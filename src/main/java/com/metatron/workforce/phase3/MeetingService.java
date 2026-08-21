@@ -35,9 +35,7 @@ public final class MeetingService {
                 .filter(actor -> !actor.equals(organizer))
                 .findFirst()
                 .orElse(organizer);
-        AuthorizationContext authorization = authorizationPolicy.authorize(
-                organizer, target, organizationContextId);
-        requireAllowed(authorization);
+        requireAllowed(authorizationPolicy.authorize(organizer, target, organizationContextId));
 
         Meeting meeting = new Meeting(
                 UUID.randomUUID().toString(), organizer, participants, organizationContextId,
@@ -47,8 +45,9 @@ public final class MeetingService {
         return meeting;
     }
 
-    public Meeting holdMeeting(String meetingId, Instant actualStart) {
+    public Meeting holdMeeting(String meetingId, ActorRef actor, Instant actualStart) {
         Meeting meeting = find(meetingId);
+        requireActorCanManageMeeting(meeting, actor);
         if (meeting.state() != Meeting.MeetingState.SCHEDULED) {
             throw new IllegalStateException("meeting must be SCHEDULED before it can be HELD");
         }
@@ -57,8 +56,9 @@ public final class MeetingService {
                 meeting.actionItemReferences(), meeting.evidenceReferences());
     }
 
-    public Meeting closeMeeting(String meetingId, Instant actualEnd, String minutesReference) {
+    public Meeting closeMeeting(String meetingId, ActorRef actor, Instant actualEnd, String minutesReference) {
         Meeting meeting = find(meetingId);
+        requireActorCanManageMeeting(meeting, actor);
         if (meeting.state() != Meeting.MeetingState.HELD && meeting.state() != Meeting.MeetingState.MINUTES_PENDING) {
             throw new IllegalStateException("meeting must be HELD or MINUTES_PENDING before close");
         }
@@ -74,8 +74,9 @@ public final class MeetingService {
                 meeting.actionItemReferences(), meeting.evidenceReferences());
     }
 
-    public Meeting cancelMeeting(String meetingId) {
+    public Meeting cancelMeeting(String meetingId, ActorRef actor) {
         Meeting meeting = find(meetingId);
+        requireActorCanManageMeeting(meeting, actor);
         if (meeting.state() == Meeting.MeetingState.HELD || meeting.state() == Meeting.MeetingState.CLOSED) {
             throw new IllegalStateException("held or closed meeting cannot be cancelled");
         }
@@ -89,6 +90,18 @@ public final class MeetingService {
     private Meeting find(String meetingId) {
         return meetings.stream().filter(item -> item.meetingId().equals(meetingId)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("meeting not found: " + meetingId));
+    }
+
+    private void requireActorCanManageMeeting(Meeting meeting, ActorRef actor) {
+        Objects.requireNonNull(actor, "actor");
+        if (!meeting.organizer().equals(actor)) {
+            throw new SecurityException("only the meeting organizer may manage the meeting lifecycle");
+        }
+        ActorRef target = meeting.participants().stream()
+                .filter(participant -> !participant.equals(actor))
+                .findFirst()
+                .orElse(actor);
+        requireAllowed(authorizationPolicy.authorize(actor, target, meeting.organizationContextId()));
     }
 
     private Meeting replace(Meeting old, Instant actualStart, Instant actualEnd, Meeting.MeetingState state,
