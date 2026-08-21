@@ -27,8 +27,26 @@ class WorkplaceCommunicationServiceTest {
 
         assertEquals(human, conversation.initiator());
         assertEquals(human, message.sender());
+        assertEquals("org-1", message.organizationContextId());
         assertEquals("auth-1", message.authorizationId());
         assertEquals(Instant.parse("2026-01-01T00:00:00Z"), message.createdAt());
+    }
+
+    @Test
+    void workerCanRespondWithinAuthorizedConversation() {
+        ActorRef human = new ActorRef("human-1", ActorRef.ActorType.HUMAN);
+        ActorRef head = new ActorRef("worker-head", ActorRef.ActorType.WORKER);
+        WorkplaceCommunicationService service = new WorkplaceCommunicationService(
+                (actor, target, org) -> AuthorizationContext.allowed("auth-1"), CLOCK);
+
+        Conversation conversation = service.startConversation(
+                human, List.of(human, head), "org-1");
+        Message response = service.sendMessage(
+                conversation.conversationId(), head, "content:response", "org-1");
+
+        assertEquals(head, response.sender());
+        assertEquals(conversation.conversationId(), response.conversationId());
+        assertEquals("auth-1", response.authorizationId());
     }
 
     @Test
@@ -56,5 +74,20 @@ class WorkplaceCommunicationServiceTest {
 
         assertThrows(IllegalStateException.class, () -> service.sendMessage(
                 conversation.conversationId(), outsider, "content:blocked", "org-1"));
+    }
+
+    @Test
+    void messageCannotChangeConversationOrganizationContext() {
+        ActorRef human = new ActorRef("human-1", ActorRef.ActorType.HUMAN);
+        ActorRef head = new ActorRef("worker-head", ActorRef.ActorType.WORKER);
+        WorkplaceCommunicationService service = new WorkplaceCommunicationService(
+                (actor, target, org) -> AuthorizationContext.allowed("auth-1"), CLOCK);
+
+        Conversation conversation = service.startConversation(
+                human, List.of(human, head), "org-1");
+
+        assertThrows(IllegalArgumentException.class, () -> service.sendMessage(
+                conversation.conversationId(), human, "content:wrong-context", "org-2"));
+        assertEquals(0, service.messages().size());
     }
 }
