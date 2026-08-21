@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: metatron-workforce
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
