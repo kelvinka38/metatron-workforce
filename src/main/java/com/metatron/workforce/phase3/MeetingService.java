@@ -56,6 +56,11 @@ public final class MeetingService {
                 meeting.actionItemReferences(), meeting.evidenceReferences());
     }
 
+    public Meeting holdMeeting(String meetingId, Instant actualStart) {
+        Meeting meeting = find(meetingId);
+        return holdMeeting(meetingId, meeting.organizer(), actualStart);
+    }
+
     public Meeting closeMeeting(String meetingId, ActorRef actor, Instant actualEnd, String minutesReference) {
         Meeting meeting = find(meetingId);
         requireActorCanManageMeeting(meeting, actor);
@@ -74,6 +79,11 @@ public final class MeetingService {
                 meeting.actionItemReferences(), meeting.evidenceReferences());
     }
 
+    public Meeting closeMeeting(String meetingId, Instant actualEnd, String minutesReference) {
+        Meeting meeting = find(meetingId);
+        return closeMeeting(meetingId, meeting.organizer(), actualEnd, minutesReference);
+    }
+
     public Meeting cancelMeeting(String meetingId, ActorRef actor) {
         Meeting meeting = find(meetingId);
         requireActorCanManageMeeting(meeting, actor);
@@ -83,6 +93,11 @@ public final class MeetingService {
         return replace(meeting, meeting.actualStart(), meeting.actualEnd(), Meeting.MeetingState.CANCELLED,
                 meeting.minutesReference(), meeting.discussionReferences(), meeting.decisionReferences(),
                 meeting.actionItemReferences(), meeting.evidenceReferences());
+    }
+
+    public Meeting cancelMeeting(String meetingId) {
+        Meeting meeting = find(meetingId);
+        return cancelMeeting(meetingId, meeting.organizer());
     }
 
     public List<Meeting> meetings() { return List.copyOf(meetings); }
