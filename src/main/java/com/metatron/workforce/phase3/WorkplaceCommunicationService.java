@@ -59,6 +59,9 @@ public final class WorkplaceCommunicationService {
         if (!conversation.participants().contains(sender)) {
             throw new IllegalStateException("sender is not a conversation participant");
         }
+        if (!conversation.organizationContextId().equals(organizationContextId)) {
+            throw new IllegalArgumentException("organization context does not match conversation context");
+        }
 
         ActorRef target = conversation.participants().stream()
                 .filter(actor -> !actor.equals(sender))
@@ -66,7 +69,7 @@ public final class WorkplaceCommunicationService {
                 .orElseThrow(() -> new IllegalStateException("conversation has no target participant"));
 
         AuthorizationContext authorization = authorizationPolicy.authorize(
-                sender, target, organizationContextId);
+                sender, target, conversation.organizationContextId());
         requireAllowed(authorization);
 
         Message message = new Message(
@@ -74,7 +77,7 @@ public final class WorkplaceCommunicationService {
                 conversationId,
                 sender,
                 contentReference,
-                organizationContextId,
+                conversation.organizationContextId(),
                 authorization.authorizationId(),
                 Instant.now(clock));
         messages.add(message);
