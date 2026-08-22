@@ -18,4 +18,4 @@ jobs:
           distribution: temurin
           java-version: '22'
       - name: Run full regression suite
-        run: ./gradlew clean test
+        run: bash ./gradlew clean test
