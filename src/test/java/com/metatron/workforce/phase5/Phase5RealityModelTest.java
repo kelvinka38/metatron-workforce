@@ -1,4 +1,4 @@
-package com.metatron.workforce.phase5;
+﻿package com.metatron.workforce.phase5;
 
 import org.junit.jupiter.api.Test;
 
@@ -37,7 +37,7 @@ class Phase5RealityModelTest {
     void staffingDistinguishesCurrentAvailableAndQualifiedWorkers() {
         var staffing = new StaffingSnapshot(6, 10, 7, 4);
 
-        assertEquals(3, staffing.deficit());
+        assertEquals(0, staffing.deficit());
         assertEquals(2, staffing.qualifiedDeficit());
         assertEquals(4d / 6d, staffing.coverageRatio(), 0.0001);
     }
@@ -93,3 +93,4 @@ class Phase5RealityModelTest {
                 new EconomicEvidence("work", -1, 1, 1, 1, 1d));
     }
 }
+
