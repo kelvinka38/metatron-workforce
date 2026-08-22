@@ -9,10 +9,9 @@ import java.util.Objects;
  */
 public final class Phase10PrimaryVerticalSliceService {
 
-    public FarmOperatingPlan plan(
-            String planId, String farmId, int requiredLaborHours, int workerCount,
-            int shiftHoursPerWorker, double hourlyLaborCost, double resourceCost,
-            double expectedOutput, String schedule, String risks, String provenance) {
+    public FarmOperatingPlan plan(String planId, String farmId, int requiredLaborHours, int workerCount,
+            int shiftHoursPerWorker, double hourlyLaborCost, double resourceCost, double expectedOutput,
+            String schedule, String risks, String provenance) {
         Objects.requireNonNull(planId);
         Objects.requireNonNull(farmId);
         Objects.requireNonNull(schedule);
@@ -48,8 +47,8 @@ public final class Phase10PrimaryVerticalSliceService {
                 Objects.requireNonNull(authorityReference), Instant.now(), Objects.requireNonNull(provenance));
     }
 
-    public ExecutionOutcome execute(FarmOperatingPlan plan, Approval approval,
-            int actualLaborHours, double actualCost, double actualOutput, String provenance) {
+    public ExecutionOutcome execute(FarmOperatingPlan plan, Approval approval, int actualLaborHours,
+            double actualCost, double actualOutput, String provenance) {
         Objects.requireNonNull(plan);
         Objects.requireNonNull(approval);
         Objects.requireNonNull(provenance);
@@ -90,6 +89,21 @@ public final class Phase10PrimaryVerticalSliceService {
                 performance, issues, provenance);
     }
 
+    public EconomicSliceEvidence economicEvidence(FarmOperatingPlan plan, ExecutionOutcome execution,
+            double plannedRevenue, double actualRevenue, String allocationBasis, String provenance) {
+        Objects.requireNonNull(plan);
+        Objects.requireNonNull(execution);
+        double plannedCost = plan.plannedLaborCost() + plan.plannedResourceCost();
+        double actualCost = execution.actualCost();
+        double plannedContribution = plannedRevenue - plannedCost;
+        double actualContribution = actualRevenue - actualCost;
+        return new EconomicSliceEvidence(plannedRevenue, actualRevenue, plannedCost, actualCost,
+                plannedContribution, actualContribution, actualContribution - plannedContribution,
+                Objects.requireNonNull(allocationBasis),
+                "Workforce emits operational economic evidence; Economy remains authoritative for accounting truth",
+                Objects.requireNonNull(provenance));
+    }
+
     public LearningImprovement learn(CycleReport report, String rootCause, String lesson,
             boolean validationEvidence, String provenance) {
         Objects.requireNonNull(report);
@@ -113,33 +127,40 @@ public final class Phase10PrimaryVerticalSliceService {
                 current.provenance() + ";validated-improvement=" + improvement.candidateId());
     }
 
-    public VerticalSliceResult run(VerticalSliceRequest request, String farmId,
-            int requiredLaborHours, int workerCount, int shiftHoursPerWorker,
-            double hourlyLaborCost, double resourceCost, double expectedOutput,
-            double actualOutput, double actualCost, String schedule, String risks) {
+    public VerticalSliceResult run(VerticalSliceRequest request, String farmId, int requiredLaborHours,
+            int workerCount, int shiftHoursPerWorker, double hourlyLaborCost, double resourceCost,
+            double expectedOutput, double actualOutput, double actualCost, double plannedRevenue,
+            double actualRevenue, String schedule, String risks) {
         Objects.requireNonNull(request);
+        Assignment assignment = new Assignment("assignment-" + request.requestId(),
+                request.headOfWorkforceId(), request.farmHeadId(),
+                "Own the farm operating plan for the requested cycle", Instant.now(),
+                "request=" + request.requestId());
         FarmOperatingPlan plan = plan("plan-" + request.requestId(), farmId, requiredLaborHours,
                 workerCount, shiftHoursPerWorker, hourlyLaborCost, resourceCost, expectedOutput,
-                schedule, risks, "request=" + request.requestId());
+                schedule, risks, "assignment=" + assignment.assignmentId());
         Approval approval = approve(plan, "AUTHORITY:" + request.headOfWorkforceId(),
                 "request=" + request.requestId());
         ExecutionOutcome execution = execute(plan, approval, plan.requiredLaborHours(), actualCost,
                 actualOutput, "plan=" + plan.planId() + ";authority=" + approval.authorityReference());
         CycleReport report = report(plan, execution, "execution=" + execution.executionId());
+        EconomicSliceEvidence economic = economicEvidence(plan, execution, plannedRevenue, actualRevenue,
+                "labor-hours + resource allocation basis", "report=" + report.reportId());
         LearningImprovement learning = learn(report,
                 report.outputVariance() < 0 ? "forecast-error" : "validated-operating-pattern",
                 report.outputVariance() < 0 ? "recalibrate the next planning forecast" : "retain the validated operating pattern",
                 execution.success(), "report=" + report.reportId());
         FarmOperatingPlan nextPlan = applyValidatedImprovement(plan, learning);
-        return new VerticalSliceResult(request, plan, approval, execution, report, learning,
-                nextPlan, "PENDING_HUMAN_REVIEW");
+        return new VerticalSliceResult(request, assignment, plan, approval, execution, report, economic,
+                learning, nextPlan, "PENDING_HUMAN_REVIEW");
     }
 
     public VerticalSliceResult review(VerticalSliceResult result, String decision) {
         Objects.requireNonNull(result);
         Objects.requireNonNull(decision);
         if (decision.isBlank()) throw new IllegalArgumentException("review decision is required");
-        return new VerticalSliceResult(result.request(), result.plan(), result.approval(), result.execution(),
-                result.report(), result.learning(), result.nextPlan(), decision);
+        return new VerticalSliceResult(result.request(), result.assignment(), result.plan(), result.approval(),
+                result.execution(), result.report(), result.economicEvidence(), result.learning(),
+                result.nextPlan(), decision);
     }
 }
