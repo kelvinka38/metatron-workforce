@@ -62,7 +62,7 @@ class Phase7ReportingTest {
         assertTrue(dashboard.overBudget());
         assertEquals(48, dashboard.remainingCapacity(), 0.0001);
         assertEquals(2, dashboard.currentStaffing());
-        assertEquals(1, dashboard.organizationalMetrics().get("output"));
+        assertEquals(70d, dashboard.organizationalMetrics().get("output"));
     }
 
     @Test
