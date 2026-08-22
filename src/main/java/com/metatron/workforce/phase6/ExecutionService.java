@@ -30,8 +30,8 @@ public final class ExecutionService {
         Objects.requireNonNull(feasibilityCheck, "feasibilityCheck");
         requireState(execution, Execution.State.AUTHORIZED);
         if (!feasibilityCheck.test(execution)) {
-            return copy(execution, Execution.State.BLOCKED, null, null, at,
-                    "execution admission constraints are insufficient", null);
+            return copy(execution, Execution.State.BLOCKED, null, null, null,
+                    null, "execution admission constraints are insufficient");
         }
         return copy(execution, Execution.State.RUNNING, at, null, null, null, null);
     }
@@ -56,7 +56,7 @@ public final class ExecutionService {
         if (execution.state() != Execution.State.RUNNING && execution.state() != Execution.State.AUTHORIZED) {
             throw new IllegalStateException("only authorized or running execution can become blocked");
         }
-        return copy(execution, Execution.State.BLOCKED, null, null, at, null, reason);
+        return copy(execution, Execution.State.BLOCKED, null, null, null, null, reason);
     }
 
     public Execution cancel(Execution execution, Instant at, String reason) {
