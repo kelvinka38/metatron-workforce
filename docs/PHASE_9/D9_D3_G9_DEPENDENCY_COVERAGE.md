@@ -58,6 +58,10 @@ D9-D3 passes only when:
 - Workforce is never the owner of an external dependency;
 - the full Phase 8 + Phase 9 regression suite passes.
 
+## Regression gate
+
+The full regression suite is executed by `.github/workflows/phase9-d3.yml`.
+
 ## Gate
 
 **D9-D3 = PASS only after full regression acceptance.**

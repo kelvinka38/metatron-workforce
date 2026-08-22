@@ -27,7 +27,7 @@ public final class Phase9DependencyRegistry {
                 "institutional-policy-authority",
                 "policy/rule request",
                 "policy decision + authority reference",
-                "Governance owns institutional authority; Workforce cannot manufacture policy",
+                "Governance owns institutional authority; that authority remains external to Workforce",
                 "unavailable or denied governance remains non-authoritative",
                 "preserve policy identity, authority reference, decision time, and provenance"));
 

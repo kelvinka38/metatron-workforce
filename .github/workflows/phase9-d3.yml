@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - phase9-d3-g9-closure
+      - phase9-d3-validation
   pull_request:
     branches:
       - main
