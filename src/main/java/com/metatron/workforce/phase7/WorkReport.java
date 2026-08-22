@@ -13,9 +13,28 @@ public record WorkReport(
         Instant periodEnd,
         String statusSummary,
         String evidenceReference,
-        Instant reportedAt) {
+        Instant reportedAt,
+        StatementNature statementNature) {
 
     public enum ReportType { DAILY, PERIODIC, TASK, EXCEPTION, INCIDENT, PERFORMANCE, ECONOMIC }
+
+    /** Distinguishes directly observed statements from model-derived values. */
+    public enum StatementNature { OBSERVED, INFERRED, ESTIMATED }
+
+    /** Backward-compatible constructor for existing reports whose nature is observed evidence. */
+    public WorkReport(
+            String reportId,
+            String workerId,
+            String organizationContextId,
+            ReportType type,
+            Instant periodStart,
+            Instant periodEnd,
+            String statusSummary,
+            String evidenceReference,
+            Instant reportedAt) {
+        this(reportId, workerId, organizationContextId, type, periodStart, periodEnd,
+                statusSummary, evidenceReference, reportedAt, StatementNature.OBSERVED);
+    }
 
     public WorkReport {
         requireText(reportId, "reportId");
@@ -28,6 +47,7 @@ public record WorkReport(
         requireText(statusSummary, "statusSummary");
         requireText(evidenceReference, "evidenceReference");
         Objects.requireNonNull(reportedAt, "reportedAt");
+        Objects.requireNonNull(statementNature, "statementNature");
     }
 
     private static void requireText(String value, String field) {
