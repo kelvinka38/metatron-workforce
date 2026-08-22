@@ -45,7 +45,7 @@ public final class ReportingService {
         Objects.requireNonNull(capacity, "capacity");
         Objects.requireNonNull(staffing, "staffing");
         Objects.requireNonNull(performance, "performance");
-        return new ManagementDashboard(current, completed, blocked, capacity.remaining(), staffing.available,
+        return new ManagementDashboard(current, completed, blocked, capacity.remaining(), staffing.available(),
                 performance, risks, exceptions, reportedCost, budget, economicEvidence, metrics);
     }
 }
