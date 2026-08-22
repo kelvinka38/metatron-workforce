@@ -39,4 +39,7 @@ public record WorkforcePracticeCandidate(
                 evidence,
                 true);
     }
+    public boolean isQualified() {
+        return validationEvidence != null;
+    }
 }

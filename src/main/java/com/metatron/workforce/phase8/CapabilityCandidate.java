@@ -80,4 +80,7 @@ public final class CapabilityCandidate {
 
         return value;
     }
+    public boolean isQualified() {
+        return validationEvidence != null;
+    }
 }

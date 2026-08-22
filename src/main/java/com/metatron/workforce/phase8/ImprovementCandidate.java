@@ -8,6 +8,20 @@ public record ImprovementCandidate(
         String proposedChange,
         Status status,
         Instant proposedAt) {
+    public ImprovementCandidate(
+            String id,
+            String workerId,
+            String description,
+            boolean adopted) {
+
+        this(
+            id,
+            workerId,
+            description,
+            adopted ? Status.ADOPTED : Status.PROPOSED,
+            java.time.Instant.now());
+    }
+
 
     public enum Status { PROPOSED, VALIDATED, ADOPTED, REJECTED }
 
