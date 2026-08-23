@@ -14,7 +14,7 @@ public final class ExecutionLifecycleService {
             ExecutionState next
     ) {
 
-        if (!guard.allowed(current,next)) {
+        if (!guard.allowed(current, next)) {
 
             throw new InvalidExecutionTransitionException(
                     "Invalid transition "
