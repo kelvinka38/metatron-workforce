@@ -4,7 +4,7 @@ Document Type:
 Gate Execution Checklist
 
 Status:
-Execution In Progress
+Execution Verified / Runtime Evidence Pending
 
 Gate:
 G12 — Workforce Production Readiness
@@ -30,54 +30,54 @@ Define the execution sequence required to evaluate G12 readiness. This checklist
 
 | Check | Status | Evidence |
 |---|---|---|
-| Multi-organization scenario tested | [ ] | Phase 12 acceptance test |
-| Multiple departments tested | [ ] | Phase 12 acceptance test |
-| Multiple teams tested | [ ] | Phase 12 acceptance test |
-| Multiple worker classes tested | [ ] | Phase 12 acceptance test |
-| Isolation verified | [ ] | Phase 12 acceptance test |
-| 1,000-worker capacity represented | [ ] | Phase 12 acceptance test |
-| Concurrent workflows validated | [ ] | Phase 12 acceptance test |
+| Multi-organization scenario tested | [x] | Local Phase 12 acceptance suite PASS at `b7485ac` |
+| Multiple departments tested | [x] | Local Phase 12 acceptance suite PASS at `b7485ac` |
+| Multiple teams tested | [x] | Local Phase 12 acceptance suite PASS at `b7485ac` |
+| Multiple worker classes tested | [x] | Local Phase 12 acceptance suite PASS at `b7485ac` |
+| Isolation verified | [x] | `multiOrganizationWorkflowsRemainIsolated` PASS |
+| 1,000-worker capacity represented | [x] | `thousandWorkerCapacityIsRepresentableWithoutArtificialOverflow` PASS |
+| Concurrent workflows validated | [x] | 64 concurrent workflows test PASS |
 
 # PHASE 3 — OPERATIONAL VALIDATION
 
 | Check | Status | Evidence |
 |---|---|---|
-| Concurrent workflows validated | [ ] | Phase 12 acceptance test |
-| Failure recovery validated | [ ] | Phase 12 acceptance test |
-| State consistency validated | [ ] | Phase 12 acceptance test |
-| Audit/provenance completeness validated | [ ] | Phase 12 acceptance test |
+| Concurrent workflows validated | [x] | 64 concurrent workflows test PASS |
+| Failure recovery validated | [x] | `failureRecoveryPreservesFailureAndDoesNotManufactureSuccess` PASS |
+| State consistency validated | [x] | Successful/failure outcome invariants PASS in acceptance suite |
+| Audit/provenance completeness validated | [x] | `observabilityProvenanceExistsAcrossMaterialStages` PASS |
 
 # PHASE 4 — SECURITY VALIDATION
 
 | Check | Status | Evidence |
 |---|---|---|
-| Identity validation | [ ] | Full acceptance suite |
-| Authorization validation | [ ] | Phase 11 + Phase 12 acceptance tests |
-| Isolation validation | [ ] | Phase 12 acceptance test |
-| Data visibility validation | [ ] | Full acceptance suite |
-| Delegation validation | [ ] | Phase 11 acceptance test |
-| Revocation / expiry validation | [ ] | Phase 11 + Phase 12 acceptance tests |
+| Identity validation | [ ] | Full acceptance suite / runtime evidence pending |
+| Authorization validation | [x] | `securityRejectsOutOfWindowAuthorization` PASS |
+| Isolation validation | [x] | Multi-organization isolation test PASS |
+| Data visibility validation | [ ] | Runtime evidence pending |
+| Delegation validation | [ ] | Phase 11 acceptance evidence pending |
+| Revocation / expiry validation | [x] | Authorization window expiry denial PASS |
 
 # PHASE 5 — ECONOMIC VALIDATION
 
 | Check | Status | Evidence |
 |---|---|---|
-| Capacity accounting validated | [ ] | Phase 11 + Phase 12 acceptance tests |
-| Worker economics validated | [ ] | Phase 12 economic evidence test |
-| Cost attribution validated | [ ] | Existing economic evidence model + full suite |
+| Capacity accounting validated | [x] | 1,000-worker capacity test PASS |
+| Worker economics validated | [x] | Economic evidence acceptance test PASS |
+| Cost attribution validated | [x] | Economic evidence model + acceptance suite PASS |
 | Utilization evidence available | [ ] | Runtime evidence required |
-| Plan vs actual variance validated | [ ] | Phase 11 + Phase 12 acceptance tests |
+| Plan vs actual variance validated | [x] | Economic plan-vs-actual test PASS |
 
 # PHASE 6 — OBSERVABILITY / EVIDENCE
 
 | Check | Status | Evidence |
 |---|---|---|
-| Logs available | [ ] | Runtime evidence required |
-| Metrics available | [ ] | Runtime evidence required |
-| Traces available | [ ] | Runtime evidence required |
-| Audit evidence available | [ ] | Runtime evidence required |
-| Economic indicators available | [ ] | Runtime evidence required |
-| Learning indicators available | [ ] | Runtime evidence required |
+| Logs available | [ ] | CI/runtime evidence bundle pending |
+| Metrics available | [ ] | CI/runtime evidence bundle pending |
+| Traces available | [ ] | CI/runtime evidence bundle pending |
+| Audit evidence available | [ ] | CI/runtime evidence bundle pending |
+| Economic indicators available | [ ] | CI/runtime evidence bundle pending |
+| Learning indicators available | [ ] | CI/runtime evidence bundle pending |
 
 # FINAL G12 DECISION
 
@@ -95,6 +95,20 @@ Date:
 
 Evidence Location:
 
-## Current Gate Rule
+## CURRENT EXECUTION RECORD
+
+Acceptance baseline:
+
+`b7485ac` — full `clean test` PASS and explicit `Phase12ProductionReadinessAcceptanceTest` PASS.
+
+Runtime evidence workflow:
+
+`.github/workflows/g12-production-readiness.yml`
+
+Expected artifact:
+
+`g12-production-readiness-evidence`
+
+## CURRENT GATE RULE
 
 G12 cannot be marked PASS until the acceptance suite passes and runtime evidence closes all HIGH gaps in the G12 implementation gap register.
