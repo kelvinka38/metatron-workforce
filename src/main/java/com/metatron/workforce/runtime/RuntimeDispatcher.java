@@ -11,22 +11,19 @@ public final class RuntimeDispatcher {
     }
 
     public RuntimeInstance dispatch(String runtimeId) {
-
         RuntimeInstance runtime = registry.get(runtimeId);
 
         if (runtime == null) {
-            throw new IllegalStateException(
-                    "runtime not found: " + runtimeId);
+            throw new IllegalStateException("runtime not found: " + runtimeId);
         }
 
         if (runtime.state() != RuntimeState.READY
                 && runtime.state() != RuntimeState.RUNNING) {
-            throw new IllegalStateException(
-                    "runtime unavailable: " + runtime.state());
+            throw new IllegalStateException("runtime unavailable: " + runtime.state());
         }
 
         runtime.transition(RuntimeState.RUNNING);
-
+        registry.register(runtime);
         return runtime;
     }
 }
