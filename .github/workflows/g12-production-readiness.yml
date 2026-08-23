@@ -38,6 +38,19 @@ jobs:
       - name: Generate G12 runtime evidence
         run: ./gradlew test --tests '*Phase12RuntimeEvidenceCaptureTest*' --no-daemon
 
+      - name: Build deployable Workforce runtime
+        run: ./gradlew bootJar --no-daemon
+
+      - name: Execute deployable Workforce runtime evidence smoke
+        env:
+          METATRON_COMMIT_SHA: ${{ github.sha }}
+          METATRON_VERSION: g12-${{ github.sha }}
+          METATRON_ENVIRONMENT: ci-deployed-runtime
+        run: |
+          java -jar build/libs/metatron-workforce-0.1.0.jar
+          test -d runtime-evidence/production
+          find runtime-evidence/production -type f -maxdepth 3 -print
+
       - name: Collect G12 repository evidence
         if: always()
         run: |
@@ -47,6 +60,7 @@ jobs:
           cp -R build/reports/tests build/g12-evidence/test-report 2>/dev/null || true
           cp -R build/reports/problems build/g12-evidence/problems-report 2>/dev/null || true
           cp -R build/g12-runtime-evidence build/g12-evidence/runtime-evidence 2>/dev/null || true
+          cp -R runtime-evidence build/g12-evidence/production-runtime-evidence 2>/dev/null || true
           git rev-parse HEAD > build/g12-evidence/commit.txt
           git status --short > build/g12-evidence/git-status.txt
           {
