@@ -17,7 +17,7 @@ Define the execution sequence required to evaluate G12 readiness. This checklist
 
 | Check | Status | Evidence |
 |---|---|---|
-| Phase 11 acceptance completed | [ ] | `docs/PHASE_11/G11_HARDENING_ACCEPTANCE.md` |
+| Phase 11 acceptance completed | [x] | G11 PASS at `b7485ac`; `docs/PHASE_11/G11_HARDENING_ACCEPTANCE_EXECUTION_RECORD.md` |
 | Architecture implementation available | [x] | Phase 1 implementation artifacts |
 | Core lifecycle operational | [x] | Phase 2 lifecycle artifacts / tests |
 | Organization model operational | [x] | Phase 4 implementation artifacts / tests |
@@ -55,7 +55,7 @@ Define the execution sequence required to evaluate G12 readiness. This checklist
 | Authorization validation | [x] | `securityRejectsOutOfWindowAuthorization` PASS |
 | Isolation validation | [x] | Multi-organization isolation test PASS |
 | Data visibility validation | [ ] | Runtime evidence pending |
-| Delegation validation | [ ] | Phase 11 acceptance evidence pending |
+| Delegation validation | [x] | G11 hardening acceptance PASS |
 | Revocation / expiry validation | [x] | Authorization window expiry denial PASS |
 
 # PHASE 5 — ECONOMIC VALIDATION
@@ -97,9 +97,17 @@ Evidence Location:
 
 ## CURRENT EXECUTION RECORD
 
-Acceptance baseline:
+G11 acceptance:
+
+PASS
+
+G12 acceptance baseline:
 
 `b7485ac` — full `clean test` PASS and explicit `Phase12ProductionReadinessAcceptanceTest` PASS.
+
+Acceptance execution record:
+
+`docs/phase-12/G12_EVIDENCE/G12_ACCEPTANCE_EXECUTION_RECORD.md`
 
 Runtime evidence workflow:
 
