@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   g12-acceptance:
@@ -35,6 +36,16 @@ jobs:
           cp -R docs/phase-12 build/g12-evidence/phase-12
           git rev-parse HEAD > build/g12-evidence/commit.txt
           git status --short > build/g12-evidence/git-status.txt
+          {
+            echo "workflow_run=${GITHUB_RUN_ID}"
+            echo "workflow_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "event=${GITHUB_EVENT_NAME}"
+            echo "ref=${GITHUB_REF}"
+            echo "sha=${GITHUB_SHA}"
+            echo "runner=${RUNNER_OS}"
+            java -version 2>&1
+            ./gradlew --version
+          } > build/g12-evidence/execution-environment.txt
 
       - name: Upload G12 evidence bundle
         if: always()
