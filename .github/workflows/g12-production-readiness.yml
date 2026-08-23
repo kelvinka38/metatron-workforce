@@ -29,11 +29,17 @@ jobs:
       - name: Run full acceptance suite
         run: ./gradlew clean test --no-daemon
 
+      - name: Run explicit G12 acceptance suite
+        run: ./gradlew test --tests '*Phase12ProductionReadinessAcceptanceTest*' --no-daemon
+
       - name: Collect G12 repository evidence
         if: always()
         run: |
           mkdir -p build/g12-evidence
           cp -R docs/phase-12 build/g12-evidence/phase-12
+          cp -R build/test-results build/g12-evidence/test-results 2>/dev/null || true
+          cp -R build/reports/tests build/g12-evidence/test-report 2>/dev/null || true
+          cp -R build/reports/problems build/g12-evidence/problems-report 2>/dev/null || true
           git rev-parse HEAD > build/g12-evidence/commit.txt
           git status --short > build/g12-evidence/git-status.txt
           {
