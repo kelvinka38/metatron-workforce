@@ -1,0 +1,9 @@
+{
+  "runtimeInstanceCount": 2,
+  "readyCount": 0,
+  "runningCount": 1,
+  "failedCount": 1,
+  "terminatedCount": 0,
+  "replacementEvent": "durable-runtime-state-recovered",
+  "continuityRuntimeId": "1ac6216e-4c24-4c82-b7a8-793543be49b1"
+}
