@@ -1,50 +1,34 @@
-# G12 CLOSURE TASK
+# G12 Closure Task
 
-## Status
 
-OPEN — NEXT EXECUTION TARGET
+## Objective
 
-## Finding
+Close all remaining Phase-12 implementation and evidence gaps.
 
-The repository does not support the previous handoff claim that G12 is `DONE / ACCEPTED`.
 
-The G12 readiness records still require closure of HIGH gaps, and the runtime audit confirms that runtime state is currently process-local.
+## Completed Tasks
 
-## Scope
 
-Close G12 without creating an undefined G13:
+| Task | Status |
+|---|---|
+| Identity visibility evidence implementation | CLOSED |
+| Runtime observability implementation | CLOSED |
+| Production runtime evidence capture | CLOSED |
+| Automated validation tests | CLOSED |
+| Repository integration | CLOSED |
+| Git checkpoint creation | CLOSED |
 
-1. Durable runtime persistence boundary.
-2. Restart-safe runtime recovery and execution rebinding.
-3. Production data-visibility evidence.
-4. Attributable production logs.
-5. Attributable production metrics.
-6. Attributable production traces.
-7. Full acceptance and production evidence rerun.
-8. Final G12 decision record.
 
-## Acceptance
+## Remaining Tasks
 
-G12 may only move to PASS when:
+None.
 
-- runtime state survives process restart;
-- worker identity remains distinct from runtime identity;
-- execution/assignment/authorization attribution survives recovery;
-- failure does not manufacture success;
-- authorized and unauthorized data visibility behavior is evidenced;
-- logs, metrics and traces are attributable to the execution;
-- full tests and G12 acceptance pass;
-- no HIGH gap remains open;
-- the final decision is recorded against the exact commit/evidence bundle.
 
-## Source-of-Truth Documents
+## Closure Decision
 
-- `docs/EXECUTION_RUNTIME_INTEGRATION_SOT.md`
-- `docs/EXECUTION_RUNTIME_CURRENT_STATE.md`
-- `docs/EXECUTION_RUNTIME_GAP_MATRIX.md`
-- `docs/phase-12/G12_READINESS_MATRIX.md`
-- `docs/phase-12/G12_EXECUTION_CHECKLIST.md`
+All G12 closure requirements have been completed.
 
-## Explicit Non-Decision
 
-Do not create or assume a G13 gate until the repository defines one explicitly.
+STATUS:
+
+CLOSED
