@@ -1,0 +1,13 @@
+{
+  "requestId": "PROD-EVIDENCE-001",
+  "assignmentId": "assignment-PROD-EVIDENCE-001",
+  "executionId": "execution-plan-PROD-EVIDENCE-001",
+  "runtimeId": "f4448699-4b39-492d-a89b-588faaf1213b",
+  "workerId": "WORKER-PROD-001",
+  "organizationContext": "ORG-PROD-001",
+  "timestamp": "2026-08-23T07:35:30.404673100Z",
+  "sourceEvent": "production-evidence-smoke",
+  "commitSha": "b1d6551de3f56f9de0f68b5e1faf58ba8b3897f1",
+  "environment": "local-production-evidence",
+  "provenanceStages": 7
+}

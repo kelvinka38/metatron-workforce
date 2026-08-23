@@ -1,0 +1,9 @@
+{
+  "runtimeInstanceCount": 2,
+  "readyCount": 0,
+  "runningCount": 1,
+  "failedCount": 1,
+  "terminatedCount": 0,
+  "replacementEvent": "runtime-failure-snapshot-captured",
+  "continuityRuntimeId": "96bdd2f1-6624-4949-b7b8-e1d567e840cd"
+}

@@ -1,0 +1,8 @@
+{
+  "authorizationId": "auth-PROD-AUTH-DENY-001",
+  "outcome": "DENY",
+  "reason": "authorization request is outside its validity window",
+  "organizationContext": "ORG-PROD-001",
+  "delegationReference": "DELEGATION-PROD-001",
+  "evidenceReference": "PROD-EVIDENCE-001"
+}
