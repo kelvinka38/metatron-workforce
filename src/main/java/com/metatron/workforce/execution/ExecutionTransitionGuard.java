@@ -6,9 +6,7 @@ public final class ExecutionTransitionGuard {
             ExecutionState from,
             ExecutionState to
     ) {
-
         return switch (from) {
-
             case REQUESTED ->
                     to == ExecutionState.ADMITTED;
 
