@@ -4,7 +4,7 @@ Document Type:
 Readiness Gap Register
 
 Status:
-Execution Verified / Runtime Evidence Pending
+CI Evidence Captured / Production Evidence Pending
 
 Gate:
 G12 — Workforce Production Readiness
@@ -13,29 +13,38 @@ G12 — Workforce Production Readiness
 
 Identify unresolved implementation and evidence gaps preventing G12 readiness approval.
 
-## ACCEPTANCE EXECUTION BASELINE
+## AUTHORITATIVE CI EVIDENCE
 
-Local validation completed successfully against commit:
+CI workflow:
+`G12 Production Readiness Evidence`
 
-`b7485ac` — `test(phase12): align acceptance test with ExecutionOutcome API`
+Workflow run:
+`32617145966` / run `41`
 
-Executed:
+Commit:
+`a9537dfb310e224175e4e9471f0f9dcc458d80af`
 
-- full `clean test` suite — PASS
-- explicit `Phase12ProductionReadinessAcceptanceTest` suite — PASS
+Result:
+- full acceptance suite — PASS
+- explicit `Phase12ProductionReadinessAcceptanceTest` — PASS
+- 7 G12 acceptance tests — 0 failures / 0 errors / 0 skipped
 
-This closes the question of whether the repository's covered G12 acceptance scenarios execute successfully. It does not close runtime-evidence gaps until attributable execution artifacts are persisted.
+Evidence record:
+`docs/phase-12/G12_EVIDENCE/G12_CI_RUNTIME_EVIDENCE_RECORD.md`
+
+Evidence artifact:
+`g12-production-readiness-evidence` / artifact `9487280323`
 
 ## GAP REGISTER
 
 | ID | Domain | Gap | Severity | Status |
 |---|---|---|---|---|
-| G12-GAP-001 | Runtime | Runtime evidence bundle not yet persisted from CI execution | HIGH | OPEN |
-| G12-GAP-002 | Scale | Multi-organization / capacity / concurrency validation not executed | HIGH | CLOSED — acceptance suite PASS |
-| G12-GAP-003 | Security | Security validation evidence not yet persisted as runtime artifact | HIGH | OPEN |
-| G12-GAP-004 | Economic | Economic validation evidence not yet persisted as runtime artifact | HIGH | OPEN |
-| G12-GAP-005 | Operations | Production operational evidence not yet collected | HIGH | OPEN |
-| G12-GAP-006 | Audit | Audit completeness validation pending attributable runtime artifact | MEDIUM | OPEN |
+| G12-GAP-001 | Runtime | Attributable CI/runtime evidence bundle not yet persisted | HIGH | CLOSED — CI run 32617145966 captured evidence bundle |
+| G12-GAP-002 | Scale | Multi-organization / capacity / concurrency validation | HIGH | CLOSED — CI acceptance PASS |
+| G12-GAP-003 | Security | Full production security evidence across identity, visibility and all required security controls | HIGH | OPEN — covered authorization/delegation/expiry evidence exists, broader production evidence remains |
+| G12-GAP-004 | Economic | Economic validation evidence not yet persisted as runtime artifact | HIGH | CLOSED — CI acceptance captured plan/actual/variance/boundary evidence |
+| G12-GAP-005 | Operations | Production operational evidence including observability/utilization/runtime signals | HIGH | OPEN — acceptance execution is proven, production observability evidence is not |
+| G12-GAP-006 | Audit | Audit completeness validation pending attributable runtime artifact | MEDIUM | CLOSED — CI captured provenance acceptance evidence |
 
 ## CURRENT ASSESSMENT
 
@@ -51,9 +60,17 @@ Acceptance Execution:
 
 VERIFIED — FULL SUITE PASS + EXPLICIT G12 PASS
 
-Runtime Evidence:
+CI Runtime Evidence:
 
-PENDING CI ARTIFACT CAPTURE
+CAPTURED — RUN 32617145966
+
+Production Security Evidence:
+
+PARTIAL — HIGH GAP OPEN
+
+Production Operational Evidence:
+
+PENDING — HIGH GAP OPEN
 
 Production Readiness:
 
@@ -65,7 +82,10 @@ All HIGH severity gaps must be CLOSED before:
 
 `G12 Decision Record → PASS`
 
-At minimum, the remaining HIGH gaps require an attributable CI/runtime evidence bundle containing execution results and environment metadata.
+Remaining blockers are:
+
+1. full production security evidence coverage
+2. production operational / observability / utilization evidence
 
 ## DECISION
 
