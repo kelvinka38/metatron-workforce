@@ -4,14 +4,14 @@ Document Type:
 Evidence Index / Execution Boundary
 
 Status:
-Execution In Progress
+CI Evidence Captured / Production Evidence Pending
 
 Gate:
 G12 — Workforce Production Readiness
 
 ## PURPOSE
 
-Provide one canonical index for G12 evidence collection and distinguish repository evidence from runtime evidence.
+Provide one canonical index for G12 evidence collection and distinguish repository evidence from attributable runtime evidence.
 
 ## REPOSITORY-SIDE EVIDENCE
 
@@ -23,33 +23,31 @@ Provide one canonical index for G12 evidence collection and distinguish reposito
 | Gap register | `docs/phase-12/G12_EVIDENCE/G12_IMPLEMENTATION_GAP_REGISTER.md` | PRESENT |
 | Evidence collection tracker | `docs/phase-12/G12_EVIDENCE/G12_EVIDENCE_COLLECTION_TRACKER.md` | PRESENT |
 | Runtime evidence map | `docs/phase-12/G12_EVIDENCE/G12_RUNTIME_EVIDENCE_MAP.md` | PRESENT |
+| CI runtime evidence record | `docs/phase-12/G12_EVIDENCE/G12_CI_RUNTIME_EVIDENCE_RECORD.md` | PRESENT |
 | Scale validation plan | `docs/phase-12/G12_EVIDENCE/G12_SCALE_VALIDATION_PLAN.md` | PRESENT |
 | Security validation plan | `docs/phase-12/G12_EVIDENCE/G12_SECURITY_VALIDATION_PLAN.md` | PRESENT |
 | Economic validation plan | `docs/phase-12/G12_EVIDENCE/G12_ECONOMIC_VALIDATION_PLAN.md` | PRESENT |
 | Operational evidence requirements | `docs/phase-12/G12_EVIDENCE/G12_OPERATIONAL_EVIDENCE_REQUIREMENTS.md` | PRESENT |
 | Runtime execution handoff | `docs/phase-12/G12_EVIDENCE/G12_RUNTIME_EXECUTION_HANDOFF.md` | READY |
 | Decision record | `docs/phase-12/G12_EVIDENCE/G12_DECISION_RECORD.md` | PRESENT / PENDING |
-| Repository execution status | `docs/phase-12/G12_EVIDENCE/G12_REPOSITORY_EXECUTION_STATUS.md` | PENDING RUNTIME VALIDATION |
+| Repository execution status | `docs/phase-12/G12_EVIDENCE/G12_REPOSITORY_EXECUTION_STATUS.md` | CI VALIDATED |
 
-## AUTOMATED EXECUTION
+## AUTHORITATIVE CI EXECUTION
 
-Canonical workflow:
+Workflow:
+`G12 Production Readiness Evidence`
 
-`.github/workflows/g12-production-readiness.yml`
+Run:
+`32617145966` / run `41`
 
-Execution modes:
+Commit:
+`a9537dfb310e224175e4e9471f0f9dcc458d80af`
 
-- push to `main`
-- pull request targeting `main`
-- manual `workflow_dispatch`
+Conclusion:
+PASS
 
-Runtime:
-
-- Java 22
-- Gradle wrapper
-- full test suite
-- execution metadata capture
-- G12 evidence bundle uploaded as a workflow artifact
+Artifact:
+`g12-production-readiness-evidence` / `9487280323`
 
 ## EVIDENCE CLASSIFICATION
 
@@ -74,15 +72,25 @@ Must establish:
 - operational/audit evidence actually exists
 - execution environment is attributable
 
-Repository presence MUST NOT be treated as runtime proof.
+The CI run now provides attributable execution evidence for the covered acceptance scenarios.
+
+It does not by itself prove production observability infrastructure, utilization telemetry, or the remaining security breadth not covered by the acceptance suite.
 
 ## CURRENT STATE
 
 Repository-side G12 package:
 
-READY FOR EXECUTION
+READY
 
-Runtime execution evidence:
+CI acceptance evidence:
+
+CAPTURED — RUN 32617145966
+
+Production security evidence:
+
+PARTIAL
+
+Production operational evidence:
 
 PENDING
 
