@@ -32,6 +32,9 @@ jobs:
       - name: Run full acceptance suite
         run: ./gradlew clean test --no-daemon
 
+      - name: Run durable runtime recovery acceptance
+        run: ./gradlew test --tests '*RuntimeDurableRecoveryTest' --no-daemon
+
       - name: Run all G12 acceptance tests
         run: ./gradlew test --tests '*Phase12*AcceptanceTest*' --no-daemon
 
@@ -46,10 +49,14 @@ jobs:
           METATRON_COMMIT_SHA: ${{ github.sha }}
           METATRON_VERSION: g12-${{ github.sha }}
           METATRON_ENVIRONMENT: ci-deployed-runtime
+          METATRON_RUNTIME_STATE_DIR: runtime-state/production
         run: |
           java -jar build/libs/metatron-workforce-0.1.0.jar
           test -d runtime-evidence/production
+          test -d runtime-state/production
+          test "$(find runtime-state/production -type f -name '*.properties' | wc -l)" -ge 2
           find runtime-evidence/production -type f -maxdepth 3 -print
+          find runtime-state/production -type f -maxdepth 2 -print
 
       - name: Collect G12 repository evidence
         if: always()
@@ -61,6 +68,7 @@ jobs:
           cp -R build/reports/problems build/g12-evidence/problems-report 2>/dev/null || true
           cp -R build/g12-runtime-evidence build/g12-evidence/runtime-evidence 2>/dev/null || true
           cp -R runtime-evidence build/g12-evidence/production-runtime-evidence 2>/dev/null || true
+          cp -R runtime-state build/g12-evidence/runtime-state 2>/dev/null || true
           git rev-parse HEAD > build/g12-evidence/commit.txt
           git status --short > build/g12-evidence/git-status.txt
           {
