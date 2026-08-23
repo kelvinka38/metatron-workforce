@@ -12,7 +12,6 @@ import com.metatron.workforce.phase6.AuthorizationService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -92,7 +91,7 @@ class Phase12ProductionReadinessAcceptanceTest {
 
         ExecutionOutcome failed = service.execute(plan, approval, 40, 4_000_000, 40, "G12-failure");
         assertFalse(failed.success());
-        assertEquals("execution incomplete", failed.status());
+        assertEquals("execution incomplete", failed.report());
         assertTrue(failed.failure().contains("required labor-hours"));
 
         var report = service.report(plan, failed, "G12-recovery-report");
