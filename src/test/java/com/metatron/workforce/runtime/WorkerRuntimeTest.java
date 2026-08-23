@@ -1,31 +1,34 @@
 package com.metatron.workforce.runtime;
 
+import com.metatron.workforce.workers.Worker;
 import com.metatron.workforce.workers.WorkerResult;
 import com.metatron.workforce.workers.audit.RepositoryAuditWorker;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.*;
 
 class WorkerRuntimeTest {
 
-
     @Test
-    void should_execute_worker_through_runtime() {
+    void should_execute_worker_and_write_evidence() throws Exception {
 
+        Worker worker = new RepositoryAuditWorker();
 
-        WorkerRuntime runtime =
-                new WorkerRuntime();
-
+        WorkerRuntime runtime = new WorkerRuntime();
 
         WorkerResult result =
                 runtime.execute(
-                        new RepositoryAuditWorker(),
-                        "TASK-001",
-                        "Audit workforce repository after G12 activation"
+                        worker,
+                        "task-001",
+                        "audit repository structure"
                 );
 
+
+        assertNotNull(result);
 
         assertEquals(
                 "PASS",
@@ -36,6 +39,25 @@ class WorkerRuntimeTest {
         assertEquals(
                 "RepositoryAuditWorker",
                 result.worker()
+        );
+
+
+        assertNotNull(
+                result.evidence()
+        );
+
+
+        assertTrue(
+                Files.exists(
+                        Path.of(
+                                "runtime-evidence"
+                        )
+                )
+        );
+
+
+        assertNotNull(
+                result.completedAt()
         );
     }
 }
