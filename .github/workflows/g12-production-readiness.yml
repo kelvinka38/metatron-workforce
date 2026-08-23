@@ -23,6 +23,9 @@ jobs:
           java-version: '22'
           cache: gradle
 
+      - name: Disable file-mode noise in CI
+        run: git config core.filemode false
+
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
