@@ -27,6 +27,7 @@ Provide one canonical index for G12 evidence collection and distinguish reposito
 | Security validation plan | `docs/phase-12/G12_EVIDENCE/G12_SECURITY_VALIDATION_PLAN.md` | PRESENT |
 | Economic validation plan | `docs/phase-12/G12_EVIDENCE/G12_ECONOMIC_VALIDATION_PLAN.md` | PRESENT |
 | Operational evidence requirements | `docs/phase-12/G12_EVIDENCE/G12_OPERATIONAL_EVIDENCE_REQUIREMENTS.md` | PRESENT |
+| Runtime execution handoff | `docs/phase-12/G12_EVIDENCE/G12_RUNTIME_EXECUTION_HANDOFF.md` | READY |
 | Decision record | `docs/phase-12/G12_EVIDENCE/G12_DECISION_RECORD.md` | PRESENT / PENDING |
 | Repository execution status | `docs/phase-12/G12_EVIDENCE/G12_REPOSITORY_EXECUTION_STATUS.md` | PENDING RUNTIME VALIDATION |
 
