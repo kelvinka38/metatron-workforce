@@ -21,24 +21,33 @@ Provide one canonical index for G12 evidence collection and distinguish reposito
 | Readiness matrix | `docs/phase-12/G12_READINESS_MATRIX.md` | PRESENT |
 | Execution checklist | `docs/phase-12/G12_EXECUTION_CHECKLIST.md` | PRESENT |
 | Gap register | `docs/phase-12/G12_EVIDENCE/G12_IMPLEMENTATION_GAP_REGISTER.md` | PRESENT |
+| Evidence collection tracker | `docs/phase-12/G12_EVIDENCE/G12_EVIDENCE_COLLECTION_TRACKER.md` | PRESENT |
 | Runtime evidence map | `docs/phase-12/G12_EVIDENCE/G12_RUNTIME_EVIDENCE_MAP.md` | PRESENT |
 | Scale validation plan | `docs/phase-12/G12_EVIDENCE/G12_SCALE_VALIDATION_PLAN.md` | PRESENT |
 | Security validation plan | `docs/phase-12/G12_EVIDENCE/G12_SECURITY_VALIDATION_PLAN.md` | PRESENT |
 | Economic validation plan | `docs/phase-12/G12_EVIDENCE/G12_ECONOMIC_VALIDATION_PLAN.md` | PRESENT |
 | Operational evidence requirements | `docs/phase-12/G12_EVIDENCE/G12_OPERATIONAL_EVIDENCE_REQUIREMENTS.md` | PRESENT |
 | Decision record | `docs/phase-12/G12_EVIDENCE/G12_DECISION_RECORD.md` | PRESENT / PENDING |
+| Repository execution status | `docs/phase-12/G12_EVIDENCE/G12_REPOSITORY_EXECUTION_STATUS.md` | PENDING RUNTIME VALIDATION |
 
 ## AUTOMATED EXECUTION
 
-Workflow:
+Canonical workflow:
 
 `.github/workflows/g12-production-readiness.yml`
+
+Execution modes:
+
+- push to `main`
+- pull request targeting `main`
+- manual `workflow_dispatch`
 
 Runtime:
 
 - Java 22
 - Gradle wrapper
 - full test suite
+- execution metadata capture
 - G12 evidence bundle uploaded as a workflow artifact
 
 ## EVIDENCE CLASSIFICATION
@@ -62,6 +71,7 @@ Must establish:
 - security boundaries actually hold
 - economic calculations actually execute
 - operational/audit evidence actually exists
+- execution environment is attributable
 
 Repository presence MUST NOT be treated as runtime proof.
 
