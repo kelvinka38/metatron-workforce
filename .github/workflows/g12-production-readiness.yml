@@ -1,0 +1,46 @@
+name: G12 Production Readiness Evidence
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  g12-acceptance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 22
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '22'
+          cache: gradle
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Run full acceptance suite
+        run: ./gradlew clean test --no-daemon
+
+      - name: Collect G12 repository evidence
+        if: always()
+        run: |
+          mkdir -p build/g12-evidence
+          cp -R docs/phase-12 build/g12-evidence/phase-12
+          git rev-parse HEAD > build/g12-evidence/commit.txt
+          git status --short > build/g12-evidence/git-status.txt
+
+      - name: Upload G12 evidence bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g12-production-readiness-evidence
+          path: build/g12-evidence
+          if-no-files-found: error
+          retention-days: 30
