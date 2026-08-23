@@ -1,31 +1,63 @@
 package com.metatron.workforce.runtime;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Implementation-level registry for Worker Runtime Instances.
  *
- * This registry does not own Worker identity or Execution semantics.
- * It only tracks runtime-instance references required by implementation.
+ * The registry owns only runtime-instance references. Durable continuity is
+ * delegated to RuntimePersistenceStore and therefore survives JVM replacement
+ * when a durable store is configured.
  */
 public final class RuntimeRegistry {
     private final Map<String, RuntimeInstance> runtimes = new ConcurrentHashMap<>();
+    private final RuntimePersistenceStore persistence;
+
+    public RuntimeRegistry() {
+        this(new InMemoryRuntimePersistenceStore());
+    }
+
+    public RuntimeRegistry(RuntimePersistenceStore persistence) {
+        this.persistence = persistence;
+    }
 
     public RuntimeInstance register(RuntimeInstance runtime) {
         runtimes.put(runtime.runtimeId(), runtime);
+        persist(runtime);
         return runtime;
     }
 
     public RuntimeInstance get(String runtimeId) {
-        return runtimes.get(runtimeId);
+        RuntimeInstance runtime = runtimes.get(runtimeId);
+        if (runtime != null) {
+            return runtime;
+        }
+        return persistence.find(runtimeId)
+                .map(RuntimeInstance::restore)
+                .map(restored -> {
+                    runtimes.put(restored.runtimeId(), restored);
+                    return restored;
+                })
+                .orElse(null);
     }
 
     public boolean remove(String runtimeId) {
-        return runtimes.remove(runtimeId) != null;
+        boolean removed = runtimes.remove(runtimeId) != null;
+        persistence.delete(runtimeId);
+        return removed;
     }
 
     public int size() {
         return runtimes.size();
+    }
+
+    public void persist(RuntimeInstance runtime) {
+        persistence.save(new RuntimePersistenceRecord(
+                runtime.runtimeId(),
+                runtime.workerId(),
+                runtime.state().name(),
+                Instant.now()));
     }
 }
