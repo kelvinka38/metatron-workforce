@@ -32,8 +32,8 @@ jobs:
       - name: Run full acceptance suite
         run: ./gradlew clean test --no-daemon
 
-      - name: Run explicit G12 acceptance suite
-        run: ./gradlew test --tests '*Phase12ProductionReadinessAcceptanceTest*' --no-daemon
+      - name: Run all G12 acceptance tests
+        run: ./gradlew test --tests '*Phase12*AcceptanceTest*' --no-daemon
 
       - name: Generate G12 runtime evidence
         run: ./gradlew test --tests '*Phase12RuntimeEvidenceCaptureTest*' --no-daemon
