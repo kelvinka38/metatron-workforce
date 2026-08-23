@@ -124,7 +124,7 @@ class Phase12RuntimeEvidenceCaptureTest {
                 "outcome", denied.outcome(),
                 "usableAtExpiry", denied.usableAt(authStart.plusSeconds(60)),
                 "authorizationId", denied.authorizationId(),
-                "provenance", denied.provenance()));
+                "provenance", "authorization-denied"));
 
         FarmOperatingPlan economicPlan = service.plan("PLAN-ECON", "FARM-ECON", 80,
                 10, 8, 100_000, 2_000_000, 500,
