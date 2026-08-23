@@ -7,24 +7,26 @@ Gate:
 G12 — Workforce Production Readiness
 
 Status:
-Acceptance PASS / Production Readiness PENDING
+CI ACCEPTANCE PASS / PRODUCTION READINESS PENDING
 
-## EXECUTION BASELINE
+## AUTHORITATIVE CI EXECUTION
+
+Workflow:
+`G12 Production Readiness Evidence`
+
+Run:
+`32617145966` / run `41`
 
 Commit:
-
-`b7485ac` — `test(phase12): align acceptance test with ExecutionOutcome API`
+`a9537dfb310e224175e4e9471f0f9dcc458d80af`
 
 Execution source:
 
-Local developer environment
+GitHub Actions / `ubuntu-latest`
 
-## EXECUTED COMMANDS
+Environment:
 
-```text
-.\gradlew.bat clean test --no-daemon
-.\gradlew.bat test --tests "*Phase12ProductionReadinessAcceptanceTest*" --no-daemon
-```
+Temurin Java 22.0.2 / Gradle 8.14.3
 
 ## RESULTS
 
@@ -36,13 +38,17 @@ Explicit Phase 12 acceptance suite:
 
 PASS
 
-Working tree after execution:
+Phase 12 acceptance result:
 
-CLEAN
+7 tests / 0 failures / 0 errors / 0 skipped
 
-Branch relationship:
+Workflow conclusion:
 
-`main` up to date with `origin/main` at execution time
+SUCCESS
+
+Evidence artifact:
+
+`g12-production-readiness-evidence` / `9487280323`
 
 ## COVERED G12 SCENARIOS
 
@@ -61,25 +67,27 @@ Branch relationship:
 
 ## EVIDENCE LIMITATION
 
-This record establishes that the acceptance scenarios executed successfully at the stated commit.
+This record establishes attributable CI execution of the covered G12 acceptance scenarios.
 
-It does not constitute a production-runtime evidence bundle. G12 remains blocked from PASS until runtime/CI evidence is persisted and all HIGH gaps in the implementation gap register are closed.
+It does not constitute proof that production observability infrastructure, utilization telemetry, identity controls, or data-visibility controls exist merely because the acceptance suite passed.
 
-## NEXT G12 EVIDENCE STEP
+G12 remains blocked from PASS until all HIGH gaps in the implementation gap register are closed.
 
-The authoritative CI workflow is:
+## LOCAL CORROBORATION
 
-`.github/workflows/g12-production-readiness.yml`
+The same full suite and explicit G12 acceptance suite were previously executed locally at commit:
 
-Expected artifact:
+`b7485ac` — `test(phase12): align acceptance test with ExecutionOutcome API`
 
-`g12-production-readiness-evidence`
-
-The workflow captures repository contracts, test result XML, HTML test reports, environment metadata, commit identity, and repository status.
+Both local executions passed.
 
 ## DECISION
 
 Acceptance:
+
+PASS
+
+CI Runtime Evidence:
 
 PASS
 
