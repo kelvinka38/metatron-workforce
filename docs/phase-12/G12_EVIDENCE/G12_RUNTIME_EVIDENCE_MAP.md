@@ -4,14 +4,14 @@ Document Type:
 Evidence Mapping Contract
 
 Status:
-Repository Sources Connected / Runtime Execution Pending
+Local Acceptance Verified / Runtime Evidence Pending
 
 Gate:
 G12 — Workforce Production Readiness
 
 ## PURPOSE
 
-Map each G12 production-readiness requirement to the concrete repository implementation and acceptance-test source that will produce runtime evidence.
+Map each G12 production-readiness requirement to the concrete repository implementation and acceptance-test source that produces attributable runtime evidence.
 
 ## SOURCE MAP
 
@@ -30,13 +30,19 @@ Map each G12 production-readiness requirement to the concrete repository impleme
 | Audit completeness | Provenance fields across assignment, plan, approval, execution, report, economics, learning | `observabilityProvenanceExistsAcrossMaterialStages` | Complete attributable audit/provenance evidence |
 | Learning integrity | Phase 10 `LearningImprovement` | Observability/provenance acceptance | Learning evidence |
 
+## ACCEPTANCE EXECUTION RECORD
+
+The local full acceptance suite was executed successfully against commit:
+
+`b7485ac` — `test(phase12): align acceptance test with ExecutionOutcome API`
+
+The explicit Phase 12 acceptance suite was also executed successfully against the same commit.
+
+This establishes executed acceptance evidence for the covered scenarios. It does **not** by itself establish production runtime evidence because the execution output has not yet been persisted into the repository/CI evidence bundle.
+
 ## CURRENT ACCEPTANCE COVERAGE
 
-The repository currently contains a dedicated Phase 12 acceptance test:
-
-`src/test/java/com/metatron/workforce/phase12/Phase12ProductionReadinessAcceptanceTest.java`
-
-It covers:
+The dedicated Phase 12 acceptance test covers:
 
 - multi-organization isolation
 - 1,000-worker capacity representation
@@ -45,8 +51,6 @@ It covers:
 - authorization denial outside the valid window
 - economic plan-vs-actual variance
 - provenance across material stages
-
-The existence of these tests is repository evidence only. Their results become runtime evidence only after actual execution.
 
 ## RUNTIME EVIDENCE DESTINATION
 
@@ -58,8 +62,12 @@ Expected workflow artifact:
 
 `g12-production-readiness-evidence`
 
-Expected runtime metadata:
+The workflow now captures:
 
+- Phase 12 contracts and evidence documents
+- Gradle test result XML
+- Gradle HTML test report
+- Gradle problems report when present
 - workflow run ID
 - workflow attempt
 - event
@@ -68,7 +76,7 @@ Expected runtime metadata:
 - runner OS
 - Java version
 - Gradle version
-- test reports / execution output
+- repository status
 
 ## CURRENT STATE
 
@@ -76,9 +84,13 @@ Repository source mapping:
 
 CONNECTED
 
-Runtime execution:
+Acceptance execution:
 
-PENDING
+VERIFIED LOCALLY — FULL SUITE PASS + EXPLICIT G12 PASS
+
+Runtime evidence bundle:
+
+PENDING CI EXECUTION / ARTIFACT CAPTURE
 
 G12 decision:
 
