@@ -1,0 +1,32 @@
+package com.metatron.workforce.runtime.binding;
+
+import com.metatron.workforce.runtime.RuntimeInstance;
+
+import java.util.Objects;
+import com.metatron.workforce.runtime.RuntimeExecutionContext;
+
+public final class RuntimeExecutionBinder {
+
+    public RuntimeExecutionContext bind(
+            RuntimeInstance runtime,
+            String executionId,
+            String assignmentId,
+            String authorizationId) {
+
+        Objects.requireNonNull(runtime);
+
+        if (runtime.state().name().equals("FAILED")
+                || runtime.state().name().equals("TERMINATED")) {
+            throw new IllegalStateException(
+                    "runtime unavailable for execution");
+        }
+
+        return new RuntimeExecutionContext(
+                runtime.runtimeId(),
+                runtime.workerId(),
+                executionId,
+                assignmentId,
+                authorizationId
+        );
+    }
+}

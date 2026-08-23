@@ -1,32 +1,64 @@
 package com.metatron.workforce.runtime;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
-/**
- * Implementation-level Worker Runtime Instance reference.
- *
- * This is not an institutional identity and does not replace Worker or Execution identity.
- */
 public final class RuntimeInstance {
+
     private final String runtimeId;
     private final String workerId;
     private final Instant createdAt;
     private RuntimeState state;
 
     public RuntimeInstance(String workerId) {
-        this.runtimeId = UUID.randomUUID().toString();
-        this.workerId = workerId;
+        this(UUID.randomUUID().toString(), workerId, RuntimeState.CREATED);
+    }
+
+    public RuntimeInstance(
+            String runtimeId,
+            String workerId,
+            RuntimeState state) {
+
+        this.runtimeId = require(runtimeId);
+        this.workerId = require(workerId);
+        this.state = Objects.requireNonNull(state);
         this.createdAt = Instant.now();
-        this.state = RuntimeState.CREATED;
     }
 
     public void transition(RuntimeState nextState) {
+
+        Objects.requireNonNull(nextState);
+
+        if (state == RuntimeState.TERMINATED) {
+            throw new IllegalStateException(
+                    "terminated runtime cannot transition");
+        }
+
         this.state = nextState;
     }
 
-    public String runtimeId() { return runtimeId; }
-    public String workerId() { return workerId; }
-    public Instant createdAt() { return createdAt; }
-    public RuntimeState state() { return state; }
+    private static String require(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                    "value must not be blank");
+        }
+        return value;
+    }
+
+    public String runtimeId() {
+        return runtimeId;
+    }
+
+    public String workerId() {
+        return workerId;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
+    }
+
+    public RuntimeState state() {
+        return state;
+    }
 }
