@@ -19,11 +19,14 @@ PENDING RUNTIME VALIDATION
 - G12 Operational Evidence Requirements exists.
 - G12 Runtime Evidence Map exists.
 - G12 Implementation Gap Register exists.
+- G12 Evidence Collection Tracker exists.
 - G12 Execution Checklist exists.
 - Phase 11 hardening acceptance tests have been added.
 - Phase 11 hardening gate aggregation has been added.
 - Phase 12 production-readiness acceptance tests have been added.
-- A Phase 12 CI workflow has been added to execute the repository acceptance suite on pushes and pull requests targeting `main`.
+- Canonical G12 CI workflow executes the full acceptance suite on pushes and pull requests targeting `main`.
+- Canonical G12 CI workflow also supports manual `workflow_dispatch` execution.
+- G12 CI captures commit SHA, run identity, event/ref, runner OS, Java version, and Gradle version into the evidence bundle.
 
 ## Evidence Boundary
 
@@ -33,7 +36,7 @@ No G12 PASS is asserted from source-code presence, documentation presence, or te
 
 ## Runtime Blockers
 
-The following require an actual execution environment and therefore remain pending until the repository test suite has executed successfully:
+The following require an actual execution environment and therefore remain pending until the acceptance workflow has executed successfully and the resulting evidence has been reviewed:
 
 1. Full test-suite execution result.
 2. Phase 11 hardening acceptance result.
@@ -42,6 +45,14 @@ The following require an actual execution environment and therefore remain pendi
 5. Phase 12 economic acceptance result.
 6. Runtime logs / metrics / traces / audit evidence.
 7. Closure of all HIGH gaps in `G12_IMPLEMENTATION_GAP_REGISTER.md`.
+
+## Evidence Collection Control
+
+The canonical runtime collection tracker is:
+
+`docs/phase-12/G12_EVIDENCE/G12_EVIDENCE_COLLECTION_TRACKER.md`
+
+Each gap may be marked CLOSED only against observable, attributable execution evidence.
 
 ## Decision
 
