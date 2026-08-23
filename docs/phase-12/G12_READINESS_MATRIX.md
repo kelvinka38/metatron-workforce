@@ -1,10 +1,10 @@
 # METATRON WORKFORCE — G12 READINESS MATRIX
 
 Status:
-CI Acceptance PASS / Production Readiness Pending
+CI Acceptance PASS / Production Readiness OPEN
 
 Purpose:
-Map G12 Production Readiness requirements against existing implementation artifacts and attributable CI execution evidence.
+Map G12 Production Readiness requirements against existing implementation artifacts and attributable execution evidence.
 
 ## REQUIREMENT MATRIX
 
@@ -23,39 +23,32 @@ Map G12 Production Readiness requirements against existing implementation artifa
 | Learning system operational | PHASE_8 Learning Model | VERIFIED | provenance/learning acceptance PASS |
 | Cross-domain integration validated | PHASE_9 Integration Contracts | VERIFIED | CI full acceptance PASS |
 
-## AUTHORITATIVE CI EXECUTION
+## AUTHORITATIVE G12 EXECUTION
 
 Workflow:
 `G12 Production Readiness Evidence`
 
-Run:
+Historical CI run:
 `32617145966` / run `41`
 
-Commit:
+Historical CI commit:
 `a9537dfb310e224175e4e9471f0f9dcc458d80af`
 
-Result:
-PASS
+Historical result:
+PASS — 7 Phase 12 tests / 0 failures / 0 errors / 0 skipped
 
-Phase 12 acceptance:
-7 tests / 0 failures / 0 errors / 0 skipped
+Latest production evidence commit:
+`02565131515baa6478aed249fd8666182964e6a2`
 
-Evidence artifact:
-`g12-production-readiness-evidence` / `9487280323`
+Latest evidence contains:
+- deployment identity
+- runtime health / failure snapshot
+- capacity and utilization
+- execution summary
+- authorization DENY
+- audit/provenance
 
-Evidence record:
-`docs/phase-12/G12_EVIDENCE/G12_CI_RUNTIME_EVIDENCE_RECORD.md`
-
-## G11 ENTRY GATE
-
-G11 Hardening / Acceptance:
-
-PASS
-
-Evidence:
-`docs/PHASE_11/G11_HARDENING_ACCEPTANCE_EXECUTION_RECORD.md`
-
-## G12 CURRENT ASSESSMENT
+## CURRENT ASSESSMENT
 
 Architecture coverage:
 
@@ -75,11 +68,19 @@ PASS
 
 Production security evidence:
 
-PARTIAL — identity/data-visibility breadth remains open
+PARTIAL — data-visibility boundary evidence remains open
 
 Production operational evidence:
 
-PENDING — observability/utilization evidence remains open
+PARTIAL — utilization is captured, but independent runtime logs/metrics/traces remain open
+
+Durable runtime persistence:
+
+HIGH GAP — current `RuntimeRegistry` is process-local in-memory state
+
+Runtime recovery continuity:
+
+PARTIAL — failure snapshot exists; restart-safe recovery/rebinding is not proven
 
 Production readiness:
 
@@ -87,14 +88,18 @@ NOT YET CLAIMED
 
 ## REMAINING G12 WORK
 
-[ ] Complete production security evidence coverage
-
-[ ] Collect production operational / observability / utilization evidence
-
-[ ] Close all remaining HIGH gaps
-
-[ ] G12 decision record
+- [ ] Define and implement durable runtime persistence
+- [ ] Prove restart-safe recovery / rebinding continuity
+- [ ] Complete production data-visibility evidence
+- [ ] Add attributable production logs
+- [ ] Add attributable production metrics
+- [ ] Add attributable production traces
+- [ ] Re-run full acceptance and production evidence workflow
+- [ ] Close all remaining HIGH gaps
+- [ ] Record final G12 decision
 
 ## DECISION
 
 PENDING
+
+No G13 is created or assumed because the repository has not defined a post-G12 gate.
