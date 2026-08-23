@@ -16,6 +16,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify source tree is clean
+        run: |
+          test -z "$(git status --porcelain)"
+
       - name: Setup Java 22
         uses: actions/setup-java@v4
         with:
@@ -55,6 +59,19 @@ jobs:
           test -d runtime-evidence/production
           test -d runtime-state/production
           test "$(find runtime-state/production -type f -name '*.properties' | wc -l)" -ge 2
+          evidence_root="$(find runtime-evidence/production -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          test -n "$evidence_root"
+          for file in deployment-identity.json runtime-health.json execution-summary.json security-decisions.json audit-provenance.json logs.jsonl metrics.json traces.json README.md; do
+            test -s "$evidence_root/$file"
+          done
+          grep -q '"sameOrganizationVisible":true' "$evidence_root/security-decisions.json"
+          grep -q '"crossOrganizationVisible":false' "$evidence_root/security-decisions.json"
+          grep -q '"runtimeStateAfterReplacement":"RUNNING"' "$evidence_root/deployment-identity.json"
+          grep -q '"runtime_recovery_success":1' "$evidence_root/metrics.json"
+          grep -q '"execution_success":1' "$evidence_root/metrics.json"
+          test "$(grep -c 'runtime_started' "$evidence_root/logs.jsonl")" -ge 1
+          grep -q '"executionId"' "$evidence_root/traces.json"
+          grep -q '"authorizationId"' "$evidence_root/traces.json"
           find runtime-evidence/production -type f -maxdepth 3 -print
           find runtime-state/production -type f -maxdepth 2 -print
 
