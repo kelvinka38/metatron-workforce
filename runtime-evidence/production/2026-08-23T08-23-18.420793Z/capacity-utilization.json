@@ -1,0 +1,8 @@
+{
+  "workerCapacity": 1000,
+  "availableLaborHours": 8000,
+  "requiredLaborHours": 8000,
+  "capacityDeficitHours": 0,
+  "utilizationRatio": 1.0,
+  "concurrentWorkflowCount": 1
+}
