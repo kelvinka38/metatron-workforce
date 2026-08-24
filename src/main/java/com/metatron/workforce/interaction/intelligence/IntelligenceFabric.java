@@ -33,14 +33,26 @@ public final class IntelligenceFabric {
         Objects.requireNonNull(request, "request");
         IntelligencePlan plan = planner.plan(request);
         List<LlmResponse> responses = new ArrayList<>();
+        RuntimeException lastFailure = null;
+
         for (LlmProvider provider : plan.providers()) {
-            LlmResponse response = Objects.requireNonNull(
-                    engine.execute(provider, request),
-                    "intelligence engine response");
-            if (response.provider() != provider) {
-                throw new IllegalStateException("provider attribution mismatch for " + provider);
+            try {
+                LlmResponse response = Objects.requireNonNull(
+                        engine.execute(provider, request),
+                        "intelligence engine response");
+                if (response.provider() != provider) {
+                    throw new IllegalStateException("provider attribution mismatch for " + provider);
+                }
+                responses.add(response);
+                if (plan.collaborationMode() == CollaborationMode.SINGLE) break;
+            } catch (RuntimeException failure) {
+                lastFailure = failure;
+                if (plan.collaborationMode() != CollaborationMode.SINGLE) throw failure;
             }
-            responses.add(response);
+        }
+
+        if (responses.isEmpty()) {
+            throw new IllegalStateException("all configured intelligence providers failed", lastFailure);
         }
 
         String text = plan.collaborationMode() == CollaborationMode.SINGLE
