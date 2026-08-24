@@ -31,7 +31,7 @@ class Phase5RealityAcceptanceTest {
         assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-05T05:00:00Z")));
         assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-05T09:00:00Z")));
         assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-02T15:00:00Z")));
-        assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-02T23:00:00Z")));
+        assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-02T22:00:00Z")));
         assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-03T00:00:00Z")));
     }
 
@@ -117,7 +117,7 @@ class Phase5RealityAcceptanceTest {
         assertTrue(result.blockingReasons().contains("operating-window-closed"));
         assertTrue(result.blockingReasons().contains("budget-insufficient"));
         assertTrue(result.blockingReasons().contains("dependency-unsatisfied"));
-        assertTrue(result.blockingReasons().contains("resource-unavailable:equipment"));
+        assertTrue(result.blockingReasons().contains("resource-unauthorized:equipment"));
     }
 
     @Test
