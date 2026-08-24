@@ -45,6 +45,8 @@ public final class TelegramWebhookController {
             @Value("${OPENAI_MODEL:}") String openAiModel,
             @Value("${GEMINI_MODEL:}") String googleModel,
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
+            @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
+            @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
@@ -72,7 +74,8 @@ public final class TelegramWebhookController {
 
         TelegramIntelligenceResponder intelligence = new TelegramIntelligenceResponder(
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
-                openAiModel, googleModel, anthropicModel, objectMapper);
+                openAiModel, googleModel, anthropicModel, objectMapper,
+                gatewayAuditUrl, gatewayAuditToken);
         this.orchestrator = new MetatronInteractionOrchestrator(interaction -> {
             String answer = intelligence.respond(
                     interaction.human().actorId(),
