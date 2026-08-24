@@ -21,10 +21,11 @@ class IntelligenceFabricFailoverTest {
 
         IntelligenceFabric fabric = new IntelligenceFabric(
                 request -> new IntelligencePlan(
-                        request,
-                        List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE),
+                        request.requestId(),
+                        true,
+                        request.mode(),
                         CollaborationMode.SINGLE,
-                        true),
+                        List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE)),
                 engine,
                 (request, responses) -> responses.getFirst().text(),
                 (request, responses, text) -> { }
