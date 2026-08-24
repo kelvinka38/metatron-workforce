@@ -59,7 +59,7 @@ public final class TelegramWorkplaceAdapter {
     }
 
     private Conversation conversation(TelegramIdentityResolver.Resolution identity, long chatId) {
-        String existing = conversationsByChat.get(chatId);
+        final String existing = conversationsByChat.get(chatId);
         if (existing != null) {
             return workplace.conversations().stream()
                     .filter(item -> item.conversationId().equals(existing))
@@ -67,13 +67,6 @@ public final class TelegramWorkplaceAdapter {
                     .orElseThrow(() -> new IllegalStateException("mapped Telegram conversation is missing"));
         }
 
-        existing = conversationsByChat.get(chatId);
-        if (existing != null) {
-            return workplace.conversations().stream()
-                    .filter(item -> item.conversationId().equals(existing))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("mapped Telegram conversation is missing"));
-        }
         Conversation created = workplace.startConversation(
                 identity.human(),
                 List.of(identity.human(), identity.target()),
