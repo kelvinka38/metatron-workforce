@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -47,5 +48,20 @@ public final class TelegramWebhookController {
         gateway.send(new ChannelMessage("telegram", inbound.senderId(),
                 "Workforce received: " + inbound.text()));
         return ResponseEntity.ok().build();
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)
+    ResponseEntity<Void> handleSecurityException() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<Void> handleInvalidUpdate() {
+        return ResponseEntity.badRequest().build();
+    }
+
+    @org.springframework.web.bind.annotation.ExceptionHandler(IllegalStateException.class)
+    ResponseEntity<Void> handleTelegramUpstreamFailure() {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
     }
 }
