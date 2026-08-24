@@ -4,10 +4,11 @@ import com.metatron.workforce.phase10.ExecutionOutcome;
 import com.metatron.workforce.phase10.Phase10PrimaryVerticalSliceService;
 import com.metatron.workforce.phase10.VerticalSliceRequest;
 import com.metatron.workforce.phase10.VerticalSliceResult;
-import com.metatron.workforce.phase6.AuthorizationDecision;
+import com.metatron.workforce.phase6.ApprovalDecision;
 import com.metatron.workforce.phase6.AuthorizationRequest;
 import com.metatron.workforce.phase6.AuthorizationService;
 import com.metatron.workforce.phase6.DataVisibilityPolicy;
+import com.metatron.workforce.phase6.WorkProposal;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimePersistenceRecord;
 import com.metatron.workforce.runtime.RuntimeState;
@@ -87,15 +88,20 @@ public class MetatronWorkforceApplication {
                 100_000, 2_000_000, 500, 550, 9_000_000,
                 15_000_000, 16_500_000, "10 workers x 8h", "production evidence smoke");
 
-        AuthorizationService authorization = new AuthorizationService();
         Instant authStart = started.minusSeconds(120);
+        WorkProposal proposal = new WorkProposal(
+                "PROD-PROPOSAL-001", "WORKER-PROD-001", "PROD-EVIDENCE-001",
+                "EXECUTE", "FARM-PROD-001", "ORG-PROD-001", authStart);
+        ApprovalDecision approval = new ApprovalDecision(
+                "PROD-DECISION-001", proposal.proposalId(), "HEAD-PROD-001", true,
+                authStart, "AUTHORITY-PROD-001", "approved for evidence evaluation");
         AuthorizationRequest authRequest = new AuthorizationRequest(
-                "PROD-AUTH-DENY-001", "WORKER-PROD-001", "HEAD", "EXECUTE",
-                "FARM-PROD-001", "ORG-PROD-001", "AUTHORITY-PROD-001", "DELEGATION-PROD-001",
-                "POLICY-PROD-001", authStart, authStart, authStart.plusSeconds(60),
-                "PROD-EVIDENCE-001");
-        AuthorizationDecision denied = authorization.resolve(
-                authRequest, started, "HEAD-PROD-001", ignored -> true);
+                proposal.actorId(), "HEAD", "AUTHORITY-PROD-001", proposal.scope(), proposal.action(),
+                proposal.contextId(), started, "PROD-EVIDENCE-001");
+        AuthorizationService authorization = new AuthorizationService(
+                ignored -> com.metatron.workforce.phase6.Phase6AuthorizationPolicy.Decision.denied(
+                        "POLICY-PROD-001", "production evidence policy denies execution"));
+        AuthorizationService.AuthorizationResult denied = authorization.authorize(proposal, approval, authRequest);
 
         DataVisibilityPolicy visibilityPolicy = new DataVisibilityPolicy();
         DataVisibilityPolicy.Decision visible = visibilityPolicy.evaluate("ORG-PROD-001", "ORG-PROD-001");
@@ -145,12 +151,13 @@ public class MetatronWorkforceApplication {
         writeJson(root.resolve("capacity-utilization.json"), capacity);
 
         Map<String, Object> security = new LinkedHashMap<>();
-        security.put("authorizationId", denied.authorizationId());
-        security.put("outcome", denied.outcome().name());
+        security.put("authorizationReference", denied.authorizationReference());
+        security.put("allowed", denied.allowed());
         security.put("reason", denied.reason());
-        security.put("organizationContext", authRequest.organizationContextId());
-        security.put("delegationReference", denied.delegationReference());
-        security.put("evidenceReference", denied.evidenceReference());
+        security.put("organizationContext", authRequest.contextId());
+        security.put("authorityReference", approval.authorityReference());
+        security.put("policyReference", denied.authorizationReference());
+        security.put("resourceId", authRequest.resourceId());
         security.put("sameOrganizationVisible", visible.visible());
         security.put("crossOrganizationVisible", hidden.visible());
         security.put("crossOrganizationReason", hidden.reason());
@@ -188,7 +195,7 @@ public class MetatronWorkforceApplication {
         trace.put("runtimeId", recovered.runtimeId());
         trace.put("executionId", execution.executionId());
         trace.put("assignmentId", result.assignment().assignmentId());
-        trace.put("authorizationId", denied.authorizationId());
+        trace.put("authorizationReference", denied.authorizationReference());
         trace.put("commitSha", commit);
         writeJson(root.resolve("traces.json"), trace);
 
@@ -199,7 +206,7 @@ public class MetatronWorkforceApplication {
                 + "Environment: " + environment + "\n"
                 + "Runtime: " + recovered.runtimeId() + "\n"
                 + "Execution: " + execution.executionId() + "\n"
-                + "Authorization decision: " + denied.outcome() + "\n"
+                + "Authorization allowed: " + denied.allowed() + "\n"
                 + "Same-organization visibility: " + visible.visible() + "\n"
                 + "Cross-organization visibility: " + hidden.visible() + "\n");
     }
