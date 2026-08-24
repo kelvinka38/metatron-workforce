@@ -58,24 +58,48 @@ public final class TelegramWebhookController {
         JsonNode chat = message.path("chat");
         String senderId = chat.path("id").asText("");
         String text = message.path("text").asText("");
+        long updateId = update.path("update_id").asLong(-1L);
 
         ChannelMessage inbound = adapter.receive(suppliedSecret, senderId, text);
+        LOG.info("telegram_received update_id={} sender={} text_length={}", updateId, senderId, text.length());
+
         try {
             String answer = intelligence.respond(inbound.senderId(), inbound.text());
-            gateway.send(new ChannelMessage("telegram", inbound.senderId(), answer));
+            String safeAnswer = validateAnswer(inbound.text(), answer);
+            LOG.info("telegram_answer_ready update_id={} sender={} answer_length={}", updateId, senderId, safeAnswer.length());
+            gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
         } catch (RuntimeException e) {
-            LOG.error("telegram_intelligence_failed", e);
+            LOG.error("telegram_intelligence_failed update_id=" + updateId, e);
             try {
                 gateway.send(new ChannelMessage(
                         "telegram", inbound.senderId(),
-                        "Metatron received your message, but intelligence processing failed. The failure has been recorded for recovery."));
+                        "Metatron could not produce an AI response for this message. The failure has been recorded for recovery."));
             } catch (RuntimeException sendFailure) {
-                LOG.error("telegram_failure_notification_failed", sendFailure);
+                LOG.error("telegram_failure_notification_failed update_id=" + updateId, sendFailure);
             }
         }
 
         // Telegram must receive 2xx for a valid update; otherwise it retries the same update.
         return ResponseEntity.ok().build();
+    }
+
+    static String validateAnswer(String inbound, String answer) {
+        if (answer == null || answer.isBlank()) {
+            throw new IllegalStateException("telegram_answer_empty");
+        }
+        String normalizedInbound = normalize(inbound);
+        String normalizedAnswer = normalize(answer);
+        if (normalizedAnswer.equals(normalizedInbound)) {
+            throw new IllegalStateException("telegram_response_echo");
+        }
+        if (normalizedAnswer.startsWith("workforce received:")) {
+            throw new IllegalStateException("telegram_legacy_echo");
+        }
+        return answer.trim();
+    }
+
+    private static String normalize(String value) {
+        return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)
