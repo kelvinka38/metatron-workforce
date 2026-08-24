@@ -5,17 +5,20 @@ import com.metatron.workforce.interaction.llm.LlmResponse;
 import java.util.List;
 import java.util.Objects;
 
-/** Minimal evidence gate for governed reasoning; richer BIOS rules remain upstream. */
+/** BIOS-backed governance gate for the Workforce intelligence runtime. */
 public final class EvidenceBackedGovernance implements IntelligenceGovernance {
+    private final BiosConformanceValidator validator;
+
+    public EvidenceBackedGovernance() {
+        this(new BiosConformanceValidator());
+    }
+
+    public EvidenceBackedGovernance(BiosConformanceValidator validator) {
+        this.validator = Objects.requireNonNull(validator, "validator");
+    }
+
     @Override
     public void validate(IntelligenceRequest request, List<LlmResponse> responses, String finalText) {
-        Objects.requireNonNull(request, "request");
-        Objects.requireNonNull(responses, "responses");
-        Objects.requireNonNull(finalText, "finalText");
-        if (responses.isEmpty()) throw new IllegalStateException("no intelligence response");
-        if (finalText.isBlank()) throw new IllegalStateException("empty governed result");
-        if (request.mode().requiresGovernance() && request.evidenceReferences().isEmpty()) {
-            throw new IllegalStateException("governed reasoning requires evidence references");
-        }
+        validator.validate(request, responses, finalText);
     }
 }
