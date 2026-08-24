@@ -28,6 +28,15 @@ public record CapacitySnapshot(
         return Math.max(required - available(), 0d);
     }
 
+    public boolean overcommitted() {
+        return committed > available();
+    }
+
+    public double utilization(double consumed) {
+        requireNonNegative("consumed", consumed);
+        return available() == 0d ? (consumed == 0d ? 0d : Double.POSITIVE_INFINITY) : consumed / available();
+    }
+
     public double coverageRatio() {
         return required == 0d ? 1d : available() / required;
     }
