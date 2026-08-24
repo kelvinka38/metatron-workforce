@@ -54,9 +54,13 @@ class IntelligencePlannerTest {
     }
 
     @Test
-    void singleModeRequiresSingleProviderBudget() {
-        assertThrows(IllegalArgumentException.class,
-                () -> request(IntelligenceMode.REASONING, CollaborationMode.SINGLE, 2));
+    void singleModeAllowsMultipleOrderedFailoverCandidates() {
+        IntelligenceRequest request = request(IntelligenceMode.REASONING, CollaborationMode.SINGLE, 2);
+
+        IntelligencePlan plan = planner(List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE)).plan(request);
+
+        assertEquals(CollaborationMode.SINGLE, plan.collaborationMode());
+        assertEquals(List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE), plan.providers());
     }
 
     private static IntelligencePlanner planner(List<LlmProvider> providers) {
