@@ -19,6 +19,7 @@ import java.util.Set;
 public final class BiosConformanceValidator {
     private static final Set<String> GOVERNED_CONSEQUENCES = Set.of("MEDIUM", "HIGH", "CRITICAL", "IRREVERSIBLE");
     private static final Set<String> HIGH_CONSEQUENCE = Set.of("HIGH", "CRITICAL", "IRREVERSIBLE");
+    private static final Set<String> MULTI_ENGINE_REQUIRED = Set.of("CRITICAL", "IRREVERSIBLE");
 
     public void validate(IntelligenceRequest request, List<LlmResponse> responses, String finalText) {
         Objects.requireNonNull(request, "request");
@@ -26,7 +27,7 @@ public final class BiosConformanceValidator {
         Objects.requireNonNull(finalText, "finalText");
 
         validateRequest(request);
-        validateResponses(responses);
+        validateResponses(request, responses);
 
         if (finalText.isBlank()) {
             throw new IllegalStateException("BIOS_OUTPUT_EMPTY");
@@ -60,10 +61,20 @@ public final class BiosConformanceValidator {
             throw new IllegalStateException("BIOS_AUTHORITY_CONTEXT_REQUIRED");
         }
 
-        // Higher consequence does not automatically mean multi-model consensus.
-        // It means the request is governed and must remain explicitly attributable.
-        if (HIGH_CONSEQUENCE.contains(consequence) && request.authorityContext().isBlank()) {
+        if (HIGH_CONSEQUENCE.contains(consequence) && isBlank(request.authorityContext())) {
             throw new IllegalStateException("BIOS_HIGH_CONSEQUENCE_AUTHORITY_REQUIRED");
+        }
+
+        // Canonical Intelligence SOT: CRITICAL / IRREVERSIBLE work requires
+        // multi-engine review plus BIOS and human authority. This validator is
+        // the Workforce machine-checkable portion of that boundary.
+        if (MULTI_ENGINE_REQUIRED.contains(consequence)) {
+            if (request.collaborationMode() == CollaborationMode.SINGLE || request.maxProviders() < 2) {
+                throw new IllegalStateException("BIOS_MULTI_ENGINE_REQUIRED");
+            }
+            if (isBlank(request.authorityContext())) {
+                throw new IllegalStateException("BIOS_HUMAN_AUTHORITY_REQUIRED");
+            }
         }
     }
 
@@ -86,7 +97,7 @@ public final class BiosConformanceValidator {
         }
     }
 
-    private void validateResponses(List<LlmResponse> responses) {
+    private void validateResponses(IntelligenceRequest request, List<LlmResponse> responses) {
         if (responses.isEmpty()) throw new IllegalStateException("BIOS_NO_INTELLIGENCE_RESPONSE");
 
         Set<LlmProvider> providers = new HashSet<>();
@@ -101,6 +112,11 @@ public final class BiosConformanceValidator {
             if (!providers.add(response.provider())) {
                 throw new IllegalStateException("BIOS_PROVIDER_DUPLICATE");
             }
+        }
+
+        String consequence = normalize(request.consequence());
+        if (MULTI_ENGINE_REQUIRED.contains(consequence) && providers.size() < 2) {
+            throw new IllegalStateException("BIOS_MULTI_ENGINE_RESPONSE_REQUIRED");
         }
     }
 
