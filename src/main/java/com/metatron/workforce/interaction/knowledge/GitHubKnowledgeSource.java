@@ -5,6 +5,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 
 /** Read-only GitHub REST knowledge source. Credentials are optional and supplied by configuration. */
@@ -38,7 +39,13 @@ public final class GitHubKnowledgeSource implements KnowledgeSource {
             if (!token.isEmpty()) builder.header("Authorization", "Bearer " + token);
             HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) return null;
-            return new KnowledgeDocument(sourceId(), uri.toString(), response.body());
+            String documentId = sourceId() + ":" + uri;
+            return new KnowledgeDocument(
+                    documentId,
+                    sourceId(),
+                    path,
+                    response.body(),
+                    List.of(uri.toString()));
         } catch (Exception e) {
             return null;
         }
