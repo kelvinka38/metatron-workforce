@@ -45,12 +45,15 @@ public final class GatewayAuditCapability implements ExecutionCapability {
             boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
             String summary = "Gateway audit HTTP " + response.statusCode() + (success ? " PASS" : " FAIL");
             String evidence = "url=" + auditUri + ";status=" + response.statusCode() + ";body=" + body.replace("\n", "\\n");
-            return new ExecutionResult(command.executionId(), success, "gateway.audit.read", summary, evidence, completed);
+            String message = ";capability=gateway.audit.read;summary=" + summary + ";evidence=" + evidence;
+            return new ExecutionResult(command.executionId(), success ? ExecutionState.COMPLETED : ExecutionState.FAILED, message, completed);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            return new ExecutionResult(command.executionId(), false, "gateway.audit.read", "Gateway audit interrupted", interrupted.toString(), completed);
+            return new ExecutionResult(command.executionId(), ExecutionState.FAILED,
+                    ";capability=gateway.audit.read;summary=Gateway audit interrupted;evidence=" + interrupted, completed);
         } catch (IOException | RuntimeException failure) {
-            return new ExecutionResult(command.executionId(), false, "gateway.audit.read", "Gateway audit failed", failure.toString(), completed);
+            return new ExecutionResult(command.executionId(), ExecutionState.FAILED,
+                    ";capability=gateway.audit.read;summary=Gateway audit failed;evidence=" + failure, completed);
         }
     }
 }
