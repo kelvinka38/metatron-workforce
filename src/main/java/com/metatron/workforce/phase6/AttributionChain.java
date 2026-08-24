@@ -18,7 +18,7 @@ public record AttributionChain(List<Entry> entries) {
     }
 
     public record Entry(String actorId, Kind kind, String reference, Instant at) {
-        public enum Kind { HUMAN_INSTRUCTION, DECISION, WORKER_EXECUTION, OUTCOME }
+        public enum Kind { HUMAN_INSTRUCTION, DECISION, AUTHORIZATION, ASSIGNMENT, WORKER_EXECUTION, RUNTIME, OUTCOME }
         public Entry {
             if (actorId == null || actorId.isBlank()) throw new IllegalArgumentException("actorId must not be blank");
             if (reference == null || reference.isBlank()) throw new IllegalArgumentException("reference must not be blank");
