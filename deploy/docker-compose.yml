@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: metatron-workforce:0.1.0
+    image: metatron-workforce:${METATRON_VERSION:-0.1.0}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -11,8 +11,13 @@ services:
       - "8080"
     environment:
       SERVER_PORT: "8080"
+      METATRON_VERSION: "${METATRON_VERSION:-0.1.0}"
+      METATRON_COMMIT_SHA: "${METATRON_COMMIT_SHA:-unknown}"
+      METATRON_ENVIRONMENT: "${METATRON_ENVIRONMENT:-production}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       TELEGRAM_WEBHOOK_SECRET: "${TELEGRAM_WEBHOOK_SECRET}"
+      TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID}"
+      METATRON_ORGANIZATION_ID: "${METATRON_ORGANIZATION_ID}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
       GEMINI_API_KEY: "${GEMINI_API_KEY}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
