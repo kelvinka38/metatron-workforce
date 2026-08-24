@@ -57,7 +57,7 @@ public final class ExecutionService {
         if (!authorization.usableAt(at)) {
             throw new IllegalStateException("authorization is not usable at execution admission time");
         }
-        return copy(execution, Execution.State.AUTHORIZED, null, null, at, null, null);
+        return copy(execution, Execution.State.AUTHORIZED, null, null, null, null, null);
     }
 
     @Deprecated
@@ -66,9 +66,9 @@ public final class ExecutionService {
         Objects.requireNonNull(executable, "executable");
         requireState(execution, Execution.State.AUTHORIZED);
         if (!executable.test(execution)) {
-            return copy(execution, Execution.State.BLOCKED, null, "execution blocked", at, null, at);
+            return copy(execution, Execution.State.BLOCKED, null, null, null, "execution blocked", at);
         }
-        return copy(execution, Execution.State.RUNNING, at, null, at, null, null);
+        return copy(execution, Execution.State.RUNNING, at, null, null, null, null);
     }
 
     @Deprecated
@@ -76,7 +76,7 @@ public final class ExecutionService {
         Objects.requireNonNull(at, "at");
         requireText(reason, "reason");
         requireState(execution, Execution.State.RUNNING);
-        return copy(execution, Execution.State.FAILED, execution.startedAt(), null, execution.terminalAt(), reason, at);
+        return copy(execution, Execution.State.FAILED, execution.startedAt(), null, null, reason, at);
     }
 
     @Deprecated
@@ -85,15 +85,14 @@ public final class ExecutionService {
         requireText(result, "result");
         if (execution.terminal()) throw new IllegalStateException("execution is already terminal");
         requireState(execution, Execution.State.RUNNING);
-        return copy(execution, Execution.State.COMPLETED, execution.startedAt(), result, execution.terminalAt(), null, at);
+        return copy(execution, Execution.State.COMPLETED, execution.startedAt(), result, at, null, at);
     }
 
     private Execution copy(Execution e, Execution.State state, Instant startedAt, String result,
-                           Instant terminalAt, String failureReason, Instant terminalOverride) {
-        Instant terminal = terminalOverride != null ? terminalOverride : terminalAt;
+                           Instant completedAt, String failureReason, Instant terminalOverride) {
+        Instant terminal = terminalOverride;
         return new Execution(e.executionId(), e.requestId(), e.workerId(), e.assignmentId(), e.authorizationId(),
-                state, e.requestedAt(), startedAt, state == Execution.State.COMPLETED ? terminal : null,
-                terminal, result, failureReason, e.evidenceReference());
+                state, e.requestedAt(), startedAt, completedAt, terminal, result, failureReason, e.evidenceReference());
     }
 
     private static void requireState(Execution execution, Execution.State expected) {
