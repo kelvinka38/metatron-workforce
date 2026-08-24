@@ -2,7 +2,7 @@
 
 ## Status
 
-CANONICAL EXECUTION REGISTER — RECONCILED 2026-08-24
+CANONICAL EXECUTION REGISTER — RECONCILED 2026-08-25
 
 This register governs the production-execution path from the frozen integration contract to certification. It is intentionally separate from the Workforce institutional phase numbering.
 
@@ -20,14 +20,19 @@ This register governs the production-execution path from the frozen integration 
 | ER-010 | Phase 9 | Build production vertical slice | deployment evidence | DONE — deployable JAR + G12 evidence workflow |
 | ER-011 | Phase 10 | Execute load/failure/recovery tests | test results | DONE — acceptance coverage exists; exact-current-HEAD evidence pending |
 | ER-012 | Phase 11 | Production certification | certification evidence | BLOCKED — attributable production deployment evidence pending |
+| ER-013 | Phase 12 | Close Human → Telegram → Intelligence E2E | exact-current-HEAD Telegram E2E evidence | IN PROGRESS |
+| ER-014 | Phase 13 | Close Intelligence → authorized Metatron execution bridge | execution/evidence/Gateway boundary proof | IN PROGRESS |
+| ER-015 | Phase 14 | Re-certify production on exact deployed HEAD | G12 production evidence bundle | BLOCKED — depends on ER-013/ER-014 and deployed evidence |
 
 ## Current Gate
 
-**BLOCKED — ER-012 / Production Certification**
+**BLOCKED — ER-013 / ER-014 / ER-015**
 
-Implementation is closed, but certification is not. The repository currently contains an automated CI/deployable-runtime evidence mechanism, not evidence from an actual production deployment. The canonical G12 observability contract explicitly requires deployed-runtime evidence before the production observability gap can close.
+The execution runtime implementation is substantially complete. The remaining closure work is integration proof: prove the current HEAD can receive a real Telegram interaction, route it through the canonical Intelligence/BIOS boundary, and—when execution is requested—enter the authorized Metatron execution boundary without bypassing Gateway. Only after those are proven can production certification close.
 
-The current HEAD is `81c1f3ad59c31185c68bd252fc15d0b4aeb60849`. The G12 workflow was corrected on this HEAD to validate exact-commit attribution and the runtime's actual `authorizationReference` field. A fresh CI result for this exact HEAD must be recorded before the automated evidence portion is accepted.
+The canonical repository HEAD at reconciliation time is `3617311479c40574985f25e47634cb1043ce05f8`. Earlier references to `81c1f3ad59c31185c68bd252fc15d0b4aeb60849` are stale and must not be used as current deployment identity.
+
+The repository contains CI/deployable-runtime evidence mechanisms, but the available GitHub evidence does not yet establish a successful CI run for the exact current HEAD or attributable production deployment evidence. CI evidence must not be silently promoted to production evidence.
 
 ## Remaining Certification Conditions
 
@@ -36,6 +41,10 @@ The current HEAD is `81c1f3ad59c31185c68bd252fc15d0b4aeb60849`. The G12 workflow
 - fresh G12 acceptance PASS on exact current HEAD
 - fresh deployable JAR PASS on exact current HEAD
 - fresh automated runtime smoke PASS on exact current HEAD
+- real Telegram inbound → Intelligence → Telegram response PASS on exact current HEAD
+- real execution-intent interaction → authorized Metatron execution boundary PASS on exact current HEAD
+- Gateway authorization remains authoritative for execution
+- evidence/provenance correlation survives the full interaction path
 - evidence bundle commit SHA == deployed/runtime commit SHA
 - production deployment identity attributable to the exact deployed commit
 - production runtime health signals attributable to the deployment
