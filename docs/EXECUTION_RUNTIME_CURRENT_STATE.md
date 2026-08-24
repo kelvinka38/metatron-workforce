@@ -2,7 +2,7 @@
 
 ## Status
 
-IMPLEMENTATION CLOSED — CERTIFICATION PENDING
+IMPLEMENTATION CLOSED — CERTIFIED
 
 ## Scope
 
@@ -30,7 +30,7 @@ Current `metatron-workforce` state reconciled against the Execution Runtime Inte
 
 Implementation gaps from the previous audit are closed.
 
-The only remaining state transition is evidence-based certification:
+The final evidence-based certification transition is complete:
 
 ```text
 IMPLEMENTATION CLOSED
@@ -47,7 +47,7 @@ DURABLE STATE + OBSERVABILITY + VISIBILITY EVIDENCE
         ↓
 CLEAN WORKTREE / EXACT COMMIT
         ↓
-G12 PASS / ACCEPTED
+G12 PASS / CERTIFIED
 ```
 
-No G13 is created or assumed. G12 is the terminal gate of the current Workforce execution process.
+No G13 is created or assumed. G12 is the terminal gate of the current Workforce execution process. Certification is complete.

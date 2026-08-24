@@ -11,7 +11,7 @@ This register governs the production-execution path from the frozen integration 
 | ER-001 | Phase 0 | Freeze Execution Runtime Integration Contract | `EXECUTION_RUNTIME_INTEGRATION_SOT.md` | DONE |
 | ER-002 | Phase 1 | Reconcile existing implementation | source + tests + runtime artifacts | DONE — audit completed |
 | ER-003 | Phase 2 | Freeze Assignment → Execution Contract | contract + validation evidence | DONE — contract and vertical slice evidence |
-| ER-004 | Phase 3 | Validate Worker Runtime integration | runtime execution evidence | DONE — durable runtime implementation; fresh CI pending |
+| ER-004 | Phase 3 | Validate Worker Runtime integration | runtime execution evidence | DONE — durable runtime implementation + fresh CI PASS |
 | ER-005 | Phase 4 | Freeze production requirements | requirement document | DONE — current production evidence envelope documented |
 | ER-006 | Phase 5 | Build workload model | workload evidence | DONE — current acceptance envelope documented |
 | ER-007 | Phase 6 | Build capacity model | capacity calculation | DONE — 1,000-worker / 8,000-hour acceptance envelope |
@@ -19,13 +19,13 @@ This register governs the production-execution path from the frozen integration 
 | ER-009 | Phase 8 | Approve production architecture | architecture evidence | DONE — current deployable single-node boundary recorded |
 | ER-010 | Phase 9 | Build production vertical slice | deployment evidence | DONE — deployable JAR + production evidence workflow |
 | ER-011 | Phase 10 | Execute load/failure/recovery tests | test results | DONE — historical acceptance + new durable recovery gate |
-| ER-012 | Phase 11 | Production certification | certification evidence | PENDING — fresh green certification run |
+| ER-012 | Phase 11 | Production certification | certification evidence | DONE — fresh GitHub Actions certification PASS |
 
 ## Current Gate
 
-**ER-012 / Production Certification**
+**CERTIFIED — ER-012 / Production Certification**
 
-The implementation work is closed. Certification remains pending until a fresh GitHub Actions run proves the exact current commit and packages the complete evidence bundle.
+The implementation work is closed. A fresh GitHub Actions run proved the exact current commit and packaged the complete production evidence bundle. Production certification is PASS.
 
 ## Certification Conditions
 
