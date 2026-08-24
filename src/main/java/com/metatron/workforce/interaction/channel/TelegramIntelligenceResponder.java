@@ -38,20 +38,13 @@ public final class TelegramIntelligenceResponder {
     private final IntelligenceFabric fabric;
     private final String configuredProvider;
 
-    public TelegramIntelligenceResponder(
-            String openAiApiKey,
-            String googleApiKey,
-            String anthropicApiKey,
-            String provider,
-            String openAiModel,
-            String googleModel,
-            String anthropicModel,
-            ObjectMapper objectMapper) {
+    public TelegramIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
+                                         String provider, String openAiModel, String googleModel,
+                                         String anthropicModel, ObjectMapper objectMapper) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         HttpClient httpClient = HttpClient.newBuilder().build();
         List<LlmProviderClient> clients = new ArrayList<>();
         List<ProviderCapacity> capacities = new ArrayList<>();
-
         if (present(openAiApiKey)) {
             clients.add(new OpenAiLlmProviderClient(openAiApiKey, httpClient, objectMapper));
             capacities.add(new ProviderCapacity(LlmProvider.OPENAI, true, 100, 1, 100_000, 500, 1));
@@ -64,17 +57,13 @@ public final class TelegramIntelligenceResponder {
             clients.add(new AnthropicLlmProviderClient(anthropicApiKey, httpClient, objectMapper));
             capacities.add(new ProviderCapacity(LlmProvider.ANTHROPIC, true, 80, 1, 100_000, 700, 1));
         }
-
         this.configuredProvider = normalizeProvider(provider);
         Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
-        LlmProviderRouter router = new LlmProviderRouter(clients);
-        RouterBackedIntelligenceEngine engine = new RouterBackedIntelligenceEngine(router, modelSelector);
         this.fabric = new IntelligenceFabric(
                 new IntelligencePlanner(new CapacityAwareRoutingPolicy(capacities)),
-                engine,
+                new RouterBackedIntelligenceEngine(new LlmProviderRouter(clients), modelSelector),
                 (request, responses) -> responses.getFirst().text(),
-                new EvidenceBackedGovernance()
-        );
+                new EvidenceBackedGovernance());
     }
 
     public String respond(String senderId, String text) {
@@ -88,31 +77,41 @@ public final class TelegramIntelligenceResponder {
         LlmProvider requested = configuredProvider.isBlank() ? null : LlmProvider.valueOf(configuredProvider);
         List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
         int maxProviders = requested == null ? 3 : 1;
+        IntelligenceMode mode = resolveMode(text);
+        String consequence = mode == IntelligenceMode.EXECUTION ? "HIGH" : mode == IntelligenceMode.DECISION ? "MEDIUM" : "LOW";
+        List<String> evidence = mode.requiresGovernance()
+                ? List.of("observation:telegram:" + externalMessageReference)
+                : List.of();
 
         IntelligenceRequest request = new IntelligenceRequest(
-                "telegram-" + senderId + "-" + System.nanoTime(),
-                "telegram:" + senderId,
-                IntelligenceMode.REASONING,
-                CollaborationMode.SINGLE,
-                text,
-                SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.\n",
-                List.of("telegram:" + externalMessageReference),
-                "analysis",
-                "LOW",
-                "interactive",
-                "standard",
-                "telegram-human",
-                "direct natural-language answer",
-                requestedProviders,
-                maxProviders
-        );
+                "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
+                mode, CollaborationMode.SINGLE, text,
+                SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.\n", evidence,
+                "analysis", consequence, "interactive", "standard", "telegram-human",
+                "direct natural-language answer", requestedProviders, maxProviders);
         return fabric.execute(request).text();
     }
 
-    private static Function<LlmProvider, String> modelSelector(
-            String openAiModel,
-            String googleModel,
-            String anthropicModel) {
+    private static IntelligenceMode resolveMode(String text) {
+        String value = text.toLowerCase(Locale.ROOT);
+        if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) {
+            return IntelligenceMode.EXECUTION;
+        }
+        if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) {
+            return IntelligenceMode.DECISION;
+        }
+        if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) {
+            return IntelligenceMode.REASONING;
+        }
+        return IntelligenceMode.DISCUSSION;
+    }
+
+    private static boolean containsAny(String value, String... terms) {
+        for (String term : terms) if (value.contains(term)) return true;
+        return false;
+    }
+
+    private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) {
         return provider -> switch (provider) {
             case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini");
             case GOOGLE -> defaultModel(googleModel, "gemini-2.5-flash");
