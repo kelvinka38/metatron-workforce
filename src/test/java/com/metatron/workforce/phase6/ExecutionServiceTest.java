@@ -1,86 +1,108 @@
 package com.metatron.workforce.phase6;
 
+import com.metatron.workforce.phase5.ExecutionFeasibility;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ExecutionServiceTest {
-    private static final Instant T0 = Instant.parse("2026-08-20T10:00:00Z");
-    private static final Instant T1 = Instant.parse("2026-08-20T10:05:00Z");
-    private static final Instant T2 = Instant.parse("2026-08-20T11:00:00Z");
+    private static final Instant REQUESTED = Instant.parse("2026-08-20T10:00:00Z");
+    private static final Instant APPROVED = Instant.parse("2026-08-20T10:05:00Z");
+    private static final Instant STARTED = Instant.parse("2026-08-20T10:10:00Z");
+    private static final Instant COMPLETED = Instant.parse("2026-08-20T10:11:00Z");
 
-    private AuthorizationDecision authorization() {
-        return new AuthorizationDecision(
-                "auth-req-001", "req-001", AuthorizationDecision.Outcome.ALLOW,
-                "policy allows", "authority-001", null, "policy-001",
-                T0, T2, T0, "head-001", "evidence-001");
+    private WorkProposal proposal() {
+        return new WorkProposal("proposal-001", "worker-001", "work-001", "EXECUTE_WORK", "farm-A", "org-A", REQUESTED);
     }
 
-    private Execution requested() {
-        return Execution.requested(
-                "exec-001", "req-001", "worker-001", "assignment-001",
-                "auth-req-001", T0, "evidence-exec-001");
+    private ApprovalDecision approval(boolean approved) {
+        return new ApprovalDecision("decision-001", "proposal-001", "head-001", approved, APPROVED,
+                "authority-001", approved ? "approved" : "rejected");
     }
 
-    @Test
-    void validExecutionMovesToRunningAndCompletes() {
-        ExecutionService service = new ExecutionService();
-        Execution execution = service.validating(requested());
-        execution = service.admit(execution, authorization(), T1);
-        execution = service.start(execution, T1, ignored -> true);
-        execution = service.complete(execution, T2, "work completed");
-
-        assertEquals(Execution.State.COMPLETED, execution.state());
-        assertEquals(T1, execution.startedAt());
-        assertEquals(T2, execution.completedAt());
-        assertTrue(execution.terminal());
+    private AuthorizationRequest request() {
+        return new AuthorizationRequest("worker-001", "publisher", "authority-001", "farm-A", "EXECUTE_WORK",
+                "org-A", STARTED, "resource-001");
     }
 
-    @Test
-    void expiredOrMismatchedAuthorizationCannotAdmitExecution() {
-        ExecutionService service = new ExecutionService();
-        Execution execution = service.validating(requested());
+    private AuthorizationService authorization(boolean allowed) {
+        return new AuthorizationService(ignored -> allowed
+                ? Phase6AuthorizationPolicy.Decision.allowed("auth-001")
+                : Phase6AuthorizationPolicy.Decision.denied("policy-001", "forbidden"));
+    }
 
-        AuthorizationDecision expired = new AuthorizationDecision(
-                "auth-req-001", "req-001", AuthorizationDecision.Outcome.ALLOW,
-                "expired", "authority-001", null, "policy-001",
-                T0, T1, T0, "head-001", "evidence-001");
-
-        assertThrows(IllegalStateException.class,
-                () -> service.admit(execution, expired, T2));
+    private ExecutionFeasibility feasible() {
+        return new ExecutionFeasibility(ExecutionFeasibility.Status.FEASIBLE, 0, 0, List.of());
     }
 
     @Test
-    void insufficientRealityConstraintsBlockExecution() {
-        ExecutionService service = new ExecutionService();
-        Execution execution = service.validating(requested());
-        execution = service.admit(execution, authorization(), T1);
-        execution = service.start(execution, T1, ignored -> false);
+    void validExecutionCompletesAndPreservesAuthorization() {
+        ExecutionRecord record = new ExecutionService().execute(
+                proposal(), approval(true), request(), authorization(true), feasible(),
+                p -> ExecutionService.ExecutionResult.success(List.of("input"), List.of("output")),
+                "execution-001", STARTED, COMPLETED, null);
 
-        assertEquals(Execution.State.BLOCKED, execution.state());
-        assertFalse(execution.terminal());
-        assertNotNull(execution.failureReason());
+        assertEquals(ExecutionRecord.Status.SUCCEEDED, record.status());
+        assertEquals("worker-001", record.actorId());
+        assertEquals("auth-001", record.authorizationReference());
+        assertEquals(List.of("input"), record.inputs());
+        assertEquals(List.of("output"), record.outputs());
     }
 
     @Test
-    void failureAndCancellationRemainTerminalAndDistinct() {
-        ExecutionService service = new ExecutionService();
-        Execution running = service.start(
-                service.admit(service.validating(requested()), authorization(), T1),
-                T1, ignored -> true);
+    void unauthorizedExecutionFailsClosed() {
+        assertThrows(SecurityException.class, () -> new ExecutionService().execute(
+                proposal(), approval(true), request(), authorization(false), feasible(),
+                p -> fail("executor must not run"), "execution-002", STARTED, COMPLETED, null));
+    }
 
-        Execution failed = service.fail(running, T2, "external dependency failed");
-        assertEquals(Execution.State.FAILED, failed.state());
-        assertTrue(failed.terminal());
+    @Test
+    void insufficientRealityBlocksExecutionBeforeExecutorRuns() {
+        ExecutionFeasibility blocked = new ExecutionFeasibility(
+                ExecutionFeasibility.Status.BLOCKED, 0, 1, List.of("qualified-worker-unavailable"));
 
-        Execution runningAgain = service.start(
-                service.admit(service.validating(requested()), authorization(), T1),
-                T1, ignored -> true);
-        Execution cancelled = service.cancel(runningAgain, T2, "authorized cancellation");
-        assertEquals(Execution.State.CANCELLED, cancelled.state());
-        assertTrue(cancelled.terminal());
-        assertNotEquals(failed.state(), cancelled.state());
+        ExecutionRecord record = new ExecutionService().execute(
+                proposal(), approval(true), request(), authorization(true), blocked,
+                p -> fail("executor must not run"), "execution-003", STARTED, COMPLETED, null);
+
+        assertEquals(ExecutionRecord.Status.BLOCKED, record.status());
+        assertEquals("qualified-worker-unavailable", record.failureReason());
+    }
+
+    @Test
+    void partialRealityRemainsPartial() {
+        ExecutionFeasibility partial = new ExecutionFeasibility(
+                ExecutionFeasibility.Status.PARTIAL, 2.5, 1, List.of());
+
+        ExecutionRecord record = new ExecutionService().execute(
+                proposal(), approval(true), request(), authorization(true), partial,
+                p -> fail("executor must not run"), "execution-004", STARTED, COMPLETED, null);
+
+        assertEquals(ExecutionRecord.Status.PARTIAL, record.status());
+    }
+
+    @Test
+    void failureIsRecordedAsFailure() {
+        ExecutionRecord record = new ExecutionService().execute(
+                proposal(), approval(true), request(), authorization(true), feasible(),
+                p -> ExecutionService.ExecutionResult.failure(List.of("input"), "downstream unavailable"),
+                "execution-005", STARTED, COMPLETED, null);
+
+        assertEquals(ExecutionRecord.Status.FAILED, record.status());
+        assertEquals("downstream unavailable", record.failureReason());
+    }
+
+    @Test
+    void retryRemainsLinkedToOriginalExecution() {
+        ExecutionRecord retry = new ExecutionRecord(
+                "execution-006b", "proposal-001", "worker-001", "EXECUTE_WORK", STARTED, COMPLETED,
+                "org-A", "auth-006", List.of("input"), List.of(), ExecutionRecord.Status.FAILED,
+                "timeout", "execution-006a");
+
+        assertEquals("execution-006a", retry.retryOfExecutionId());
+        assertNotEquals(retry.executionId(), retry.retryOfExecutionId());
     }
 }
