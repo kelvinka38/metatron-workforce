@@ -21,14 +21,35 @@ public final class AuthorizationService {
         Objects.requireNonNull(proposal, "proposal");
         Objects.requireNonNull(approval, "approval");
         Objects.requireNonNull(request, "request");
-        if (!proposal.proposalId().equals(approval.proposalId())) return AuthorizationResult.denied("proposal-mismatch", "approval does not belong to proposal");
-        if (!proposal.actorId().equals(request.actorId())) return AuthorizationResult.denied("actor-mismatch", "authorization actor differs from proposal actor");
-        if (!proposal.action().equals(request.action())) return AuthorizationResult.denied("action-mismatch", "authorization action differs from proposal");
-        if (!proposal.scope().equals(request.scope())) return AuthorizationResult.denied("scope-mismatch", "authorization scope differs from proposal");
-        if (!proposal.contextId().equals(request.contextId())) return AuthorizationResult.denied("context-mismatch", "authorization context differs from proposal");
-        if (!approval.approved()) return AuthorizationResult.denied(approval.authorityReference(), "proposal not approved");
-        if (request.at().isBefore(approval.decidedAt())) return AuthorizationResult.denied("approval-not-effective", "approval not yet effective");
-        if (request.at().isBefore(proposal.requestedAt())) return AuthorizationResult.denied("time-invalid", "authorization predates proposal");
+
+        // Canonical Phase-6 validation order: identity/alignment -> proposal chronology
+        // -> approval state/effectiveness -> external policy. Earlier failures must not
+        // be masked by a later time or policy condition.
+        if (!proposal.proposalId().equals(approval.proposalId())) {
+            return AuthorizationResult.denied("proposal-mismatch", "approval does not belong to proposal");
+        }
+        if (!proposal.actorId().equals(request.actorId())) {
+            return AuthorizationResult.denied("actor-mismatch", "authorization actor differs from proposal actor");
+        }
+        if (!proposal.action().equals(request.action())) {
+            return AuthorizationResult.denied("action-mismatch", "authorization action differs from proposal");
+        }
+        if (!proposal.scope().equals(request.scope())) {
+            return AuthorizationResult.denied("scope-mismatch", "authorization scope differs from proposal");
+        }
+        if (!proposal.contextId().equals(request.contextId())) {
+            return AuthorizationResult.denied("context-mismatch", "authorization context differs from proposal");
+        }
+        if (request.at().isBefore(proposal.requestedAt())) {
+            return AuthorizationResult.denied("time-invalid", "authorization predates proposal");
+        }
+        if (!approval.approved()) {
+            return AuthorizationResult.denied(approval.authorityReference(), "proposal not approved");
+        }
+        if (request.at().isBefore(approval.decidedAt())) {
+            return AuthorizationResult.denied("approval-not-effective", "approval not yet effective");
+        }
+
         var decision = policy.authorize(request);
         return decision.allowed()
                 ? AuthorizationResult.allowed(decision.authorizationReference())
