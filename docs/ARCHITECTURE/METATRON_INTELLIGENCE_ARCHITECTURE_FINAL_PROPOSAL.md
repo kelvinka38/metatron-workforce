@@ -2,21 +2,17 @@
 
 ## Status
 
-PROPOSAL — pending institutional reconciliation and approval.
+**RECONCILED — IMPLEMENTATION BASELINE**
 
-This document is **not yet an SOT**. It is the final architectural proposal to be reconciled against the canonical Metatron SOT / Master Execution Plan before implementation becomes authoritative.
+This proposal has been reconciled against the canonical `10_INTELLIGENCE/SOT.md` in `kelvinka38/metatron-institution`, the Universal SOT, the Workforce execution plan, the existing Workplace/Communication boundary, BIOS governance semantics, and the Gateway ownership/execution boundary.
+
+The institutional canonical source remains `kelvinka38/metatron-institution/10_INTELLIGENCE/SOT.md`. This document is the Workforce engineering interpretation and must not redefine that SOT.
 
 ## 1. Executive Decision
 
 Metatron SHALL NOT model a Worker as an LLM chat session.
 
-A Worker is an institutional actor with access to:
-
-1. Workplace / communication;
-2. Knowledge;
-3. Tools and external capabilities;
-4. Other Workers;
-5. Shared Intelligence resources when reasoning is required.
+A Worker is an institutional actor with access to Workplace/communication, Knowledge, Tools, Other Workers, and shared Intelligence resources when reasoning is required.
 
 LLMs (ChatGPT, Claude, Gemini, future models, or local models) are implementations behind a shared **Intelligence Fabric**. They are not Workers, not authorities, and not the communication bus.
 
@@ -87,11 +83,7 @@ Telegram:
 "audit G4 gateway"
 ```
 
-The Human does not need to select a Worker, provider, model, or tool manually.
-
-Metatron resolves the request into the appropriate institutional workflow.
-
-Conceptually:
+The Human does not need to select a Worker, provider, model, or tool manually. Metatron resolves the request into the appropriate institutional workflow.
 
 ```text
 Human
@@ -110,107 +102,63 @@ Telegram is only an interface adapter. It is not the source of truth, authority 
 
 ## 4. Worker ↔ Worker
 
-Worker-to-Worker communication SHALL NOT require an LLM by default.
-
-Workers may directly exchange:
-
-- structured messages;
-- requests;
-- assignments;
-- artifacts;
-- observations;
-- evidence references;
-- status;
-- results.
-
-Example:
-
-```text
-Worker A
-  -> structured request
-  -> Worker B
-  -> structured result
-  -> Worker A
-```
+Worker-to-Worker communication SHALL NOT require an LLM by default. Workers may directly exchange structured messages, requests, assignments, artifacts, observations, evidence references, status, and results.
 
 An LLM is invoked only when the interaction requires reasoning, synthesis, critique, planning, or another intelligence capability.
 
-## 5. Worker → Knowledge
+## 5. Worker → Knowledge / Tools
 
-Workers SHALL be able to acquire information before consuming scarce reasoning capacity.
+Workers SHALL acquire information before consuming scarce reasoning capacity whenever deterministic or validated sources can answer the requirement reliably enough.
 
 Preferred acquisition order:
 
 ```text
-1. Existing validated knowledge
-2. Local / institutional artifacts
-3. Deterministic APIs and systems
+1. Validated knowledge
+2. Institutional artifacts / Library
+3. Deterministic APIs / systems
 4. Worker observations
 5. Authorized external data
-6. Web search / web retrieval
-7. LLM reasoning when needed
+6. Web search / retrieval
+7. LLM reasoning when required
 ```
 
-Principle:
+Web access and external tools remain capability/authority controlled.
 
-> Information acquisition precedes intelligence expenditure.
+## 6. Intelligence Fabric
 
-Web access is a capability, not an implicit authority. Access remains governed by Worker identity, role, policy, and available tools.
-
-## 6. Knowledge Fabric
-
-Knowledge SHALL be treated as a first-class Metatron capability.
-
-Knowledge MAY originate from:
-
-- canonical SOT;
-- validated institutional documents;
-- repository state;
-- API observations;
-- operational observations;
-- external documentation;
-- web research;
-- validated Worker discoveries;
-- prior outcomes.
-
-Unverified model output SHALL NOT automatically become institutional knowledge.
-
-Promotion path:
-
-```text
-Observation
-  -> Evidence
-  -> Validation
-  -> Knowledge Artifact
-  -> Knowledge Fabric
-```
-
-## 7. Intelligence Fabric
-
-Workers SHALL request intelligence through a capability contract, not through provider-specific conversations.
-
-Conceptual request:
+Workers SHALL request intelligence through a provider-neutral capability contract, not a permanent provider-specific conversation.
 
 ```text
 INTELLIGENCE_REQUEST
-
-objective
-context
-available_evidence
-required_capability
-consequence_level
-latency_budget
-cost_budget
-collaboration_policy
+├── requester
+├── objective
+├── context
+├── available evidence
+├── required capability
+├── consequence / risk
+├── latency budget
+├── cost / resource budget
+├── authority context
+└── required output
 ```
 
-The Intelligence Fabric decides whether an LLM is necessary and, if so, which available intelligence resource should be used.
+The Intelligence Fabric decides whether reasoning is necessary and allocates shared intelligence capacity.
 
-Provider identity is an implementation detail unless explicitly requested or required by policy.
+The architecture MUST NOT establish:
 
-## 8. Progressive Intelligence Allocation
+```text
+1 WORKER = 1 LLM SESSION
+```
 
-LLM usage SHALL be demand-driven.
+Instead:
+
+```text
+N WORKERS
+   ↓
+SHARED INTELLIGENCE CAPACITY
+```
+
+## 7. Progressive Intelligence Allocation
 
 ```text
 Simple / deterministic
@@ -220,45 +168,20 @@ Normal reasoning
     -> one model
 
 Uncertain / contested
-    -> second opinion
+    -> independent second opinion
 
-High-consequence reasoning
-    -> multi-model collaboration
+High consequence
+    -> multi-model review
 
 Critical / irreversible
-    -> multi-model + BIOS + Human authorization where required
+    -> multi-model + BIOS + required human authority
 ```
 
-Therefore:
+Provider quotas, rate limits, token limits, concurrency, cost, latency, and availability are shared capacity constraints.
 
-> 1,000 Workers MUST NOT imply 1,000 permanent LLM sessions.
+## 8. Multi-Model Collaboration
 
-LLM provider limits are shared infrastructure-capacity constraints handled by the Intelligence Fabric, not Worker-level architectural dependencies.
-
-## 9. Provider Selection
-
-The system SHALL support explicit and implicit provider selection.
-
-Examples:
-
-```text
-"Claude, audit G4"
-    -> Claude
-
-"GPT + Claude + Gemini, audit G4"
-    -> multi-model collaboration
-
-"audit G4"
-    -> Metatron selects the appropriate intelligence path
-```
-
-Provider selection MUST NOT bypass BIOS, authorization, Gateway, or institutional workflow.
-
-## 10. Multi-Model Collaboration
-
-Multi-model collaboration SHALL NOT be implemented as simple majority voting.
-
-Required conceptual protocol:
+Multi-model collaboration is an escalation mechanism, not the default path.
 
 ```text
 Request
@@ -268,53 +191,46 @@ Request
   -> contradiction analysis
   -> BIOS conformance
   -> synthesis
-  -> one consolidated response
+  -> one consolidated governed output
 ```
 
-Consensus is a collaboration mechanism, not proof of truth.
-
-A minority proposal MAY become the final conclusion if its evidence and reasoning are stronger.
-
-## 11. BIOS Governance
-
-BIOS SHALL NOT be implemented merely as a large system prompt.
-
-BIOS is a constitutional governance contract composed conceptually of:
+Majority voting is not truth determination.
 
 ```text
-SEMANTICS
-GRAMMAR
-LOGIC
-INVARIANTS
-CONSTRAINTS
-VALIDATOR
-ENFORCEMENT
+CONSENSUS ≠ CORRECTNESS
 ```
 
-BIOS governs consequential reasoning and action, not ordinary conversation.
+A minority conclusion MAY become final when its evidence or reasoning is stronger.
 
-### Progressive governance
+Supported patterns include `SINGLE`, `LEAD + REVIEWER`, `PARALLEL + SYNTHESIS`, `ADVERSARIAL REVIEW`, and `INDEPENDENT SECOND OPINION`.
+
+## 9. BIOS Governance
+
+BIOS is not an LLM and is not replaced by an LLM provider.
+
+BIOS governs reasoning, evidence integrity, authority, decision rights, falsification, and related institutional behavior according to its canonical SOT and upstream authority.
+
+Reasoning depth is consequence/complexity/uncertainty dependent; INTELLIGENCE MUST NOT impose a fixed formal template on every conversation.
 
 ```text
 CASUAL
-  -> minimal governance
-
+  ↓
 DISCUSSION
-  -> light reasoning discipline
-
+  ↓
 REASONING
-  -> strict claim / evidence discipline
-
+  ↓
 DECISION
-  -> strict evidence / contradiction / authority checks
-
+  ↓
 EXECUTION
-  -> maximum governance
+  ↓
+IRREVERSIBLE / HIGH-CONSEQUENCE ACTION
 ```
 
-## 12. Core BIOS Invariants
+This is progressive governance, not mandatory formalism for every sentence.
 
-At minimum, the governance model SHALL distinguish:
+Material outputs MUST preserve epistemic distinctions such as `FACT`, `OBSERVATION`, `EVIDENCE`, `INFERENCE`, `HYPOTHESIS`, `ASSUMPTION`, and `UNKNOWN`.
+
+Core invariants include:
 
 ```text
 ASSUMPTION           != FACT
@@ -326,138 +242,108 @@ EXECUTION_SUCCESS    != OUTCOME_SUCCESS
 ABSENCE_OF_EVIDENCE  != EVIDENCE_OF_ABSENCE
 ```
 
-A model SHALL NOT be allowed to promote an uncertain claim into verified fact merely because another model agrees with it.
+## 10. Knowledge / Learning
 
-## 13. BIOS Conformance
-
-For governed reasoning:
+Institutional learning is represented through validated knowledge artifacts rather than dependence on external LLM retraining.
 
 ```text
-Model output
-    -> BIOS validation
-        -> PASS
-        -> REJECT / REVISE
+OBSERVATION
+   ↓
+EVIDENCE
+   ↓
+VALIDATION
+   ↓
+KNOWLEDGE ARTIFACT
+   ↓
+KNOWLEDGE FABRIC
+   ↓
+FUTURE RETRIEVAL
 ```
 
-Repeated non-conformance SHALL eventually escalate rather than silently accepting invalid output.
+Unverified model output MUST NOT automatically become institutional knowledge.
 
-The validator MUST be able to distinguish at least:
+## 11. Authority / Execution Boundary
 
-- missing evidence;
-- invalid inference;
-- unsupported conclusion;
-- contradiction;
-- authority violation;
-- scope violation;
-- execution claim without evidence;
-- knowledge claim without validation.
-
-## 14. Learning
-
-Metatron SHALL NOT depend on retraining external LLMs for institutional memory.
-
-Workers learn operationally by producing validated knowledge artifacts.
+Intelligence does not create authority.
 
 ```text
-Observe
-  -> validate
-  -> record
-  -> retrieve later
+INTELLIGENCE
+   ↓
+RECOMMENDATION / DECISION WITHIN AUTHORITY
+   ↓
+AUTHORIZATION
+   ↓
+GATEWAY WHEN EXTERNAL BOUNDARY CROSSING IS REQUIRED
+   ↓
+EXECUTION
+   ↓
+OBSERVATION / VERIFICATION
 ```
 
-External LLM weights remain external implementation state.
+Telegram, LLM providers, and Intelligence MUST NOT bypass the applicable authorization or Gateway boundary. Gateway ownership, semantics, and gate definitions remain unchanged by this architecture.
 
-Metatron institutional knowledge remains under Metatron governance.
+## 12. Reconciliation Record
 
-## 15. Execution Boundary
+### Universal SOT
 
-Intelligence SHALL NOT create execution authority.
-
-The execution path remains governed by the existing Metatron execution architecture.
-
-Conceptually:
+The architecture preserves the Universal distinctions required for downstream systems:
 
 ```text
-Human / Worker intent
-  -> reasoning
-  -> decision
-  -> authorization
-  -> Gateway
-  -> execution
-  -> observation
-  -> verification
-  -> evidence
+REALITY ≠ MODEL
+CAPABILITY ≠ AUTHORITY
+CLAIM ≠ EVIDENCE
+EVIDENCE ≠ TRUTH
+DECISION ≠ EXECUTION
+UNKNOWN ≠ TRUE
+UNKNOWN ≠ FALSE
 ```
 
-Neither Telegram, an LLM provider, nor BIOS may silently bypass the Gateway boundary.
+It follows the Universal derivation chain and does not create a new Universal primitive.
 
-## 16. Final Responsibility Model
+### Workforce Master Execution Plan
+
+The architecture preserves the existing Workforce sequence and boundaries. Intelligence is a capability consumed by Workforce; it does not replace Workplace, Communication, Authorization, Execution, Learning, or Economic boundaries. The Workforce plan's requirements for identity, attribution, authorization, provenance, evidence, temporal validity, learning lineage, and economic evidence remain intact.
+
+### BIOS
+
+The architecture uses BIOS as governance/conformance and preserves dynamic reasoning depth, epistemic status, authority separation, and evidence discipline. It does not turn BIOS into a provider prompt or force formalism on casual conversation.
+
+### Gateway
+
+The architecture does not move Gateway ownership into Intelligence. Intelligence may use Gateway information and may request authorized external execution, but Gateway remains the external boundary enforcement layer.
+
+### Institutional canonical source
+
+The canonical Intelligence SOT is:
+
+`kelvinka38/metatron-institution/10_INTELLIGENCE/SOT.md`
+
+This Workforce document is subordinate engineering interpretation only.
+
+## 13. Implementation Rule
+
+Implementation SHALL proceed from the canonical Intelligence SOT into provider-neutral contracts and tests.
+
+Provider transport, credentials, concrete models, and external API integrations remain implementation details behind the Intelligence Fabric.
+
+The first implementation objective is **not** "connect every Worker to ChatGPT/Claude/Gemini". It is:
 
 ```text
-Workplace
-  = communication / interaction
-
-Workforce
-  = institutional workers and work semantics
-
-Knowledge Fabric
-  = information and institutional memory
-
-Tool Fabric
-  = capabilities / external systems
-
-Intelligence Fabric
-  = reasoning capability
-
-BIOS
-  = constitutional governance / conformance
-
-Gateway
-  = external boundary enforcement
-
-Execution
-  = authorized action and outcome
+INTELLIGENCE_REQUEST
+        ↓
+ROUTING / CAPACITY DECISION
+        ↓
+PROVIDER-NEUTRAL EXECUTION
+        ↓
+BIOS / AUTHORITY / VALIDATION
+        ↓
+GOVERNED RESULT
 ```
 
-## 17. Non-Goals
-
-This proposal does NOT define:
-
-- one LLM per Worker;
-- permanent LLM conversations;
-- Telegram as the institutional source of truth;
-- an LLM as an authority;
-- majority voting as truth determination;
-- automatic promotion of model output to knowledge;
-- BIOS as a prompt-only mechanism;
-- a new MIL institutional domain;
-- a replacement for Workplace / Communication;
-- a replacement for Gateway.
-
-## 18. Architectural Principle
-
-The final principle is:
+## 14. Architectural Principle
 
 > **Workers do not chat with AI. Workers have access to intelligence.**
 
-And:
-
-> **Workers do not depend on LLMs for knowledge. They acquire knowledge through retrieval, tools, observations, and other Workers, then use intelligence to reason over that knowledge.**
-
-Finally:
+> **Information acquisition precedes intelligence expenditure.**
 
 > **BIOS governs consequential cognition and action; it does not suppress ordinary human conversation.**
-
-## 19. Acceptance Gate Before Implementation
-
-Before this proposal becomes authoritative, it MUST be reconciled against:
-
-1. Metatron Universal SOT;
-2. Master Execution Plan;
-3. current Workplace / Communication contracts;
-4. Workforce SOT;
-5. BIOS canonical artifacts;
-6. Gateway SOT and execution boundary;
-7. existing Phase 3 PASS state.
-
-Only after reconciliation should the relevant portions be promoted into canonical SOT and implementation contracts.
