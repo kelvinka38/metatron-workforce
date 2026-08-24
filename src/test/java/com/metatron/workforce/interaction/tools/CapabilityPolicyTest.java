@@ -1,6 +1,7 @@
 package com.metatron.workforce.interaction.tools;
 
 import org.junit.jupiter.api.Test;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,6 +22,14 @@ class CapabilityPolicyTest {
         };
         PolicyToolFabric fabric = new PolicyToolFabric(Map.of("github.read", adapter),
                 new CapabilityPolicy(Set.of()));
-        assertEquals("capability_denied", fabric.execute(new ToolRequest("github.read", "/repos/x/y")).message());
+        ToolRequest request = new ToolRequest(
+                "test-request",
+                "test",
+                "github.read",
+                "/repos/x/y",
+                "read",
+                "",
+                List.of());
+        assertEquals("capability_denied", fabric.execute(request).message());
     }
 }
