@@ -25,19 +25,19 @@ public final class CloudflareReadAdapter implements ToolAdapter {
 
     @Override public ToolResult execute(ToolRequest request) {
         Objects.requireNonNull(request, "request");
-        if (token.isEmpty()) return ToolResult.failure("cloudflare_token_missing");
+        if (token.isEmpty()) return ToolResult.failure(request, "cloudflare_token_missing");
         String path = request.target().trim();
-        if (!path.startsWith("/accounts/") && !path.startsWith("/zones/")) return ToolResult.failure("invalid_cloudflare_path");
-        if (path.contains("..") || path.contains("//")) return ToolResult.failure("invalid_cloudflare_path");
-        if (path.startsWith("/accounts/") && !accountId.isEmpty() && !path.startsWith("/accounts/" + accountId + "/")) return ToolResult.failure("account_scope_denied");
+        if (!path.startsWith("/accounts/") && !path.startsWith("/zones/")) return ToolResult.failure(request, "invalid_cloudflare_path");
+        if (path.contains("..") || path.contains("//")) return ToolResult.failure(request, "invalid_cloudflare_path");
+        if (path.startsWith("/accounts/") && !accountId.isEmpty() && !path.startsWith("/accounts/" + accountId + "/")) return ToolResult.failure(request, "account_scope_denied");
         try {
             URI uri = URI.create("https://api.cloudflare.com/client/v4" + path);
             HttpRequest httpRequest = HttpRequest.newBuilder(uri).timeout(timeout)
                     .header("Authorization", "Bearer " + token)
                     .header("Accept", "application/json").GET().build();
             HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) return ToolResult.failure("http_status:" + response.statusCode());
-            return ToolResult.success(response.body());
-        } catch (Exception e) { return ToolResult.failure("cloudflare_request_failed"); }
+            if (response.statusCode() < 200 || response.statusCode() >= 300) return ToolResult.failure(request, "http_status:" + response.statusCode());
+            return ToolResult.success(request, response.body());
+        } catch (Exception e) { return ToolResult.failure(request, "cloudflare_request_failed"); }
     }
 }
