@@ -26,6 +26,10 @@ import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.interaction.llm.LlmProviderClient;
 import com.metatron.workforce.interaction.llm.LlmProviderRouter;
 import com.metatron.workforce.interaction.llm.OpenAiLlmProviderClient;
+import com.metatron.workforce.interaction.tools.CurrentTimeToolAdapter;
+import com.metatron.workforce.interaction.tools.DefaultToolFabric;
+import com.metatron.workforce.interaction.tools.ToolRequest;
+import com.metatron.workforce.interaction.tools.ToolResult;
 
 import java.net.http.HttpClient;
 import java.time.Instant;
@@ -52,6 +56,7 @@ public final class TelegramIntelligenceResponder {
     private final ExecutionAdmissionService admissionService = new ExecutionAdmissionService();
     private final ExecutionCommandService commandService = new ExecutionCommandService();
     private final ExecutionCapabilityRegistry capabilityRegistry;
+    private final DefaultToolFabric toolFabric;
 
     public TelegramIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
@@ -94,6 +99,7 @@ public final class TelegramIntelligenceResponder {
         } else {
             this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
         }
+        this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter()));
     }
 
     public String respond(String senderId, String text) {
@@ -107,6 +113,10 @@ public final class TelegramIntelligenceResponder {
 
         if (isGatewayAuditCommand(text)) {
             return executeGatewayAudit(senderId, text, externalMessageReference);
+        }
+
+        if (isCurrentTimeCommand(text)) {
+            return executeCurrentTime(senderId, externalMessageReference);
         }
 
         LlmProvider requested = configuredProvider.isBlank() ? null : LlmProvider.valueOf(configuredProvider);
@@ -125,6 +135,43 @@ public final class TelegramIntelligenceResponder {
                 "analysis", consequence, "interactive", "standard", "telegram-human",
                 "direct natural-language answer", requestedProviders, maxProviders);
         return fabric.execute(request).text();
+    }
+
+    private String executeCurrentTime(String senderId, String externalMessageReference) {
+        ToolRequest request = new ToolRequest(
+                "telegram-time-" + senderId + "-" + System.nanoTime(),
+                "telegram-human",
+                CurrentTimeToolAdapter.CAPABILITY,
+                "runtime:workforce",
+                "read",
+                "current date and time",
+                List.of("telegram:" + externalMessageReference));
+        ToolResult result = toolFabric.execute(request);
+        if (!result.success()) {
+            throw new IllegalStateException("current_time_read_failed:" + result.output());
+        }
+
+        Map<String, String> fields = parseKeyValueOutput(result.output());
+        String day = switch (fields.getOrDefault("day_of_week", "")) {
+            case "MONDAY" -> "Thứ Hai";
+            case "TUESDAY" -> "Thứ Ba";
+            case "WEDNESDAY" -> "Thứ Tư";
+            case "THURSDAY" -> "Thứ Năm";
+            case "FRIDAY" -> "Thứ Sáu";
+            case "SATURDAY" -> "Thứ Bảy";
+            case "SUNDAY" -> "Chủ Nhật";
+            default -> fields.getOrDefault("day_of_week", "không xác định");
+        };
+        return "Hôm nay là " + day + ", ngày " + fields.getOrDefault("current_date", "không xác định")
+                + ". Giờ hiện tại: " + fields.getOrDefault("current_time", "không xác định")
+                + " (giờ Việt Nam).";
+    }
+
+    private static Map<String, String> parseKeyValueOutput(String output) {
+        return output.lines()
+                .map(line -> line.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1]));
     }
 
     private String executeGatewayAudit(String senderId, String text, String externalMessageReference) {
@@ -154,6 +201,15 @@ public final class TelegramIntelligenceResponder {
     private static boolean isGatewayAuditCommand(String text) {
         String value = text.toLowerCase(Locale.ROOT);
         return containsAny(value, "audit g4 gateway", "audit gateway", "audit g4");
+    }
+
+    private static boolean isCurrentTimeCommand(String text) {
+        String value = text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+        return containsAny(value,
+                "hôm nay là thứ mấy", "hôm nay thứ mấy", "hom nay la thu may", "hom nay thu may",
+                "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today",
+                "today's date", "todays date", "what date is it", "what is today's date",
+                "what time is it", "current time", "current date and time", "what's the date");
     }
 
     private static IntelligenceMode resolveMode(String text) {
