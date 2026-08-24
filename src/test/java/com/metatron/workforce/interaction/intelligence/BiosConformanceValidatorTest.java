@@ -15,7 +15,7 @@ class BiosConformanceValidatorTest {
     @Test
     void casualConversationDoesNotRequireGovernedEvidence() {
         assertDoesNotThrow(() -> validator.validate(
-                request(IntelligenceMode.CASUAL, "LOW", ""),
+                request(IntelligenceMode.CASUAL, "LOW", "worker:metatron", ""),
                 List.of(response()),
                 "hello"));
     }
@@ -23,7 +23,7 @@ class BiosConformanceValidatorTest {
     @Test
     void reasoningRequiresEvidence() {
         assertThrows(IllegalStateException.class, () -> validator.validate(
-                request(IntelligenceMode.REASONING, "LOW", ""),
+                request(IntelligenceMode.REASONING, "LOW", "worker:metatron", ""),
                 List.of(response()),
                 "analysis"));
     }
@@ -31,7 +31,7 @@ class BiosConformanceValidatorTest {
     @Test
     void reasoningRejectsPlaceholderEvidence() {
         assertThrows(IllegalStateException.class, () -> validator.validate(
-                request(IntelligenceMode.REASONING, "LOW", "unknown"),
+                request(IntelligenceMode.REASONING, "LOW", "worker:metatron", "unknown"),
                 List.of(response()),
                 "analysis"));
     }
@@ -39,7 +39,7 @@ class BiosConformanceValidatorTest {
     @Test
     void decisionRequiresAuthority() {
         assertThrows(IllegalStateException.class, () -> validator.validate(
-                request(IntelligenceMode.DECISION, "MEDIUM", "evidence:1"),
+                request(IntelligenceMode.DECISION, "MEDIUM", "", "evidence:1"),
                 List.of(response()),
                 "recommendation"));
     }
@@ -47,7 +47,7 @@ class BiosConformanceValidatorTest {
     @Test
     void highConsequenceCannotRunAtCasualGovernance() {
         assertThrows(IllegalStateException.class, () -> validator.validate(
-                request(IntelligenceMode.CASUAL, "CRITICAL", ""),
+                request(IntelligenceMode.CASUAL, "CRITICAL", "worker:metatron", ""),
                 List.of(response()),
                 "answer"));
     }
@@ -55,7 +55,7 @@ class BiosConformanceValidatorTest {
     @Test
     void validGovernedReasoningPasses() {
         assertDoesNotThrow(() -> validator.validate(
-                request(IntelligenceMode.REASONING, "HIGH", "evidence:gateway-g4"),
+                request(IntelligenceMode.REASONING, "HIGH", "worker:metatron", "evidence:gateway-g4"),
                 List.of(response()),
                 "audit result"));
     }
@@ -63,7 +63,7 @@ class BiosConformanceValidatorTest {
     @Test
     void duplicateEvidenceIsRejected() {
         assertThrows(IllegalStateException.class, () -> validator.validate(
-                request(IntelligenceMode.REASONING, "LOW", "evidence:1", "evidence:1"),
+                request(IntelligenceMode.REASONING, "LOW", "worker:metatron", "evidence:1", "evidence:1"),
                 List.of(response()),
                 "analysis"));
     }
@@ -71,13 +71,16 @@ class BiosConformanceValidatorTest {
     @Test
     void duplicateProviderAttributionIsRejected() {
         assertThrows(IllegalStateException.class, () -> validator.validate(
-                request(IntelligenceMode.REASONING, "LOW", "evidence:1"),
+                request(IntelligenceMode.REASONING, "LOW", "worker:metatron", "evidence:1"),
                 List.of(response(), response()),
                 "analysis"));
     }
 
-    private static IntelligenceRequest request(IntelligenceMode mode, String consequence, String... evidence) {
-        String authority = mode.ordinal() >= IntelligenceMode.DECISION.ordinal() ? "authority:human" : "worker:metatron";
+    private static IntelligenceRequest request(
+            IntelligenceMode mode,
+            String consequence,
+            String authority,
+            String... evidence) {
         return new IntelligenceRequest(
                 "test-request",
                 "test-requester",
