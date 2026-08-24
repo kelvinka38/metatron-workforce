@@ -7,54 +7,80 @@ import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AuthorizationServiceTest {
-    private static final Instant EFFECTIVE = Instant.parse("2026-08-01T00:00:00Z");
-    private static final Instant EXPIRES = Instant.parse("2026-09-01T00:00:00Z");
-    private static final Instant DECIDED = Instant.parse("2026-08-20T10:00:00Z");
+    private static final Instant REQUESTED = Instant.parse("2026-08-20T10:00:00Z");
+    private static final Instant APPROVED = Instant.parse("2026-08-20T10:05:00Z");
+    private static final Instant AUTHORIZED = Instant.parse("2026-08-20T10:10:00Z");
+
+    private WorkProposal proposal() {
+        return new WorkProposal("proposal-001", "worker-001", "work-001", "EXECUTE_WORK", "farm-A", "org-A", REQUESTED);
+    }
+
+    private ApprovalDecision approval(boolean approved) {
+        return new ApprovalDecision("decision-001", "proposal-001", "head-001", approved, APPROVED,
+                "authority-001", approved ? "approved" : "rejected");
+    }
 
     private AuthorizationRequest request() {
-        return new AuthorizationRequest(
-                "req-001", "worker-001", "head", "EXECUTE_WORK", "farm-A",
-                "org-A", "authority-001", "delegation-001", "policy-001",
-                DECIDED, EFFECTIVE, EXPIRES, "evidence-001");
+        return new AuthorizationRequest("worker-001", "publisher", "authority-001", "farm-A", "EXECUTE_WORK",
+                "org-A", AUTHORIZED, "resource-001");
     }
 
     @Test
-    void allowsOnlyWhenPolicyAllowsAndRequestIsTemporallyValid() {
-        AuthorizationDecision decision = new AuthorizationService().resolve(
-                request(), DECIDED, "head-001", ignored -> true);
+    void allowsWhenApprovalAndPolicyAllow() {
+        AuthorizationService service = new AuthorizationService(
+                ignored -> Phase6AuthorizationPolicy.Decision.allowed("auth-001"));
 
-        assertEquals(AuthorizationDecision.Outcome.ALLOW, decision.outcome());
-        assertTrue(decision.usableAt(DECIDED));
-        assertEquals("authority-001", decision.authorityReference());
-        assertEquals("delegation-001", decision.delegationReference());
+        AuthorizationService.AuthorizationResult result = service.authorize(proposal(), approval(true), request());
+
+        assertTrue(result.allowed());
+        assertEquals("auth-001", result.authorizationReference());
     }
 
     @Test
-    void deniesWhenPolicyRejects() {
-        AuthorizationDecision decision = new AuthorizationService().resolve(
-                request(), DECIDED, "head-001", ignored -> false);
+    void deniesWhenApprovalRejects() {
+        AuthorizationService service = new AuthorizationService(
+                ignored -> Phase6AuthorizationPolicy.Decision.allowed("auth-001"));
 
-        assertEquals(AuthorizationDecision.Outcome.DENY, decision.outcome());
-        assertFalse(decision.usableAt(DECIDED));
+        AuthorizationService.AuthorizationResult result = service.authorize(proposal(), approval(false), request());
+
+        assertFalse(result.allowed());
+        assertEquals("proposal not approved", result.reason());
     }
 
     @Test
-    void deniesOutsideValidityWindow() {
-        Instant afterExpiry = Instant.parse("2026-09-01T00:00:00Z");
-        AuthorizationDecision decision = new AuthorizationService().resolve(
-                request(), afterExpiry, "head-001", ignored -> true);
+    void deniesWhenExternalPolicyRejects() {
+        AuthorizationService service = new AuthorizationService(
+                ignored -> Phase6AuthorizationPolicy.Decision.denied("policy-001", "resource not authorized"));
 
-        assertEquals(AuthorizationDecision.Outcome.DENY, decision.outcome());
-        assertFalse(decision.usableAt(afterExpiry));
+        AuthorizationService.AuthorizationResult result = service.authorize(proposal(), approval(true), request());
+
+        assertFalse(result.allowed());
+        assertEquals("policy-001", result.authorizationReference());
     }
 
     @Test
-    void reviewAndDeferRemainDistinctFromDeny() {
-        AuthorizationService service = new AuthorizationService();
+    void deniesWhenActorActionScopeOrContextDoesNotMatchProposal() {
+        AuthorizationService service = new AuthorizationService(
+                ignored -> Phase6AuthorizationPolicy.Decision.allowed("auth-001"));
 
-        assertEquals(AuthorizationDecision.Outcome.REVIEW,
-                service.review(request(), DECIDED, "head-001", "dual approval required").outcome());
-        assertEquals(AuthorizationDecision.Outcome.DEFER,
-                service.defer(request(), DECIDED, "head-001", "budget confirmation pending").outcome());
+        AuthorizationRequest actorMismatch = new AuthorizationRequest(
+                "worker-002", "publisher", "authority-001", "farm-A", "EXECUTE_WORK", "org-A", AUTHORIZED, "resource-001");
+        AuthorizationService.AuthorizationResult result = service.authorize(proposal(), approval(true), actorMismatch);
+
+        assertFalse(result.allowed());
+        assertEquals("actor-mismatch", result.reason());
+    }
+
+    @Test
+    void deniesWhenAuthorizationPredatesProposal() {
+        AuthorizationService service = new AuthorizationService(
+                ignored -> Phase6AuthorizationPolicy.Decision.allowed("auth-001"));
+
+        AuthorizationRequest early = new AuthorizationRequest(
+                "worker-001", "publisher", "authority-001", "farm-A", "EXECUTE_WORK", "org-A", REQUESTED.minusSeconds(1), "resource-001");
+        AuthorizationService.AuthorizationResult result = service.authorize(proposal(), approval(true), early);
+
+        assertFalse(result.allowed());
+        assertEquals("time-invalid", result.reason());
     }
 }
