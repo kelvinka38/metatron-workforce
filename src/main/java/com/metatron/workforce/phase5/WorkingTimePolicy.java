@@ -36,17 +36,11 @@ public record WorkingTimePolicy(
             return AvailabilityStatus.UNKNOWN;
         }
         for (Unavailability exception : unavailability) {
-            if (exception.contains(instant)) {
-                return AvailabilityStatus.UNAVAILABLE;
-            }
+            if (exception.contains(instant)) return AvailabilityStatus.UNAVAILABLE;
         }
         ZonedDateTime local = instant.atZone(zone);
-        if (!isInsideShift(local)) {
-            return AvailabilityStatus.UNAVAILABLE;
-        }
-        if (isInsideBreak(local)) {
-            return AvailabilityStatus.UNAVAILABLE;
-        }
+        if (!isInsideShift(local)) return AvailabilityStatus.UNAVAILABLE;
+        if (isInsideBreak(local)) return AvailabilityStatus.UNAVAILABLE;
         return AvailabilityStatus.AVAILABLE;
     }
 
@@ -54,8 +48,7 @@ public record WorkingTimePolicy(
         DayOfWeek day = value.getDayOfWeek();
         LocalTime time = value.toLocalTime();
         if (contains(shifts.getOrDefault(day, List.of()), time, false)) return true;
-        DayOfWeek previous = day.minus(1);
-        return contains(shifts.getOrDefault(previous, List.of()), time, true);
+        return contains(shifts.getOrDefault(day.minus(1), List.of()), time, true);
     }
 
     private boolean isInsideBreak(ZonedDateTime value) {
@@ -63,15 +56,18 @@ public record WorkingTimePolicy(
                 || contains(breaks.getOrDefault(value.getDayOfWeek().minus(1), List.of()), value.toLocalTime(), true);
     }
 
-    private static boolean contains(List<? extends Window> windows, LocalTime time, boolean overnightOnly) {
+    private static boolean contains(List<? extends Window> windows, LocalTime time, boolean previousDayOvernight) {
         for (Window window : windows) {
             boolean overnight = window.end().isBefore(window.start()) || window.end().equals(window.start());
-            if (overnightOnly && !overnight) continue;
-            if (!overnightOnly && overnight) {
-                if (!time.isBefore(window.start()) || time.isBefore(window.end())) return true;
+            if (previousDayOvernight) {
+                if (overnight && time.isBefore(window.end())) return true;
                 continue;
             }
-            if (!time.isBefore(window.start()) && time.isBefore(window.end())) return true;
+            if (overnight) {
+                if (!time.isBefore(window.start()) || time.isBefore(window.end())) return true;
+            } else if (!time.isBefore(window.start()) && time.isBefore(window.end())) {
+                return true;
+            }
         }
         return false;
     }
