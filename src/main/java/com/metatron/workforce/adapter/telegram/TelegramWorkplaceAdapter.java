@@ -1,6 +1,5 @@
 package com.metatron.workforce.adapter.telegram;
 
-import com.metatron.workforce.phase3.ActorRef;
 import com.metatron.workforce.phase3.Conversation;
 import com.metatron.workforce.phase3.Message;
 import com.metatron.workforce.phase3.WorkplaceCommunicationService;
@@ -26,7 +25,7 @@ public final class TelegramWorkplaceAdapter {
         this.identities = identities;
     }
 
-    public Result accept(TelegramUpdate update) {
+    public synchronized Result accept(TelegramUpdate update) {
         if (update == null || update.message() == null) {
             return Result.ignored("update has no message");
         }
@@ -40,7 +39,7 @@ public final class TelegramWorkplaceAdapter {
         if (message.text() == null || message.text().isBlank()) {
             return Result.ignored("message has no text content");
         }
-        if (!processedUpdates.add(update.updateId())) {
+        if (processedUpdates.contains(update.updateId())) {
             return Result.duplicate(update.updateId());
         }
 
@@ -55,6 +54,7 @@ public final class TelegramWorkplaceAdapter {
                 contentReference,
                 identity.organizationContextId());
 
+        processedUpdates.add(update.updateId());
         return Result.accepted(update.updateId(), materialized, message.text());
     }
 
@@ -67,21 +67,19 @@ public final class TelegramWorkplaceAdapter {
                     .orElseThrow(() -> new IllegalStateException("mapped Telegram conversation is missing"));
         }
 
-        synchronized (conversationsByChat) {
-            existing = conversationsByChat.get(chatId);
-            if (existing != null) {
-                return workplace.conversations().stream()
-                        .filter(item -> item.conversationId().equals(existing))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalStateException("mapped Telegram conversation is missing"));
-            }
-            Conversation created = workplace.startConversation(
-                    identity.human(),
-                    List.of(identity.human(), identity.target()),
-                    identity.organizationContextId());
-            conversationsByChat.put(chatId, created.conversationId());
-            return created;
+        existing = conversationsByChat.get(chatId);
+        if (existing != null) {
+            return workplace.conversations().stream()
+                    .filter(item -> item.conversationId().equals(existing))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("mapped Telegram conversation is missing"));
         }
+        Conversation created = workplace.startConversation(
+                identity.human(),
+                List.of(identity.human(), identity.target()),
+                identity.organizationContextId());
+        conversationsByChat.put(chatId, created.conversationId());
+        return created;
     }
 
     public record Result(
