@@ -15,3 +15,8 @@ Thumbs.db
 # Local environment
 .env
 .env.*
+
+# Generated runtime evidence/state
+/runtime-evidence/production/
+/runtime-state/production/
+/runtime-evidence/task-001/
