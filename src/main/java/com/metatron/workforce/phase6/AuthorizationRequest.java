@@ -1,50 +1,22 @@
 package com.metatron.workforce.phase6;
 
 import java.time.Instant;
-import java.util.Objects;
 
-/** Material authorization request evaluated before execution admission. */
 public record AuthorizationRequest(
-        String requestId,
         String actorId,
-        String roleContext,
-        String action,
+        String roleId,
+        String authorityId,
         String scope,
-        String organizationContextId,
-        String authorityReference,
-        String delegationReference,
-        String policyReference,
-        Instant requestedAt,
-        Instant validFrom,
-        Instant validUntil,
-        String evidenceReference) {
-
+        String action,
+        String contextId,
+        Instant at,
+        String resourceId) {
     public AuthorizationRequest {
-        requireText(requestId, "requestId");
-        requireText(actorId, "actorId");
-        requireText(roleContext, "roleContext");
-        requireText(action, "action");
-        requireText(scope, "scope");
-        requireText(organizationContextId, "organizationContextId");
-        requireText(authorityReference, "authorityReference");
-        requireText(policyReference, "policyReference");
-        Objects.requireNonNull(requestedAt, "requestedAt");
-        Objects.requireNonNull(validFrom, "validFrom");
-        requireText(evidenceReference, "evidenceReference");
-        if (validUntil != null && validUntil.isBefore(validFrom)) {
-            throw new IllegalArgumentException("validUntil must not precede validFrom");
-        }
+        require(actorId, "actorId"); require(roleId, "roleId"); require(authorityId, "authorityId");
+        require(scope, "scope"); require(action, "action"); require(contextId, "contextId"); require(resourceId, "resourceId");
+        if (at == null) throw new IllegalArgumentException("at must not be null");
     }
-
-    public boolean validAt(Instant instant) {
-        Objects.requireNonNull(instant, "instant");
-        return !instant.isBefore(validFrom)
-                && (validUntil == null || instant.isBefore(validUntil));
-    }
-
-    private static void requireText(String value, String field) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(field + " must not be blank");
-        }
+    private static void require(String value, String name) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " must not be blank");
     }
 }
