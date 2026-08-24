@@ -2,6 +2,9 @@ package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.MetatronInteraction;
+import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
+import com.metatron.workforce.phase3.ActorRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Objects;
 
-/** Public Telegram webhook boundary. Valid updates are acknowledged exactly once to prevent Telegram retries. */
+/** Public Telegram transport boundary. Transport is normalized before entering the canonical Metatron interaction boundary. */
 @RestController
 @RequestMapping("/telegram")
 @ConditionalOnProperty(name = {"telegram.bot-token", "telegram.webhook-secret"})
@@ -25,7 +28,7 @@ public final class TelegramWebhookController {
 
     private final TelegramWebhookAdapter adapter;
     private final TelegramBotGateway gateway;
-    private final TelegramIntelligenceResponder intelligence;
+    private final MetatronInteractionOrchestrator orchestrator;
     private final ObjectMapper objectMapper;
 
     public TelegramWebhookController(
@@ -43,9 +46,19 @@ public final class TelegramWebhookController {
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
         this.adapter = new TelegramWebhookAdapter(secret);
         this.gateway = new TelegramBotGateway(botToken, java.net.http.HttpClient.newHttpClient(), objectMapper);
-        this.intelligence = new TelegramIntelligenceResponder(
+        TelegramIntelligenceResponder intelligence = new TelegramIntelligenceResponder(
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
                 openAiModel, googleModel, anthropicModel, objectMapper);
+        this.orchestrator = new MetatronInteractionOrchestrator(interaction -> {
+            String answer = intelligence.respond(
+                    interaction.human().actorId(),
+                    interaction.text(),
+                    interaction.externalMessageReference());
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(),
+                    answer,
+                    "interaction:" + interaction.externalMessageReference());
+        });
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
 
@@ -64,12 +77,21 @@ public final class TelegramWebhookController {
         LOG.info("telegram_received update_id={} sender={} text_length={}", updateId, senderId, text.length());
 
         try {
-            String answer = intelligence.respond(inbound.senderId(), inbound.text());
-            String safeAnswer = validateAnswer(inbound.text(), answer);
-            LOG.info("telegram_answer_ready update_id={} sender={} answer_length={}", updateId, senderId, safeAnswer.length());
+            MetatronInteraction interaction = new MetatronInteraction(
+                    new ActorRef(inbound.senderId(), ActorRef.ActorType.HUMAN),
+                    new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
+                    "telegram",
+                    "telegram:" + inbound.senderId(),
+                    "update:" + updateId,
+                    inbound.text());
+
+            MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
+            String safeAnswer = validateAnswer(inbound.text(), response.text());
+            LOG.info("telegram_answer_ready update_id={} sender={} answer_length={} provenance={}",
+                    updateId, senderId, safeAnswer.length(), response.provenanceReference());
             gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
         } catch (RuntimeException e) {
-            LOG.error("telegram_intelligence_failed update_id=" + updateId, e);
+            LOG.error("telegram_interaction_failed update_id=" + updateId, e);
             try {
                 gateway.send(new ChannelMessage(
                         "telegram", inbound.senderId(),
@@ -79,22 +101,15 @@ public final class TelegramWebhookController {
             }
         }
 
-        // Telegram must receive 2xx for a valid update; otherwise it retries the same update.
         return ResponseEntity.ok().build();
     }
 
     static String validateAnswer(String inbound, String answer) {
-        if (answer == null || answer.isBlank()) {
-            throw new IllegalStateException("telegram_answer_empty");
-        }
+        if (answer == null || answer.isBlank()) throw new IllegalStateException("telegram_answer_empty");
         String normalizedInbound = normalize(inbound);
         String normalizedAnswer = normalize(answer);
-        if (normalizedAnswer.equals(normalizedInbound)) {
-            throw new IllegalStateException("telegram_response_echo");
-        }
-        if (normalizedAnswer.startsWith("workforce received:")) {
-            throw new IllegalStateException("telegram_legacy_echo");
-        }
+        if (normalizedAnswer.equals(normalizedInbound)) throw new IllegalStateException("telegram_response_echo");
+        if (normalizedAnswer.startsWith("workforce received:")) throw new IllegalStateException("telegram_legacy_echo");
         return answer.trim();
     }
 
@@ -103,12 +118,8 @@ public final class TelegramWebhookController {
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)
-    ResponseEntity<Void> handleSecurityException() {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-    }
+    ResponseEntity<Void> handleSecurityException() { return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build(); }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Void> handleInvalidUpdate() {
-        return ResponseEntity.badRequest().build();
-    }
+    ResponseEntity<Void> handleInvalidUpdate() { return ResponseEntity.badRequest().build(); }
 }
