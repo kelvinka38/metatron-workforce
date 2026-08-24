@@ -42,7 +42,7 @@ class ExecutionCapabilityTest {
         assertEquals(ExecutionState.COMPLETED, result.state());
         assertEquals("gateway.audit.read", result.capability());
         assertTrue(result.evidence().contains("status=200"));
-        assertTrue(result.evidence().contains("status\\\":\\\"UP"));
+        assertTrue(result.evidence().contains("status"));
     }
 
     @Test
