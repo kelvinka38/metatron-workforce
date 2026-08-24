@@ -27,7 +27,7 @@ public final class AuthorizationService {
         if (!proposal.scope().equals(request.scope())) return AuthorizationResult.denied("scope-mismatch", "authorization scope differs from proposal");
         if (!proposal.contextId().equals(request.contextId())) return AuthorizationResult.denied("context-mismatch", "authorization context differs from proposal");
         if (!approval.approved()) return AuthorizationResult.denied(approval.authorityReference(), "proposal not approved");
-        if (request.at().isBefore(approval.approvedAt())) return AuthorizationResult.denied("approval-not-effective", "approval not yet effective");
+        if (request.at().isBefore(approval.decidedAt())) return AuthorizationResult.denied("approval-not-effective", "approval not yet effective");
         if (request.at().isBefore(proposal.requestedAt())) return AuthorizationResult.denied("time-invalid", "authorization predates proposal");
         var decision = policy.authorize(request);
         return decision.allowed()
@@ -37,7 +37,7 @@ public final class AuthorizationService {
 
     /**
      * Historical resolve surface retained as a compatibility adapter. It never
-     * bypasses the supplied policy predicate, actor/context data, or validity window.
+     * bypasses the supplied policy predicate or authorization validity window.
      */
     @Deprecated
     public AuthorizationDecision resolve(
@@ -50,12 +50,13 @@ public final class AuthorizationService {
         Objects.requireNonNull(decidedBy, "decidedBy");
         Objects.requireNonNull(externalPolicy, "externalPolicy");
 
-        boolean withinWindow = !evaluatedAt.isBefore(request.at());
-        boolean policyAllowed = withinWindow && externalPolicy.test(request);
+        boolean beforeEffective = evaluatedAt.isBefore(request.effectiveAtIfLegacy().orElse(request.at()));
+        boolean expired = request.expiresAtIfLegacy().isPresent() && !evaluatedAt.isBefore(request.expiresAtIfLegacy().get());
+        boolean policyAllowed = !beforeEffective && !expired && externalPolicy.test(request);
         AuthorizationDecision.Outcome outcome = policyAllowed ? AuthorizationDecision.Outcome.ALLOW : AuthorizationDecision.Outcome.DENY;
         String reason;
-        if (!withinWindow) reason = "authorization not yet effective";
-        else if (request.expiresAtIfLegacy().isPresent() && !evaluatedAt.isBefore(request.expiresAtIfLegacy().get())) reason = "authorization expired";
+        if (beforeEffective) reason = "authorization not yet effective";
+        else if (expired) reason = "authorization expired";
         else if (!policyAllowed) reason = "external policy denied";
         else reason = "authorized";
 
