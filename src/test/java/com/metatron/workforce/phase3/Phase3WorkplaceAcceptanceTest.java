@@ -43,7 +43,7 @@ class Phase3WorkplaceAcceptanceTest {
         assertEquals(HUMAN, request.sender());
         assertEquals(HEAD, response.sender());
         assertEquals("org-1", response.organizationContextId());
-        assertTrue(response.authorizationId().startsWith("auth-head-1-worker-1"));
+        assertTrue(response.authorizationId().startsWith("auth-head-1-human-1"));
         assertEquals(5, service.messages().size());
     }
 
