@@ -23,19 +23,19 @@ public final class HetznerReadAdapter implements ToolAdapter {
 
     @Override public ToolResult execute(ToolRequest request) {
         Objects.requireNonNull(request, "request");
-        if (token.isEmpty()) return ToolResult.failure("hetzner_token_missing");
+        if (token.isEmpty()) return ToolResult.failure(request, "hetzner_token_missing");
         String path = request.target().trim();
         if (!path.startsWith("/servers") && !path.startsWith("/server_types") && !path.startsWith("/datacenters") && !path.startsWith("/locations"))
-            return ToolResult.failure("invalid_hetzner_path");
-        if (path.contains("..") || path.contains("//")) return ToolResult.failure("invalid_hetzner_path");
+            return ToolResult.failure(request, "invalid_hetzner_path");
+        if (path.contains("..") || path.contains("//")) return ToolResult.failure(request, "invalid_hetzner_path");
         try {
             URI uri = URI.create("https://api.hetzner.cloud/v1" + path);
             HttpRequest httpRequest = HttpRequest.newBuilder(uri).timeout(timeout)
                     .header("Authorization", "Bearer " + token)
                     .header("Accept", "application/json").GET().build();
             HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) return ToolResult.failure("http_status:" + response.statusCode());
-            return ToolResult.success(response.body());
-        } catch (Exception e) { return ToolResult.failure("hetzner_request_failed"); }
+            if (response.statusCode() < 200 || response.statusCode() >= 300) return ToolResult.failure(request, "http_status:" + response.statusCode());
+            return ToolResult.success(request, response.body());
+        } catch (Exception e) { return ToolResult.failure(request, "hetzner_request_failed"); }
     }
 }
