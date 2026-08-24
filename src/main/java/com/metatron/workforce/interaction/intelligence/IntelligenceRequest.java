@@ -48,9 +48,6 @@ public record IntelligenceRequest(
             throw new IllegalArgumentException("requiredCapability and requiredOutput must not be blank");
         }
         if (maxProviders < 1) throw new IllegalArgumentException("maxProviders must be >= 1");
-        if (collaborationMode == CollaborationMode.SINGLE && maxProviders != 1) {
-            throw new IllegalArgumentException("SINGLE collaboration requires maxProviders=1");
-        }
         if (collaborationMode != CollaborationMode.SINGLE && maxProviders < 2) {
             throw new IllegalArgumentException("multi-provider collaboration requires maxProviders>=2");
         }
