@@ -22,7 +22,7 @@ env:
 
 jobs:
   test-and-build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,66 +48,47 @@ jobs:
 
   deploy-production:
     needs: test-and-build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure SSH
+      - name: Deploy to local production runtime
         env:
-          PROD_SSH_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-          PROD_KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          test -n "$PROD_SSH_KEY"
-          test -n "$PROD_KNOWN_HOSTS"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/metatron_prod
-          chmod 600 ~/.ssh/metatron_prod
-          printf '%s\n' "$PROD_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-
-      - name: Package source
-        run: |
-          set -euo pipefail
-          tar --exclude='.git' --exclude='.env' --exclude='.gradle' --exclude='build' -czf metatron-workforce-${GITHUB_SHA}.tgz .
-
-      - name: Upload source to production
-        env:
-          PROD_HOST: ${{ secrets.PROD_HOST }}
-        run: |
-          set -euo pipefail
-          test -n "$PROD_HOST"
-          scp -i ~/.ssh/metatron_prod metatron-workforce-${GITHUB_SHA}.tgz root@"$PROD_HOST":/tmp/metatron-workforce-${GITHUB_SHA}.tgz
-
-      - name: Deploy and verify production
-        env:
-          PROD_HOST: ${{ secrets.PROD_HOST }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          test -n "$PROD_HOST"
-          ssh -i ~/.ssh/metatron_prod root@"$PROD_HOST" "SHA='$SHA' bash -s" <<'REMOTE'
-          set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          ARCHIVE=/tmp/metatron-workforce-${SHA}.tgz
-          test -f "$BASE/.env"
-          test -f "$ARCHIVE"
 
+          BASE=/opt/metatron/metatron-workforce
+          WORKSPACE="$GITHUB_WORKSPACE"
+
+          test -d "$BASE"
+          test -f "$BASE/.env"
+          test -f "$WORKSPACE/deploy/docker-compose.yml"
+
+          echo "=== SYNC SOURCE TO PRODUCTION ==="
           mkdir -p "$BASE"
-          find "$BASE" -mindepth 1 -maxdepth 1 ! -name .env ! -name runtime-state ! -name runtime-evidence -exec rm -rf {} +
-          tar -xzf "$ARCHIVE" -C "$BASE"
-          rm -f "$ARCHIVE"
+          find "$BASE" -mindepth 1 -maxdepth 1 \
+            ! -name .env \
+            ! -name runtime-state \
+            ! -name runtime-evidence \
+            -exec rm -rf {} +
+
+          cp -a "$WORKSPACE/." "$BASE/"
 
           cd "$BASE"
           export METATRON_VERSION=0.1.0
           export METATRON_COMMIT_SHA="$SHA"
           export METATRON_ENVIRONMENT=production
 
+          echo "=== VALIDATE COMPOSE ==="
           docker compose --env-file .env -f deploy/docker-compose.yml config >/dev/null
+
+          echo "=== BUILD + START PRODUCTION ==="
           docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
+          echo "=== WAIT FOR HEALTH ==="
           healthy=false
           for i in $(seq 1 45); do
             if curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
@@ -116,6 +97,7 @@ jobs:
             fi
             sleep 2
           done
+
           if [ "$healthy" != true ]; then
             docker compose --env-file .env -f deploy/docker-compose.yml logs --tail 200 workforce
             exit 1
@@ -129,4 +111,3 @@ jobs:
           echo "DEPLOYED_SHA=$deployed_sha"
           echo "IMAGE=$(docker inspect deploy-workforce-1 --format '{{.Config.Image}}')"
           echo "HEALTH=$(curl -fsS http://127.0.0.1:8080/actuator/health)"
-          REMOTE
