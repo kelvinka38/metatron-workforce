@@ -3,6 +3,7 @@ package com.metatron.workforce.interaction.channel;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -12,9 +13,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Objects;
 
-/** Public Telegram webhook boundary. */
+/** Public Telegram webhook boundary. Enabled only when both Telegram credentials are configured. */
 @RestController
 @RequestMapping("/telegram")
+@ConditionalOnProperty(name = {"telegram.bot-token", "telegram.webhook-secret"})
 public final class TelegramWebhookController {
     private final TelegramWebhookAdapter adapter;
     private final TelegramBotGateway gateway;
