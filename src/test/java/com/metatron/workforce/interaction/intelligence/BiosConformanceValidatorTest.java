@@ -98,7 +98,7 @@ class BiosConformanceValidatorTest {
             String authority,
             String... evidence) {
         CollaborationMode collaboration = "CRITICAL".equals(consequence)
-                ? CollaborationMode.PARALLEL_SYNTHESIS
+                ? CollaborationMode.CONSENSUS
                 : CollaborationMode.SINGLE;
         int maxProviders = "CRITICAL".equals(consequence) ? 2 : 1;
         return new IntelligenceRequest(
