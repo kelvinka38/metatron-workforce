@@ -88,7 +88,7 @@ public final class TelegramIntelligenceResponder {
                 IntelligenceMode.CASUAL,
                 CollaborationMode.SINGLE,
                 text,
-                "Telegram natural-language interaction.",
+                SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.\n",
                 List.of(),
                 "conversation",
                 "LOW",
