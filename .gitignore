@@ -20,3 +20,5 @@ Thumbs.db
 /runtime-evidence/production/
 /runtime-state/production/
 /runtime-evidence/task-001/
+
+.env
