@@ -75,10 +75,10 @@ jobs:
             ! -name runtime-evidence \
             -exec rm -rf {} +
 
-          # Do not preserve source timestamps/ownership: the production workspace
-          # is intentionally runner-owned, and cp -a can fail on the destination
-          # directory when preserving metadata is not permitted.
-          cp -a --no-preserve=timestamps,ownership "$WORKSPACE/." "$BASE/"
+          # Copy source without archive metadata preservation. The production
+          # workspace is runner-owned; GNU cp -a metadata preservation is not
+          # required and can fail on files/directories with restricted metadata.
+          cp -r "$WORKSPACE/." "$BASE/"
 
           cd "$BASE"
           export METATRON_VERSION=0.1.0
