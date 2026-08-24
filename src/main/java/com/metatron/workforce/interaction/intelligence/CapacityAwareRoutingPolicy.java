@@ -42,7 +42,7 @@ public final class CapacityAwareRoutingPolicy implements IntelligenceRoutingPoli
                 .thenComparing(entry -> entry.provider().name());
 
         return capacity.values().stream()
-                .filter(this::isUsable)
+                .filter(entry -> isUsable(entry.provider()))
                 .sorted(ranking)
                 .limit(request.maxProviders())
                 .map(ProviderCapacity::provider)
@@ -51,6 +51,9 @@ public final class CapacityAwareRoutingPolicy implements IntelligenceRoutingPoli
 
     private boolean isUsable(LlmProvider provider) {
         ProviderCapacity entry = capacity.get(provider);
-        return entry != null && entry.available() && entry.availableConcurrency() > 0;
+        return entry != null
+                && entry.available()
+                && entry.availableConcurrency() > 0
+                && entry.availableTokens() > 0;
     }
 }
