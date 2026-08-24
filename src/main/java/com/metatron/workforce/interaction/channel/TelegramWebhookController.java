@@ -2,9 +2,10 @@ package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.adapter.telegram.ConfiguredTelegramIdentityResolver;
+import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
-import com.metatron.workforce.phase3.ActorRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,11 +30,14 @@ public final class TelegramWebhookController {
     private final TelegramWebhookAdapter adapter;
     private final TelegramBotGateway gateway;
     private final MetatronInteractionOrchestrator orchestrator;
+    private final TelegramIdentityResolver identityResolver;
     private final ObjectMapper objectMapper;
 
     public TelegramWebhookController(
             @Value("${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}") String secret,
             @Value("${telegram.bot-token:${TELEGRAM_BOT_TOKEN:}}") String botToken,
+            @Value("${TELEGRAM_ALLOWED_USER_ID:}") String allowedTelegramUserId,
+            @Value("${METATRON_ORGANIZATION_ID:}") String organizationContextId,
             @Value("${OPENAI_API_KEY:}") String openAiApiKey,
             @Value("${GEMINI_API_KEY:}") String googleApiKey,
             @Value("${ANTHROPIC_API_KEY:}") String anthropicApiKey,
@@ -44,8 +48,28 @@ public final class TelegramWebhookController {
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
+        if (allowedTelegramUserId == null || allowedTelegramUserId.isBlank()) {
+            throw new IllegalStateException("TELEGRAM_ALLOWED_USER_ID_MISSING");
+        }
+        if (organizationContextId == null || organizationContextId.isBlank()) {
+            throw new IllegalStateException("METATRON_ORGANIZATION_ID_MISSING");
+        }
+
+        long configuredTelegramUserId;
+        try {
+            configuredTelegramUserId = Long.parseLong(allowedTelegramUserId.trim());
+        } catch (NumberFormatException failure) {
+            throw new IllegalStateException("TELEGRAM_ALLOWED_USER_ID_INVALID", failure);
+        }
+
         this.adapter = new TelegramWebhookAdapter(secret);
         this.gateway = new TelegramBotGateway(botToken, java.net.http.HttpClient.newHttpClient(), objectMapper);
+        this.identityResolver = new ConfiguredTelegramIdentityResolver(
+                configuredTelegramUserId,
+                new com.metatron.workforce.phase3.ActorRef("telegram-human", com.metatron.workforce.phase3.ActorRef.ActorType.HUMAN),
+                new com.metatron.workforce.phase3.ActorRef("metatron-workforce", com.metatron.workforce.phase3.ActorRef.ActorType.WORKER),
+                organizationContextId.trim());
+
         TelegramIntelligenceResponder intelligence = new TelegramIntelligenceResponder(
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
                 openAiModel, googleModel, anthropicModel, objectMapper);
@@ -69,26 +93,30 @@ public final class TelegramWebhookController {
         JsonNode update = objectMapper.readTree(body);
         JsonNode message = update.path("message");
         JsonNode chat = message.path("chat");
-        String senderId = chat.path("id").asText("");
+        JsonNode from = message.path("from");
+        long telegramUserId = from.path("id").asLong(-1L);
+        String chatId = chat.path("id").asText("");
         String text = message.path("text").asText("");
         long updateId = update.path("update_id").asLong(-1L);
 
-        ChannelMessage inbound = adapter.receive(suppliedSecret, senderId, text);
-        LOG.info("telegram_received update_id={} sender={} text_length={}", updateId, senderId, text.length());
+        TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
+        ChannelMessage inbound = adapter.receive(suppliedSecret, chatId, text);
+        LOG.info("telegram_received update_id={} telegram_user={} chat={} text_length={}",
+                updateId, telegramUserId, chatId, text.length());
 
         try {
             MetatronInteraction interaction = new MetatronInteraction(
-                    new ActorRef(inbound.senderId(), ActorRef.ActorType.HUMAN),
-                    new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
-                    "telegram",
-                    "telegram:" + inbound.senderId(),
+                    identity.human(),
+                    identity.target(),
+                    identity.organizationContextId(),
+                    "telegram:" + chatId,
                     "update:" + updateId,
                     inbound.text());
 
             MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
             String safeAnswer = validateAnswer(inbound.text(), response.text());
-            LOG.info("telegram_answer_ready update_id={} sender={} answer_length={} provenance={}",
-                    updateId, senderId, safeAnswer.length(), response.provenanceReference());
+            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={}",
+                    updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference());
             gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
         } catch (RuntimeException e) {
             LOG.error("telegram_interaction_failed update_id=" + updateId, e);
@@ -115,6 +143,14 @@ public final class TelegramWebhookController {
 
     private static String normalize(String value) {
         return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static long parseChatId(String chatId) {
+        try {
+            return Long.parseLong(chatId);
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException("telegram_chat_id_invalid", failure);
+        }
     }
 
     @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)
