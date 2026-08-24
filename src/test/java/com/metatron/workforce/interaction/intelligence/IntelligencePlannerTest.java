@@ -54,9 +54,9 @@ class IntelligencePlannerTest {
     }
 
     @Test
-    void singleModeRejectsMultipleProviders() {
-        IntelligenceRequest request = request(IntelligenceMode.REASONING, CollaborationMode.SINGLE, 2);
-        assertThrows(IllegalArgumentException.class, () -> planner(List.of(LlmProvider.OPENAI)).plan(request));
+    void singleModeRequiresSingleProviderBudget() {
+        assertThrows(IllegalArgumentException.class,
+                () -> request(IntelligenceMode.REASONING, CollaborationMode.SINGLE, 2));
     }
 
     private static IntelligencePlanner planner(List<LlmProvider> providers) {
@@ -66,10 +66,18 @@ class IntelligencePlannerTest {
     private static IntelligenceRequest request(IntelligenceMode mode, CollaborationMode collaborationMode, int maxProviders) {
         return new IntelligenceRequest(
                 "test-request",
+                "test-worker",
                 mode,
                 collaborationMode,
-                "test task",
+                "test objective",
                 "test context",
+                List.of("evidence:test"),
+                "analysis",
+                "medium",
+                "10s",
+                "test-budget",
+                "test-authority",
+                "governed result",
                 List.of(),
                 maxProviders);
     }
