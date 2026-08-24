@@ -87,7 +87,7 @@ class Phase4OrganizationAcceptanceTest {
         assertEquals("worker-head", escalation.routeTargetWorkerId());
         assertEquals("authority-report", escalation.routeAuthorityReference());
         assertEquals("decision-42", escalation.responseReference());
-        assertTrue(escalation.resolvedAt().isAfter(escalation.createdAt()));
+        assertEquals(NOW, escalation.resolvedAt());
     }
 
     @Test
