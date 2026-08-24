@@ -28,14 +28,14 @@ public final class HttpToolAdapter implements ToolAdapter {
         try {
             URI uri = URI.create(request.target());
             if (!"https".equalsIgnoreCase(uri.getScheme()) && !"http".equalsIgnoreCase(uri.getScheme()))
-                return ToolResult.failure("unsupported_scheme");
+                return ToolResult.failure(request, "unsupported_scheme");
             HttpRequest httpRequest = HttpRequest.newBuilder(uri).timeout(timeout).GET().build();
             HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300)
-                return ToolResult.failure("http_status:" + response.statusCode());
-            return ToolResult.success(response.body());
+                return ToolResult.failure(request, "http_status:" + response.statusCode());
+            return ToolResult.success(request, response.body());
         } catch (Exception e) {
-            return ToolResult.failure("request_failed");
+            return ToolResult.failure(request, "request_failed");
         }
     }
 }
