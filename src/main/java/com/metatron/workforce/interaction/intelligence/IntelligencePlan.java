@@ -21,9 +21,8 @@ public record IntelligencePlan(
         providers = List.copyOf(providers);
         if (requestId.isBlank()) throw new IllegalArgumentException("requestId must not be blank");
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one provider is required for an intelligence plan");
-        if (collaborationMode == CollaborationMode.SINGLE && providers.size() != 1) {
-            throw new IllegalArgumentException("SINGLE plan must contain exactly one provider");
-        }
+        // SINGLE means one successful response is sufficient. Multiple providers are
+        // therefore valid ordered failover candidates and are tried until one succeeds.
         if (collaborationMode != CollaborationMode.SINGLE && providers.size() < 2) {
             throw new IllegalArgumentException("multi-provider plan requires at least two providers");
         }
