@@ -55,7 +55,7 @@ jobs:
           METATRON_ENVIRONMENT: ci-deployed-runtime
           METATRON_RUNTIME_STATE_DIR: runtime-state/production
         run: |
-          java -jar build/libs/metatron-workforce-0.1.0.jar
+          java -jar build/libs/metatron-workforce-0.1.0.jar --g12-evidence
           test -d runtime-evidence/production
           test -d runtime-state/production
           test "$(find runtime-state/production -type f -name '*.properties' | wc -l)" -ge 2
