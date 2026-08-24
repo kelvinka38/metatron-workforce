@@ -35,8 +35,14 @@ public class MetatronWorkforceApplication {
 
     public static void main(String[] args) throws Exception {
         if (isG12EvidenceMode(args)) {
-            captureProductionEvidence();
-            return;
+            try {
+                captureProductionEvidence();
+                return;
+            } catch (Throwable failure) {
+                System.err.println("G12_EVIDENCE_EXECUTION_FAILED");
+                failure.printStackTrace(System.err);
+                throw failure;
+            }
         }
         SpringApplication.run(MetatronWorkforceApplication.class, args);
     }
@@ -66,7 +72,6 @@ public class MetatronWorkforceApplication {
         RuntimeInstance running = runtime.createWorkerRuntime("WORKER-PROD-001");
         running = runtime.startRuntime(running.runtimeId());
 
-        // Replacement runtime object proves that durable state is not coupled to the first registry.
         WorkforceRuntime replacement = new WorkforceRuntime(stateRoot);
         RuntimeInstance recovered = replacement.recoverRuntime(running.runtimeId());
 
