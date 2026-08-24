@@ -23,9 +23,8 @@ public final class IntelligencePlanner {
         if (providers.size() > request.maxProviders()) {
             throw new IllegalStateException("routing policy exceeded request provider budget: " + request.requestId());
         }
-        if (request.collaborationMode() == CollaborationMode.SINGLE && providers.size() != 1) {
-            throw new IllegalStateException("routing policy returned multiple providers for SINGLE request: " + request.requestId());
-        }
+        // SINGLE means one successful answer is required; multiple providers are
+        // ordered failover candidates and are therefore valid.
         if (request.collaborationMode() != CollaborationMode.SINGLE && providers.size() < 2) {
             throw new IllegalStateException("routing policy returned insufficient providers for collaboration: " + request.requestId());
         }
