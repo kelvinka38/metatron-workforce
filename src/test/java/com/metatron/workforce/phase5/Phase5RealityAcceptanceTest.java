@@ -30,8 +30,9 @@ class Phase5RealityAcceptanceTest {
         assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-05T03:00:00Z")));
         assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-05T05:00:00Z")));
         assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-05T09:00:00Z")));
-        assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-06T03:00:00Z")));
-        assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-06T04:00:00Z")));
+        assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-02T15:00:00Z")));
+        assertEquals(AvailabilityStatus.AVAILABLE, policy.resolve(Instant.parse("2026-01-02T23:00:00Z")));
+        assertEquals(AvailabilityStatus.UNAVAILABLE, policy.resolve(Instant.parse("2026-01-03T00:00:00Z")));
     }
 
     @Test
