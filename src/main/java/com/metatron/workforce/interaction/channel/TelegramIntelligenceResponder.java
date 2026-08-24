@@ -87,6 +87,7 @@ public final class TelegramIntelligenceResponder {
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         LlmProvider requested = configuredProvider.isBlank() ? null : LlmProvider.valueOf(configuredProvider);
         List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
+        int maxProviders = requested == null ? 3 : 1;
 
         IntelligenceRequest request = new IntelligenceRequest(
                 "telegram-" + senderId + "-" + System.nanoTime(),
@@ -103,7 +104,7 @@ public final class TelegramIntelligenceResponder {
                 "telegram-human",
                 "direct natural-language answer",
                 requestedProviders,
-                1
+                maxProviders
         );
         return fabric.execute(request).text();
     }
