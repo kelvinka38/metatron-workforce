@@ -19,13 +19,12 @@ class IntelligenceFabricFailoverTest {
             return new LlmResponse(provider, "test-model", "fallback-answer", "ref-2");
         };
 
+        IntelligencePlanner planner = new IntelligencePlanner(request -> List.of(
+                LlmProvider.OPENAI,
+                LlmProvider.GOOGLE));
+
         IntelligenceFabric fabric = new IntelligenceFabric(
-                request -> new IntelligencePlan(
-                        request.requestId(),
-                        true,
-                        request.mode(),
-                        CollaborationMode.SINGLE,
-                        List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE)),
+                planner,
                 engine,
                 (request, responses) -> responses.getFirst().text(),
                 (request, responses, text) -> { }
@@ -49,6 +48,6 @@ class IntelligenceFabricFailoverTest {
                 2));
 
         assertEquals("fallback-answer", result.text());
-        assertEquals(LlmProvider.GOOGLE, result.providers().getFirst().provider());
+        assertEquals(LlmProvider.GOOGLE, result.providerResults().getFirst().provider());
     }
 }
