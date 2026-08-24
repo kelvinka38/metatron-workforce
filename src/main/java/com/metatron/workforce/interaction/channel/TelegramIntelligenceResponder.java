@@ -23,10 +23,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Function;
 
-/**
- * Natural-language Telegram response path through the shared Intelligence Fabric.
- * Provider choice is configuration/routing policy; Telegram never talks to a vendor directly.
- */
+/** Natural-language Telegram response path through the shared Intelligence Fabric. */
 public final class TelegramIntelligenceResponder {
     private static final String SYSTEM_CONTEXT = """
             You are Metatron Workforce's intelligence layer.
@@ -66,7 +63,6 @@ public final class TelegramIntelligenceResponder {
             clients.add(new AnthropicLlmProviderClient(anthropicApiKey, httpClient, objectMapper));
             capacities.add(new ProviderCapacity(LlmProvider.ANTHROPIC, true, 80, 1, 100_000, 700, 1));
         }
-        if (clients.isEmpty()) throw new IllegalStateException("NO_LLM_PROVIDER_CONFIGURED");
 
         this.configuredProvider = normalizeProvider(provider);
         Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
