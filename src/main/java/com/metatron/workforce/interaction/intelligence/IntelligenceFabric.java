@@ -43,14 +43,14 @@ public final class IntelligenceFabric {
             responses.add(response);
         }
 
-        if (plan.requiresReasoning()) {
-            governance.validate(request, responses);
-        }
-
         String text = plan.collaborationMode() == CollaborationMode.SINGLE
                 ? responses.getFirst().text()
                 : Objects.requireNonNull(synthesizer.synthesize(request, List.copyOf(responses)),
                         "synthesized intelligence result");
+
+        if (plan.requiresReasoning()) {
+            governance.validate(request, List.copyOf(responses), text);
+        }
 
         return new IntelligenceResult(
                 request.requestId(),
