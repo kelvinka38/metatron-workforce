@@ -18,9 +18,9 @@ public final class PolicyToolFabric implements ToolAdapter {
 
     public ToolResult execute(ToolRequest request) {
         Objects.requireNonNull(request, "request");
-        if (!policy.allows(request.capability())) return ToolResult.failure("capability_denied");
+        if (!policy.allows(request.capability())) return ToolResult.failure(request, "capability_denied");
         ToolAdapter adapter = adapters.get(request.capability());
-        if (adapter == null) return ToolResult.failure("capability_unavailable");
+        if (adapter == null) return ToolResult.failure(request, "capability_unavailable");
         return adapter.execute(request);
     }
 }
