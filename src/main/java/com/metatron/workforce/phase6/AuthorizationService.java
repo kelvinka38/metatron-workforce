@@ -24,30 +24,25 @@ public final class AuthorizationService {
 
         // Canonical Phase-6 validation order: proposal identity -> request alignment
         // -> proposal chronology -> approval state/effectiveness -> external policy.
-        // Keep each boundary explicit so a later condition can never mask an earlier one.
+        // The result contract is (allowed, authorizationReference, reason), so
+        // validation codes belong in the reason field, not the reference field.
         if (!proposal.proposalId().equals(approval.proposalId())) {
-            return AuthorizationResult.denied("proposal-mismatch", "approval does not belong to proposal");
+            return AuthorizationResult.denied("AUTH-VALIDATION", "proposal-mismatch");
         }
 
         String alignmentFailure = alignmentFailure(proposal, request);
         if (alignmentFailure != null) {
-            return switch (alignmentFailure) {
-                case "actor-mismatch" -> AuthorizationResult.denied("actor-mismatch", "authorization actor differs from proposal actor");
-                case "action-mismatch" -> AuthorizationResult.denied("action-mismatch", "authorization action differs from proposal");
-                case "scope-mismatch" -> AuthorizationResult.denied("scope-mismatch", "authorization scope differs from proposal");
-                case "context-mismatch" -> AuthorizationResult.denied("context-mismatch", "authorization context differs from proposal");
-                default -> throw new IllegalStateException("unknown alignment failure: " + alignmentFailure);
-            };
+            return AuthorizationResult.denied("AUTH-VALIDATION", alignmentFailure);
         }
 
         if (request.at().isBefore(proposal.requestedAt())) {
-            return AuthorizationResult.denied("time-invalid", "authorization predates proposal");
+            return AuthorizationResult.denied("AUTH-VALIDATION", "time-invalid");
         }
         if (!approval.approved()) {
             return AuthorizationResult.denied(approval.authorityReference(), "proposal not approved");
         }
         if (request.at().isBefore(approval.decidedAt())) {
-            return AuthorizationResult.denied("approval-not-effective", "approval not yet effective");
+            return AuthorizationResult.denied("AUTH-VALIDATION", "approval-not-effective");
         }
 
         var decision = policy.authorize(request);
