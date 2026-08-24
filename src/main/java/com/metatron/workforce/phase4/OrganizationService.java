@@ -87,13 +87,43 @@ public final class OrganizationService {
         if (!decision.allowed()) throw new SecurityException(decision.reason());
     }
 
-    static boolean scopeWithin(String grantedScope, String requestedAction) {
-        if (grantedScope == null || grantedScope.isBlank() || requestedAction == null || requestedAction.isBlank()) return false;
-        String requested = requestedAction.trim();
-        for (String token : grantedScope.split(",")) {
-            String normalized = token.trim();
-            if (normalized.equals("*") || normalized.equals(requested)) return true;
-            if (normalized.endsWith(".*") && requested.startsWith(normalized.substring(0, normalized.length() - 2))) return true;
+    /**
+     * Returns true when every requested scope token is contained by the granted scope.
+     * Supports comma-separated scopes and both hierarchy-style (FOO.*) and action-family
+     * (FOO:*) wildcards. This is used both for bounded delegation validation and for
+     * checking whether a delegated action is covered by a delegation scope.
+     */
+    static boolean scopeWithin(String grantedScope, String requestedScope) {
+        if (grantedScope == null || grantedScope.isBlank() || requestedScope == null || requestedScope.isBlank()) return false;
+
+        String[] grantedTokens = grantedScope.split(",");
+        String[] requestedTokens = requestedScope.split(",");
+
+        for (String requestedToken : requestedTokens) {
+            String requested = requestedToken.trim();
+            if (requested.isBlank()) return false;
+
+            boolean covered = false;
+            for (String grantedToken : grantedTokens) {
+                String granted = grantedToken.trim();
+                if (granted.isBlank()) continue;
+                if (scopeTokenCovers(granted, requested)) {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered) return false;
+        }
+        return true;
+    }
+
+    private static boolean scopeTokenCovers(String granted, String requested) {
+        if (granted.equals("*") || granted.equals(requested)) return true;
+        if (granted.endsWith(".*")) {
+            return requested.startsWith(granted.substring(0, granted.length() - 2));
+        }
+        if (granted.endsWith(":*")) {
+            return requested.startsWith(granted.substring(0, granted.length() - 1));
         }
         return false;
     }
