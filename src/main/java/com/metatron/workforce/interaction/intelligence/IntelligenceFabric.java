@@ -33,14 +33,35 @@ public final class IntelligenceFabric {
         Objects.requireNonNull(request, "request");
         IntelligencePlan plan = planner.plan(request);
         List<LlmResponse> responses = new ArrayList<>();
+        List<RuntimeException> failures = new ArrayList<>();
+
         for (LlmProvider provider : plan.providers()) {
-            LlmResponse response = Objects.requireNonNull(
-                    engine.execute(provider, request),
-                    "intelligence engine response");
-            if (response.provider() != provider) {
-                throw new IllegalStateException("provider attribution mismatch for " + provider);
+            try {
+                LlmResponse response = Objects.requireNonNull(
+                        engine.execute(provider, request),
+                        "intelligence engine response");
+                if (response.provider() != provider) {
+                    throw new IllegalStateException("provider attribution mismatch for " + provider);
+                }
+                responses.add(response);
+
+                // SINGLE mode only needs the first successful provider. In multi-provider
+                // mode we continue so the synthesizer receives every successful response.
+                if (plan.collaborationMode() == CollaborationMode.SINGLE) {
+                    break;
+                }
+            } catch (RuntimeException failure) {
+                failures.add(new IllegalStateException(
+                        "intelligence provider failed: " + provider + ": " + failure.getMessage(),
+                        failure));
             }
-            responses.add(response);
+        }
+
+        if (responses.isEmpty()) {
+            IllegalStateException failure = new IllegalStateException(
+                    "all selected intelligence providers failed: " + plan.providers());
+            failures.forEach(failure::addSuppressed);
+            throw failure;
         }
 
         String text = plan.collaborationMode() == CollaborationMode.SINGLE
