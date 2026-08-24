@@ -20,8 +20,8 @@ This register governs the production-execution path from the frozen integration 
 | ER-010 | Phase 9 | Build production vertical slice | deployment evidence | DONE — deployable JAR + G12 evidence workflow |
 | ER-011 | Phase 10 | Execute load/failure/recovery tests | test results | DONE — acceptance coverage exists; exact-current-HEAD evidence pending |
 | ER-012 | Phase 11 | Production certification | certification evidence | BLOCKED — attributable production deployment evidence pending |
-| ER-013 | Phase 12 | Close Human → Telegram → Intelligence E2E | exact-current-HEAD Telegram E2E evidence | IN PROGRESS |
-| ER-014 | Phase 13 | Close Intelligence → authorized Metatron execution bridge | execution/evidence/Gateway boundary proof | IN PROGRESS |
+| ER-013 | Phase 12 | Close Human → Telegram → Intelligence E2E | exact-current-HEAD Telegram E2E evidence | IN PROGRESS — transport, identity, anti-echo and Intelligence path implemented; live evidence pending |
+| ER-014 | Phase 13 | Close Intelligence → authorized Metatron execution bridge | execution/evidence/Gateway boundary proof | IN PROGRESS — admitted capability dispatch + read-only Gateway audit capability implemented; live Gateway evidence pending |
 | ER-015 | Phase 14 | Re-certify production on exact deployed HEAD | G12 production evidence bundle | BLOCKED — depends on ER-013/ER-014 and deployed evidence |
 
 ## Current Gate
@@ -30,9 +30,20 @@ This register governs the production-execution path from the frozen integration 
 
 The execution runtime implementation is substantially complete. The remaining closure work is integration proof: prove the current HEAD can receive a real Telegram interaction, route it through the canonical Intelligence/BIOS boundary, and—when execution is requested—enter the authorized Metatron execution boundary without bypassing Gateway. Only after those are proven can production certification close.
 
-The canonical repository HEAD at reconciliation time is `3617311479c40574985f25e47634cb1043ce05f8`. Earlier references to `81c1f3ad59c31185c68bd252fc15d0b4aeb60849` are stale and must not be used as current deployment identity.
+The canonical repository HEAD at this reconciliation is `457c83b30a4e93acee067e99beaf9457d04e4714`. Earlier references to `3617311479c40574985f25e47634cb1043ce05f8` and `81c1f3ad59c31185c68bd252fc15d0b4aeb60849` are stale and must not be used as current deployment identity.
 
-The repository contains CI/deployable-runtime evidence mechanisms, but the available GitHub evidence does not yet establish a successful CI run for the exact current HEAD or attributable production deployment evidence. CI evidence must not be silently promoted to production evidence.
+The repository now contains an explicit execution-capability registry, a read-only Gateway audit capability, Telegram wiring for `audit gateway` / `audit g4 gateway`, and an isolated deployment gate that can run without production credentials. These are implementation changes, not production evidence.
+
+The available GitHub evidence does not yet establish a successful CI run for the exact current HEAD or attributable production deployment evidence. CI evidence must not be silently promoted to production evidence.
+
+## Runtime Configuration for Gateway Audit
+
+The Telegram execution path requires:
+
+- `METATRON_GATEWAY_AUDIT_URL` — the exact read-only Gateway audit/health endpoint to invoke.
+- `METATRON_GATEWAY_AUDIT_TOKEN` — optional bearer token when that endpoint requires authentication.
+
+The capability is read-only. It is registered as `gateway.audit.read` and fails closed when the URL is not configured.
 
 ## Remaining Certification Conditions
 
@@ -42,7 +53,7 @@ The repository contains CI/deployable-runtime evidence mechanisms, but the avail
 - fresh deployable JAR PASS on exact current HEAD
 - fresh automated runtime smoke PASS on exact current HEAD
 - real Telegram inbound → Intelligence → Telegram response PASS on exact current HEAD
-- real execution-intent interaction → authorized Metatron execution boundary PASS on exact current HEAD
+- `audit gateway` / `audit g4 gateway` → admitted execution capability → Gateway response PASS on exact current HEAD
 - Gateway authorization remains authoritative for execution
 - evidence/provenance correlation survives the full interaction path
 - evidence bundle commit SHA == deployed/runtime commit SHA
