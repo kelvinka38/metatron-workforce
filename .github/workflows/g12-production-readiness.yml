@@ -64,14 +64,14 @@ jobs:
           for file in deployment-identity.json runtime-health.json execution-summary.json security-decisions.json audit-provenance.json logs.jsonl metrics.json traces.json README.md; do
             test -s "$evidence_root/$file"
           done
-          grep -q '"sameOrganizationVisible":true' "$evidence_root/security-decisions.json"
-          grep -q '"crossOrganizationVisible":false' "$evidence_root/security-decisions.json"
-          grep -q '"runtimeStateAfterReplacement":"RUNNING"' "$evidence_root/deployment-identity.json"
-          grep -q '"runtime_recovery_success":1' "$evidence_root/metrics.json"
-          grep -q '"execution_success":1' "$evidence_root/metrics.json"
+          jq -e '.sameOrganizationVisible == true' "$evidence_root/security-decisions.json"
+          jq -e '.crossOrganizationVisible == false' "$evidence_root/security-decisions.json"
+          jq -e '.runtimeStateAfterReplacement == "RUNNING"' "$evidence_root/deployment-identity.json"
+          jq -e '.runtime_recovery_success == 1' "$evidence_root/metrics.json"
+          jq -e '.execution_success == 1' "$evidence_root/metrics.json"
           test "$(grep -c 'runtime_started' "$evidence_root/logs.jsonl")" -ge 1
-          grep -q '"executionId"' "$evidence_root/traces.json"
-          grep -q '"authorizationId"' "$evidence_root/traces.json"
+          jq -e 'has("executionId")' "$evidence_root/traces.json"
+          jq -e 'has("authorizationId")' "$evidence_root/traces.json"
           find runtime-evidence/production -type f -maxdepth 3 -print
           find runtime-state/production -type f -maxdepth 2 -print
 
