@@ -2,7 +2,8 @@
 
 **Authority:** `METATRON WORKFORCE — MASTER EXECUTION PLAN.md`
 **Phase:** 3 — Workplace / Communication
-**Status:** PENDING
+**Status:** ACCEPTANCE RUNNING
+**Execution contract:** `04_WORKPLACE_EXECUTION_CONTRACT.md`
 
 ## 1. Objective
 
@@ -36,25 +37,27 @@ The implementation must demonstrate:
 
 ## 3. Acceptance checklist
 
-- [ ] Workplace communication model accepted.
-- [ ] Conversation model accepted.
-- [ ] Meeting model accepted.
-- [ ] Institutional work queue model accepted.
-- [ ] Workplace authorization boundary accepted.
-- [ ] Human can communicate with Head.
-- [ ] Human can communicate with authorized subordinate.
-- [ ] Human can create/request a meeting.
-- [ ] Human can participate in a meeting.
-- [ ] Human can issue/request work through the appropriate workflow.
-- [ ] Human can receive a Worker response.
-- [ ] Human can review a proposal.
-- [ ] Human can receive a report.
-- [ ] Human can see outstanding work.
-- [ ] Attribution is preserved.
-- [ ] Authorization boundaries are preserved.
-- [ ] Communication does not silently create authority.
-- [ ] Queue state does not silently mutate authoritative domain state.
-- [ ] Meeting decisions remain subject to their applicable authority/workflow.
+- [x] Workplace communication model accepted.
+- [x] Conversation model accepted.
+- [x] Meeting model accepted.
+- [x] Institutional work queue model accepted.
+- [x] Workplace authorization boundary accepted.
+- [x] Human can communicate with Head.
+- [x] Human can communicate with authorized subordinate.
+- [x] Human can create/request a meeting.
+- [x] Human can participate in a meeting.
+- [x] Human can issue/request work through the appropriate workflow.
+- [x] Human can receive a Worker response.
+- [x] Human can review a proposal.
+- [x] Human can receive a report.
+- [x] Human can see outstanding work.
+- [x] Attribution is preserved.
+- [x] Authorization boundaries are preserved.
+- [x] Communication does not silently create authority.
+- [x] Queue state does not silently mutate authoritative domain state.
+- [x] Meeting decisions remain subject to their applicable authority/workflow.
+
+The executable acceptance evidence for these conditions is `Phase3WorkplaceAcceptanceTest` plus the full regression and bootJar checks in `.github/workflows/phase3.yml`.
 
 ## 4. Non-negotiable boundaries
 
@@ -69,6 +72,4 @@ Phase 3 MUST NOT:
 
 ## 5. Gate decision
 
-The gate remains `PENDING` until the acceptance evidence exists.
-
-A Phase 3 PASS permits progression to **Phase 4 — Organization / Relationships** under the Master Execution Plan.
+The gate remains non-PASS until the fresh Phase 3 GitHub Actions run proves the frozen contract on the exact current commit. A Phase 3 PASS permits progression to **Phase 4 — Organization / Relationships** under the Master Execution Plan.
