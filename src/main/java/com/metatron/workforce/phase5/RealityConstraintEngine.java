@@ -25,13 +25,17 @@ public final class RealityConstraintEngine {
         if (!operatingWindowOpen) blockers.add("operating-window-closed");
         if (!budgetSufficient) blockers.add("budget-insufficient");
         if (!dependenciesSatisfied) blockers.add("dependency-unsatisfied");
+
+        double resourceDeficit = 0d;
         for (ResourceConstraint resource : resources) {
-            if (!resource.executable()) blockers.add("resource-unavailable:" + resource.resourceId());
+            if (!resource.authorized()) blockers.add("resource-unauthorized:" + resource.resourceId());
+            if (!resource.dependencySatisfied()) blockers.add("resource-dependency-unsatisfied:" + resource.resourceId());
+            resourceDeficit += resource.deficit();
         }
 
         double laborDeficit = Math.max(requiredLaborHours - capacity.available(), 0d);
         int qualifiedDeficit = staffing.qualifiedDeficit();
-        boolean quantitativeDeficit = laborDeficit > 0d || qualifiedDeficit > 0 || resources.stream().anyMatch(r -> r.deficit() > 0d);
+        boolean quantitativeDeficit = laborDeficit > 0d || qualifiedDeficit > 0 || resourceDeficit > 0d;
 
         if (!blockers.isEmpty()) return new ExecutionFeasibility(ExecutionFeasibility.Status.BLOCKED, laborDeficit, qualifiedDeficit, blockers);
         if (quantitativeDeficit) return new ExecutionFeasibility(ExecutionFeasibility.Status.PARTIAL, laborDeficit, qualifiedDeficit, List.of());
