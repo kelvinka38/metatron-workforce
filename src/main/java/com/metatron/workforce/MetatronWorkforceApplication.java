@@ -36,10 +36,7 @@ public class MetatronWorkforceApplication {
         try {
             captureProductionEvidence();
         } finally {
-            int exitCode = SpringApplication.exit(context);
-            if (exitCode != 0) {
-                System.exit(exitCode);
-            }
+            SpringApplication.exit(context);
         }
     }
 
