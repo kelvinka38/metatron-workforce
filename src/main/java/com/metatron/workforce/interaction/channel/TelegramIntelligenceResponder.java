@@ -1,6 +1,16 @@
 package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.execution.Assignment;
+import com.metatron.workforce.execution.Authorization;
+import com.metatron.workforce.execution.ExecutionAdmissionService;
+import com.metatron.workforce.execution.ExecutionCapabilityRegistry;
+import com.metatron.workforce.execution.ExecutionCommand;
+import com.metatron.workforce.execution.ExecutionCommandService;
+import com.metatron.workforce.execution.ExecutionRequest;
+import com.metatron.workforce.execution.ExecutionResult;
+import com.metatron.workforce.execution.ExecutionState;
+import com.metatron.workforce.execution.GatewayAuditCapability;
 import com.metatron.workforce.interaction.intelligence.CapacityAwareRoutingPolicy;
 import com.metatron.workforce.interaction.intelligence.CollaborationMode;
 import com.metatron.workforce.interaction.intelligence.EvidenceBackedGovernance;
@@ -18,9 +28,11 @@ import com.metatron.workforce.interaction.llm.LlmProviderRouter;
 import com.metatron.workforce.interaction.llm.OpenAiLlmProviderClient;
 
 import java.net.http.HttpClient;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 
@@ -37,10 +49,21 @@ public final class TelegramIntelligenceResponder {
 
     private final IntelligenceFabric fabric;
     private final String configuredProvider;
+    private final ExecutionAdmissionService admissionService = new ExecutionAdmissionService();
+    private final ExecutionCommandService commandService = new ExecutionCommandService();
+    private final ExecutionCapabilityRegistry capabilityRegistry;
 
     public TelegramIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
+                objectMapper, "", "");
+    }
+
+    public TelegramIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
+                                         String provider, String openAiModel, String googleModel,
+                                         String anthropicModel, ObjectMapper objectMapper,
+                                         String gatewayAuditUrl, String gatewayAuditToken) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         HttpClient httpClient = HttpClient.newBuilder().build();
         List<LlmProviderClient> clients = new ArrayList<>();
@@ -64,6 +87,13 @@ public final class TelegramIntelligenceResponder {
                 new RouterBackedIntelligenceEngine(new LlmProviderRouter(clients), modelSelector),
                 (request, responses) -> responses.getFirst().text(),
                 new EvidenceBackedGovernance());
+
+        if (present(gatewayAuditUrl)) {
+            this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of(
+                    "gateway.audit.read", new GatewayAuditCapability(gatewayAuditUrl, gatewayAuditToken)));
+        } else {
+            this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
+        }
     }
 
     public String respond(String senderId, String text) {
@@ -74,6 +104,11 @@ public final class TelegramIntelligenceResponder {
         Objects.requireNonNull(senderId, "senderId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
+
+        if (isGatewayAuditCommand(text)) {
+            return executeGatewayAudit(senderId, text, externalMessageReference);
+        }
+
         LlmProvider requested = configuredProvider.isBlank() ? null : LlmProvider.valueOf(configuredProvider);
         List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
         int maxProviders = requested == null ? 3 : 1;
@@ -90,6 +125,35 @@ public final class TelegramIntelligenceResponder {
                 "analysis", consequence, "interactive", "standard", "telegram-human",
                 "direct natural-language answer", requestedProviders, maxProviders);
         return fabric.execute(request).text();
+    }
+
+    private String executeGatewayAudit(String senderId, String text, String externalMessageReference) {
+        String executionId = "telegram-exec-" + senderId + "-" + System.nanoTime();
+        try {
+            Assignment assignment = new Assignment("assignment-" + executionId, "metatron-workforce");
+            Authorization authorization = new Authorization("telegram-auth-" + senderId, "metatron-workforce");
+            ExecutionRequest request = new ExecutionRequest(executionId, assignment, authorization, Instant.now());
+            ExecutionState admitted = admissionService.admit(request);
+            ExecutionCommand command = new ExecutionCommand(executionId, "gateway.audit.read", Instant.now());
+            ExecutionResult result = commandService.dispatch(command, admitted, capabilityRegistry);
+            return "METATRON EXECUTION RESULT\n"
+                    + "execution_id=" + result.executionId() + "\n"
+                    + "capability=" + result.capability() + "\n"
+                    + "success=" + result.success() + "\n"
+                    + "summary=" + result.summary() + "\n"
+                    + "evidence=" + result.evidence() + "\n"
+                    + "source=telegram:" + externalMessageReference + "\n"
+                    + "request=" + text.trim();
+        } catch (RuntimeException failure) {
+            return "METATRON EXECUTION BLOCKED\n"
+                    + "execution_id=" + executionId + "\n"
+                    + "reason=" + failure.getMessage();
+        }
+    }
+
+    private static boolean isGatewayAuditCommand(String text) {
+        String value = text.toLowerCase(Locale.ROOT);
+        return containsAny(value, "audit g4 gateway", "audit gateway", "audit g4");
     }
 
     private static IntelligenceMode resolveMode(String text) {
