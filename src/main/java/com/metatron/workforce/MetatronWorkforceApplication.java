@@ -12,7 +12,6 @@ import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimePersistenceRecord;
 import com.metatron.workforce.runtime.RuntimeState;
 import com.metatron.workforce.runtime.WorkforceRuntime;
-import org.springframework.boot.ExitCodeGenerator;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -28,29 +27,39 @@ import java.util.Map;
  *
  * The runtime uses durable runtime-state storage and emits attributable operational
  * evidence from the running JVM. It does not replace the domain acceptance suite.
+ *
+ * G12 runs this application as a finite evidence-capture process. The process
+ * lifecycle is deliberately owned here rather than delegated to Spring's global
+ * ExitCodeGenerator aggregation: the deployable evidence runner must terminate
+ * successfully iff evidence capture itself succeeded.
  */
 @SpringBootApplication
 public class MetatronWorkforceApplication {
 
     public static void main(String[] args) throws Exception {
         ConfigurableApplicationContext context = SpringApplication.run(MetatronWorkforceApplication.class, args);
-        int applicationExitCode = 0;
+        Throwable failure = null;
         try {
             captureProductionEvidence();
-        } catch (Throwable failure) {
-            applicationExitCode = 1;
-            failure.printStackTrace(System.err);
+        } catch (Throwable capturedFailure) {
+            failure = capturedFailure;
+            capturedFailure.printStackTrace(System.err);
         } finally {
-            // The deployable evidence runner owns its process lifecycle. Spring's
-            // context must be closed without allowing unrelated ExitCodeGenerators
-            // to turn a successful evidence capture into a false CI failure.
-            ExitCodeGenerator successfulShutdown = () -> 0;
-            int springExitCode = SpringApplication.exit(context, successfulShutdown);
-            if (applicationExitCode == 0 && springExitCode != 0) {
-                applicationExitCode = springExitCode;
-            }
+            // This is a one-shot CI evidence runner, not the long-lived service
+            // lifecycle. Closing the context directly avoids Spring's ExitCodeGenerator
+            // aggregation changing the process result after evidence capture succeeds.
+            context.close();
         }
-        System.exit(applicationExitCode);
+
+        if (failure != null) {
+            if (failure instanceof Exception exception) {
+                throw exception;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+            throw new RuntimeException("Production evidence capture failed", failure);
+        }
     }
 
     static void captureProductionEvidence() throws Exception {
