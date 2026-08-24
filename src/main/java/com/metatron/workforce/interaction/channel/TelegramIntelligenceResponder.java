@@ -3,6 +3,7 @@ package com.metatron.workforce.interaction.channel;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.intelligence.CapacityAwareRoutingPolicy;
 import com.metatron.workforce.interaction.intelligence.CollaborationMode;
+import com.metatron.workforce.interaction.intelligence.EvidenceBackedGovernance;
 import com.metatron.workforce.interaction.intelligence.IntelligenceFabric;
 import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
 import com.metatron.workforce.interaction.intelligence.IntelligencePlanner;
@@ -23,7 +24,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Function;
 
-/** Natural-language Telegram response path through the shared Intelligence Fabric. */
+/** Natural-language response path through the canonical Intelligence Fabric. */
 public final class TelegramIntelligenceResponder {
     private static final String SYSTEM_CONTEXT = """
             You are Metatron Workforce's intelligence layer.
@@ -72,25 +73,30 @@ public final class TelegramIntelligenceResponder {
                 new IntelligencePlanner(new CapacityAwareRoutingPolicy(capacities)),
                 engine,
                 (request, responses) -> responses.getFirst().text(),
-                (request, responses, finalText) -> { /* CASUAL requests do not require BIOS validation. */ }
+                new EvidenceBackedGovernance()
         );
     }
 
     public String respond(String senderId, String text) {
+        return respond(senderId, text, "telegram-message");
+    }
+
+    public String respond(String senderId, String text, String externalMessageReference) {
         Objects.requireNonNull(senderId, "senderId");
         Objects.requireNonNull(text, "text");
+        Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         LlmProvider requested = configuredProvider.isBlank() ? null : LlmProvider.valueOf(configuredProvider);
         List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
 
         IntelligenceRequest request = new IntelligenceRequest(
                 "telegram-" + senderId + "-" + System.nanoTime(),
                 "telegram:" + senderId,
-                IntelligenceMode.CASUAL,
+                IntelligenceMode.REASONING,
                 CollaborationMode.SINGLE,
                 text,
                 SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.\n",
-                List.of(),
-                "conversation",
+                List.of("telegram:" + externalMessageReference),
+                "analysis",
                 "LOW",
                 "interactive",
                 "standard",
