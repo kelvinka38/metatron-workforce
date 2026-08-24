@@ -30,9 +30,9 @@ This register governs the production-execution path from the frozen integration 
 
 The execution runtime implementation is substantially complete. The remaining closure work is integration proof: prove the current HEAD can receive a real Telegram interaction, route it through the canonical Intelligence/BIOS boundary, and—when execution is requested—enter the authorized Metatron execution boundary without bypassing Gateway. Only after those are proven can production certification close.
 
-The canonical repository HEAD at this reconciliation is `457c83b30a4e93acee067e99beaf9457d04e4714`. Earlier references to `3617311479c40574985f25e47634cb1043ce05f8` and `81c1f3ad59c31185c68bd252fc15d0b4aeb60849` are stale and must not be used as current deployment identity.
+The canonical repository HEAD at this reconciliation is `a8b30e68b5b0dd8ef3f16eab43ea6ca1fe33c5dc`. Earlier references to `457c83b30a4e93acee067e99beaf9457d04e4714`, `3617311479c40574985f25e47634cb1043ce05f8`, and `81c1f3ad59c31185c68bd252fc15d0b4aeb60849` are stale and must not be used as current deployment identity.
 
-The repository now contains an explicit execution-capability registry, a read-only Gateway audit capability, Telegram wiring for `audit gateway` / `audit g4 gateway`, and an isolated deployment gate that can run without production credentials. These are implementation changes, not production evidence.
+The repository now contains an explicit execution-capability registry, a read-only Gateway audit capability, Telegram wiring for `audit gateway` / `audit g4 gateway`, an execution-path regression test, and an isolated deployment gate that can run without production credentials. These are implementation changes, not production evidence.
 
 The available GitHub evidence does not yet establish a successful CI run for the exact current HEAD or attributable production deployment evidence. CI evidence must not be silently promoted to production evidence.
 
