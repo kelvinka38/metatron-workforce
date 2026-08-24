@@ -18,7 +18,7 @@ jobs:
           java-version: '22'
       - uses: gradle/actions/setup-gradle@v4
       - name: Phase 3 acceptance
-        run: ./gradlew clean test --tests '*Phase3WorkplaceAcceptanceTest' --no-daemon
+        run: ./gradlew clean test --tests 'com.metatron.workforce.phase3.Phase3WorkplaceAcceptanceTest' --no-daemon
       - name: Full regression
         run: ./gradlew test --no-daemon
       - name: Build deployable artifact
