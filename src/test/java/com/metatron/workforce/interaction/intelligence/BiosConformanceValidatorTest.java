@@ -76,16 +76,36 @@ class BiosConformanceValidatorTest {
                 "analysis"));
     }
 
+    @Test
+    void criticalConsequenceRequiresMultiEngineReview() {
+        assertThrows(IllegalStateException.class, () -> validator.validate(
+                request(IntelligenceMode.DECISION, "CRITICAL", "human:authorized", "evidence:critical-1"),
+                List.of(response()),
+                "decision support"));
+    }
+
+    @Test
+    void criticalConsequencePassesWithDistinctEnginesAndAuthority() {
+        assertDoesNotThrow(() -> validator.validate(
+                request(IntelligenceMode.DECISION, "CRITICAL", "human:authorized", "evidence:critical-1"),
+                List.of(response(), new LlmResponse(LlmProvider.ANTHROPIC, "test-model-2", "independent review", "provider-request-2")),
+                "decision support"));
+    }
+
     private static IntelligenceRequest request(
             IntelligenceMode mode,
             String consequence,
             String authority,
             String... evidence) {
+        CollaborationMode collaboration = "CRITICAL".equals(consequence)
+                ? CollaborationMode.PARALLEL_SYNTHESIS
+                : CollaborationMode.SINGLE;
+        int maxProviders = "CRITICAL".equals(consequence) ? 2 : 1;
         return new IntelligenceRequest(
                 "test-request",
                 "test-requester",
                 mode,
-                CollaborationMode.SINGLE,
+                collaboration,
                 "test objective",
                 "test context",
                 List.of(evidence),
@@ -96,7 +116,7 @@ class BiosConformanceValidatorTest {
                 authority,
                 "test output",
                 List.of(),
-                1);
+                maxProviders);
     }
 
     private static LlmResponse response() {
