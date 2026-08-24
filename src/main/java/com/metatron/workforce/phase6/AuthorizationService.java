@@ -22,24 +22,24 @@ public final class AuthorizationService {
         Objects.requireNonNull(approval, "approval");
         Objects.requireNonNull(request, "request");
 
-        // Canonical Phase-6 validation order: identity/alignment -> proposal chronology
-        // -> approval state/effectiveness -> external policy. Earlier failures must not
-        // be masked by a later time or policy condition.
+        // Canonical Phase-6 validation order: proposal identity -> request alignment
+        // -> proposal chronology -> approval state/effectiveness -> external policy.
+        // Keep each boundary explicit so a later condition can never mask an earlier one.
         if (!proposal.proposalId().equals(approval.proposalId())) {
             return AuthorizationResult.denied("proposal-mismatch", "approval does not belong to proposal");
         }
-        if (!proposal.actorId().equals(request.actorId())) {
-            return AuthorizationResult.denied("actor-mismatch", "authorization actor differs from proposal actor");
+
+        String alignmentFailure = alignmentFailure(proposal, request);
+        if (alignmentFailure != null) {
+            return switch (alignmentFailure) {
+                case "actor-mismatch" -> AuthorizationResult.denied("actor-mismatch", "authorization actor differs from proposal actor");
+                case "action-mismatch" -> AuthorizationResult.denied("action-mismatch", "authorization action differs from proposal");
+                case "scope-mismatch" -> AuthorizationResult.denied("scope-mismatch", "authorization scope differs from proposal");
+                case "context-mismatch" -> AuthorizationResult.denied("context-mismatch", "authorization context differs from proposal");
+                default -> throw new IllegalStateException("unknown alignment failure: " + alignmentFailure);
+            };
         }
-        if (!proposal.action().equals(request.action())) {
-            return AuthorizationResult.denied("action-mismatch", "authorization action differs from proposal");
-        }
-        if (!proposal.scope().equals(request.scope())) {
-            return AuthorizationResult.denied("scope-mismatch", "authorization scope differs from proposal");
-        }
-        if (!proposal.contextId().equals(request.contextId())) {
-            return AuthorizationResult.denied("context-mismatch", "authorization context differs from proposal");
-        }
+
         if (request.at().isBefore(proposal.requestedAt())) {
             return AuthorizationResult.denied("time-invalid", "authorization predates proposal");
         }
@@ -54,6 +54,14 @@ public final class AuthorizationService {
         return decision.allowed()
                 ? AuthorizationResult.allowed(decision.authorizationReference())
                 : AuthorizationResult.denied(decision.authorizationReference(), decision.reason());
+    }
+
+    private static String alignmentFailure(WorkProposal proposal, AuthorizationRequest request) {
+        if (!Objects.equals(proposal.actorId(), request.actorId())) return "actor-mismatch";
+        if (!Objects.equals(proposal.action(), request.action())) return "action-mismatch";
+        if (!Objects.equals(proposal.scope(), request.scope())) return "scope-mismatch";
+        if (!Objects.equals(proposal.contextId(), request.contextId())) return "context-mismatch";
+        return null;
     }
 
     /**
