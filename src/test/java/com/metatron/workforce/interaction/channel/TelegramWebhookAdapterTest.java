@@ -18,4 +18,22 @@ class TelegramWebhookAdapterTest {
         assertThrows(SecurityException.class,
                 () -> adapter.receive("wrong", "human-1", "audit G4 gateway"));
     }
+
+    @Test
+    void rejectsExactEcho() {
+        assertThrows(IllegalStateException.class,
+                () -> TelegramWebhookController.validateAnswer("Hôm nay thứ mấy?", "Hôm nay thứ mấy?"));
+    }
+
+    @Test
+    void rejectsLegacyWorkforceEcho() {
+        assertThrows(IllegalStateException.class,
+                () -> TelegramWebhookController.validateAnswer("Hôm nay thứ mấy?", "Workforce received: Hôm nay thứ mấy?"));
+    }
+
+    @Test
+    void acceptsActualAiAnswer() {
+        assertEquals("Hôm nay là thứ Hai.",
+                TelegramWebhookController.validateAnswer("Hôm nay thứ mấy?", "Hôm nay là thứ Hai."));
+    }
 }
