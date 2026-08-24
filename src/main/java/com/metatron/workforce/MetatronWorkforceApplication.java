@@ -14,7 +14,6 @@ import com.metatron.workforce.runtime.RuntimeState;
 import com.metatron.workforce.runtime.WorkforceRuntime;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.ConfigurableApplicationContext;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,43 +22,32 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Minimal deployable runtime boundary used for G12 production evidence collection.
+ * Deployable Workforce application.
  *
- * The runtime uses durable runtime-state storage and emits attributable operational
- * evidence from the running JVM. It does not replace the domain acceptance suite.
- *
- * G12 runs this application as a finite evidence-capture process. The process
- * lifecycle is deliberately owned here rather than delegated to Spring's global
- * ExitCodeGenerator aggregation: the deployable evidence runner must terminate
- * successfully iff evidence capture itself succeeded.
+ * The normal entrypoint owns the long-lived Spring application lifecycle.
+ * G12 production evidence is a separate finite execution mode because evidence
+ * capture is deterministic application logic and does not require a running
+ * Spring context. Keeping the two lifecycles separate prevents Spring shutdown
+ * and exit-code aggregation from being part of the runtime evidence contract.
  */
 @SpringBootApplication
 public class MetatronWorkforceApplication {
 
     public static void main(String[] args) throws Exception {
-        ConfigurableApplicationContext context = SpringApplication.run(MetatronWorkforceApplication.class, args);
-        Throwable failure = null;
-        try {
+        if (isG12EvidenceMode(args)) {
             captureProductionEvidence();
-        } catch (Throwable capturedFailure) {
-            failure = capturedFailure;
-            capturedFailure.printStackTrace(System.err);
-        } finally {
-            // This is a one-shot CI evidence runner, not the long-lived service
-            // lifecycle. Closing the context directly avoids Spring's ExitCodeGenerator
-            // aggregation changing the process result after evidence capture succeeds.
-            context.close();
+            return;
         }
+        SpringApplication.run(MetatronWorkforceApplication.class, args);
+    }
 
-        if (failure != null) {
-            if (failure instanceof Exception exception) {
-                throw exception;
+    private static boolean isG12EvidenceMode(String[] args) {
+        for (String arg : args) {
+            if ("--g12-evidence".equals(arg)) {
+                return true;
             }
-            if (failure instanceof Error error) {
-                throw error;
-            }
-            throw new RuntimeException("Production evidence capture failed", failure);
         }
+        return false;
     }
 
     static void captureProductionEvidence() throws Exception {
