@@ -18,7 +18,7 @@ public final class CurrentTimeToolAdapter implements ToolAdapter {
         this(Clock.system(OPERATING_ZONE));
     }
 
-    CurrentTimeToolAdapter(Clock clock) {
+    public CurrentTimeToolAdapter(Clock clock) {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
