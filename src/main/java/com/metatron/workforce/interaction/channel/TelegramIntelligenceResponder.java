@@ -103,6 +103,11 @@ public final class TelegramIntelligenceResponder {
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
 
+        String normalized = text.trim().toLowerCase(Locale.ROOT);
+        if (isStartCommand(normalized)) {
+            return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên, ví dụ:\n• audit g4 gateway\n• hôm nay thứ mấy?\n• phân tích ...\n• Hey Gemini / Hey Claude / Hey OpenAI";
+        }
+
         if (isGatewayAuditCommand(text)) {
             return executeGatewayAudit(senderId, text, externalMessageReference);
         }
@@ -111,7 +116,10 @@ public final class TelegramIntelligenceResponder {
             return executeCurrentTime(senderId, externalMessageReference);
         }
 
-        LlmProvider requested = configuredProvider.isBlank() ? null : LlmProvider.valueOf(configuredProvider);
+        LlmProvider requested = explicitProvider(text);
+        if (requested == null && !configuredProvider.isBlank()) {
+            requested = LlmProvider.valueOf(configuredProvider);
+        }
         List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
         int maxProviders = requested == null ? 3 : 1;
         IntelligenceMode mode = resolveMode(text);
@@ -127,6 +135,18 @@ public final class TelegramIntelligenceResponder {
                 "analysis", consequence, "interactive", "standard", "telegram-human",
                 "direct natural-language answer", requestedProviders, maxProviders);
         return fabric.execute(request).text();
+    }
+
+    private static boolean isStartCommand(String normalized) {
+        return "/start".equals(normalized) || "/help".equals(normalized);
+    }
+
+    private static LlmProvider explicitProvider(String text) {
+        String value = text.toLowerCase(Locale.ROOT);
+        if (containsAny(value, "hey gemini", "hi gemini", "gemini:")) return LlmProvider.GOOGLE;
+        if (containsAny(value, "hey claude", "hi claude", "claude:")) return LlmProvider.ANTHROPIC;
+        if (containsAny(value, "hey openai", "hi openai", "openai:")) return LlmProvider.OPENAI;
+        return null;
     }
 
     private String executeCurrentTime(String senderId, String externalMessageReference) {
@@ -222,7 +242,7 @@ public final class TelegramIntelligenceResponder {
     private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) {
         return provider -> switch (provider) {
             case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini");
-            case GOOGLE -> defaultModel(googleModel, "gemini-2.5-flash");
+            case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
             case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
         };
     }
