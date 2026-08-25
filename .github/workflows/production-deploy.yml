@@ -87,6 +87,12 @@ jobs:
 
           echo "=== SYNC SOURCE TO PRODUCTION ==="
           mkdir -p "$BASE"
+
+          # Previous production runs could leave Docker/runner-generated build
+          # artifacts owned by root. Remove those explicitly before the runner
+          # attempts to replace the workspace. Runtime state and .env are kept.
+          sudo rm -rf "$BASE/build" "$BASE/.gradle"
+
           find "$BASE" -mindepth 1 -maxdepth 1 \
             ! -name .env \
             ! -name runtime-state \
