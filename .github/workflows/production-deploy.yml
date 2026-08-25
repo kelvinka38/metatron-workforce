@@ -85,16 +85,13 @@ jobs:
           test -f "$WORKSPACE/deploy/docker-compose.yml"
           test -s "$WORKSPACE/build/libs/metatron-workforce-0.1.0.jar"
 
-          echo "=== SYNC SOURCE TO PRODUCTION ==="
-          mkdir -p "$BASE"
+          echo "=== VERIFY RUNNER WRITE ACCESS ==="
+          test -w "$BASE"
 
-          # Previous production runs could leave root-owned build artifacts.
-          # Remove only generated build state; preserve runtime state and .env.
-          if [ "$(id -u)" -eq 0 ]; then
-            rm -rf "$BASE/build" "$BASE/.gradle"
-          else
-            sudo -n rm -rf "$BASE/build" "$BASE/.gradle"
-          fi
+          echo "=== SYNC SOURCE TO PRODUCTION ==="
+          # The production directory is owned by github-runner. .env is protected
+          # separately and is never replaced by repository contents.
+          rm -rf "$BASE/build" "$BASE/.gradle"
 
           find "$BASE" -mindepth 1 -maxdepth 1 \
             ! -name .env \
