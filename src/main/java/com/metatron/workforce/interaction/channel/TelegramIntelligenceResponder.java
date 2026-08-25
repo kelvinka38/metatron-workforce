@@ -1,15 +1,9 @@
 package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.metatron.workforce.execution.Assignment;
-import com.metatron.workforce.execution.Authorization;
-import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.execution.ExecutionCapabilityRegistry;
 import com.metatron.workforce.execution.ExecutionCommand;
-import com.metatron.workforce.execution.ExecutionCommandService;
-import com.metatron.workforce.execution.ExecutionRequest;
 import com.metatron.workforce.execution.ExecutionResult;
-import com.metatron.workforce.execution.ExecutionState;
 import com.metatron.workforce.execution.GatewayAuditCapability;
 import com.metatron.workforce.interaction.intelligence.CapacityAwareRoutingPolicy;
 import com.metatron.workforce.interaction.intelligence.CollaborationMode;
@@ -53,8 +47,6 @@ public final class TelegramIntelligenceResponder {
 
     private final IntelligenceFabric fabric;
     private final String configuredProvider;
-    private final ExecutionAdmissionService admissionService = new ExecutionAdmissionService();
-    private final ExecutionCommandService commandService = new ExecutionCommandService();
     private final ExecutionCapabilityRegistry capabilityRegistry;
     private final DefaultToolFabric toolFabric;
 
@@ -175,15 +167,11 @@ public final class TelegramIntelligenceResponder {
     }
 
     private String executeGatewayAudit(String senderId, String text, String externalMessageReference) {
-        String executionId = "telegram-exec-" + senderId + "-" + System.nanoTime();
+        String executionId = "telegram-audit-" + senderId + "-" + System.nanoTime();
         try {
-            Assignment assignment = new Assignment("assignment-" + executionId, "metatron-workforce");
-            Authorization authorization = new Authorization("telegram-auth-" + senderId, "metatron-workforce");
-            ExecutionRequest request = new ExecutionRequest(executionId, assignment, authorization, Instant.now());
-            ExecutionState admitted = admissionService.admit(request);
             ExecutionCommand command = new ExecutionCommand(executionId, "gateway.audit.read", Instant.now());
-            ExecutionResult result = commandService.dispatch(command, admitted, capabilityRegistry);
-            return "METATRON EXECUTION RESULT\n"
+            ExecutionResult result = capabilityRegistry.require(command.action()).execute(command);
+            return "METATRON GATEWAY AUDIT RESULT\n"
                     + "execution_id=" + result.executionId() + "\n"
                     + "capability=" + result.capability() + "\n"
                     + "success=" + result.success() + "\n"
@@ -192,7 +180,7 @@ public final class TelegramIntelligenceResponder {
                     + "source=telegram:" + externalMessageReference + "\n"
                     + "request=" + text.trim();
         } catch (RuntimeException failure) {
-            return "METATRON EXECUTION BLOCKED\n"
+            return "METATRON GATEWAY AUDIT BLOCKED\n"
                     + "execution_id=" + executionId + "\n"
                     + "reason=" + failure.getMessage();
         }
