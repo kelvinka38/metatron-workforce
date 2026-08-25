@@ -2,6 +2,7 @@ package com.metatron.workforce.bios;
 
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
+import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
 import com.metatron.workforce.phase3.ActorRef;
 import org.junit.jupiter.api.Test;
 
@@ -15,22 +16,22 @@ class BiosExecutionKernelTest {
 
     @Test
     void classifiesDiscussion() {
-        assertEquals(BiosExecutionKernel.Mode.DISCUSSION, bios.classify("hôm nay thời tiết thế nào?"));
+        assertEquals(IntelligenceMode.DISCUSSION, bios.classify("hôm nay thời tiết thế nào?"));
     }
 
     @Test
     void classifiesReasoning() {
-        assertEquals(BiosExecutionKernel.Mode.REASONING, bios.classify("audit g4 gateway"));
+        assertEquals(IntelligenceMode.REASONING, bios.classify("audit g4 gateway"));
     }
 
     @Test
     void classifiesDecision() {
-        assertEquals(BiosExecutionKernel.Mode.DECISION, bios.classify("should we approve this?"));
+        assertEquals(IntelligenceMode.DECISION, bios.classify("should we approve this?"));
     }
 
     @Test
     void classifiesExecution() {
-        assertEquals(BiosExecutionKernel.Mode.EXECUTION, bios.classify("deploy this to production"));
+        assertEquals(IntelligenceMode.EXECUTION, bios.classify("deploy this to production"));
     }
 
     @Test
@@ -51,12 +52,12 @@ class BiosExecutionKernelTest {
     }
 
     @Test
-    void reasoningRequiresProvenance() {
-        MetatronInteraction interaction = interaction("audit g4 gateway");
+    void decisionRequiresProvenance() {
+        MetatronInteraction interaction = interaction("should we approve this?");
         assertThrows(IllegalStateException.class, () -> bios.execute(
                 interaction,
                 value -> new MetatronInteractionOrchestrator.InteractionResponse(
-                        value.conversationId(), "audit result", "")));
+                        value.conversationId(), "decision", "")));
     }
 
     @Test
