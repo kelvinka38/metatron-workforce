@@ -88,10 +88,13 @@ jobs:
           echo "=== SYNC SOURCE TO PRODUCTION ==="
           mkdir -p "$BASE"
 
-          # Previous production runs could leave Docker/runner-generated build
-          # artifacts owned by root. Remove those explicitly before the runner
-          # attempts to replace the workspace. Runtime state and .env are kept.
-          sudo rm -rf "$BASE/build" "$BASE/.gradle"
+          # Previous production runs could leave root-owned build artifacts.
+          # Remove only generated build state; preserve runtime state and .env.
+          if [ "$(id -u)" -eq 0 ]; then
+            rm -rf "$BASE/build" "$BASE/.gradle"
+          else
+            sudo -n rm -rf "$BASE/build" "$BASE/.gradle"
+          fi
 
           find "$BASE" -mindepth 1 -maxdepth 1 \
             ! -name .env \
@@ -99,8 +102,6 @@ jobs:
             ! -name runtime-evidence \
             -exec rm -rf {} +
 
-          # Copy source without preserving ownership/timestamps. The production
-          # workspace is runner-owned and Docker only needs the source/build tree.
           cp -r "$WORKSPACE/." "$BASE/"
 
           cd "$BASE"
