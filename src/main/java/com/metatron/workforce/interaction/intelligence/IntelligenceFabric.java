@@ -2,6 +2,8 @@ package com.metatron.workforce.interaction.intelligence;
 
 import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.interaction.llm.LlmResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -9,6 +11,8 @@ import java.util.Objects;
 
 /** Shared intelligence capacity boundary above concrete provider transport. */
 public final class IntelligenceFabric {
+    private static final Logger LOG = LoggerFactory.getLogger(IntelligenceFabric.class);
+
     private final IntelligencePlanner planner;
     private final IntelligenceEngine engine;
     private final IntelligenceSynthesizer synthesizer;
@@ -51,9 +55,12 @@ public final class IntelligenceFabric {
                     break;
                 }
             } catch (RuntimeException failure) {
-                failures.add(new IllegalStateException(
+                RuntimeException wrapped = new IllegalStateException(
                         "intelligence provider failed: " + provider + ": " + failure.getMessage(),
-                        failure));
+                        failure);
+                failures.add(wrapped);
+                LOG.warn("intelligence_provider_failed request_id={} provider={} reason={}",
+                        request.requestId(), provider, failure.getMessage());
             }
         }
 
@@ -61,6 +68,8 @@ public final class IntelligenceFabric {
             IllegalStateException failure = new IllegalStateException(
                     "all selected intelligence providers failed: " + plan.providers());
             failures.forEach(failure::addSuppressed);
+            LOG.error("intelligence_all_providers_failed request_id={} providers={} failure_count={}",
+                    request.requestId(), plan.providers(), failures.size());
             throw failure;
         }
 
