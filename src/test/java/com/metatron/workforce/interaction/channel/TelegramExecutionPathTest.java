@@ -19,7 +19,7 @@ class TelegramExecutionPathTest {
     }
 
     @Test
-    void auditGatewayCommandReachesConcreteExecutionCapability() throws Exception {
+    void auditGatewayCommandReachesConcreteReadCapabilityWithoutManufacturedAuthorization() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/g4/health", exchange -> {
             byte[] body = "{\"status\":\"UP\",\"gateway\":\"G4\"}".getBytes();
@@ -36,10 +36,21 @@ class TelegramExecutionPathTest {
 
         String response = responder.respond("telegram-human", "audit g4 gateway", "update:42");
 
-        assertTrue(response.contains("METATRON EXECUTION RESULT"));
+        assertTrue(response.contains("METATRON GATEWAY AUDIT RESULT"));
         assertTrue(response.contains("capability=gateway.audit.read"));
         assertTrue(response.contains("success=true"));
         assertTrue(response.contains("status=200"));
         assertTrue(response.contains("G4"));
+    }
+
+    @Test
+    void auditGatewayCommandFailsClosedWhenCapabilityIsNotConfigured() {
+        TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
+                "", "", "", "AUTO", "", "", "", new ObjectMapper());
+
+        String response = responder.respond("telegram-human", "audit g4 gateway", "update:43");
+
+        assertTrue(response.contains("METATRON GATEWAY AUDIT BLOCKED"));
+        assertTrue(response.contains("gateway.audit.read"));
     }
 }
