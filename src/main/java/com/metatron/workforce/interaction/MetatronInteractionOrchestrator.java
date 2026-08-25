@@ -1,21 +1,30 @@
 package com.metatron.workforce.interaction;
 
+import com.metatron.workforce.bios.BiosExecutionKernel;
+
 import java.util.Objects;
 
 /**
  * Canonical orchestration boundary between Human interaction and Metatron nodes.
- * Provider selection and execution are delegated; this class does not bypass Gateway.
+ * Every interaction is admitted and verified by the Workforce BIOS kernel before
+ * provider/tool execution is reached.
  */
 public final class MetatronInteractionOrchestrator {
     private final InteractionHandler handler;
+    private final BiosExecutionKernel bios;
 
     public MetatronInteractionOrchestrator(InteractionHandler handler) {
+        this(handler, new BiosExecutionKernel());
+    }
+
+    MetatronInteractionOrchestrator(InteractionHandler handler, BiosExecutionKernel bios) {
         this.handler = Objects.requireNonNull(handler, "handler");
+        this.bios = Objects.requireNonNull(bios, "bios");
     }
 
     public InteractionResponse handle(MetatronInteraction interaction) {
         Objects.requireNonNull(interaction, "interaction");
-        return handler.handle(interaction);
+        return bios.execute(interaction, handler::handle);
     }
 
     @FunctionalInterface
