@@ -32,6 +32,7 @@ public final class TelegramWebhookController {
     private final MetatronInteractionOrchestrator orchestrator;
     private final TelegramIdentityResolver identityResolver;
     private final ObjectMapper objectMapper;
+    private final TelegramUpdateDeduplicator updateDeduplicator;
 
     public TelegramWebhookController(
             @Value("${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}") String secret,
@@ -87,6 +88,7 @@ public final class TelegramWebhookController {
                     "interaction:" + interaction.externalMessageReference());
         });
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        this.updateDeduplicator = new TelegramUpdateDeduplicator();
     }
 
     @PostMapping("/webhook")
@@ -101,9 +103,17 @@ public final class TelegramWebhookController {
         String chatId = chat.path("id").asText("");
         String text = message.path("text").asText("");
         long updateId = update.path("update_id").asLong(-1L);
+        if (updateId < 0) throw new IllegalArgumentException("telegram_update_id_invalid");
 
         TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
         ChannelMessage inbound = adapter.receive(suppliedSecret, chatId, text);
+
+        if (!updateDeduplicator.accept(updateId)) {
+            LOG.info("telegram_duplicate_update_ignored update_id={} telegram_user={} chat={}",
+                    updateId, telegramUserId, chatId);
+            return ResponseEntity.ok().build();
+        }
+
         LOG.info("telegram_received update_id={} telegram_user={} chat={} text_length={}",
                 updateId, telegramUserId, chatId, text.length());
 
