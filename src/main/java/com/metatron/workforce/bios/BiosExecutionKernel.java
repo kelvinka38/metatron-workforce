@@ -2,6 +2,7 @@ package com.metatron.workforce.bios;
 
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
+import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +34,7 @@ public final class BiosExecutionKernel {
         MetatronInteraction normalized = normalize(interaction);
         phases.add(Phase.NORMALIZE);
 
-        Mode mode = classify(normalized.text());
+        IntelligenceMode mode = classify(normalized.text());
         phases.add(Phase.CLASSIFY);
 
         admit(normalized, mode);
@@ -52,19 +53,19 @@ public final class BiosExecutionKernel {
         return response;
     }
 
-    public Mode classify(String text) {
+    public IntelligenceMode classify(String text) {
         Objects.requireNonNull(text, "text");
         String value = normalizeText(text).toLowerCase(Locale.ROOT);
         if (containsAny(value, "deploy", "execute", "ship it", "push to production", "run the fix", "fix it and deploy")) {
-            return Mode.EXECUTION;
+            return IntelligenceMode.EXECUTION;
         }
         if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) {
-            return Mode.DECISION;
+            return IntelligenceMode.DECISION;
         }
         if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "root cause", "why")) {
-            return Mode.REASONING;
+            return IntelligenceMode.REASONING;
         }
-        return Mode.DISCUSSION;
+        return IntelligenceMode.DISCUSSION;
     }
 
     private MetatronInteraction normalize(MetatronInteraction interaction) {
@@ -79,7 +80,7 @@ public final class BiosExecutionKernel {
                 text);
     }
 
-    private void admit(MetatronInteraction interaction, Mode mode) {
+    private void admit(MetatronInteraction interaction, IntelligenceMode mode) {
         if (interaction.human().actorId().isBlank()) {
             throw new IllegalStateException("BIOS_HUMAN_IDENTITY_REQUIRED");
         }
@@ -94,20 +95,20 @@ public final class BiosExecutionKernel {
         // authority. The existing identity resolver establishes the authenticated
         // human + organization boundary; execution remains gated on an explicit
         // authorization phrase until a richer authority source is connected.
-        if (mode == Mode.EXECUTION && !hasExplicitAuthorization(interaction.text())) {
+        if (mode == IntelligenceMode.EXECUTION && !hasExplicitAuthorization(interaction.text())) {
             throw new IllegalStateException("BIOS_EXECUTION_AUTHORIZATION_REQUIRED");
         }
     }
 
     private void verify(
             MetatronInteraction interaction,
-            Mode mode,
+            IntelligenceMode mode,
             MetatronInteractionOrchestrator.InteractionResponse response) {
         Objects.requireNonNull(response, "response");
         if (response.text() == null || response.text().isBlank()) {
             throw new IllegalStateException("BIOS_OUTPUT_EMPTY");
         }
-        if (mode != Mode.DISCUSSION && mode != Mode.REASONING
+        if (mode.ordinal() >= IntelligenceMode.DECISION.ordinal()
                 && (response.provenanceReference() == null || response.provenanceReference().isBlank())) {
             throw new IllegalStateException("BIOS_PROVENANCE_REQUIRED");
         }
@@ -131,13 +132,6 @@ public final class BiosExecutionKernel {
     private static boolean containsAny(String value, String... terms) {
         for (String term : terms) if (value.contains(term)) return true;
         return false;
-    }
-
-    public enum Mode {
-        DISCUSSION,
-        REASONING,
-        DECISION,
-        EXECUTION
     }
 
     private enum Phase {
