@@ -1,5 +1,6 @@
 package com.metatron.workforce.interaction.channel;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
@@ -43,7 +44,15 @@ public final class TelegramBotGateway implements ChannelGateway {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() / 100 != 2) {
-                throw new IllegalStateException("telegram_send_failed:" + response.statusCode());
+                throw new IllegalStateException("telegram_send_failed:http_status=" + response.statusCode());
+            }
+
+            JsonNode apiResponse = objectMapper.readTree(response.body());
+            if (!apiResponse.path("ok").asBoolean(false)) {
+                String description = apiResponse.path("description").asText("unknown_telegram_error");
+                int errorCode = apiResponse.path("error_code").asInt(response.statusCode());
+                throw new IllegalStateException(
+                        "telegram_send_failed:telegram_error=" + errorCode + ":" + description);
             }
             return response.body();
         } catch (InterruptedException e) {
