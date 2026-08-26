@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.adapter.telegram.ConfiguredTelegramIdentityResolver;
 import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
+import com.metatron.workforce.interaction.MetatronInteraction;
+import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
 import com.metatron.workforce.phase3.ActorRef;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
