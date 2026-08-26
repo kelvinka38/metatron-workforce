@@ -26,6 +26,7 @@ printf '\n=== 3. BUILD + TEST ===\n'
 
 printf '\n=== 4. IMAGE ===\n'
 docker build -t metatron-workforce:telegram-completion . >/tmp/metatron-telegram-docker-build.log
+docker tag metatron-workforce:telegram-completion metatron-workforce:0.1.0
 tail -8 /tmp/metatron-telegram-docker-build.log
 
 printf '\n=== 5. RECREATE ===\n'
