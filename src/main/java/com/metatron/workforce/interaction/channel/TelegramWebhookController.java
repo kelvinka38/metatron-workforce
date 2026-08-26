@@ -2,6 +2,8 @@ package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.adapter.telegram.ConfiguredTelegramIdentityResolver;
+import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
 import com.metatron.workforce.phase3.ActorRef;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -21,6 +23,7 @@ import java.util.Objects;
 public final class TelegramWebhookController {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramWebhookController.class);
 
+    private final String secret;
     private final TelegramWebhookAdapter adapter;
     private final TelegramBotGateway gateway;
     private final MetatronInteractionOrchestrator orchestrator;
@@ -55,6 +58,7 @@ public final class TelegramWebhookController {
             throw new IllegalStateException("TELEGRAM_ALLOWED_USER_ID_INVALID", failure);
         }
 
+        this.secret = secret;
         this.adapter = new TelegramWebhookAdapter(secret);
         this.gateway = new TelegramBotGateway(botToken, java.net.http.HttpClient.newHttpClient(), objectMapper);
         this.identityResolver = new ConfiguredTelegramIdentityResolver(
@@ -151,7 +155,7 @@ public final class TelegramWebhookController {
                             "Metatron could not produce an AI response for this message. The failure has been recorded for recovery."));
                     LOG.info("telegram_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
                 } catch (RuntimeException sendFailure) {
-                    LOG.error("telegram_failure_notification_failed update_id=" + updateId, sendFailure);
+                    LOG.error("telegram_failure_notification_failed update_id={}", updateId, sendFailure);
                 }
             }
         } catch (RuntimeException failure) {
