@@ -183,6 +183,11 @@ public final class TelegramWebhookController {
         String normalizedInbound = normalize(inbound);
         String normalizedAnswer = normalize(answer);
         if (normalizedAnswer.equals(normalizedInbound)) throw new IllegalStateException("telegram_response_echo");
+        String legacyPrefix = "workforce received: ";
+        if (normalizedAnswer.startsWith(legacyPrefix)
+                && normalize(answer.substring(legacyPrefix.length())).equals(normalizedInbound)) {
+            throw new IllegalStateException("telegram_legacy_workforce_echo");
+        }
         return answer.trim();
     }
 
