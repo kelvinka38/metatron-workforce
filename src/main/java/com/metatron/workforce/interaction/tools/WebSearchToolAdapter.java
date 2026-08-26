@@ -21,14 +21,21 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private final HttpClient client;
     private final Duration timeout;
+    private final String endpoint;
 
     public WebSearchToolAdapter() {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), Duration.ofSeconds(8));
+        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), Duration.ofSeconds(8), ENDPOINT);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout) {
+        this(client, timeout, ENDPOINT);
+    }
+
+    public WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint) {
         this.client = Objects.requireNonNull(client, "client");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
+        this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
+        if (endpoint.isBlank()) throw new IllegalArgumentException("endpoint must not be blank");
     }
 
     @Override
@@ -46,7 +53,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         if (query.isBlank()) return ToolResult.failure(request, "web_search_query_empty");
 
         try {
-            URI uri = URI.create(ENDPOINT + URLEncoder.encode(query, StandardCharsets.UTF_8));
+            URI uri = URI.create(endpoint + URLEncoder.encode(query, StandardCharsets.UTF_8));
             HttpRequest httpRequest = HttpRequest.newBuilder(uri)
                     .timeout(timeout)
                     .header("User-Agent", "Metatron-Workforce/0.1")
@@ -78,6 +85,10 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         } catch (Exception e) {
             return ToolResult.failure(request, "web_search_failed:" + e.getClass().getSimpleName());
         }
+    }
+
+    static List<String> parseEvidenceUrls(String xml) {
+        return parseResults(xml, 5).stream().map(Result::url).toList();
     }
 
     private static List<Result> parseResults(String xml, int max) {
