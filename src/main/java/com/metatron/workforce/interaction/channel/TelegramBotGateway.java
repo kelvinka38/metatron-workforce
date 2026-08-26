@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 
@@ -39,6 +40,7 @@ public final class TelegramBotGateway implements ChannelGateway {
                     "text", message.text()));
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.telegram.org/bot" + botToken + "/sendMessage"))
+                    .timeout(Duration.ofSeconds(10))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
@@ -59,7 +61,12 @@ public final class TelegramBotGateway implements ChannelGateway {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("telegram_send_interrupted", e);
         } catch (IOException e) {
-            throw new IllegalStateException("telegram_send_failed", e);
+            throw new IllegalStateException("telegram_send_failed:" + e.getClass().getSimpleName() + ":" + safeMessage(e), e);
         }
+    }
+
+    private static String safeMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.isBlank() ? "no_message" : message.replaceAll("\\s+", " ").trim();
     }
 }
