@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,21 +34,18 @@ class WebSearchToolAdapterTest {
         });
         server.start();
 
+        String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/search?q=";
         WebSearchToolAdapter adapter = new WebSearchToolAdapter(
-                HttpClient.newHttpClient(), Duration.ofSeconds(2)) {
-            // no-op: endpoint is fixed by production adapter; this test verifies parsing
-        };
+                HttpClient.newHttpClient(), Duration.ofSeconds(2), endpoint);
 
-        // Parsing is exercised through a production-shaped request by using the local
-        // parser contract in a deterministic unit fixture below.
-        ToolResult result = new ToolResult(
-                "web-1", WebSearchToolAdapter.CAPABILITY, "internet:web-search", "search",
-                true, "Example result\\nurl=https://example.com/a\\nsnippet=Example snippet & evidence.",
-                List.of("https://example.com/a"));
+        ToolResult result = adapter.execute(new ToolRequest(
+                "web-1", "telegram:human", WebSearchToolAdapter.CAPABILITY,
+                "internet:web-search", "search", "example query", java.util.List.of("read-only")));
 
-        assertTrue(result.success());
+        assertTrue(result.success(), result.output());
         assertEquals("https://example.com/a", result.evidenceReferences().getFirst());
         assertTrue(result.output().contains("Example result"));
+        assertTrue(result.output().contains("Example snippet & evidence."));
     }
 
     @Test
@@ -57,7 +53,7 @@ class WebSearchToolAdapterTest {
         WebSearchToolAdapter adapter = new WebSearchToolAdapter();
         ToolResult result = adapter.execute(new ToolRequest(
                 "web-blank", "telegram:human", WebSearchToolAdapter.CAPABILITY,
-                "internet:web-search", "search", "  ", List.of("read-only")));
+                "internet:web-search", "search", "  ", java.util.List.of("read-only")));
 
         assertTrue(!result.success());
         assertEquals("web_search_query_empty", result.output());
