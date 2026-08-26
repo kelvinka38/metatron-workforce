@@ -127,6 +127,52 @@ jobs:
             exit 1
           fi
 
+          echo "=== TELEGRAM CHANNEL HEALTH ==="
+          curl -fsS http://127.0.0.1:8080/telegram/health
+          echo
+
+          echo "=== TELEGRAM WEBHOOK BINDING ==="
+          set -a
+          source "$BASE/.env"
+          set +a
+          test -n "${TELEGRAM_BOT_TOKEN:-}"
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+          test -n "${METATRON_ORGANIZATION_ID:-}"
+          test -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}"
+
+          TELEGRAM_WEBHOOK_URL="https://gate.metatron.vn/telegram/webhook"
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+            --data-urlencode "url=${TELEGRAM_WEBHOOK_URL}" \
+            --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+            --data-urlencode 'drop_pending_updates=false' \
+            >/tmp/telegram-set-webhook.json
+
+          python3 - <<'PY'
+          import json
+          with open('/tmp/telegram-set-webhook.json') as f:
+              data=json.load(f)
+          assert data.get('ok') is True, data
+          print('SET_WEBHOOK=PASS')
+          PY
+
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" \
+            >/tmp/telegram-webhook-info.json
+
+          python3 - <<'PY'
+          import json
+          with open('/tmp/telegram-webhook-info.json') as f:
+              data=json.load(f)
+          assert data.get('ok') is True, data
+          result=data['result']
+          expected='https://gate.metatron.vn/telegram/webhook'
+          assert result.get('url') == expected, result
+          print('WEBHOOK_URL=' + result['url'])
+          print('PENDING_UPDATE_COUNT=' + str(result.get('pending_update_count', 0)))
+          if result.get('last_error_message'):
+              print('LAST_ERROR=' + result['last_error_message'])
+          PY
+
           deployed_sha=$(docker inspect deploy-workforce-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$deployed_sha" = "$SHA"
 
