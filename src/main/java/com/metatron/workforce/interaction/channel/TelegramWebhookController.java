@@ -2,34 +2,24 @@ package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.metatron.workforce.adapter.telegram.ConfiguredTelegramIdentityResolver;
-import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
-import com.metatron.workforce.interaction.MetatronInteraction;
-import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.metatron.workforce.phase3.ActorRef;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
 
-/** Public Telegram transport boundary. Authenticated Telegram updates are always acknowledged with HTTP 200 after processing. */
+/** Public Telegram transport boundary. Transport is normalized before entering the canonical Metatron interaction boundary. */
 @RestController
 @RequestMapping("/telegram")
 @ConditionalOnProperty(name = {"telegram.bot-token", "telegram.webhook-secret"})
 public final class TelegramWebhookController {
-    private static final Logger LOG = LoggerFactory.getLogger(TelegramWebhookController.class);
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramWebhookController.class);
 
     private final TelegramWebhookAdapter adapter;
     private final TelegramBotGateway gateway;
@@ -37,7 +27,6 @@ public final class TelegramWebhookController {
     private final TelegramIdentityResolver identityResolver;
     private final ObjectMapper objectMapper;
     private final TelegramUpdateDeduplicator updateDeduplicator;
-    private final String secret;
 
     public TelegramWebhookController(
             @Value("${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}") String secret,
@@ -66,13 +55,12 @@ public final class TelegramWebhookController {
             throw new IllegalStateException("TELEGRAM_ALLOWED_USER_ID_INVALID", failure);
         }
 
-        this.secret = secret;
         this.adapter = new TelegramWebhookAdapter(secret);
         this.gateway = new TelegramBotGateway(botToken, java.net.http.HttpClient.newHttpClient(), objectMapper);
         this.identityResolver = new ConfiguredTelegramIdentityResolver(
                 configuredTelegramUserId,
-                new com.metatron.workforce.phase3.ActorRef("telegram-human", com.metatron.workforce.phase3.ActorRef.ActorType.HUMAN),
-                new com.metatron.workforce.phase3.ActorRef("metatron-workforce", com.metatron.workforce.phase3.ActorRef.ActorType.WORKER),
+                new ActorRef("telegram-human", ActorRef.ActorType.HUMAN),
+                new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
                 organizationContextId.trim());
 
         TelegramIntelligenceResponder intelligence = new TelegramIntelligenceResponder(
@@ -85,7 +73,8 @@ public final class TelegramWebhookController {
                     interaction.text(),
                     interaction.externalMessageReference());
             return new MetatronInteractionOrchestrator.InteractionResponse(
-                    interaction.conversationId(), answer,
+                    interaction.conversationId(),
+                    answer,
                     "interaction:" + interaction.externalMessageReference());
         });
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -109,7 +98,12 @@ public final class TelegramWebhookController {
         long updateId = -1L;
         String chatId = "";
         try {
-            JsonNode update = objectMapper.readTree(body);
+            JsonNode update;
+            try {
+                update = objectMapper.readTree(body);
+            } catch (Exception parsingFailure) {
+                throw new IllegalArgumentException("telegram_payload_invalid", parsingFailure);
+            }
             updateId = update.path("update_id").asLong(-1L);
             if (updateId < 0) throw new IllegalArgumentException("telegram_update_id_invalid");
 
@@ -169,7 +163,7 @@ public final class TelegramWebhookController {
                             "Metatron nhận được message nhưng gặp lỗi xử lý. Webhook đã được acknowledge và lỗi đã được ghi nhận."));
                     LOG.info("telegram_processing_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
                 } catch (RuntimeException sendFailure) {
-                    LOG.error("telegram_processing_failure_notification_failed update_id=" + updateId, sendFailure);
+                    LOG.error("telegram_processing_failure_notification_failed update_id={}", updateId, sendFailure);
                 }
             }
         }
@@ -183,7 +177,6 @@ public final class TelegramWebhookController {
         String normalizedInbound = normalize(inbound);
         String normalizedAnswer = normalize(answer);
         if (normalizedAnswer.equals(normalizedInbound)) throw new IllegalStateException("telegram_response_echo");
-        if (normalizedAnswer.startsWith("workforce received:")) throw new IllegalStateException("telegram_legacy_echo");
         return answer.trim();
     }
 
@@ -191,18 +184,16 @@ public final class TelegramWebhookController {
         return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
     }
 
-    private static long parseChatId(String chatId) {
-        try { return Long.parseLong(chatId); }
-        catch (NumberFormatException failure) { throw new IllegalArgumentException("telegram_chat_id_invalid", failure); }
-    }
-
     private static boolean constantTimeEquals(String expected, String supplied) {
-        if (supplied == null) return false;
-        return MessageDigest.isEqual(
-                expected.getBytes(StandardCharsets.UTF_8),
-                supplied.getBytes(StandardCharsets.UTF_8));
+        if (expected == null || supplied == null) return false;
+        return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8));
     }
 
-    @org.springframework.web.bind.annotation.ExceptionHandler(SecurityException.class)
-    ResponseEntity<Void> handleSecurityException() { return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build(); }
+    private static long parseChatId(String chatId) {
+        try {
+            return Long.parseLong(chatId);
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException("telegram_chat_id_invalid", failure);
+        }
+    }
 }
