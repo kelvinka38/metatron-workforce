@@ -96,14 +96,29 @@ public final class TelegramWebhookController {
             @RequestHeader(name = "X-Telegram-Bot-Api-Secret-Token", required = false) String suppliedSecret,
             @RequestBody String body) throws Exception {
         JsonNode update = objectMapper.readTree(body);
+        long updateId = update.path("update_id").asLong(-1L);
+        if (updateId < 0) throw new IllegalArgumentException("telegram_update_id_invalid");
+
         JsonNode message = update.path("message");
+        if (message.isMissingNode() || message.isNull()) {
+            // Telegram legitimately sends non-message updates (edited messages, membership changes,
+            // callback queries, etc.). They must be acknowledged so Telegram does not retry them as 400s.
+            adapter.receive(suppliedSecret, "telegram-system", "non-message-update");
+            LOG.info("telegram_non_message_update_ignored update_id={}", updateId);
+            return ResponseEntity.ok().build();
+        }
+
         JsonNode chat = message.path("chat");
         JsonNode from = message.path("from");
         long telegramUserId = from.path("id").asLong(-1L);
         String chatId = chat.path("id").asText("");
         String text = message.path("text").asText("");
-        long updateId = update.path("update_id").asLong(-1L);
-        if (updateId < 0) throw new IllegalArgumentException("telegram_update_id_invalid");
+        if (telegramUserId < 0 || chatId.isBlank() || text.isBlank()) {
+            adapter.receive(suppliedSecret, "telegram-system", "invalid-but-acknowledged-update");
+            LOG.info("telegram_non_text_update_ignored update_id={} telegram_user={} chat={}",
+                    updateId, telegramUserId, chatId);
+            return ResponseEntity.ok().build();
+        }
 
         TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
         ChannelMessage inbound = adapter.receive(suppliedSecret, chatId, text);
@@ -130,13 +145,16 @@ public final class TelegramWebhookController {
             String safeAnswer = validateAnswer(inbound.text(), response.text());
             LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={}",
                     updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference());
-            gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
+            String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
+            LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={}",
+                    updateId, telegramUserId, chatId, delivery.length());
         } catch (RuntimeException e) {
             LOG.error("telegram_interaction_failed update_id=" + updateId, e);
             try {
-                gateway.send(new ChannelMessage(
+                String delivery = gateway.send(new ChannelMessage(
                         "telegram", inbound.senderId(),
                         "Metatron could not produce an AI response for this message. The failure has been recorded for recovery."));
+                LOG.info("telegram_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
             } catch (RuntimeException sendFailure) {
                 LOG.error("telegram_failure_notification_failed update_id=" + updateId, sendFailure);
             }
