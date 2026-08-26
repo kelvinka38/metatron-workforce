@@ -67,14 +67,14 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             List<Result> results = parseResults(response.body(), 5);
             if (results.isEmpty()) return ToolResult.failure(request, "web_search_no_results");
 
-            StringBuilder output = new StringBuilder("WEB SEARCH RESULTS\\nquery=").append(query).append('\\n');
+            StringBuilder output = new StringBuilder("WEB SEARCH RESULTS\nquery=").append(query).append('\n');
             List<String> evidence = new ArrayList<>();
             int index = 1;
             for (Result result : results) {
                 output.append('[').append(index++).append("] ")
-                        .append(result.title()).append('\\n')
-                        .append("url=").append(result.url()).append('\\n')
-                        .append("snippet=").append(result.description()).append("\\n\\n");
+                        .append(result.title()).append('\n')
+                        .append("url=").append(result.url()).append('\n')
+                        .append("snippet=").append(result.description()).append("\n\n");
                 evidence.add(result.url());
             }
             return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
