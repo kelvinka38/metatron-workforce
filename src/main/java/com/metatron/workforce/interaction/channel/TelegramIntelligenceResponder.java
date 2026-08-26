@@ -111,18 +111,11 @@ public final class TelegramIntelligenceResponder {
             return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên, ví dụ:\n• audit g4 gateway\n• hôm nay thứ mấy?\n• hỏi thông tin mới nhất về ...\n• phân tích ...\n• Hey Gemini / Hey Claude / Hey OpenAI";
         }
 
-        if (isGatewayAuditCommand(text)) {
-            return executeGatewayAudit(senderId, text, externalMessageReference);
-        }
-
-        if (isCurrentTimeCommand(text)) {
-            return executeCurrentTime(senderId, externalMessageReference);
-        }
+        if (isGatewayAuditCommand(text)) return executeGatewayAudit(senderId, text, externalMessageReference);
+        if (isCurrentTimeCommand(text)) return executeCurrentTime(senderId, externalMessageReference);
 
         LlmProvider requested = explicitProvider(text);
-        if (requested == null && !configuredProvider.isBlank()) {
-            requested = LlmProvider.valueOf(configuredProvider);
-        }
+        if (requested == null && !configuredProvider.isBlank()) requested = LlmProvider.valueOf(configuredProvider);
         List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
         int maxProviders = requested == null ? 3 : 1;
         IntelligenceMode mode = resolveMode(text);
@@ -135,21 +128,18 @@ public final class TelegramIntelligenceResponder {
             webContext = "\n\nFRESH WEB SEARCH EVIDENCE (read-only; use it to answer factual/current questions):\n"
                     + webEvidence.output()
                     + "\n\nCite the evidence naturally in the answer when useful. Do not claim browsing beyond this supplied evidence.";
-            evidence = webEvidence.evidence();
+            evidence = webEvidence.evidenceReferences();
         } else {
             webContext = "\n\nWEB SEARCH ATTEMPT: unavailable (" + webEvidence.output() + "). Do not claim an external lookup occurred.";
             evidence = List.of("observation:telegram:" + externalMessageReference, "web-search:" + webEvidence.output());
         }
-        if (evidence.isEmpty()) {
-            evidence = List.of("observation:telegram:" + externalMessageReference);
-        }
+        if (evidence.isEmpty()) evidence = List.of("observation:telegram:" + externalMessageReference);
 
         IntelligenceRequest request = new IntelligenceRequest(
                 "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
                 mode, CollaborationMode.SINGLE, text,
                 SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.\n" + webContext,
-                evidence,
-                "analysis", consequence, "interactive", "standard", "telegram-human",
+                evidence, "analysis", consequence, "interactive", "standard", "telegram-human",
                 "direct natural-language answer", requestedProviders, maxProviders);
         return fabric.execute(request).text();
     }
@@ -157,18 +147,12 @@ public final class TelegramIntelligenceResponder {
     private ToolResult executeWebSearch(String senderId, String text, String externalMessageReference) {
         ToolRequest request = new ToolRequest(
                 "telegram-web-search-" + senderId + "-" + System.nanoTime(),
-                "telegram-human",
-                WebSearchToolAdapter.CAPABILITY,
-                "runtime:workforce",
-                "read",
-                text,
+                "telegram-human", WebSearchToolAdapter.CAPABILITY, "runtime:workforce", "read", text,
                 List.of("telegram:" + externalMessageReference));
         return toolFabric.execute(request);
     }
 
-    private static boolean isStartCommand(String normalized) {
-        return "/start".equals(normalized) || "/help".equals(normalized);
-    }
+    private static boolean isStartCommand(String normalized) { return "/start".equals(normalized) || "/help".equals(normalized); }
 
     private static LlmProvider explicitProvider(String text) {
         String value = text.toLowerCase(Locale.ROOT);
@@ -179,39 +163,23 @@ public final class TelegramIntelligenceResponder {
     }
 
     private String executeCurrentTime(String senderId, String externalMessageReference) {
-        ToolRequest request = new ToolRequest(
-                "telegram-time-" + senderId + "-" + System.nanoTime(),
-                "telegram-human",
-                CurrentTimeToolAdapter.CAPABILITY,
-                "runtime:workforce",
-                "read",
-                "current date and time",
+        ToolRequest request = new ToolRequest("telegram-time-" + senderId + "-" + System.nanoTime(), "telegram-human",
+                CurrentTimeToolAdapter.CAPABILITY, "runtime:workforce", "read", "current date and time",
                 List.of("telegram:" + externalMessageReference));
         ToolResult result = toolFabric.execute(request);
-        if (!result.success()) {
-            throw new IllegalStateException("current_time_read_failed:" + result.output());
-        }
-
+        if (!result.success()) throw new IllegalStateException("current_time_read_failed:" + result.output());
         Map<String, String> fields = parseKeyValueOutput(result.output());
         String day = switch (fields.getOrDefault("day_of_week", "")) {
-            case "MONDAY" -> "Thứ Hai";
-            case "TUESDAY" -> "Thứ Ba";
-            case "WEDNESDAY" -> "Thứ Tư";
-            case "THURSDAY" -> "Thứ Năm";
-            case "FRIDAY" -> "Thứ Sáu";
-            case "SATURDAY" -> "Thứ Bảy";
-            case "SUNDAY" -> "Chủ Nhật";
-            default -> fields.getOrDefault("day_of_week", "không xác định");
+            case "MONDAY" -> "Thứ Hai"; case "TUESDAY" -> "Thứ Ba"; case "WEDNESDAY" -> "Thứ Tư";
+            case "THURSDAY" -> "Thứ Năm"; case "FRIDAY" -> "Thứ Sáu"; case "SATURDAY" -> "Thứ Bảy";
+            case "SUNDAY" -> "Chủ Nhật"; default -> fields.getOrDefault("day_of_week", "không xác định");
         };
         return "Hôm nay là " + day + ", ngày " + fields.getOrDefault("current_date", "không xác định")
-                + ". Giờ hiện tại: " + fields.getOrDefault("current_time", "không xác định")
-                + " (giờ Việt Nam).";
+                + ". Giờ hiện tại: " + fields.getOrDefault("current_time", "không xác định") + " (giờ Việt Nam).";
     }
 
     private static Map<String, String> parseKeyValueOutput(String output) {
-        return output.lines()
-                .map(line -> line.split("=", 2))
-                .filter(parts -> parts.length == 2)
+        return output.lines().map(line -> line.split("=", 2)).filter(parts -> parts.length == 2)
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1]));
     }
 
@@ -220,18 +188,12 @@ public final class TelegramIntelligenceResponder {
         try {
             ExecutionCommand command = new ExecutionCommand(executionId, "gateway.audit.read", Instant.now());
             ExecutionResult result = capabilityRegistry.require(command.action()).execute(command);
-            return "METATRON GATEWAY AUDIT RESULT\n"
-                    + "execution_id=" + result.executionId() + "\n"
-                    + "capability=" + result.capability() + "\n"
-                    + "success=" + result.success() + "\n"
-                    + "summary=" + result.summary() + "\n"
-                    + "evidence=" + result.evidence() + "\n"
-                    + "source=telegram:" + externalMessageReference + "\n"
-                    + "request=" + text.trim();
+            return "METATRON GATEWAY AUDIT RESULT\nexecution_id=" + result.executionId() + "\ncapability="
+                    + result.capability() + "\nsuccess=" + result.success() + "\nsummary=" + result.summary()
+                    + "\nevidence=" + result.evidence() + "\nsource=telegram:" + externalMessageReference
+                    + "\nrequest=" + text.trim();
         } catch (RuntimeException failure) {
-            return "METATRON GATEWAY AUDIT BLOCKED\n"
-                    + "execution_id=" + executionId + "\n"
-                    + "reason=" + failure.getMessage();
+            return "METATRON GATEWAY AUDIT BLOCKED\nexecution_id=" + executionId + "\nreason=" + failure.getMessage();
         }
     }
 
@@ -242,31 +204,21 @@ public final class TelegramIntelligenceResponder {
 
     private static boolean isCurrentTimeCommand(String text) {
         String value = text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
-        return containsAny(value,
-                "hôm nay là thứ mấy", "hôm nay thứ mấy", "hom nay la thu may", "hom nay thu may",
-                "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today",
-                "today's date", "todays date", "what date is it", "what is today's date",
-                "what time is it", "current time", "current date and time", "what's the date");
+        return containsAny(value, "hôm nay là thứ mấy", "hôm nay thứ mấy", "hom nay la thu may", "hom nay thu may",
+                "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today", "today's date",
+                "todays date", "what date is it", "what is today's date", "what time is it", "current time",
+                "current date and time", "what's the date");
     }
 
     private static IntelligenceMode resolveMode(String text) {
         String value = text.toLowerCase(Locale.ROOT);
-        if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) {
-            return IntelligenceMode.EXECUTION;
-        }
-        if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) {
-            return IntelligenceMode.DECISION;
-        }
-        if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) {
-            return IntelligenceMode.REASONING;
-        }
+        if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) return IntelligenceMode.EXECUTION;
+        if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) return IntelligenceMode.DECISION;
+        if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) return IntelligenceMode.REASONING;
         return IntelligenceMode.DISCUSSION;
     }
 
-    private static boolean containsAny(String value, String... terms) {
-        for (String term : terms) if (value.contains(term)) return true;
-        return false;
-    }
+    private static boolean containsAny(String value, String... terms) { for (String term : terms) if (value.contains(term)) return true; return false; }
 
     private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) {
         return provider -> switch (provider) {
@@ -281,11 +233,6 @@ public final class TelegramIntelligenceResponder {
         return provider.trim().toUpperCase(Locale.ROOT);
     }
 
-    private static String defaultModel(String configured, String fallback) {
-        return configured == null || configured.isBlank() ? fallback : configured.trim();
-    }
-
-    private static boolean present(String value) {
-        return value != null && !value.isBlank();
-    }
+    private static String defaultModel(String configured, String fallback) { return configured == null || configured.isBlank() ? fallback : configured.trim(); }
+    private static boolean present(String value) { return value != null && !value.isBlank(); }
 }
