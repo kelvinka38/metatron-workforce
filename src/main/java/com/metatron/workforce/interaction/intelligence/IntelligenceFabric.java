@@ -111,6 +111,12 @@ public final class IntelligenceFabric {
     private IntelligenceRequest enrichWithWebEvidence(IntelligenceRequest request) {
         if (!requiresWebResearch(request.objective())) return request;
 
+        List<String> authority = new ArrayList<>(request.authorityContext().isBlank()
+                ? List.of()
+                : List.of(request.authorityContext()));
+        authority.add("bios:admitted");
+        authority.add("knowledge:external-read");
+
         ToolRequest toolRequest = new ToolRequest(
                 "web-research-" + request.requestId(),
                 request.requester(),
@@ -118,7 +124,7 @@ public final class IntelligenceFabric {
                 "internet:web-search",
                 "search",
                 request.objective(),
-                List.of(request.authorityContext(), "bios:admitted", "knowledge:external-read"));
+                authority);
         ToolResult result = toolFabric.execute(toolRequest);
         if (!result.success()) {
             LOG.warn("web_research_unavailable request_id={} reason={}", request.requestId(), result.output());
