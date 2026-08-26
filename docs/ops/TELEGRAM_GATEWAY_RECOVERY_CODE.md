@@ -1,0 +1,1 @@
+Code change pending: Telegram webhook invalid-update handling must ACK HTTP 200, not 400. This file is a recovery marker only.
