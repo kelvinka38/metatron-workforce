@@ -20,8 +20,11 @@ permissions:
 env:
   METATRON_VERSION: "0.1.0"
 
-# Deployment trigger: force canonical main source through the production runner.
-# Recovery trigger: this workflow file change intentionally re-runs production deployment.
+# Production deployment deliberately builds from the immutable GitHub Actions
+# workspace. The historical /opt/metatron/metatron-workforce tree may contain
+# root-owned files and must not be recursively deleted or overwritten by the
+# unprivileged runner. The production .env remains on the host and is injected
+# via --env-file.
 jobs:
   test-and-build:
     runs-on: [self-hosted, linux, x64, metatron-prod]
@@ -81,42 +84,33 @@ jobs:
 
           BASE=/opt/metatron/metatron-workforce
           WORKSPACE="$GITHUB_WORKSPACE"
+          COMPOSE="$WORKSPACE/deploy/docker-compose.yml"
 
+          echo "=== VERIFY HOST RUNTIME ==="
           test -d "$BASE"
           test -f "$BASE/.env"
-          test -f "$WORKSPACE/deploy/docker-compose.yml"
           test -s "$WORKSPACE/build/libs/metatron-workforce-0.1.0.jar"
+          test -f "$COMPOSE"
+          test -f "$WORKSPACE/Dockerfile"
 
-          echo "=== VERIFY RUNNER WRITE ACCESS ==="
-          test -w "$BASE"
+          echo "=== DEPLOY IDENTITY ==="
+          echo "EXPECTED_SHA=$SHA"
+          echo "WORKSPACE=$WORKSPACE"
+          echo "BASE=$BASE"
 
-          echo "=== SYNC SOURCE TO PRODUCTION ==="
-          # The production directory is owned by github-runner. .env is protected
-          # separately and is never replaced by repository contents.
-          rm -rf "$BASE/build" "$BASE/.gradle"
+          echo "=== VERIFY PRODUCTION ENV ==="
+          test -r "$BASE/.env"
 
-          find "$BASE" -mindepth 1 -maxdepth 1 \
-            ! -name .env \
-            ! -name runtime-state \
-            ! -name runtime-evidence \
-            -exec rm -rf {} +
-
-          cp -r "$WORKSPACE/." "$BASE/"
-
-          cd "$BASE"
+          cd "$WORKSPACE"
           export METATRON_VERSION=0.1.0
           export METATRON_COMMIT_SHA="$SHA"
           export METATRON_ENVIRONMENT=production
 
-          echo "=== VERIFY JAR ==="
-          test -s build/libs/metatron-workforce-0.1.0.jar
-          ls -lh build/libs/metatron-workforce-0.1.0.jar
-
-          echo "=== VALIDATE COMPOSE ==="
-          docker compose --env-file .env -f deploy/docker-compose.yml config >/dev/null
+          echo "=== VALIDATE COMPOSE WITH PRODUCTION ENV ==="
+          docker compose --env-file "$BASE/.env" -f "$COMPOSE" config >/dev/null
 
           echo "=== BUILD + START PRODUCTION ==="
-          docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+          docker compose --env-file "$BASE/.env" -f "$COMPOSE" up -d --build --force-recreate
 
           echo "=== WAIT FOR HEALTH ==="
           healthy=false
@@ -129,7 +123,7 @@ jobs:
           done
 
           if [ "$healthy" != true ]; then
-            docker compose --env-file .env -f deploy/docker-compose.yml logs --tail 200 workforce
+            docker compose --env-file "$BASE/.env" -f "$COMPOSE" logs --tail 200 workforce
             exit 1
           fi
 
