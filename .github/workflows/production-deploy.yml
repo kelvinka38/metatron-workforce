@@ -21,6 +21,7 @@ env:
   METATRON_VERSION: "0.1.0"
 
 # Deployment trigger: force canonical main source through the production runner.
+# Recovery trigger: this workflow file change intentionally re-runs production deployment.
 jobs:
   test-and-build:
     runs-on: [self-hosted, linux, x64, metatron-prod]
