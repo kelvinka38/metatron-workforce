@@ -1,0 +1,1 @@
+Temporary recovery marker: the canonical Telegram controller must acknowledge malformed/non-actionable webhook updates with HTTP 200 so Telegram does not retry them as 400 failures. Outbound Bot API connectivity and the web-search capability have been separately verified.
