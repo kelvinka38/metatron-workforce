@@ -17,6 +17,7 @@ import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /** Public Telegram transport boundary. Transport is normalized before entering the canonical Metatron interaction boundary. */
 @RestController
@@ -79,8 +80,7 @@ public final class TelegramWebhookController {
                     interaction.text(),
                     interaction.externalMessageReference());
             return new MetatronInteractionOrchestrator.InteractionResponse(
-                    interaction.conversationId(),
-                    answer,
+                    interaction.conversationId(), answer,
                     "interaction:" + interaction.externalMessageReference());
         });
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -143,39 +143,51 @@ public final class TelegramWebhookController {
                     identity.human(), identity.target(), identity.organizationContextId(),
                     "telegram:" + chatId, "update:" + updateId, inbound.text());
 
-            try {
-                MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
-                String safeAnswer = validateAnswer(inbound.text(), response.text());
-                LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={}", updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference());
-                String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
-                LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={}", updateId, telegramUserId, chatId, delivery.length());
-            } catch (RuntimeException failure) {
-                LOG.error("telegram_interaction_failed update_id=" + updateId, failure);
-                try {
-                    String delivery = gateway.send(new ChannelMessage(
-                            "telegram", inbound.senderId(),
-                            "Metatron could not produce an AI response for this message. The failure has been recorded for recovery."));
-                    LOG.info("telegram_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
-                } catch (RuntimeException sendFailure) {
-                    LOG.error("telegram_failure_notification_failed update_id={}", updateId, sendFailure);
-                }
-            }
+            final long acceptedUpdateId = updateId;
+            final String acceptedChatId = chatId;
+            final long acceptedTelegramUserId = telegramUserId;
+            final ChannelMessage acceptedInbound = inbound;
+            CompletableFuture.runAsync(() -> processInteraction(
+                    acceptedUpdateId, acceptedTelegramUserId, acceptedChatId, acceptedInbound, interaction));
+
+            LOG.info("telegram_webhook_ack update_id={} chat={}", updateId, chatId);
+            return ResponseEntity.ok().build();
         } catch (RuntimeException failure) {
             LOG.error("telegram_webhook_processing_failed update_id=" + updateId + " chat=" + chatId, failure);
             if (!chatId.isBlank()) {
                 try {
-                    String delivery = gateway.send(new ChannelMessage(
+                    gateway.send(new ChannelMessage(
                             "telegram", chatId,
                             "Metatron nhận được message nhưng gặp lỗi xử lý. Webhook đã được acknowledge và lỗi đã được ghi nhận."));
-                    LOG.info("telegram_processing_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
                 } catch (RuntimeException sendFailure) {
                     LOG.error("telegram_processing_failure_notification_failed update_id={}", updateId, sendFailure);
                 }
             }
+            return ResponseEntity.ok().build();
         }
+    }
 
-        LOG.info("telegram_webhook_ack update_id={} chat={}", updateId, chatId);
-        return ResponseEntity.ok().build();
+    private void processInteraction(long updateId, long telegramUserId, String chatId,
+                                    ChannelMessage inbound, MetatronInteraction interaction) {
+        try {
+            MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
+            String safeAnswer = validateAnswer(inbound.text(), response.text());
+            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={}",
+                    updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference());
+            String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
+            LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={}",
+                    updateId, telegramUserId, chatId, delivery.length());
+        } catch (RuntimeException failure) {
+            LOG.error("telegram_interaction_failed update_id=" + updateId, failure);
+            try {
+                String delivery = gateway.send(new ChannelMessage(
+                        "telegram", inbound.senderId(),
+                        "Metatron could not produce an AI response for this message. The failure has been recorded for recovery."));
+                LOG.info("telegram_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
+            } catch (RuntimeException sendFailure) {
+                LOG.error("telegram_failure_notification_failed update_id={}", updateId, sendFailure);
+            }
+        }
     }
 
     static String validateAnswer(String inbound, String answer) {
