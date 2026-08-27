@@ -45,8 +45,14 @@ services:
     cap_drop:
       - ALL
     networks:
-      - workforce
+      workforce:
+      gateway:
+        aliases:
+          - workforce
 
 networks:
   workforce:
     name: metatron-workforce
+  gateway:
+    external: true
+    name: metatron-gateway-online
