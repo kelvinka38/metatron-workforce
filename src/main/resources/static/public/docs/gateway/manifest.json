@@ -1,0 +1,24 @@
+{
+  "publication": "metatron-workforce/public/docs/gateway",
+  "status": "PUBLIC_READ_ONLY_DERIVATIVE",
+  "authority": "NONE",
+  "canonical_source": {
+    "repository": "kelvinka38/metatron-institution",
+    "commit": "b3516179879dc90dd482660efef71894069470c3",
+    "domain": "06_GATEWAY"
+  },
+  "rules": [
+    "This publication is readable by Workforce without cross-repository credentials.",
+    "This publication does not become SOT and cannot supersede metatron-institution/06_GATEWAY.",
+    "Each document preserves its canonical source path and source blob SHA.",
+    "A publication refresh is a governed copy/derivation action; authority remains upstream."
+  ],
+  "documents": [
+    {"public_path":"SOT.md","source_path":"06_GATEWAY/SOT.md","source_blob_sha":"bc944240e62938857633358117686b316122f21f"},
+    {"public_path":"CONTRACTS.md","source_path":"06_GATEWAY/CONTRACTS.md","source_blob_sha":"70e1e089e144d0fc9632cfb15f94d55f05e56d2b"},
+    {"public_path":"GATEWAY_CURRENT_STATE.md","source_path":"06_GATEWAY/GATEWAY_CURRENT_STATE.md","source_blob_sha":"edcce4ad183a7f0f3d5d4943a11ee5f54aec7536"},
+    {"public_path":"GATEWAY_PRODUCTION_ARCHITECTURE.md","source_path":"06_GATEWAY/GATEWAY_PRODUCTION_ARCHITECTURE.md","source_blob_sha":"6df7b66bfa6a27f2f42425dee1da2342710f3f6d"},
+    {"public_path":"MASTER_EXECUTION_PLAN.md","source_path":"06_GATEWAY/MASTER_EXECUTION_PLAN.md","source_blob_sha":"5fc70b5c407511d1ad44745159f7b28044734dd1"},
+    {"public_path":"PRODUCTION_COMPLETION.md","source_path":"06_GATEWAY/g6/online/PRODUCTION_COMPLETION.md","source_blob_sha":"5edd617eafc65e1476a91095d0c71159a7e5a05a"}
+  ]
+}
