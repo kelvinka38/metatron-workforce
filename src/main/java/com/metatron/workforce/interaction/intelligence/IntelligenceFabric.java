@@ -52,7 +52,8 @@ public final class IntelligenceFabric {
 
     public IntelligenceResult execute(IntelligenceRequest request) {
         Objects.requireNonNull(request, "request");
-        IntelligenceRequest enrichedRequest = enrichWithWebEvidence(request);
+        WebEnrichment enrichment = enrichWithWebEvidence(request);
+        IntelligenceRequest enrichedRequest = enrichment.request();
         IntelligencePlan plan = planner.plan(enrichedRequest);
         List<LlmResponse> responses = new ArrayList<>();
         List<RuntimeException> failures = new ArrayList<>();
@@ -83,6 +84,13 @@ public final class IntelligenceFabric {
         }
 
         if (responses.isEmpty()) {
+            if (enrichment.webEvidence() != null && enrichment.webEvidence().success()) {
+                String fallback = renderWebEvidenceFallback(enrichment.webEvidence());
+                LOG.warn("intelligence_all_providers_failed_web_evidence_preserved request_id={} providers={} evidence_count={}",
+                        enrichedRequest.requestId(), plan.providers(), enrichment.webEvidence().evidenceReferences().size());
+                return new IntelligenceResult(enrichedRequest.requestId(), fallback, List.of());
+            }
+
             IllegalStateException failure = new IllegalStateException(
                     "all selected intelligence providers failed: " + plan.providers());
             failures.forEach(failure::addSuppressed);
@@ -108,8 +116,8 @@ public final class IntelligenceFabric {
                         .toList());
     }
 
-    private IntelligenceRequest enrichWithWebEvidence(IntelligenceRequest request) {
-        if (!requiresWebResearch(request.objective())) return request;
+    private WebEnrichment enrichWithWebEvidence(IntelligenceRequest request) {
+        if (!requiresWebResearch(request.objective())) return new WebEnrichment(request, null);
 
         List<String> authority = new ArrayList<>(request.authorityContext().isBlank()
                 ? List.of()
@@ -128,7 +136,7 @@ public final class IntelligenceFabric {
         ToolResult result = toolFabric.execute(toolRequest);
         if (!result.success()) {
             LOG.warn("web_research_unavailable request_id={} reason={}", request.requestId(), result.output());
-            return request;
+            return new WebEnrichment(request, result);
         }
 
         List<String> evidence = new ArrayList<>(request.evidenceReferences());
@@ -142,7 +150,7 @@ public final class IntelligenceFabric {
         LOG.info("web_research_complete request_id={} result_count={}",
                 request.requestId(), result.evidenceReferences().size());
 
-        return new IntelligenceRequest(
+        IntelligenceRequest enriched = new IntelligenceRequest(
                 request.requestId(),
                 request.requester(),
                 request.mode(),
@@ -158,6 +166,39 @@ public final class IntelligenceFabric {
                 request.requiredOutput(),
                 request.requestedProviders(),
                 request.maxProviders());
+        return new WebEnrichment(enriched, result);
+    }
+
+    private static String renderWebEvidenceFallback(ToolResult result) {
+        String output = result.output() == null ? "" : result.output().trim();
+        if (output.isBlank()) {
+            return "Không thể tạo bản tổng hợp AI, nhưng Workforce đã xác nhận có external evidence. Hãy thử lại.";
+        }
+
+        List<String> useful = output.lines()
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .filter(line -> !line.equals("WEB SEARCH RESULTS"))
+                .filter(line -> !line.equals("CURRENT EXTERNAL DATA"))
+                .filter(line -> !line.startsWith("query="))
+                .filter(line -> !line.startsWith("retrieved_at="))
+                .limit(18)
+                .toList();
+
+        StringBuilder answer = new StringBuilder("Thông tin web mới nhất Workforce vừa truy xuất:\n");
+        for (String line : useful) {
+            if (line.startsWith("url=")) {
+                answer.append("Nguồn: ").append(line.substring(4)).append('\n');
+            } else if (line.startsWith("snippet=")) {
+                answer.append(line.substring(8)).append('\n');
+            } else if (line.matches("\\[[0-9]+].*")) {
+                answer.append("\n").append(line).append('\n');
+            } else {
+                answer.append(line).append('\n');
+            }
+        }
+        answer.append("\nDữ liệu trên được trả trực tiếp từ external evidence; không bịa kết quả khi lớp AI synthesis tạm không khả dụng.");
+        return answer.toString().trim();
     }
 
     private static boolean requiresWebResearch(String objective) {
@@ -176,4 +217,6 @@ public final class IntelligenceFabric {
         }
         return false;
     }
+
+    private record WebEnrichment(IntelligenceRequest request, ToolResult webEvidence) {}
 }
