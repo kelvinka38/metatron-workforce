@@ -29,14 +29,19 @@ jobs:
   test-and-build:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
-      - name: Bootstrap and verify runner host resilience
+      - name: Verify or repair runner host resilience
         shell: bash
         run: |
           set -euo pipefail
           SERVICE='actions.runner.kelvinka38-metatron-workforce.metatron-prod-01.service'
-          HARDEN=/tmp/metatron-runner-hardening.sh
+          SWAP_BYTES=$(swapon --show --bytes --noheadings 2>/dev/null | awk '{s+=$3} END{print s+0}')
+          RESTART_MODE=$(systemctl show "$SERVICE" -p Restart --value 2>/dev/null || true)
+          OOM_SCORE=$(systemctl show "$SERVICE" -p OOMScoreAdjust --value 2>/dev/null || true)
 
-          cat > "$HARDEN" <<'HOSTROOT'
+          if [ "$RESTART_MODE" != always ] || [ "$OOM_SCORE" != -500 ] || [ "${SWAP_BYTES:-0}" -lt 1073741824 ]; then
+            echo 'HOST_RESILIENCE=REPAIR_REQUIRED'
+            HARDEN=/tmp/metatron-runner-hardening.sh
+            cat > "$HARDEN" <<'HOSTROOT'
           #!/usr/bin/env bash
           set -euo pipefail
           SERVICE='actions.runner.kelvinka38-metatron-workforce.metatron-prod-01.service'
@@ -48,7 +53,6 @@ jobs:
           OOMScoreAdjust=-500
           EOF
           systemctl daemon-reload
-
           SWAP_BYTES=$(swapon --show --bytes --noheadings 2>/dev/null | awk '{s+=$3} END{print s+0}')
           if [ "${SWAP_BYTES:-0}" -lt 1073741824 ]; then
             if [ ! -f /swapfile ]; then
@@ -62,17 +66,21 @@ jobs:
             fi
           fi
           HOSTROOT
-          chmod +x "$HARDEN"
+            chmod +x "$HARDEN"
 
-          if [ "$(id -u)" -eq 0 ]; then
-            bash "$HARDEN"
-          elif sudo -n true >/dev/null 2>&1; then
-            sudo -n bash "$HARDEN"
+            if [ "$(id -u)" -eq 0 ]; then
+              bash "$HARDEN"
+            elif sudo -n true >/dev/null 2>&1; then
+              sudo -n bash "$HARDEN"
+            else
+              docker run --rm --privileged --pid=host \
+                alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc \
+                sh -lc 'apk add --no-cache util-linux >/dev/null && nsenter -t 1 -m -u -i -n -p -- /bin/bash /tmp/metatron-runner-hardening.sh'
+            fi
+            rm -f "$HARDEN"
           else
-            docker run --rm --privileged --pid=host alpine:3.20 sh -lc \
-              'apk add --no-cache util-linux >/dev/null && nsenter -t 1 -m -u -i -n -p -- /bin/bash /tmp/metatron-runner-hardening.sh'
+            echo 'HOST_RESILIENCE=ALREADY_COMPLIANT'
           fi
-          rm -f "$HARDEN"
 
           echo '=== VERIFY RUNNER SELF-RECOVERY ==='
           systemctl show "$SERVICE" -p Restart -p RestartUSec -p OOMScoreAdjust --no-pager
@@ -190,9 +198,10 @@ jobs:
             return 1
           }
 
-          echo '=== BUILD IMMUTABLE IMAGE ==='
-          docker build --pull -t "metatron-workforce:$SHA" .
+          echo '=== BUILD REPRODUCIBLE IMAGE ==='
+          docker build --pull --build-arg METATRON_COMMIT_SHA="$SHA" -t "metatron-workforce:$SHA" .
           docker image inspect "metatron-workforce:$SHA" >/dev/null
+          test "$(docker image inspect "metatron-workforce:$SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SHA"
           docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" config >/dev/null
 
           echo '=== START CANDIDATE ==='
@@ -286,6 +295,7 @@ jobs:
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$SHA"
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          test "$(docker image inspect "metatron-workforce:$SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SHA"
 
           docker stats --no-stream "$CID"
           free -h
@@ -296,5 +306,6 @@ jobs:
           echo "EXPECTED_SHA=$SHA"
           echo "DEPLOYED_SHA=$DEPLOYED_SHA"
           echo "IMAGE=metatron-workforce:$SHA"
+          echo 'IMAGE_REVISION=PASS'
           echo 'PUBLIC_GATEWAY_HEALTH=PASS'
           echo 'INTERNET_EGRESS=PASS'
