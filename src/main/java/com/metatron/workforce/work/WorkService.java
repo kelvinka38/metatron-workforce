@@ -52,6 +52,7 @@ public final class WorkService {
     }
 
     public InstitutionalWork get(String id){return Optional.ofNullable(work.get(id)).orElseThrow(()->new NoSuchElementException("work not found"));}
+    public List<InstitutionalWork> all(){return work.values().stream().sorted(Comparator.comparing(InstitutionalWork::updatedAt).reversed()).toList();}
     public List<InstitutionalWork> forObjective(String objectiveRef){return work.values().stream().filter(w->w.objectiveRef().equals(objectiveRef)).toList();}
 
     private InstitutionalWork update(String id,InstitutionalWork.Status status,String proposalRef,String assignmentRef,
