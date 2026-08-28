@@ -1,53 +1,40 @@
 # METATRON WORKFORCE — G12 READINESS MATRIX
 
-Status:
-IMPLEMENTATION CLOSED / ACCEPTANCE PENDING CI
+Status: IMPLEMENTATION CLOSED / LIVE ACCEPTANCE PASS / FINAL CLOSURE CERTIFICATION REQUIRED
 
 ## REQUIREMENT MATRIX
 
 | G12 Requirement | Status | Evidence |
 |---|---|---|
-| Architecture implemented | VERIFIED | Phase 1 implementation artifacts |
-| Core lifecycle operational | VERIFIED | CI full acceptance |
-| Organization operational | VERIFIED | G12 multi-organization acceptance |
-| Workplace operational | VERIFIED | CI full acceptance |
-| Work operational | VERIFIED | concurrent workflow acceptance |
-| Capacity operational | VERIFIED | 1,000-worker representation |
-| Staffing operational | VERIFIED | CI acceptance |
-| Authorization operational | VERIFIED | G11/G12 authorization evidence |
-| Reporting operational | VERIFIED | reporting acceptance |
-| Economic evidence available | VERIFIED | plan/actual/variance evidence |
-| Learning system operational | VERIFIED | provenance/learning acceptance |
-| Cross-domain integration validated | VERIFIED | integration acceptance |
-| Durable runtime persistence | IMPLEMENTED | `FileRuntimePersistenceStore` + durable recovery test |
-| Restart-safe runtime recovery | IMPLEMENTED | replacement `WorkforceRuntime` recovers identity/state |
-| Production data visibility | IMPLEMENTED | same-org visible / cross-org hidden evidence |
-| Production logs | IMPLEMENTED | attributable `logs.jsonl` |
-| Production metrics | IMPLEMENTED | attributable `metrics.json` |
-| Production traces | IMPLEMENTED | attributable `traces.json` |
-| Utilization evidence | IMPLEMENTED | production `capacity-utilization.json` |
+| Architecture implemented | VERIFIED | canonical Workforce SOT + implementation target |
+| Core lifecycle operational | VERIFIED | live Worker lifecycle PASS |
+| Organization / participation operational | VERIFIED | core + Phase 4 acceptance |
+| Workplace operational | VERIFIED | Phase 3 acceptance |
+| First-class Work operational | VERIFIED | live Work lifecycle PASS |
+| Capacity / schedule operational | VERIFIED | live operations PASS |
+| Staffing operational | VERIFIED | live staffing + restart continuity PASS |
+| Authorization semantics | VERIFIED | Phase 6 + live fail-closed actor check |
+| Reporting / review | VERIFIED | Phase 7 + live durable review PASS |
+| Economic evidence | VERIFIED | Phase 5/7/10 acceptance |
+| Learning system | VERIFIED | Phase 8 acceptance |
+| Cross-domain integration | VERIFIED | integration acceptance |
+| Durable runtime persistence | VERIFIED | process-replacement continuity PASS |
+| Restart-safe recovery | VERIFIED | live container restart + state recovery PASS |
+| Production logs / metrics / traces | VERIFIED | G12 runtime evidence suite |
+| Public boundary isolation | VERIFIED | Gateway run 33155111510 + Workforce live acceptance |
+| Exact implementation deployment | VERIFIED | Workforce production run 33153971165; SHA 6f5b06e78d82d4e93f1cfa632d64557b64ea744c |
+| Full live Workforce acceptance | VERIFIED | run 33154091624 attempt 2 — PASS |
 
-## CURRENT GATE
+## CLOSED HIGH GAPS
 
-All implementation gaps from the prior audit have been addressed.
+The prior high gaps are closed by current implementation and live evidence: persistent Worker/Objective/Work continuity, first-class Work semantics, finite capacity and staffing, durable operational state, autonomous management/recovery, public boundary isolation, and implementation-repository authority hygiene.
 
-Final G12 PASS remains blocked only on fresh CI execution proving the new implementation and packaging the evidence bundle against the exact commit.
+## FINAL GREEN CONDITIONS
 
-## REQUIRED GREEN CONDITIONS
-
-- full test suite PASS
-- durable recovery test PASS
-- G12 acceptance suite PASS
-- deployable JAR PASS
-- production runtime smoke PASS
-- durable runtime state files present
-- logs/metrics/traces present
-- data-visibility evidence present
-- evidence bundle attributable to exact commit
-- working tree clean in evidence capture
+The closure commit must itself pass: full CI/regression, exact-SHA production deployment, post-deploy Workforce Live Acceptance, and G12 production-readiness evidence capture. These are certification gates, not remaining implementation features.
 
 ## DECISION
 
-PENDING — CI
+CONDITIONALLY ACCEPTED — IMPLEMENTATION AND LIVE OPERATING MODEL PASS. FINAL CLOSURE BECOMES UNCONDITIONAL WHEN THE CLOSURE COMMIT'S AUTOMATED CI → DEPLOY → LIVE ACCEPTANCE → G12 CHAIN IS GREEN.
 
-No G13 is created or assumed. G12 is the terminal gate of the current Workforce execution plan.
+No G13 is created or assumed. G12 remains the terminal gate of the current Workforce execution plan.
