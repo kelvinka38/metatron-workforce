@@ -3,14 +3,20 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: metatron-workforce:${METATRON_VERSION:-0.1.0}
+    image: metatron-workforce:${METATRON_IMAGE_TAG:-${METATRON_COMMIT_SHA:-0.1.0}}
     restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: 768m
+    mem_reservation: 384m
+    cpus: 1.50
+    pids_limit: 256
     ports:
       - "127.0.0.1:8080:8080"
     expose:
       - "8080"
     environment:
       SERVER_PORT: "8080"
+      JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp}"
       METATRON_VERSION: "${METATRON_VERSION:-0.1.0}"
       METATRON_COMMIT_SHA: "${METATRON_COMMIT_SHA:-unknown}"
       METATRON_ENVIRONMENT: "${METATRON_ENVIRONMENT:-production}"
@@ -39,7 +45,7 @@ services:
       start_period: 20s
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=128m,mode=1777
     security_opt:
       - no-new-privileges:true
     cap_drop:
