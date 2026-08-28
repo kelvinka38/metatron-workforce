@@ -6,7 +6,12 @@ import com.metatron.workforce.interaction.llm.LlmResponse;
 import java.util.List;
 import java.util.Objects;
 
-/** Governed result envelope; raw provider outputs remain attributable. */
+/**
+ * Governed intelligence result envelope.
+ * Provider results are present when an LLM contributed to the answer. They may be empty
+ * for an evidence-only result produced directly from a governed tool capability; callers
+ * must never invent provider attribution for such a result.
+ */
 public record IntelligenceResult(
         String requestId,
         String text,
@@ -18,7 +23,10 @@ public record IntelligenceResult(
         Objects.requireNonNull(providerResults, "providerResults");
         providerResults = List.copyOf(providerResults);
         if (requestId.isBlank() || text.isBlank()) throw new IllegalArgumentException("result fields must not be blank");
-        if (providerResults.isEmpty()) throw new IllegalArgumentException("at least one provider result is required");
+    }
+
+    public boolean evidenceOnly() {
+        return providerResults.isEmpty();
     }
 
     public record ProviderResult(LlmProvider provider, LlmResponse response) {
