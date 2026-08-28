@@ -18,9 +18,17 @@ public class WorkforceCoreController {
     }
     @PostMapping("/workers") @ResponseStatus(HttpStatus.CREATED)
     public WorkforceCoreService.Worker worker(@RequestBody WorkerCommand c) { return core.admitWorker(c.workerId(), c.participantId()); }
+    @PostMapping("/workers/{id}/status/{status}")
+    public WorkforceCoreService.Worker workerStatus(@PathVariable String id, @PathVariable WorkforceCoreService.WorkerStatus status) {
+        return core.setWorkerStatus(id, status);
+    }
     @PostMapping("/participations") @ResponseStatus(HttpStatus.CREATED)
     public WorkforceCoreService.Participation participation(@RequestBody ParticipationCommand c) {
         return core.participate(c.participationId(), c.workerId(), c.organizationRef(), c.positionRef(), c.roleRef());
+    }
+    @PostMapping("/participations/{id}/status/{status}")
+    public WorkforceCoreService.Participation participationStatus(@PathVariable String id, @PathVariable WorkforceCoreService.ParticipationStatus status) {
+        return core.setParticipationStatus(id, status);
     }
     @PostMapping("/capabilities")
     public WorkforceCoreService.Capability capability(@RequestBody CapabilityCommand c) { return core.attestCapability(c.workerId(), c.capabilityRef(), c.level(), c.evidenceRef()); }
@@ -35,7 +43,8 @@ public class WorkforceCoreController {
     @PostMapping("/assignments/{id}/status/{status}")
     public WorkforceCoreService.Assignment transition(@PathVariable String id, @PathVariable WorkforceCoreService.AssignmentStatus status) { return core.transitionAssignment(id, status); }
     @GetMapping("/workers/{id}") public WorkerView view(@PathVariable String id) {
-        return new WorkerView(core.worker(id), core.participations(id), core.assignments(id), core.availability(id).orElse(null));
+        return new WorkerView(core.worker(id), core.participations(id), core.assignments(id), core.capabilities(id),
+                core.qualifications(id), core.availability(id).orElse(null));
     }
 
     public record ParticipantCommand(String participantId, WorkforceCoreService.ParticipantType type, String provenanceRef) {}
@@ -46,5 +55,6 @@ public class WorkforceCoreController {
     public record AvailabilityCommand(String workerId, boolean available, double capacity) {}
     public record AssignmentCommand(String assignmentId, String objectiveRef, String workerId, String participationId, String authorityRef, String authorizationRef, String description) {}
     public record WorkerView(WorkforceCoreService.Worker worker, List<WorkforceCoreService.Participation> participations,
-                             List<WorkforceCoreService.Assignment> assignments, WorkforceCoreService.Availability availability) {}
+                             List<WorkforceCoreService.Assignment> assignments, List<WorkforceCoreService.Capability> capabilities,
+                             List<WorkforceCoreService.Qualification> qualifications, WorkforceCoreService.Availability availability) {}
 }
