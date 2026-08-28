@@ -20,17 +20,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^metatron-workforce($|-)' | head -n1 || true)
-          if [ -z "$CONTAINER" ]; then
-            echo 'LIVE_WORKER_GUIDANCE=FAIL no_workforce_container'
+          echo '=== LIVE DOCKER TOPOLOGY ==='
+          docker ps --format 'NAME={{.Names}} IMAGE={{.Image}} PORTS={{.Ports}}'
+
+          CONTAINER=''
+          IP=''
+          for candidate in $(docker ps --format '{{.Names}}'); do
+            candidate_ips=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$candidate" 2>/dev/null || true)
+            for candidate_ip in $candidate_ips; do
+              code=$(curl -sS -m 2 -o /tmp/probe.json -w '%{http_code}' "http://${candidate_ip}:8080/public/docs/gateway/manifest.json" || true)
+              if [ "$code" = '200' ]; then
+                CONTAINER="$candidate"
+                IP="$candidate_ip"
+                break 2
+              fi
+            done
+          done
+          if [ -z "$CONTAINER" ] || [ -z "$IP" ]; then
+            echo 'LIVE_WORKER_GUIDANCE=FAIL workforce_container_probe_failed'
             exit 1
           fi
 
-          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$CONTAINER" | awk '{print $1}')
-          if [ -z "$IP" ]; then
-            echo 'LIVE_WORKER_GUIDANCE=FAIL no_container_ip'
-            exit 1
-          fi
           BASE="http://${IP}:8080"
           WORKER='WORKER-GATEWAY-HEAD-01'
           PARTICIPANT='PARTICIPANT-GATEWAY-HEAD-01'
@@ -39,11 +49,10 @@ jobs:
           ASSIGNMENT="ASSIGNMENT-GUIDANCE-PROOF-${GITHUB_RUN_ID}"
 
           echo "CONTAINER=$CONTAINER"
+          echo "CONTAINER_IP=$IP"
           echo "WORKER=$WORKER"
           echo "WORK=$WORK"
 
-          # Bootstrap only if the canonical proof worker is absent. This is idempotent
-          # institutional state setup, not public-boundary exposure.
           code=$(curl -sS -o /tmp/worker.json -w '%{http_code}' "$BASE/workforce/core/workers/$WORKER" || true)
           if [ "$code" = '404' ]; then
             curl -fsS -X POST "$BASE/workforce/core/participants" \
@@ -69,11 +78,10 @@ jobs:
             exit 1
           fi
 
-          # Ensure worker is active and required institutional role/capability exist.
           curl -fsS -X POST "$BASE/workforce/core/workers/$WORKER/status/ACTIVE" >/dev/null
           WORKER_VIEW=$(curl -fsS "$BASE/workforce/core/workers/$WORKER")
           echo "$WORKER_VIEW" | grep -q 'ROLE-HEAD-OF-GATEWAY' || {
-            curl -fsS -X POST "$BASE/workforce/core/participations" \
+            curl -sS -X POST "$BASE/workforce/core/participations" \
               -H 'Content-Type: application/json' \
               --data "{\"participationId\":\"$PARTICIPATION\",\"workerId\":\"$WORKER\",\"organizationRef\":\"METATRON\",\"positionRef\":\"POSITION-HEAD-OF-GATEWAY\",\"roleRef\":\"ROLE-HEAD-OF-GATEWAY\"}" >/dev/null || true
             curl -fsS -X POST "$BASE/workforce/core/participations/$PARTICIPATION/status/ACTIVE" >/dev/null
