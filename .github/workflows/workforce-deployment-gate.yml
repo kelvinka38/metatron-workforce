@@ -1,28 +1,6 @@
 name: Workforce Deployment Gate
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'build.gradle'
-      - 'settings.gradle'
-      - 'gradle/**'
-      - 'gradlew'
-      - 'Dockerfile'
-      - 'deploy/**'
-      - '.github/workflows/workforce-deployment-gate.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'build.gradle'
-      - 'settings.gradle'
-      - 'gradle/**'
-      - 'gradlew'
-      - 'Dockerfile'
-      - 'deploy/**'
-      - '.github/workflows/workforce-deployment-gate.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,10 +8,15 @@ permissions:
 
 env:
   METATRON_CI: "true"
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
+
+concurrency:
+  group: workforce-deployment-gate
+  cancel-in-progress: true
 
 jobs:
   deployment-gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,14 +35,14 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
-      - name: Test
-        run: ./gradlew clean test --no-daemon
-
-      - name: Build deployable artifact
-        run: ./gradlew bootJar --no-daemon
+      - name: Test and build
+        run: ./gradlew clean test bootJar --no-daemon --max-workers=1
 
       - name: Validate production compose
-        run: docker compose -f deploy/docker-compose.yml config
+        env:
+          METATRON_IMAGE_TAG: validation
+          METATRON_COMMIT_SHA: validation
+        run: docker compose -f deploy/docker-compose.yml config >/dev/null
 
       - name: Run isolated deployment gate
         run: bash deploy/deploy.sh
