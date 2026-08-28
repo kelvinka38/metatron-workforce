@@ -15,9 +15,14 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Public Telegram transport boundary. Transport is normalized before entering the canonical Metatron interaction boundary. */
 @RestController
@@ -25,6 +30,8 @@ import java.util.concurrent.CompletableFuture;
 @ConditionalOnProperty(name = {"telegram.bot-token", "telegram.webhook-secret"})
 public final class TelegramWebhookController {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramWebhookController.class);
+    private static final int INTERACTION_THREADS = 4;
+    private static final int INTERACTION_QUEUE = 64;
 
     private final String secret;
     private final TelegramWebhookAdapter adapter;
@@ -33,6 +40,7 @@ public final class TelegramWebhookController {
     private final TelegramIdentityResolver identityResolver;
     private final ObjectMapper objectMapper;
     private final TelegramUpdateDeduplicator updateDeduplicator;
+    private final ThreadPoolExecutor interactionExecutor;
 
     public TelegramWebhookController(
             @Value("${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}") String secret,
@@ -63,7 +71,11 @@ public final class TelegramWebhookController {
 
         this.secret = secret;
         this.adapter = new TelegramWebhookAdapter(secret);
-        this.gateway = new TelegramBotGateway(botToken, java.net.http.HttpClient.newHttpClient(), objectMapper);
+        java.net.http.HttpClient telegramHttpClient = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .version(java.net.http.HttpClient.Version.HTTP_2)
+                .build();
+        this.gateway = new TelegramBotGateway(botToken, telegramHttpClient, objectMapper);
         this.identityResolver = new ConfiguredTelegramIdentityResolver(
                 configuredTelegramUserId,
                 new ActorRef("telegram-human", ActorRef.ActorType.HUMAN),
@@ -85,17 +97,33 @@ public final class TelegramWebhookController {
         });
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.updateDeduplicator = new TelegramUpdateDeduplicator();
+        this.interactionExecutor = new ThreadPoolExecutor(
+                INTERACTION_THREADS,
+                INTERACTION_THREADS,
+                30L,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(INTERACTION_QUEUE),
+                namedDaemonThreads("telegram-interaction-"),
+                new ThreadPoolExecutor.CallerRunsPolicy());
+        this.interactionExecutor.allowCoreThreadTimeOut(false);
     }
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
-        return ResponseEntity.ok(Map.of("status", "UP", "channel", "telegram", "webhook", "ready"));
+        return ResponseEntity.ok(Map.of(
+                "status", "UP",
+                "channel", "telegram",
+                "webhook", "ready",
+                "interaction_threads", INTERACTION_THREADS,
+                "interaction_queue_capacity", INTERACTION_QUEUE,
+                "interaction_queue_depth", interactionExecutor.getQueue().size()));
     }
 
     @PostMapping("/webhook")
     public ResponseEntity<Void> webhook(
             @RequestHeader(name = "X-Telegram-Bot-Api-Secret-Token", required = false) String suppliedSecret,
             @RequestBody String body) {
+        long webhookStarted = System.nanoTime();
         if (!constantTimeEquals(secret, suppliedSecret)) {
             LOG.warn("telegram_webhook_unauthorized");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
@@ -147,10 +175,13 @@ public final class TelegramWebhookController {
             final String acceptedChatId = chatId;
             final long acceptedTelegramUserId = telegramUserId;
             final ChannelMessage acceptedInbound = inbound;
-            CompletableFuture.runAsync(() -> processInteraction(
-                    acceptedUpdateId, acceptedTelegramUserId, acceptedChatId, acceptedInbound, interaction));
+            final long acceptedAt = System.nanoTime();
+            interactionExecutor.execute(() -> processInteraction(
+                    acceptedUpdateId, acceptedTelegramUserId, acceptedChatId, acceptedInbound, interaction, acceptedAt));
 
-            LOG.info("telegram_webhook_ack update_id={} chat={}", updateId, chatId);
+            long ackMs = (System.nanoTime() - webhookStarted) / 1_000_000L;
+            LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} queue_depth={} active_threads={}",
+                    updateId, chatId, ackMs, interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
             return ResponseEntity.ok().build();
         } catch (RuntimeException failure) {
             LOG.error("telegram_webhook_processing_failed update_id=" + updateId + " chat=" + chatId, failure);
@@ -168,15 +199,21 @@ public final class TelegramWebhookController {
     }
 
     private void processInteraction(long updateId, long telegramUserId, String chatId,
-                                    ChannelMessage inbound, MetatronInteraction interaction) {
+                                    ChannelMessage inbound, MetatronInteraction interaction, long acceptedAt) {
+        long processingStarted = System.nanoTime();
+        long queueMs = (processingStarted - acceptedAt) / 1_000_000L;
         try {
             MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
             String safeAnswer = validateAnswer(inbound.text(), response.text());
-            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={}",
-                    updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference());
+            long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
+            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} queue_ms={} answer_ms={}",
+                    updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference(), queueMs, answerMs);
+            long sendStarted = System.nanoTime();
             String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
-            LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={}",
-                    updateId, telegramUserId, chatId, delivery.length());
+            long sendMs = (System.nanoTime() - sendStarted) / 1_000_000L;
+            long totalMs = (System.nanoTime() - acceptedAt) / 1_000_000L;
+            LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={} queue_ms={} answer_ms={} send_ms={} total_ms={}",
+                    updateId, telegramUserId, chatId, delivery.length(), queueMs, answerMs, sendMs, totalMs);
         } catch (RuntimeException failure) {
             LOG.error("telegram_interaction_failed update_id=" + updateId, failure);
             try {
@@ -201,6 +238,15 @@ public final class TelegramWebhookController {
             throw new IllegalStateException("telegram_legacy_workforce_echo");
         }
         return answer.trim();
+    }
+
+    private static ThreadFactory namedDaemonThreads(String prefix) {
+        AtomicInteger sequence = new AtomicInteger();
+        return task -> {
+            Thread thread = new Thread(task, prefix + sequence.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     private static String normalize(String value) {
