@@ -2,6 +2,9 @@ name: G12 Production Readiness Evidence
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Workforce Live Acceptance"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -15,13 +18,20 @@ concurrency:
 
 jobs:
   g12-acceptance:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
+    env:
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
     steps:
-      - name: Checkout
+      - name: Checkout exact accepted source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TARGET_SHA }}
 
-      - name: Verify source tree is clean
-        run: test -z "$(git status --porcelain)"
+      - name: Verify exact source identity and clean tree
+        run: |
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test -z "$(git status --porcelain)"
 
       - name: Setup Java 22
         uses: actions/setup-java@v5
@@ -50,8 +60,8 @@ jobs:
 
       - name: Execute deployable Workforce runtime evidence smoke
         env:
-          METATRON_COMMIT_SHA: ${{ github.sha }}
-          METATRON_VERSION: g12-${{ github.sha }}
+          METATRON_COMMIT_SHA: ${{ env.TARGET_SHA }}
+          METATRON_VERSION: g12-${{ env.TARGET_SHA }}
           METATRON_ENVIRONMENT: ci-deployed-runtime
           METATRON_RUNTIME_STATE_DIR: runtime-state/production
         run: |
@@ -61,20 +71,15 @@ jobs:
           test "$(find runtime-state/production -type f -name '*.properties' | wc -l)" -ge 2
           evidence_root="$(find runtime-evidence/production -mindepth 1 -maxdepth 1 -type d | head -n 1)"
           test -n "$evidence_root"
-          for file in deployment-identity.json runtime-health.json execution-summary.json security-decisions.json audit-provenance.json logs.jsonl metrics.json traces.json README.md; do
-            test -s "$evidence_root/$file"
-          done
-          jq -e --arg sha "${GITHUB_SHA}" '.commitSha == $sha' "$evidence_root/deployment-identity.json"
-          jq -e --arg sha "${GITHUB_SHA}" '.commitSha == $sha' "$evidence_root/audit-provenance.json"
-          jq -e --arg sha "${GITHUB_SHA}" '.commitSha == $sha' "$evidence_root/traces.json"
-          jq -e '.sameOrganizationVisible == true' "$evidence_root/security-decisions.json"
-          jq -e '.crossOrganizationVisible == false' "$evidence_root/security-decisions.json"
+          for file in deployment-identity.json runtime-health.json execution-summary.json security-decisions.json audit-provenance.json logs.jsonl metrics.json traces.json README.md; do test -s "$evidence_root/$file"; done
+          jq -e --arg sha "$TARGET_SHA" '.commitSha == $sha' "$evidence_root/deployment-identity.json"
+          jq -e --arg sha "$TARGET_SHA" '.commitSha == $sha' "$evidence_root/audit-provenance.json"
+          jq -e --arg sha "$TARGET_SHA" '.commitSha == $sha' "$evidence_root/traces.json"
+          jq -e '.sameOrganizationVisible == true and .crossOrganizationVisible == false' "$evidence_root/security-decisions.json"
           jq -e '.runtimeStateAfterReplacement == "RUNNING"' "$evidence_root/deployment-identity.json"
-          jq -e '.runtime_recovery_success == 1' "$evidence_root/metrics.json"
-          jq -e '.execution_success == 1' "$evidence_root/metrics.json"
+          jq -e '.runtime_recovery_success == 1 and .execution_success == 1' "$evidence_root/metrics.json"
           test "$(grep -c 'runtime_started' "$evidence_root/logs.jsonl")" -ge 1
-          jq -e 'has("executionId")' "$evidence_root/traces.json"
-          jq -e 'has("authorizationReference")' "$evidence_root/traces.json"
+          jq -e 'has("executionId") and has("authorizationReference")' "$evidence_root/traces.json"
 
       - name: Collect G12 repository evidence
         if: always()
@@ -89,22 +94,15 @@ jobs:
           cp -R runtime-state build/g12-evidence/runtime-state 2>/dev/null || true
           git rev-parse HEAD > build/g12-evidence/commit.txt
           git status --short > build/g12-evidence/git-status.txt
-          {
-            echo "workflow_run=${GITHUB_RUN_ID}"
-            echo "workflow_attempt=${GITHUB_RUN_ATTEMPT}"
-            echo "event=${GITHUB_EVENT_NAME}"
-            echo "ref=${GITHUB_REF}"
-            echo "sha=${GITHUB_SHA}"
-            echo "runner=${RUNNER_OS}"
-            java -version 2>&1
-            ./gradlew --version
-          } > build/g12-evidence/execution-environment.txt
+          printf 'workflow_run=%s\nworkflow_attempt=%s\nevent=%s\nref=%s\ntarget_sha=%s\nrunner=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$TARGET_SHA" "$RUNNER_OS" > build/g12-evidence/execution-environment.txt
+          java -version >> build/g12-evidence/execution-environment.txt 2>&1
+          ./gradlew --version >> build/g12-evidence/execution-environment.txt
 
       - name: Upload G12 evidence bundle
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: g12-production-readiness-evidence
+          name: g12-production-readiness-evidence-${{ env.TARGET_SHA }}
           path: build/g12-evidence
           if-no-files-found: error
           retention-days: 30
