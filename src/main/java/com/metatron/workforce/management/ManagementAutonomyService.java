@@ -28,12 +28,29 @@ public final class ManagementAutonomyService {
 
     public synchronized ManagementObjective acceptObjective(String objectiveId, String ownerWorkerId,
             String organizationContextId, String description, Instant at) {
+        return acceptObjective(objectiveId, ownerWorkerId, organizationContextId, description,
+                ownerWorkerId, "AUTHORITY-COMPAT", "AUTHORIZATION-COMPAT", at);
+    }
+
+    /**
+     * Accepts a legitimately delegated objective while preserving who initiated the delegation
+     * and which upstream authority/authorization admitted it. Workforce records these references;
+     * it does not mint or validate constitutional authority here.
+     */
+    public synchronized ManagementObjective acceptObjective(String objectiveId, String ownerWorkerId,
+            String organizationContextId, String description, String initiatingActorId,
+            String authorityReference, String authorizationReference, Instant at) {
         Objects.requireNonNull(at, "at");
+        requireText(initiatingActorId, "initiatingActorId");
+        requireText(authorityReference, "authorityReference");
+        requireText(authorizationReference, "authorizationReference");
         if (objectives.containsKey(objectiveId)) throw new IllegalStateException("objective already exists: " + objectiveId);
         ManagementObjective objective = new ManagementObjective(objectiveId, ownerWorkerId, organizationContextId,
                 description, ManagementObjective.Status.ACTIVE, List.of(), List.of(), at, at);
         objectives.put(objectiveId, objective);
-        append(objectiveId, ownerWorkerId, ManagementEvent.Type.OBJECTIVE_ACCEPTED, description, at);
+        String detail = description + "; owner=" + ownerWorkerId + "; authority=" + authorityReference
+                + "; authorization=" + authorizationReference;
+        append(objectiveId, initiatingActorId, ManagementEvent.Type.OBJECTIVE_ACCEPTED, detail, at);
         return objective;
     }
 
