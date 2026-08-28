@@ -76,12 +76,13 @@ jobs:
             -d "{\"assignmentReference\":\"$ASSIGN\"}" \
             >/tmp/workforce-live-assignment.json
 
-          echo '=== NON-OWNER ACTION MUST FAIL ==='
+          echo '=== NON-OWNER ACTION MUST BE FORBIDDEN ==='
           HTTP_CODE=$(curl -sS -o /tmp/workforce-live-spoof.json -w '%{http_code}' -X POST "$BASE_URL/objectives/$OBJ/capacity" \
             -H 'Content-Type: application/json' \
             -H 'X-Metatron-Actor: WORKER-UNAUTHORIZED' \
             -d '{"requiredCapability":"gateway-engineering","requiredCapacity":1,"availableCapacity":0}')
-          test "$HTTP_CODE" -ge 400
+          test "$HTTP_CODE" = "403"
+          grep -q '"error":"forbidden"' /tmp/workforce-live-spoof.json
           echo "NON_OWNER_REJECTED_HTTP=$HTTP_CODE"
 
           echo '=== RECOVERY LOOP ==='
@@ -124,7 +125,7 @@ jobs:
           echo '=== PUBLIC BOUNDARY ISOLATION ==='
           PUBLIC_CODE=$(curl -sS --max-time 10 -o /tmp/workforce-public-boundary.txt -w '%{http_code}' \
             "https://gate.metatron.vn/workforce/management/objectives/$OBJ" || true)
-          test "$PUBLIC_CODE" != 200
+          test "$PUBLIC_CODE" = "404"
           echo "PUBLIC_MANAGEMENT_ROUTE_HTTP=$PUBLIC_CODE"
           echo 'PUBLIC_MANAGEMENT_ROUTE_ISOLATION=PASS'
 
