@@ -7,28 +7,42 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Read-only Internet search capability backed by Bing's RSS search endpoint. */
+/**
+ * Read-only Internet capability used by interactive Workforce paths.
+ * External content is evidence only and never creates institutional authority.
+ */
 public final class WebSearchToolAdapter implements ToolAdapter {
     public static final String CAPABILITY = "web.search";
-    private static final String ENDPOINT = "https://www.bing.com/search?format=rss&q=";
+
+    private static final String BING_ENDPOINT = "https://www.bing.com/search?format=rss&q=";
+    private static final String COINGECKO_BTC = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,vnd&include_last_updated_at=true";
+    private static final String COINBASE_BTC = "https://api.coinbase.com/v2/prices/BTC-USD/spot";
+
     private static final Pattern ITEM = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+    private static final Pattern COINGECKO_USD = Pattern.compile("\\\"usd\\\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)");
+    private static final Pattern COINGECKO_VND = Pattern.compile("\\\"vnd\\\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)");
+    private static final Pattern COINGECKO_UPDATED = Pattern.compile("\\\"last_updated_at\\\"\\s*:\\s*([0-9]+)");
+    private static final Pattern COINBASE_AMOUNT = Pattern.compile("\\\"amount\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+
     private final HttpClient client;
     private final Duration timeout;
     private final String endpoint;
 
     public WebSearchToolAdapter() {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), Duration.ofSeconds(8), ENDPOINT);
+        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), Duration.ofSeconds(8), BING_ENDPOINT);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout) {
-        this(client, timeout, ENDPOINT);
+        this(client, timeout, BING_ENDPOINT);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint) {
@@ -49,25 +63,92 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         if (!CAPABILITY.equals(request.capability())) {
             return ToolResult.failure(request, "tool capability mismatch");
         }
+
         String query = request.input() == null ? "" : request.input().trim();
         if (query.isBlank()) return ToolResult.failure(request, "web_search_query_empty");
 
+        if (isBitcoinPriceQuery(query)) {
+            ToolResult market = fetchBitcoinPrice(request, query);
+            if (market.success()) return market;
+        }
+
+        return searchWeb(request, query);
+    }
+
+    private ToolResult fetchBitcoinPrice(ToolRequest request, String query) {
+        ToolResult primary = fetchBitcoinFromCoinGecko(request, query);
+        if (primary.success()) return primary;
+        return fetchBitcoinFromCoinbase(request, query);
+    }
+
+    private ToolResult fetchBitcoinFromCoinGecko(ToolRequest request, String query) {
+        try {
+            HttpResponse<String> response = get(COINGECKO_BTC);
+            if (!ok(response)) return ToolResult.failure(request, "coingecko_http_status:" + response.statusCode());
+
+            String usd = first(COINGECKO_USD, response.body());
+            String vnd = first(COINGECKO_VND, response.body());
+            String updated = first(COINGECKO_UPDATED, response.body());
+            if (usd.isBlank()) return ToolResult.failure(request, "coingecko_price_missing");
+
+            String sourceTime = updated.isBlank() ? Instant.now().toString() : Instant.ofEpochSecond(Long.parseLong(updated)).toString();
+            String output = "CURRENT EXTERNAL DATA\n"
+                    + "query=" + query + "\n"
+                    + "asset=Bitcoin (BTC)\n"
+                    + "price_usd=" + usd + "\n"
+                    + (vnd.isBlank() ? "" : "price_vnd=" + vnd + "\n")
+                    + "source=CoinGecko\n"
+                    + "source_url=" + COINGECKO_BTC + "\n"
+                    + "source_updated_at=" + sourceTime + "\n"
+                    + "retrieved_at=" + Instant.now();
+
+            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                    true, output, List.of(COINGECKO_BTC));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "coingecko_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "coingecko_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private ToolResult fetchBitcoinFromCoinbase(ToolRequest request, String query) {
+        try {
+            HttpResponse<String> response = get(COINBASE_BTC);
+            if (!ok(response)) return ToolResult.failure(request, "coinbase_http_status:" + response.statusCode());
+
+            String usd = first(COINBASE_AMOUNT, response.body());
+            if (usd.isBlank()) return ToolResult.failure(request, "coinbase_price_missing");
+
+            String output = "CURRENT EXTERNAL DATA\n"
+                    + "query=" + query + "\n"
+                    + "asset=Bitcoin (BTC)\n"
+                    + "price_usd=" + usd + "\n"
+                    + "source=Coinbase\n"
+                    + "source_url=" + COINBASE_BTC + "\n"
+                    + "retrieved_at=" + Instant.now();
+
+            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                    true, output, List.of(COINBASE_BTC));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "coinbase_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "coinbase_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private ToolResult searchWeb(ToolRequest request, String query) {
         try {
             URI uri = URI.create(endpoint + URLEncoder.encode(query, StandardCharsets.UTF_8));
-            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
-                    .timeout(timeout)
-                    .header("User-Agent", "Metatron-Workforce/0.1")
-                    .GET()
-                    .build();
-            HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return ToolResult.failure(request, "web_search_http_status:" + response.statusCode());
-            }
+            HttpResponse<String> response = get(uri.toString());
+            if (!ok(response)) return ToolResult.failure(request, "web_search_http_status:" + response.statusCode());
 
             List<Result> results = parseResults(response.body(), 5);
             if (results.isEmpty()) return ToolResult.failure(request, "web_search_no_results");
 
-            StringBuilder output = new StringBuilder("WEB SEARCH RESULTS\nquery=").append(query).append('\n');
+            StringBuilder output = new StringBuilder("WEB SEARCH RESULTS\nquery=").append(query)
+                    .append("\nretrieved_at=").append(Instant.now()).append('\n');
             List<String> evidence = new ArrayList<>();
             int index = 1;
             for (Result result : results) {
@@ -85,6 +166,36 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         } catch (Exception e) {
             return ToolResult.failure(request, "web_search_failed:" + e.getClass().getSimpleName());
         }
+    }
+
+    private HttpResponse<String> get(String url) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(timeout)
+                .header("User-Agent", "Metatron-Workforce/0.1")
+                .header("Accept", "application/json, application/rss+xml, application/xml, text/xml, text/html;q=0.8, */*;q=0.1")
+                .GET()
+                .build();
+        return client.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static boolean ok(HttpResponse<?> response) {
+        return response.statusCode() >= 200 && response.statusCode() < 300;
+    }
+
+    private static boolean isBitcoinPriceQuery(String query) {
+        String value = query.toLowerCase(Locale.ROOT);
+        boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*");
+        boolean priceIntent = value.contains("giá") || value.contains("gia ") || value.contains("price")
+                || value.contains("bao nhiêu") || value.contains("bao nhieu") || value.contains("hôm nay")
+                || value.contains("hom nay") || value.contains("hiện tại") || value.contains("hien tai")
+                || value.contains("ngay lúc") || value.contains("ngay luc") || value.contains("now")
+                || value.contains("current");
+        return bitcoin && priceIntent;
+    }
+
+    private static String first(Pattern pattern, String value) {
+        Matcher matcher = pattern.matcher(value == null ? "" : value);
+        return matcher.find() ? matcher.group(1) : "";
     }
 
     static List<String> parseEvidenceUrls(String xml) {
