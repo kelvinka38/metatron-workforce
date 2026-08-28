@@ -35,20 +35,36 @@ class BiosExecutionKernelTest {
     }
 
     @Test
-    void executionRequiresExplicitAuthorization() {
+    void executionIntentRequiresInstitutionalAdmission() {
         MetatronInteraction interaction = interaction("deploy this to production");
-        assertThrows(IllegalStateException.class, () -> bios.execute(interaction, value -> response(value, "deployed")));
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> bios.execute(interaction, value -> response(value, "deployed")));
+        assertEquals("BIOS_EXECUTION_ADMISSION_REQUIRED", error.getMessage());
     }
 
     @Test
-    void authorizedExecutionReachesDownstreamAndVerifiesProvenance() {
+    void naturalLanguageAuthorizationIsNotAuthorityProof() {
         MetatronInteraction interaction = interaction("I authorize: deploy this to production");
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> bios.execute(interaction, value -> response(value, "deployed")));
+        assertEquals("BIOS_EXECUTION_ADMISSION_REQUIRED", error.getMessage());
+    }
+
+    @Test
+    void vietnameseImmediateExecutionPhraseIsNotAuthorityProof() {
+        MetatronInteraction interaction = interaction("thực hiện ngay");
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> bios.execute(interaction, value -> response(value, "done")));
+        assertEquals("BIOS_EXECUTION_ADMISSION_REQUIRED", error.getMessage());
+    }
+
+    @Test
+    void reasoningStillReachesDownstream() {
+        MetatronInteraction interaction = interaction("audit workforce");
         MetatronInteractionOrchestrator.InteractionResponse response = bios.execute(
                 interaction,
-                value -> response(value, "deployment accepted"));
-
-        assertEquals("deployment accepted", response.text());
-        assertEquals("telegram://message/1", response.provenanceReference());
+                value -> response(value, "audit result"));
+        assertEquals("audit result", response.text());
     }
 
     @Test
