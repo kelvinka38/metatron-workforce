@@ -14,7 +14,7 @@
     "A publication refresh is a governed copy/derivation action; authority remains upstream."
   ],
   "documents": [
-    {"public_path":"SOT.md","source_path":"06_GATEWAY/SOT.md","source_blob_sha":"bc944240e62938857633358117686b316122f21f"},
+    {"public_path":"SOT.md","source_path":"06_GATEWAY/SOT.md","source_blob_sha":"b6426c31dbbf52e8cc3668fc551602066803d21a"},
     {"public_path":"CONTRACTS.md","source_path":"06_GATEWAY/CONTRACTS.md","source_blob_sha":"70e1e089e144d0fc9632cfb15f94d55f05e56d2b"},
     {"public_path":"GATEWAY_CURRENT_STATE.md","source_path":"06_GATEWAY/GATEWAY_CURRENT_STATE.md","source_blob_sha":"edcce4ad183a7f0f3d5d4943a11ee5f54aec7536"},
     {"public_path":"GATEWAY_PRODUCTION_ARCHITECTURE.md","source_path":"06_GATEWAY/GATEWAY_PRODUCTION_ARCHITECTURE.md","source_blob_sha":"6df7b66bfa6a27f2f42425dee1da2342710f3f6d"},
