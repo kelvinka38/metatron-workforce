@@ -30,6 +30,9 @@ public class WorkforceOperationsController {
         return schedules.transition(id, status);
     }
 
+    @GetMapping("/schedules/{id}")
+    public WorkSchedule schedule(@PathVariable String id) { return schedules.get(id); }
+
     @PostMapping("/staffing") @ResponseStatus(HttpStatus.CREATED)
     public StaffingRequest staffing(@RequestBody StaffingCommand c) {
         return staffing.detect(c.staffingRequestId(), c.objectiveRef(), c.organizationContextId(), c.requestedByWorkerId(),
@@ -46,11 +49,17 @@ public class WorkforceOperationsController {
         return staffing.resolve(id, c.ref(), Instant.now());
     }
 
+    @GetMapping("/staffing/{id}")
+    public StaffingRequest staffing(@PathVariable String id) { return staffing.get(id); }
+
     @PostMapping("/reviews") @ResponseStatus(HttpStatus.CREATED)
     public InstitutionalReview review(@RequestBody ReviewCommand c) {
         return reviews.record(c.reviewId(), c.subjectRef(), c.reviewerWorkerId(), c.reviewerRoleRef(), c.authorityRef(),
                 c.decision(), c.rationale(), c.evidenceRefs(), Instant.now());
     }
+
+    @GetMapping("/reviews/{id}")
+    public InstitutionalReview review(@PathVariable String id) { return reviews.get(id); }
 
     public record ScheduleCommand(String scheduleId, String assignmentRef, String workerId, Instant start, Instant end,
                                   double committedCapacity, double workerCapacity, String evidenceRef) {}
