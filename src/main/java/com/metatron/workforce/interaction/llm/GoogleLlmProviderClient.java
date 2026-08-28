@@ -8,12 +8,14 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /** Live Google Gemini transport behind the provider-neutral LLM contract. */
 public final class GoogleLlmProviderClient implements LlmProviderClient {
+    private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(15);
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -46,6 +48,7 @@ public final class GoogleLlmProviderClient implements LlmProviderClient {
                     + request.model() + ":generateContent?key=" + apiKey);
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(uri)
+                    .timeout(INTERACTIVE_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
