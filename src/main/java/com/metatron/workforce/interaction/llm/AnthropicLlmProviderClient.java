@@ -8,12 +8,14 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /** Live Anthropic Messages transport behind the provider-neutral LLM contract. */
 public final class AnthropicLlmProviderClient implements LlmProviderClient {
+    private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(15);
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -43,6 +45,7 @@ public final class AnthropicLlmProviderClient implements LlmProviderClient {
             ));
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.anthropic.com/v1/messages"))
+                    .timeout(INTERACTIVE_TIMEOUT)
                     .header("x-api-key", apiKey)
                     .header("anthropic-version", "2023-06-01")
                     .header("Content-Type", "application/json")
