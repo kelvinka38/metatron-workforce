@@ -20,6 +20,7 @@ services:
       METATRON_VERSION: "${METATRON_VERSION:-0.1.0}"
       METATRON_COMMIT_SHA: "${METATRON_COMMIT_SHA:-unknown}"
       METATRON_ENVIRONMENT: "${METATRON_ENVIRONMENT:-production}"
+      METATRON_MANAGEMENT_STATE_PATH: "${METATRON_MANAGEMENT_STATE_PATH:-/var/lib/metatron-workforce/management-state.json}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_WEBHOOK_SECRET: "${TELEGRAM_WEBHOOK_SECRET:-}"
       TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID:-}"
@@ -37,6 +38,8 @@ services:
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
       CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
       HETZNER_API_TOKEN: "${HETZNER_API_TOKEN:-}"
+    volumes:
+      - workforce-state:/var/lib/metatron-workforce
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null"]
       interval: 10s
@@ -55,6 +58,10 @@ services:
       gateway:
         aliases:
           - workforce
+
+volumes:
+  workforce-state:
+    name: metatron-workforce-state
 
 networks:
   workforce:
