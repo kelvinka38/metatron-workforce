@@ -24,6 +24,7 @@ import com.metatron.workforce.interaction.tools.CurrentTimeToolAdapter;
 import com.metatron.workforce.interaction.tools.DefaultToolFabric;
 import com.metatron.workforce.interaction.tools.ToolRequest;
 import com.metatron.workforce.interaction.tools.ToolResult;
+import com.metatron.workforce.interaction.tools.WebSearchToolAdapter;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -96,7 +97,9 @@ public final class TelegramIntelligenceResponder {
         } else {
             this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
         }
-        this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter()));
+        this.toolFabric = new DefaultToolFabric(List.of(
+                new CurrentTimeToolAdapter(),
+                new WebSearchToolAdapter()));
     }
 
     public String respond(String senderId, String text) {
@@ -108,15 +111,27 @@ public final class TelegramIntelligenceResponder {
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         long started = System.nanoTime();
+        String route = "unknown";
 
         try {
             String normalized = text.trim().toLowerCase(Locale.ROOT);
             if (isStartCommand(normalized)) {
+                route = "deterministic-start";
                 return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên, ví dụ:\n• audit g4 gateway\n• hôm nay thứ mấy?\n• hỏi thông tin mới nhất về ...\n• phân tích ...\n• Hey Gemini / Hey Claude / Hey OpenAI";
             }
 
-            if (isGatewayAuditCommand(text)) return executeGatewayAudit(senderId, text, externalMessageReference);
-            if (isCurrentTimeCommand(text)) return executeCurrentTime(senderId, externalMessageReference);
+            if (isGatewayAuditCommand(text)) {
+                route = "gateway-audit";
+                return executeGatewayAudit(senderId, text, externalMessageReference);
+            }
+            if (isCurrentTimeCommand(text)) {
+                route = "deterministic-time";
+                return executeCurrentTime(senderId, externalMessageReference);
+            }
+            if (isBitcoinPriceCommand(text)) {
+                route = "deterministic-bitcoin-price";
+                return executeCurrentBitcoinPrice(senderId, text, externalMessageReference);
+            }
 
             LlmProvider requested = explicitProvider(text);
             if (requested == null && !configuredProvider.isBlank()) requested = LlmProvider.valueOf(configuredProvider);
@@ -125,9 +140,7 @@ public final class TelegramIntelligenceResponder {
             IntelligenceMode mode = resolveMode(text);
             String consequence = mode == IntelligenceMode.EXECUTION ? "HIGH" : mode == IntelligenceMode.DECISION ? "MEDIUM" : "LOW";
 
-            // Do not pre-fetch the web here. IntelligenceFabric is the single authority for deciding
-            // whether freshness/external evidence is required, so an ordinary interaction has zero
-            // unnecessary Internet hops and a current-data interaction performs exactly one lookup.
+            route = "intelligence";
             IntelligenceRequest request = new IntelligenceRequest(
                     "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
                     mode, CollaborationMode.SINGLE, text,
@@ -137,8 +150,36 @@ public final class TelegramIntelligenceResponder {
                     "direct natural-language answer", requestedProviders, maxProviders);
             return fabric.execute(request).text();
         } finally {
-            LOG.info("telegram_intelligence_latency elapsed_ms={} text_length={}",
-                    (System.nanoTime() - started) / 1_000_000L, text.length());
+            LOG.info("telegram_intelligence_latency route={} elapsed_ms={} text_length={}",
+                    route, (System.nanoTime() - started) / 1_000_000L, text.length());
+        }
+    }
+
+    private String executeCurrentBitcoinPrice(String senderId, String text, String externalMessageReference) {
+        ToolRequest request = new ToolRequest(
+                "telegram-btc-price-" + senderId + "-" + System.nanoTime(),
+                "telegram-human", WebSearchToolAdapter.CAPABILITY, "runtime:workforce", "read", text,
+                List.of("telegram:" + externalMessageReference));
+        ToolResult result = toolFabric.execute(request);
+        if (!result.success()) throw new IllegalStateException("bitcoin_price_read_failed:" + result.output());
+        Map<String, String> fields = parseKeyValueOutput(result.output());
+        String usd = fields.getOrDefault("price_usd", "không xác định");
+        String vnd = fields.getOrDefault("price_vnd", "");
+        String source = fields.getOrDefault("source", "external source");
+        String updated = fields.getOrDefault("source_updated_at", fields.getOrDefault("retrieved_at", ""));
+        StringBuilder answer = new StringBuilder("Giá Bitcoin (BTC) hiện tại:\n• USD: ~$").append(formatNumber(usd));
+        if (!vnd.isBlank()) answer.append("\n• VND: ~").append(formatNumber(vnd)).append(" VNĐ");
+        answer.append("\nNguồn: ").append(source);
+        if (!updated.isBlank()) answer.append(" · cập nhật: ").append(updated);
+        return answer.toString();
+    }
+
+    private static String formatNumber(String value) {
+        try {
+            java.math.BigDecimal number = new java.math.BigDecimal(value);
+            return java.text.NumberFormat.getNumberInstance(Locale.US).format(number);
+        } catch (RuntimeException ignored) {
+            return value;
         }
     }
 
@@ -170,7 +211,7 @@ public final class TelegramIntelligenceResponder {
 
     private static Map<String, String> parseKeyValueOutput(String output) {
         return output.lines().map(line -> line.split("=", 2)).filter(parts -> parts.length == 2)
-                .collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1]));
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1], (a, b) -> b));
     }
 
     private String executeGatewayAudit(String senderId, String text, String externalMessageReference) {
@@ -198,6 +239,13 @@ public final class TelegramIntelligenceResponder {
                 "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today", "today's date",
                 "todays date", "what date is it", "what is today's date", "what time is it", "current time",
                 "current date and time", "what's the date");
+    }
+
+    private static boolean isBitcoinPriceCommand(String text) {
+        String value = text.toLowerCase(Locale.ROOT);
+        boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*");
+        boolean price = containsAny(value, "giá", "gia ", "price", "bao nhiêu", "bao nhieu", "hôm nay", "hom nay", "hiện tại", "hien tai", "now", "current");
+        return bitcoin && price;
     }
 
     private static IntelligenceMode resolveMode(String text) {
