@@ -1,9 +1,17 @@
 package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.execution.Assignment;
+import com.metatron.workforce.execution.Authorization;
+import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.execution.ExecutionCommand;
+import com.metatron.workforce.execution.ExecutionRequest;
 import com.metatron.workforce.execution.ExecutionResult;
+import com.metatron.workforce.execution.ExecutionState;
 import com.metatron.workforce.execution.GatewayAuditCapability;
+import com.metatron.workforce.execution.GuidanceReceipt;
+import com.metatron.workforce.execution.GuidanceRequirement;
+import com.metatron.workforce.execution.PublicGuidanceService;
 import com.metatron.workforce.work.InstitutionalWork;
 import com.metatron.workforce.work.WorkService;
 import org.springframework.core.io.ClassPathResource;
@@ -24,10 +32,9 @@ import java.util.Map;
 /**
  * Bounded execution bridge for a Gateway Head institutional assignment.
  *
- * Gateway institutional reading is intentionally served from the public,
- * read-only Workforce publication under /public/docs/gateway. The publication
- * carries immutable upstream provenance but does not become upstream authority.
- * Runtime execution therefore needs no cross-repository GitHub credential.
+ * Required Gateway guidance is resolved from the public, read-only Workforce
+ * publication and must produce provenance-bearing receipts before execution is
+ * admitted. Guidance is a constraint/precondition; it never creates authority.
  */
 @RestController
 @RequestMapping("/workforce/management/gateway-head")
@@ -87,6 +94,37 @@ public final class GatewayHeadWorkExecutionController {
             return ResponseEntity.unprocessableEntity().body(Map.of("status", "BLOCKED", "reason", "gateway.audit.read capability not attested"));
         }
 
+        List<GuidanceRequirement> requirements = DOCS.stream().map(spec -> new GuidanceRequirement(
+                "gateway:" + spec.publicName(),
+                PUBLIC_BASE + spec.publicName(),
+                upstreamRef(spec))).toList();
+        Assignment executionAssignment = new Assignment(
+                work.assignmentRef() == null || work.assignmentRef().isBlank() ? "work:" + workId : work.assignmentRef(),
+                workerId,
+                requirements);
+
+        List<GuidanceReceipt> guidanceReceipts;
+        try {
+            guidanceReceipts = new PublicGuidanceService().readRequired(executionAssignment);
+            ExecutionRequest admissionRequest = new ExecutionRequest(
+                    "GUIDANCE-ADMISSION-" + workId + "-" + Instant.now().toEpochMilli(),
+                    executionAssignment,
+                    new Authorization("founder-gateway-head:" + workerId, workerId),
+                    guidanceReceipts,
+                    Instant.now());
+            if (new ExecutionAdmissionService().admit(admissionRequest) != ExecutionState.ADMITTED) {
+                throw new IllegalStateException("guidance admission did not reach ADMITTED");
+            }
+        } catch (Exception failure) {
+            String blocker = "guidance:required-read-failed:" + failure.getMessage();
+            workService.block(workId, blocker, Instant.now());
+            return ResponseEntity.unprocessableEntity().body(Map.of(
+                    "status", "BLOCKED",
+                    "reason", "required Gateway guidance was not satisfied",
+                    "detail", String.valueOf(failure.getMessage()),
+                    "knowledgeSurface", PUBLIC_BASE));
+        }
+
         List<Map<String, Object>> documents = new ArrayList<>();
         List<String> evidence = new ArrayList<>();
         StringBuilder publishedKnowledge = new StringBuilder();
@@ -108,16 +146,22 @@ public final class GatewayHeadWorkExecutionController {
                 }
                 if (content.isBlank()) throw new IllegalStateException("published document empty");
 
-                String upstream = "github:" + CANONICAL_REPOSITORY + "/" + spec.sourcePath() + "@" + spec.sourceBlobSha();
+                String upstream = upstreamRef(spec);
                 String publication = "public:workforce:" + PUBLIC_BASE + spec.publicName();
                 evidence.add(publication);
                 evidence.add(upstream);
                 publishedKnowledge.append("\n\n=== ").append(spec.sourcePath()).append(" ===\n").append(content);
+                GuidanceReceipt receipt = guidanceReceipts.stream()
+                        .filter(candidate -> candidate.guidanceId().equals("gateway:" + spec.publicName()))
+                        .findFirst().orElseThrow();
+                evidence.add("guidance-receipt:" + receipt.guidanceId() + ":sha256:" + receipt.contentSha256());
                 documents.add(Map.of(
                         "path", PUBLIC_BASE + spec.publicName(),
                         "sourcePath", spec.sourcePath(),
                         "sourceCommit", CANONICAL_REF,
                         "sourceBlobSha", spec.sourceBlobSha(),
+                        "contentSha256", receipt.contentSha256(),
+                        "readAt", receipt.readAt().toString(),
                         "bytes", content.getBytes(StandardCharsets.UTF_8).length,
                         "evidence", publication,
                         "authority", "DERIVATIVE_NOT_SOT"));
@@ -158,6 +202,9 @@ public final class GatewayHeadWorkExecutionController {
         result.put("canonicalRoleSemantics", "Gateway Director");
         result.put("workId", workId);
         result.put("knowledgeSurface", PUBLIC_BASE);
+        result.put("guidanceRequired", true);
+        result.put("guidanceSatisfied", true);
+        result.put("guidanceReceiptCount", guidanceReceipts.size());
         result.put("canonicalRepository", CANONICAL_REPOSITORY);
         result.put("canonicalRef", CANONICAL_REF);
         result.put("documentsRead", documents);
@@ -171,7 +218,7 @@ public final class GatewayHeadWorkExecutionController {
         result.put("crossRepositoryCredentialUsed", false);
         result.put("evidence", List.copyOf(evidence));
 
-        if (audit.state() != com.metatron.workforce.execution.ExecutionState.COMPLETED) {
+        if (audit.state() != ExecutionState.COMPLETED) {
             String blocker = "gateway:audit-failed:" + audit.executionId();
             workService.block(workId, blocker, Instant.now());
             result.put("status", "BLOCKED");
@@ -183,14 +230,18 @@ public final class GatewayHeadWorkExecutionController {
             String blocker = "authority:no-admitted-gateway-mutation-capability";
             workService.block(workId, blocker, Instant.now());
             result.put("status", "BLOCKED");
-            result.put("nextAction", "Public Gateway docs and live Gateway audit were read successfully. No gateway write/deploy/change capability is attested to this worker, so mutation remains fail-closed.");
+            result.put("nextAction", "Required public Gateway guidance and live Gateway audit passed. No gateway write/deploy/change capability is attested, so mutation remains fail-closed.");
             result.put("workState", workService.get(workId).status().name());
             return ResponseEntity.ok(result);
         }
 
         result.put("status", "READY_FOR_ADMITTED_MUTATION");
-        result.put("nextAction", "A separately registered Gateway mutation capability may now be admitted and executed; this bridge does not fabricate one.");
+        result.put("nextAction", "Required guidance was read and admitted. A separately registered Gateway mutation capability may execute; this bridge does not fabricate authority.");
         return ResponseEntity.ok(result);
+    }
+
+    private static String upstreamRef(PublishedDoc spec) {
+        return "github:" + CANONICAL_REPOSITORY + "/" + spec.sourcePath() + "@" + spec.sourceBlobSha();
     }
 
     private static String env(String name) {
