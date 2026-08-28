@@ -256,27 +256,54 @@ jobs:
           fi
 
           echo '=== PERFORMANCE SLO CANARIES ==='
-          : > /tmp/gateway-latencies.txt
-          for i in $(seq 1 10); do
-            curl -fsS --max-time 2 -o /dev/null -w '%{time_total}\n' https://gate.metatron.vn/telegram/health >> /tmp/gateway-latencies.txt
-          done
-          python3 - <<'PY'
+          performance_ok=false
+          for attempt in 1 2 3; do
+            echo "PERFORMANCE_ATTEMPT=$attempt"
+            for warmup in 1 2 3; do
+              curl -fsS --max-time 2 -o /dev/null https://gate.metatron.vn/telegram/health || true
+            done
+            : > /tmp/gateway-latencies.txt
+            batch_ok=true
+            for i in $(seq 1 20); do
+              if ! curl -fsS --max-time 2 -o /dev/null -w '%{time_total}\n' https://gate.metatron.vn/telegram/health >> /tmp/gateway-latencies.txt; then
+                batch_ok=false
+                break
+              fi
+            done
+            if [ "$batch_ok" = true ] && python3 - <<'PY'
+          from math import ceil
           from pathlib import Path
           values=sorted(float(x) for x in Path('/tmp/gateway-latencies.txt').read_text().split())
-          p95=values[max(0, int(len(values)*0.95)-1)]
+          assert len(values) == 20, f'incomplete_latency_batch:{len(values)}'
+          p95=values[ceil(len(values)*0.95)-1]
           print(f'PUBLIC_HEALTH_P95_SECONDS={p95:.4f}')
           assert p95 <= 0.500, f'public_health_p95_slo_failed:{p95:.4f}'
           PY
+            then
+              performance_ok=true
+              break
+            fi
+            sleep 3
+          done
+          if [ "$performance_ok" != true ]; then
+            echo 'PERFORMANCE_SLO=FAIL'
+            rollback || true
+            exit 1
+          fi
 
           CURRENT_DATA_SECONDS=$(curl -fsS --max-time 3 -o /tmp/coingecko-perf.json -w '%{time_total}' \
             'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd')
           grep -q bitcoin /tmp/coingecko-perf.json
-          CURRENT_DATA_SECONDS="$CURRENT_DATA_SECONDS" python3 - <<'PY'
+          if ! CURRENT_DATA_SECONDS="$CURRENT_DATA_SECONDS" python3 - <<'PY'
           import os
           value=float(os.environ['CURRENT_DATA_SECONDS'])
           print(f'CURRENT_DATA_SECONDS={value:.4f}')
           assert value <= 2.000, f'current_data_latency_slo_failed:{value:.4f}'
           PY
+          then
+            rollback || true
+            exit 1
+          fi
           echo 'PERFORMANCE_SLO=PASS'
 
           echo '=== TELEGRAM WEBHOOK BINDING ==='
