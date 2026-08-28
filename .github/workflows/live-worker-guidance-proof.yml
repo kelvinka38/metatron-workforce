@@ -1,5 +1,6 @@
 name: Live Worker Guidance Proof
 
+# rerun-after-audit-wiring: c30de86752af3db2bce8b98a9f7d9ffc4831ce90
 on:
   push:
     branches: [main]
