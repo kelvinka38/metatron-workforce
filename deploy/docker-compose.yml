@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: metatron-workforce:${METATRON_IMAGE_TAG:-${METATRON_COMMIT_SHA:-0.1.0}}
+    image: metatron-workforce:${METATRON_IMAGE_TAG:-0.1.0}
     restart: unless-stopped
     stop_grace_period: 20s
     mem_limit: 768m
