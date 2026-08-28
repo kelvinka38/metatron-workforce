@@ -24,9 +24,9 @@ import com.metatron.workforce.interaction.tools.CurrentTimeToolAdapter;
 import com.metatron.workforce.interaction.tools.DefaultToolFabric;
 import com.metatron.workforce.interaction.tools.ToolRequest;
 import com.metatron.workforce.interaction.tools.ToolResult;
-import com.metatron.workforce.interaction.tools.WebSearchToolAdapter;
 
 import java.net.http.HttpClient;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +37,7 @@ import java.util.function.Function;
 
 /** Natural-language response path through the canonical Intelligence Fabric. */
 public final class TelegramIntelligenceResponder {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramIntelligenceResponder.class);
     private static final String SYSTEM_CONTEXT = """
             You are Metatron Workforce's intelligence layer.
             Answer the human directly and naturally.
@@ -63,7 +64,10 @@ public final class TelegramIntelligenceResponder {
                                          String anthropicModel, ObjectMapper objectMapper,
                                          String gatewayAuditUrl, String gatewayAuditToken) {
         Objects.requireNonNull(objectMapper, "objectMapper");
-        HttpClient httpClient = HttpClient.newBuilder().build();
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .version(HttpClient.Version.HTTP_2)
+                .build();
         List<LlmProviderClient> clients = new ArrayList<>();
         List<ProviderCapacity> capacities = new ArrayList<>();
         if (present(openAiApiKey)) {
@@ -92,9 +96,7 @@ public final class TelegramIntelligenceResponder {
         } else {
             this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
         }
-        this.toolFabric = new DefaultToolFabric(List.of(
-                new CurrentTimeToolAdapter(),
-                new WebSearchToolAdapter()));
+        this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter()));
     }
 
     public String respond(String senderId, String text) {
@@ -105,51 +107,39 @@ public final class TelegramIntelligenceResponder {
         Objects.requireNonNull(senderId, "senderId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
+        long started = System.nanoTime();
 
-        String normalized = text.trim().toLowerCase(Locale.ROOT);
-        if (isStartCommand(normalized)) {
-            return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên, ví dụ:\n• audit g4 gateway\n• hôm nay thứ mấy?\n• hỏi thông tin mới nhất về ...\n• phân tích ...\n• Hey Gemini / Hey Claude / Hey OpenAI";
+        try {
+            String normalized = text.trim().toLowerCase(Locale.ROOT);
+            if (isStartCommand(normalized)) {
+                return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên, ví dụ:\n• audit g4 gateway\n• hôm nay thứ mấy?\n• hỏi thông tin mới nhất về ...\n• phân tích ...\n• Hey Gemini / Hey Claude / Hey OpenAI";
+            }
+
+            if (isGatewayAuditCommand(text)) return executeGatewayAudit(senderId, text, externalMessageReference);
+            if (isCurrentTimeCommand(text)) return executeCurrentTime(senderId, externalMessageReference);
+
+            LlmProvider requested = explicitProvider(text);
+            if (requested == null && !configuredProvider.isBlank()) requested = LlmProvider.valueOf(configuredProvider);
+            List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
+            int maxProviders = requested == null ? 3 : 1;
+            IntelligenceMode mode = resolveMode(text);
+            String consequence = mode == IntelligenceMode.EXECUTION ? "HIGH" : mode == IntelligenceMode.DECISION ? "MEDIUM" : "LOW";
+
+            // Do not pre-fetch the web here. IntelligenceFabric is the single authority for deciding
+            // whether freshness/external evidence is required, so an ordinary interaction has zero
+            // unnecessary Internet hops and a current-data interaction performs exactly one lookup.
+            IntelligenceRequest request = new IntelligenceRequest(
+                    "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
+                    mode, CollaborationMode.SINGLE, text,
+                    SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.",
+                    List.of("observation:telegram:" + externalMessageReference),
+                    "analysis", consequence, "interactive-fast", "standard", "telegram-human",
+                    "direct natural-language answer", requestedProviders, maxProviders);
+            return fabric.execute(request).text();
+        } finally {
+            LOG.info("telegram_intelligence_latency elapsed_ms={} text_length={}",
+                    (System.nanoTime() - started) / 1_000_000L, text.length());
         }
-
-        if (isGatewayAuditCommand(text)) return executeGatewayAudit(senderId, text, externalMessageReference);
-        if (isCurrentTimeCommand(text)) return executeCurrentTime(senderId, externalMessageReference);
-
-        LlmProvider requested = explicitProvider(text);
-        if (requested == null && !configuredProvider.isBlank()) requested = LlmProvider.valueOf(configuredProvider);
-        List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
-        int maxProviders = requested == null ? 3 : 1;
-        IntelligenceMode mode = resolveMode(text);
-        String consequence = mode == IntelligenceMode.EXECUTION ? "HIGH" : mode == IntelligenceMode.DECISION ? "MEDIUM" : "LOW";
-
-        ToolResult webEvidence = executeWebSearch(senderId, text, externalMessageReference);
-        String webContext;
-        List<String> evidence;
-        if (webEvidence.success()) {
-            webContext = "\n\nFRESH WEB SEARCH EVIDENCE (read-only; use it to answer factual/current questions):\n"
-                    + webEvidence.output()
-                    + "\n\nCite the evidence naturally in the answer when useful. Do not claim browsing beyond this supplied evidence.";
-            evidence = webEvidence.evidenceReferences();
-        } else {
-            webContext = "\n\nWEB SEARCH ATTEMPT: unavailable (" + webEvidence.output() + "). Do not claim an external lookup occurred.";
-            evidence = List.of("observation:telegram:" + externalMessageReference, "web-search:" + webEvidence.output());
-        }
-        if (evidence.isEmpty()) evidence = List.of("observation:telegram:" + externalMessageReference);
-
-        IntelligenceRequest request = new IntelligenceRequest(
-                "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
-                mode, CollaborationMode.SINGLE, text,
-                SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.\n" + webContext,
-                evidence, "analysis", consequence, "interactive", "standard", "telegram-human",
-                "direct natural-language answer", requestedProviders, maxProviders);
-        return fabric.execute(request).text();
-    }
-
-    private ToolResult executeWebSearch(String senderId, String text, String externalMessageReference) {
-        ToolRequest request = new ToolRequest(
-                "telegram-web-search-" + senderId + "-" + System.nanoTime(),
-                "telegram-human", WebSearchToolAdapter.CAPABILITY, "runtime:workforce", "read", text,
-                List.of("telegram:" + externalMessageReference));
-        return toolFabric.execute(request);
     }
 
     private static boolean isStartCommand(String normalized) { return "/start".equals(normalized) || "/help".equals(normalized); }
