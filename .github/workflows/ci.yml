@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -10,9 +8,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: workforce-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,4 +39,4 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x gradlew
       - name: Test and build
-        run: ./gradlew clean test bootJar --no-daemon
+        run: ./gradlew clean test bootJar --no-daemon --max-workers=1
