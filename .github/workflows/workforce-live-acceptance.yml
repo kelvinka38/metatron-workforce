@@ -43,7 +43,7 @@ jobs:
             -d "{\"objectiveId\":\"$OBJ\",\"ownerWorkerId\":\"$DIRECTOR\",\"organizationContextId\":\"ORG-GATEWAY\",\"description\":\"Deliver Gateway V2 according to approved specification\",\"initiatingActorId\":\"$INITIATOR\",\"authorityReference\":\"$AUTHORITY\",\"authorizationReference\":\"$AUTHZ\"}" \
             >/tmp/workforce-live-objective.json
 
-          python3 - <<'PY'
+          DIRECTOR="$DIRECTOR" python3 - <<'PY'
           import json, os
           with open('/tmp/workforce-live-objective.json') as f:
               data=json.load(f)
@@ -129,5 +129,3 @@ jobs:
           echo 'PUBLIC_MANAGEMENT_ROUTE_ISOLATION=PASS'
 
           echo 'WORKFORCE_LIVE_ACCEPTANCE=PASS'
-        env:
-          DIRECTOR: "WORKER-GATEWAY-DIRECTOR-${{ github.sha }}"
