@@ -15,8 +15,10 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Governed activation surface for already-recognized manager Workers.
- * This surface does not create Participants, Workers, Positions, Roles, Authority or Authorization.
+ * Internal activation surface for already-recognized institutional actors and manager Workers.
+ * The caller is expected to have been authenticated/admitted/authorized upstream. This surface
+ * preserves attribution and authority references but does not mint Participants, Workers, Roles,
+ * Authority or Authorization.
  */
 @RestController
 @RequestMapping("/workforce/management")
@@ -31,9 +33,12 @@ public class LiveManagementController {
     @ResponseStatus(HttpStatus.CREATED)
     public ManagementObjective appointObjective(@RequestHeader("X-Metatron-Actor") String actor,
             @RequestBody ObjectiveCommand command) {
-        requireActor(actor, command.ownerWorkerId());
+        requireActor(actor, command.initiatingActorId());
+        requireText(command.authorityReference(), "authorityReference");
+        requireText(command.authorizationReference(), "authorizationReference");
         return management.acceptObjective(command.objectiveId(), command.ownerWorkerId(),
-                command.organizationContextId(), command.description(), Instant.now());
+                command.organizationContextId(), command.description(), command.initiatingActorId(),
+                command.authorityReference(), command.authorizationReference(), Instant.now());
     }
 
     @PostMapping("/objectives/{objectiveId}/capacity")
@@ -79,13 +84,20 @@ public class LiveManagementController {
     }
 
     private static void requireActor(String actor, String expected) {
-        if (actor == null || actor.isBlank() || !actor.equals(expected)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "actor must equal appointed objective owner");
+        if (actor == null || actor.isBlank() || expected == null || !actor.equals(expected)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "caller attribution mismatch");
+        }
+    }
+
+    private static void requireText(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must not be blank");
         }
     }
 
     public record ObjectiveCommand(String objectiveId, String ownerWorkerId, String organizationContextId,
-                                   String description) {}
+                                   String description, String initiatingActorId, String authorityReference,
+                                   String authorizationReference) {}
     public record CapacityCommand(String requiredCapability, double requiredCapacity, double availableCapacity) {}
     public record AssignmentCommand(String assignmentReference) {}
     public record ReasonCommand(String reason) {}
