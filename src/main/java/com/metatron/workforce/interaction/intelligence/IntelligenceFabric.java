@@ -119,11 +119,11 @@ public final class IntelligenceFabric {
     private WebEnrichment enrichWithWebEvidence(IntelligenceRequest request) {
         if (!requiresWebResearch(request.objective())) return new WebEnrichment(request, null);
 
-        List<String> authority = new ArrayList<>(request.authorityContext().isBlank()
+        // Intelligence may propagate authority context supplied by the caller, but it must
+        // never manufacture authority merely because it selected an evidence-gathering tool.
+        List<String> authority = request.authorityContext().isBlank()
                 ? List.of()
-                : List.of(request.authorityContext()));
-        authority.add("bios:admitted");
-        authority.add("knowledge:external-read");
+                : List.of(request.authorityContext());
 
         ToolRequest toolRequest = new ToolRequest(
                 "web-research-" + request.requestId(),
