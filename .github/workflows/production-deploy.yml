@@ -17,18 +17,60 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: metatron-workforce-production
+  cancel-in-progress: true
+
 env:
   METATRON_VERSION: "0.1.0"
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
-# Production deployment deliberately builds from the immutable GitHub Actions
-# workspace. The historical /opt/metatron/metatron-workforce tree may contain
-# root-owned files and must not be recursively deleted or overwritten by the
-# unprivileged runner. The production .env remains on the host and is injected
-# via --env-file.
 jobs:
   test-and-build:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
+      - name: Harden production runner host
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE='actions.runner.kelvinka38-metatron-workforce.metatron-prod-01.service'
+
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=''
+          else
+            sudo -n true
+            SUDO='sudo -n'
+          fi
+
+          echo '=== RUNNER SELF-RECOVERY ==='
+          $SUDO mkdir -p "/etc/systemd/system/${SERVICE}.d"
+          cat <<'EOF' | $SUDO tee "/etc/systemd/system/${SERVICE}.d/10-metatron-resilience.conf" >/dev/null
+          [Service]
+          Restart=always
+          RestartSec=5s
+          OOMScoreAdjust=-500
+          EOF
+          $SUDO systemctl daemon-reload
+          $SUDO systemctl show "$SERVICE" -p Restart -p RestartUSec -p OOMScoreAdjust --no-pager
+
+          echo '=== SWAP SAFETY NET ==='
+          SWAP_BYTES=$(swapon --show --bytes --noheadings 2>/dev/null | awk '{s+=$3} END{print s+0}')
+          if [ "${SWAP_BYTES:-0}" -lt 1073741824 ]; then
+            if [ ! -f /swapfile ]; then
+              $SUDO fallocate -l 2G /swapfile
+              $SUDO chmod 600 /swapfile
+              $SUDO mkswap /swapfile >/dev/null
+            fi
+            $SUDO swapon /swapfile || true
+            if ! grep -qE '^/swapfile[[:space:]]' /etc/fstab; then
+              echo '/swapfile none swap sw 0 0' | $SUDO tee -a /etc/fstab >/dev/null
+            fi
+          fi
+
+          free -h
+          swapon --show || true
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -42,14 +84,14 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
-      - name: Test
-        run: ./gradlew clean test --no-daemon
-
-      - name: Build
-        run: ./gradlew bootJar --no-daemon
+      - name: Test and build with bounded memory
+        run: ./gradlew clean test bootJar --no-daemon --max-workers=1
 
       - name: Validate production compose
-        run: docker compose -f deploy/docker-compose.yml config
+        env:
+          METATRON_IMAGE_TAG: validation
+          METATRON_COMMIT_SHA: validation
+        run: docker compose -f deploy/docker-compose.yml config >/dev/null
 
       - name: Upload deployable JAR
         uses: actions/upload-artifact@v4
@@ -73,46 +115,88 @@ jobs:
           name: metatron-workforce-jar
           path: build/libs
 
-      - name: Verify deployable artifact
-        run: test -s build/libs/metatron-workforce-0.1.0.jar
-
-      - name: Deploy to local production runtime
+      - name: Deploy with immutable image and automatic rollback
         env:
           SHA: ${{ github.sha }}
+        shell: bash
         run: |
           set -euo pipefail
 
           BASE=/opt/metatron/metatron-workforce
           WORKSPACE="$GITHUB_WORKSPACE"
           COMPOSE="$WORKSPACE/deploy/docker-compose.yml"
+          PROJECT=deploy
 
-          echo "=== VERIFY HOST RUNTIME ==="
+          echo '=== PRE-FLIGHT ==='
           test -d "$BASE"
-          test -f "$BASE/.env"
-          test -s "$WORKSPACE/build/libs/metatron-workforce-0.1.0.jar"
-          test -f "$COMPOSE"
-          test -f "$WORKSPACE/Dockerfile"
-
-          echo "=== DEPLOY IDENTITY ==="
-          echo "EXPECTED_SHA=$SHA"
-          echo "WORKSPACE=$WORKSPACE"
-          echo "BASE=$BASE"
-
-          echo "=== VERIFY PRODUCTION ENV ==="
           test -r "$BASE/.env"
+          test -s "$WORKSPACE/build/libs/metatron-workforce-0.1.0.jar"
+          test -f "$WORKSPACE/Dockerfile"
+          test -f "$COMPOSE"
+          docker info >/dev/null
+          docker network inspect metatron-gateway-online >/dev/null
+          test "$(df --output=pcent / | tail -1 | tr -dc '0-9')" -lt 90
+          free -h
+          swapon --show || true
 
           cd "$WORKSPACE"
           export METATRON_VERSION=0.1.0
-          export METATRON_COMMIT_SHA="$SHA"
           export METATRON_ENVIRONMENT=production
+          export METATRON_IMAGE_TAG="$SHA"
+          export METATRON_COMMIT_SHA="$SHA"
 
-          echo "=== VALIDATE COMPOSE WITH PRODUCTION ENV ==="
-          docker compose --env-file "$BASE/.env" -f "$COMPOSE" config >/dev/null
+          set -a
+          source "$BASE/.env"
+          set +a
 
-          echo "=== BUILD + START PRODUCTION ==="
-          docker compose --env-file "$BASE/.env" -f "$COMPOSE" up -d --build --force-recreate
+          echo '=== CAPTURE KNOWN-GOOD ROLLBACK ==='
+          CURRENT_CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce 2>/dev/null || true)
+          PREVIOUS_SHA=''
+          if [ -n "$CURRENT_CID" ]; then
+            PREVIOUS_SHA=$(docker inspect "$CURRENT_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+            CURRENT_IMAGE_ID=$(docker inspect "$CURRENT_CID" --format '{{.Image}}')
+            docker tag "$CURRENT_IMAGE_ID" metatron-workforce:rollback
+            echo "ROLLBACK_IMAGE=$CURRENT_IMAGE_ID"
+            echo "PREVIOUS_SHA=${PREVIOUS_SHA:-unknown}"
+          else
+            echo 'ROLLBACK_IMAGE=NONE_INITIAL_DEPLOY'
+          fi
 
-          echo "=== WAIT FOR HEALTH ==="
+          rollback() {
+            echo '=== DEPLOY FAILED: AUTOMATIC ROLLBACK ==='
+            if docker image inspect metatron-workforce:rollback >/dev/null 2>&1; then
+              export METATRON_IMAGE_TAG=rollback
+              export METATRON_COMMIT_SHA="${PREVIOUS_SHA:-rollback}"
+              docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate workforce
+              for i in $(seq 1 45); do
+                if curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
+                  echo 'ROLLBACK=PASS'
+                  return 0
+                fi
+                sleep 2
+              done
+              echo 'ROLLBACK=FAILED'
+              docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" logs --tail 200 workforce || true
+            else
+              echo 'ROLLBACK=UNAVAILABLE'
+            fi
+            return 1
+          }
+
+          echo '=== BUILD IMMUTABLE IMAGE ==='
+          docker build --pull -t "metatron-workforce:$SHA" .
+          docker image inspect "metatron-workforce:$SHA" >/dev/null
+
+          echo '=== VALIDATE RESOLVED CONFIG ==='
+          docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" config >/dev/null
+
+          echo '=== START CANDIDATE ==='
+          if ! docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate workforce; then
+            rollback || true
+            exit 1
+          fi
+
+          echo '=== LOCAL HEALTH ==='
           healthy=false
           for i in $(seq 1 45); do
             if curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
@@ -121,27 +205,54 @@ jobs:
             fi
             sleep 2
           done
-
           if [ "$healthy" != true ]; then
-            docker compose --env-file "$BASE/.env" -f "$COMPOSE" logs --tail 200 workforce
+            docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" logs --tail 200 workforce || true
+            rollback || true
             exit 1
           fi
 
-          echo "=== TELEGRAM CHANNEL HEALTH ==="
-          curl -fsS http://127.0.0.1:8080/telegram/health
-          echo
+          echo '=== TELEGRAM LOCAL HEALTH ==='
+          curl -fsS http://127.0.0.1:8080/telegram/health >/dev/null
 
-          echo "=== TELEGRAM WEBHOOK BINDING ==="
-          set -a
-          source "$BASE/.env"
-          set +a
+          echo '=== INTERNET EGRESS CANARY ==='
+          CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
+          internet_ok=false
+          if docker exec "$CID" sh -c 'wget -qO- --timeout=8 "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd" | grep -q bitcoin'; then
+            internet_ok=true
+            echo 'INTERNET_CANARY=COINGECKO_PASS'
+          elif docker exec "$CID" sh -c 'wget -qO- --timeout=8 "https://api.coinbase.com/v2/prices/BTC-USD/spot" | grep -q amount'; then
+            internet_ok=true
+            echo 'INTERNET_CANARY=COINBASE_PASS'
+          fi
+          if [ "$internet_ok" != true ]; then
+            echo 'INTERNET_CANARY=FAIL'
+            rollback || true
+            exit 1
+          fi
+
+          echo '=== PUBLIC GATEWAY END-TO-END HEALTH ==='
+          public_ok=false
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 https://gate.metatron.vn/telegram/health >/dev/null; then
+              public_ok=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$public_ok" != true ]; then
+            echo 'PUBLIC_GATEWAY_HEALTH=FAIL'
+            rollback || true
+            exit 1
+          fi
+
+          echo '=== TELEGRAM WEBHOOK BINDING ==='
           test -n "${TELEGRAM_BOT_TOKEN:-}"
           test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
           test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
           test -n "${METATRON_ORGANIZATION_ID:-}"
           test -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}"
 
-          TELEGRAM_WEBHOOK_URL="https://gate.metatron.vn/telegram/webhook"
+          TELEGRAM_WEBHOOK_URL='https://gate.metatron.vn/telegram/webhook'
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
             --data-urlencode "url=${TELEGRAM_WEBHOOK_URL}" \
             --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
@@ -156,9 +267,7 @@ jobs:
           print('SET_WEBHOOK=PASS')
           PY
 
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" \
-            >/tmp/telegram-webhook-info.json
-
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" >/tmp/telegram-webhook-info.json
           python3 - <<'PY'
           import json
           with open('/tmp/telegram-webhook-info.json') as f:
@@ -167,17 +276,27 @@ jobs:
           result=data['result']
           expected='https://gate.metatron.vn/telegram/webhook'
           assert result.get('url') == expected, result
+          assert not result.get('last_error_message'), result
           print('WEBHOOK_URL=' + result['url'])
           print('PENDING_UPDATE_COUNT=' + str(result.get('pending_update_count', 0)))
-          if result.get('last_error_message'):
-              print('LAST_ERROR=' + result['last_error_message'])
           PY
 
-          deployed_sha=$(docker inspect deploy-workforce-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$deployed_sha" = "$SHA"
+          echo '=== DEPLOY IDENTITY VERIFICATION ==='
+          CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
 
-          echo "PRODUCTION_DEPLOYMENT=PASS"
+          echo '=== POST-DEPLOY RESOURCE STATE ==='
+          docker stats --no-stream "$CID"
+          free -h
+          swapon --show || true
+          docker image prune -f >/dev/null || true
+
+          echo 'PRODUCTION_DEPLOYMENT=PASS'
           echo "EXPECTED_SHA=$SHA"
-          echo "DEPLOYED_SHA=$deployed_sha"
-          echo "IMAGE=$(docker inspect deploy-workforce-1 --format '{{.Config.Image}}')"
+          echo "DEPLOYED_SHA=$DEPLOYED_SHA"
+          echo "IMAGE=metatron-workforce:$SHA"
           echo "HEALTH=$(curl -fsS http://127.0.0.1:8080/actuator/health)"
+          echo 'PUBLIC_GATEWAY_HEALTH=PASS'
+          echo 'INTERNET_EGRESS=PASS'
