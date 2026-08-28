@@ -1,4 +1,4 @@
-name: Live Create Gateway Head
+name: Live Gateway Head Execution
 
 on:
   push:
@@ -10,49 +10,39 @@ permissions:
   contents: read
 
 jobs:
-  instantiate:
+  execute:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
-      - name: Create governed Gateway Head worker and assignment
+      - name: Execute governed Gateway Head institutional work
         shell: bash
         run: |
           set -euo pipefail
           BASE=http://127.0.0.1:8080
-          PARTICIPANT=PARTICIPANT-AI-GATEWAY-HEAD-01
-          WORKER=WORKER-GATEWAY-HEAD-01
-          PARTICIPATION=PARTICIPATION-GATEWAY-HEAD-01
-          OBJECTIVE=OBJ-GATEWAY-HEAD-20260828
-          ASSIGNMENT=ASSIGN-GATEWAY-HEAD-20260828
-          WORK=WORK-GATEWAY-HEAD-20260828
-          ROLE=ROLE-HEAD-OF-GATEWAY
-          AUTHORITY=FOUNDER-DIRECTIVE-GATEWAY-HEAD-20260828
-          AUTHZ=AUTHZ-EXPLICIT-GATEWAY-HEAD-20260828
-          DOCREF='github:kelvinka38/metatron-institution/06_GATEWAY@b3516179879dc90dd482660efef71894069470c3'
-
-          post() { curl -fsS -H 'Content-Type: application/json' -X POST "$1" --data "$2"; echo; }
-
-          echo '=== PARTICIPANT ==='
-          post "$BASE/workforce/core/participants" "{\"participantId\":\"$PARTICIPANT\",\"type\":\"AI\",\"provenanceRef\":\"$DOCREF\"}"
-          echo '=== WORKER ==='
-          post "$BASE/workforce/core/workers" "{\"workerId\":\"$WORKER\",\"participantId\":\"$PARTICIPANT\"}"
-          echo '=== PARTICIPATION / ROLE ==='
-          post "$BASE/workforce/core/participations" "{\"participationId\":\"$PARTICIPATION\",\"workerId\":\"$WORKER\",\"organizationRef\":\"ORG-METATRON\",\"positionRef\":\"POSITION-HEAD-OF-GATEWAY\",\"roleRef\":\"$ROLE\"}"
-          echo '=== CAPABILITIES ==='
-          post "$BASE/workforce/core/capabilities" "{\"workerId\":\"$WORKER\",\"capabilityRef\":\"gateway.audit.read\",\"level\":1.0,\"evidenceRef\":\"$DOCREF/SOT.md\"}"
-          post "$BASE/workforce/core/capabilities" "{\"workerId\":\"$WORKER\",\"capabilityRef\":\"gateway.architecture.read\",\"level\":1.0,\"evidenceRef\":\"$DOCREF/GATEWAY_PRODUCTION_ARCHITECTURE.md\"}"
-          post "$BASE/workforce/core/capabilities" "{\"workerId\":\"$WORKER\",\"capabilityRef\":\"gateway.plan\",\"level\":1.0,\"evidenceRef\":\"$DOCREF/MASTER_EXECUTION_PLAN.md\"}"
-          echo '=== AVAILABILITY ==='
-          post "$BASE/workforce/core/availability" "{\"workerId\":\"$WORKER\",\"available\":true,\"capacity\":1.0}"
-          echo '=== OBJECTIVE ==='
-          curl -fsS -H 'Content-Type: application/json' -H 'X-Metatron-Actor: FOUNDER' -X POST "$BASE/workforce/management/objectives" --data "{\"objectiveId\":\"$OBJECTIVE\",\"ownerWorkerId\":\"$WORKER\",\"organizationContextId\":\"ORG-METATRON\",\"description\":\"Read canonical 06_GATEWAY SOT, contracts, current state, production architecture and master execution plan; audit live Gateway; derive the next admissible implementation action; execute only capabilities that are explicitly authorized and registered; return evidence and blockers without fabricating execution.\",\"initiatingActorId\":\"FOUNDER\",\"authorityReference\":\"$AUTHORITY\",\"authorizationReference\":\"$AUTHZ\"}"; echo
-          echo '=== ASSIGNMENT ==='
-          post "$BASE/workforce/core/assignments" "{\"assignmentId\":\"$ASSIGNMENT\",\"objectiveRef\":\"$OBJECTIVE\",\"workerId\":\"$WORKER\",\"participationId\":\"$PARTICIPATION\",\"authorityRef\":\"$AUTHORITY\",\"authorizationRef\":\"$AUTHZ\",\"description\":\"Study canonical Gateway docs at $DOCREF; compare to live state; produce and, where admitted, execute the next Gateway implementation step.\"}"
-          echo '=== LINK ASSIGNMENT TO OBJECTIVE ==='
-          post "$BASE/workforce/management/objectives/$OBJECTIVE/assignments" "{\"assignmentReference\":\"$ASSIGNMENT\"}" -H || true
-          echo '=== INSTITUTIONAL WORK ==='
-          post "$BASE/workforce/work" "{\"workId\":\"$WORK\",\"objectiveRef\":\"$OBJECTIVE\",\"organizationContextId\":\"ORG-METATRON\",\"originatedByWorkerId\":\"$WORKER\",\"description\":\"Gateway Head canonical-doc discovery, live audit, implementation planning and bounded execution.\"}"
-          post "$BASE/workforce/work/$WORK/assignment" "{\"ref\":\"$ASSIGNMENT\"}"
-          post "$BASE/workforce/work/$WORK/start" '{}'
-          echo '=== FINAL WORKER VIEW ==='
-          curl -fsS "$BASE/workforce/core/workers/$WORKER"; echo
-          echo 'LIVE_GATEWAY_HEAD_CREATED=PASS'
+          echo '=== EXECUTE WORKER ASSIGNMENT ==='
+          curl -fsS -X POST \
+            -H 'X-Metatron-Actor: FOUNDER' \
+            "$BASE/workforce/management/gateway-head/execute?workerId=WORKER-GATEWAY-HEAD-01&workId=WORK-GATEWAY-HEAD-20260828" \
+            | tee /tmp/gateway-head-result.json
+          echo
+          echo '=== RESULT ASSERTIONS ==='
+          python3 - <<'PY'
+          import json
+          p='/tmp/gateway-head-result.json'
+          data=json.load(open(p))
+          assert data['workerId']=='WORKER-GATEWAY-HEAD-01'
+          assert data['role']=='ROLE-HEAD-OF-GATEWAY'
+          assert len(data['documentsRead']) >= 6
+          assert data['gatewayAudit']['state']=='COMPLETED'
+          assert data['status'] in ('BLOCKED','READY_FOR_ADMITTED_MUTATION')
+          print('WORKER='+data['workerId'])
+          print('ROLE='+data['role'])
+          print('DOCUMENTS_READ='+str(len(data['documentsRead'])))
+          for d in data['documentsRead']:
+              print('DOC='+d['path']+' SHA='+d['sha']+' BYTES='+str(d['bytes']))
+          print('AUDIT='+data['gatewayAudit']['state'])
+          print('STATUS='+data['status'])
+          print('NEXT_ACTION='+data['nextAction'])
+          if 'workState' in data: print('WORK_STATE='+data['workState'])
+          print('EVIDENCE_COUNT='+str(len(data['evidence'])))
+          PY
+          echo 'LIVE_GATEWAY_HEAD_EXECUTION=PASS'
