@@ -128,6 +128,10 @@ public class WorkforceCoreService {
     }
 
     public Worker worker(String id) { return Optional.ofNullable(workers.get(id)).orElseThrow(() -> new NoSuchElementException("worker not found")); }
+    public List<Participant> allParticipants() { return participants.values().stream().sorted(Comparator.comparing(Participant::recognizedAt)).toList(); }
+    public List<Worker> allWorkers() { return workers.values().stream().sorted(Comparator.comparing(Worker::admittedAt)).toList(); }
+    public List<Participation> allParticipations() { return participations.values().stream().sorted(Comparator.comparing(Participation::startedAt)).toList(); }
+    public List<Assignment> allAssignments() { return assignments.values().stream().sorted(Comparator.comparing(Assignment::createdAt)).toList(); }
     public List<Participation> participations(String workerId) { return participations.values().stream().filter(p -> p.workerId().equals(workerId)).toList(); }
     public List<Assignment> assignments(String workerId) { return assignments.values().stream().filter(a -> a.workerId().equals(workerId)).toList(); }
     public List<Capability> capabilities(String workerId) { return List.copyOf(capabilities.getOrDefault(workerId, Map.of()).values()); }
