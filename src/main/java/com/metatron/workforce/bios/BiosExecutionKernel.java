@@ -13,11 +13,11 @@ import java.util.Objects;
 import java.util.function.Function;
 
 /**
- * Deterministic Workforce-side BIOS execution boundary.
+ * Deterministic Workforce-side BIOS interaction conformance boundary.
  *
- * BIOS is the control path around execution, not an LLM prompt. Every canonical
- * interaction is observed, normalized, classified, admitted, executed, and verified
- * here before the downstream handler is allowed to produce an answer or action.
+ * This kernel observes, normalizes, classifies, admits interaction semantics, and
+ * verifies the downstream response. It does not originate institutional authority.
+ * In particular, natural-language execution intent is never authorization proof.
  */
 public final class BiosExecutionKernel {
     private static final Logger LOG = LoggerFactory.getLogger(BiosExecutionKernel.class);
@@ -40,15 +40,15 @@ public final class BiosExecutionKernel {
         admit(normalized, mode);
         phases.add(Phase.ADMIT);
 
-        LOG.info("bios_admission_pass request={} mode={} phases={}",
+        LOG.info("bios_interaction_admission_pass request={} mode={} phases={}",
                 normalized.externalMessageReference(), mode, phases);
 
-        phases.add(Phase.EXECUTE);
+        phases.add(Phase.HANDLE);
         MetatronInteractionOrchestrator.InteractionResponse response = downstream.apply(normalized);
         verify(normalized, mode, response);
         phases.add(Phase.VERIFY);
 
-        LOG.info("bios_execution_complete request={} mode={} phases={} provenance={}",
+        LOG.info("bios_interaction_complete request={} mode={} phases={} provenance={}",
                 normalized.externalMessageReference(), mode, phases, response.provenanceReference());
         return response;
     }
@@ -56,7 +56,7 @@ public final class BiosExecutionKernel {
     public IntelligenceMode classify(String text) {
         Objects.requireNonNull(text, "text");
         String value = normalizeText(text).toLowerCase(Locale.ROOT);
-        if (containsAny(value, "deploy", "execute", "ship it", "push to production", "run the fix", "fix it and deploy")) {
+        if (containsAny(value, "deploy", "execute", "ship it", "push to production", "run the fix", "fix it and deploy", "thực hiện ngay")) {
             return IntelligenceMode.EXECUTION;
         }
         if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) {
@@ -91,12 +91,13 @@ public final class BiosExecutionKernel {
             throw new IllegalStateException("BIOS_AUTHORITY_CONTEXT_REQUIRED");
         }
 
-        // A direct Telegram/user instruction is not, by itself, proof of execution
-        // authority. The existing identity resolver establishes the authenticated
-        // human + organization boundary; execution remains gated on an explicit
-        // authorization phrase until a richer authority source is connected.
-        if (mode == IntelligenceMode.EXECUTION && !hasExplicitAuthorization(interaction.text())) {
-            throw new IllegalStateException("BIOS_EXECUTION_AUTHORIZATION_REQUIRED");
+        // EXECUTION INTENT != EXECUTION ADMISSION.
+        // A user phrase such as "I authorize" or "thực hiện ngay" can express intent,
+        // but cannot prove institutional authority, scope, policy, assignment, validity,
+        // or revocation state. Material execution must enter the dedicated Workforce
+        // execution-admission path with real authority evidence.
+        if (mode == IntelligenceMode.EXECUTION) {
+            throw new IllegalStateException("BIOS_EXECUTION_ADMISSION_REQUIRED");
         }
     }
 
@@ -117,14 +118,6 @@ public final class BiosExecutionKernel {
         }
     }
 
-    private static boolean hasExplicitAuthorization(String text) {
-        String value = normalizeText(text).toLowerCase(Locale.ROOT);
-        return containsAny(value,
-                "i authorize", "i approve", "authorized", "approved",
-                "đồng ý thực hiện", "cho phép thực hiện", "được phép thực hiện",
-                "ủy quyền thực hiện", "uy quyen thuc hien", "thực hiện ngay");
-    }
-
     private static String normalizeText(String value) {
         return value == null ? "" : value.trim().replaceAll("\\s+", " ");
     }
@@ -139,7 +132,7 @@ public final class BiosExecutionKernel {
         NORMALIZE,
         CLASSIFY,
         ADMIT,
-        EXECUTE,
+        HANDLE,
         VERIFY
     }
 }
