@@ -28,6 +28,13 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    maxHeapSize = '320m'
+    maxParallelForks = 1
+    jvmArgs '-XX:MaxMetaspaceSize=192m'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.fork = false
 }
 
 springBoot {
