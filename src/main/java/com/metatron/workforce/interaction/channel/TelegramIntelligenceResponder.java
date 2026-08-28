@@ -146,7 +146,7 @@ public final class TelegramIntelligenceResponder {
                     mode, CollaborationMode.SINGLE, text,
                     SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.",
                     List.of("observation:telegram:" + externalMessageReference),
-                    "analysis", consequence, "interactive-fast", "standard", "telegram-human",
+                    "analysis", consequence, "interactive-fast", "standard", "",
                     "direct natural-language answer", requestedProviders, maxProviders);
             return fabric.execute(request).text();
         } finally {
@@ -250,9 +250,14 @@ public final class TelegramIntelligenceResponder {
 
     private static IntelligenceMode resolveMode(String text) {
         String value = text.toLowerCase(Locale.ROOT);
-        if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) return IntelligenceMode.EXECUTION;
-        if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) return IntelligenceMode.DECISION;
-        if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) return IntelligenceMode.REASONING;
+        // Natural-language action or decision phrasing expresses intent only. It may
+        // increase reasoning scrutiny, but it cannot create DECISION/EXECUTION authority.
+        if (containsAny(value,
+                "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy",
+                "decide", "approve", "authorize", "should we proceed", "make the decision",
+                "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) {
+            return IntelligenceMode.REASONING;
+        }
         return IntelligenceMode.DISCUSSION;
     }
 
