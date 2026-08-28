@@ -8,12 +8,14 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /** Live OpenAI transport behind the provider-neutral LLM contract. */
 public final class OpenAiLlmProviderClient implements LlmProviderClient {
+    private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(15);
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -44,6 +46,7 @@ public final class OpenAiLlmProviderClient implements LlmProviderClient {
             ));
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.openai.com/v1/chat/completions"))
+                    .timeout(INTERACTIVE_TIMEOUT)
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
