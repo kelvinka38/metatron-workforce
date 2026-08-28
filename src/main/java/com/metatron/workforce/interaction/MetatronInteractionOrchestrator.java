@@ -6,8 +6,12 @@ import java.util.Objects;
 
 /**
  * Canonical orchestration boundary between Human interaction and Metatron nodes.
- * Every interaction is admitted and verified by the Workforce BIOS kernel before
- * provider/tool execution is reached.
+ * Every interaction is classified and verified by the Workforce-side BIOS product
+ * conformance kernel before provider/tool handling is reached.
+ *
+ * Passing this interaction boundary is not execution authorization. Material
+ * execution requires the dedicated Workforce execution-admission path and valid
+ * institutional authority evidence.
  */
 public final class MetatronInteractionOrchestrator {
     private final InteractionHandler handler;
