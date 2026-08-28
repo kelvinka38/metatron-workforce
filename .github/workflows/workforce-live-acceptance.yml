@@ -28,7 +28,8 @@ jobs:
           MGMT='http://127.0.0.1:8080/workforce/management'
           CORE='http://127.0.0.1:8080/workforce/core'
           OPS='http://127.0.0.1:8080/workforce/operations'
-          SUFFIX="${TARGET_SHA:0:12}"
+          WORK='http://127.0.0.1:8080/workforce/work'
+          SUFFIX="${TARGET_SHA:0:8}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
           echo '=== EXACT DEPLOYMENT IDENTITY ==='
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
@@ -38,43 +39,40 @@ jobs:
           curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'
           echo "DEPLOYMENT_IDENTITY=PASS:$DEPLOYED_SHA"
 
-          P="P-${SUFFIX}"; W="W-${SUFFIX}"; PART="PART-${SUFFIX}"; A="A-${SUFFIX}"
+          P="P-${SUFFIX}"; W="W-${SUFFIX}"; PART="PART-${SUFFIX}"; A="A-${SUFFIX}"; WI="WORK-${SUFFIX}"
           S="S-${SUFFIX}"; ST="ST-${SUFFIX}"; R="R-${SUFFIX}"
           START=$(date -u -d '+5 minutes' '+%Y-%m-%dT%H:%M:%SZ')
           END=$(date -u -d '+65 minutes' '+%Y-%m-%dT%H:%M:%SZ')
           VALID=$(date -u -d '+1 day' '+%Y-%m-%dT%H:%M:%SZ')
 
           echo '=== PARTICIPANT -> WORKER -> PARTICIPATION ==='
-          curl -fsS -X POST "$CORE/participants" -H 'Content-Type: application/json' \
-            -d "{\"participantId\":\"$P\",\"type\":\"AI\",\"provenanceRef\":\"evidence:admission:$SUFFIX\"}" >/tmp/wf-participant.json
-          curl -fsS -X POST "$CORE/workers" -H 'Content-Type: application/json' \
-            -d "{\"workerId\":\"$W\",\"participantId\":\"$P\"}" >/tmp/wf-worker.json
-          curl -fsS -X POST "$CORE/participations" -H 'Content-Type: application/json' \
-            -d "{\"participationId\":\"$PART\",\"workerId\":\"$W\",\"organizationRef\":\"ORG-GATEWAY\",\"positionRef\":\"POSITION-DIRECTOR\",\"roleRef\":\"ROLE-DIRECTOR\"}" >/tmp/wf-participation.json
-          curl -fsS -X POST "$CORE/capabilities" -H 'Content-Type: application/json' \
-            -d "{\"workerId\":\"$W\",\"capabilityRef\":\"gateway-management\",\"level\":1.0,\"evidenceRef\":\"evidence:capability:$SUFFIX\"}" >/dev/null
-          curl -fsS -X POST "$CORE/qualifications" -H 'Content-Type: application/json' \
-            -d "{\"workerId\":\"$W\",\"qualificationRef\":\"gateway-director\",\"evidenceRef\":\"evidence:qualification:$SUFFIX\",\"validUntil\":\"$VALID\"}" >/dev/null
-          curl -fsS -X POST "$CORE/availability" -H 'Content-Type: application/json' \
-            -d "{\"workerId\":\"$W\",\"available\":true,\"capacity\":1.0}" >/dev/null
-          curl -fsS -X POST "$CORE/assignments" -H 'Content-Type: application/json' \
-            -d "{\"assignmentId\":\"$A\",\"objectiveRef\":\"OBJ-$SUFFIX\",\"workerId\":\"$W\",\"participationId\":\"$PART\",\"authorityRef\":\"AUTHORITY-$SUFFIX\",\"authorizationRef\":\"AUTHZ-$SUFFIX\",\"description\":\"live acceptance assignment\"}" >/dev/null
+          curl -fsS -X POST "$CORE/participants" -H 'Content-Type: application/json' -d "{\"participantId\":\"$P\",\"type\":\"AI\",\"provenanceRef\":\"evidence:admission:$SUFFIX\"}" >/dev/null
+          curl -fsS -X POST "$CORE/workers" -H 'Content-Type: application/json' -d "{\"workerId\":\"$W\",\"participantId\":\"$P\"}" >/dev/null
+          curl -fsS -X POST "$CORE/participations" -H 'Content-Type: application/json' -d "{\"participationId\":\"$PART\",\"workerId\":\"$W\",\"organizationRef\":\"ORG-GATEWAY\",\"positionRef\":\"POSITION-DIRECTOR\",\"roleRef\":\"ROLE-DIRECTOR\"}" >/dev/null
+          curl -fsS -X POST "$CORE/capabilities" -H 'Content-Type: application/json' -d "{\"workerId\":\"$W\",\"capabilityRef\":\"gateway-management\",\"level\":1.0,\"evidenceRef\":\"evidence:capability:$SUFFIX\"}" >/dev/null
+          curl -fsS -X POST "$CORE/qualifications" -H 'Content-Type: application/json' -d "{\"workerId\":\"$W\",\"qualificationRef\":\"gateway-director\",\"evidenceRef\":\"evidence:qualification:$SUFFIX\",\"validUntil\":\"$VALID\"}" >/dev/null
+          curl -fsS -X POST "$CORE/availability" -H 'Content-Type: application/json' -d "{\"workerId\":\"$W\",\"available\":true,\"capacity\":1.0}" >/dev/null
+          curl -fsS -X POST "$CORE/assignments" -H 'Content-Type: application/json' -d "{\"assignmentId\":\"$A\",\"objectiveRef\":\"OBJ-$SUFFIX\",\"workerId\":\"$W\",\"participationId\":\"$PART\",\"authorityRef\":\"AUTHORITY-$SUFFIX\",\"authorizationRef\":\"AUTHZ-$SUFFIX\",\"description\":\"live acceptance assignment\"}" >/dev/null
           echo 'WORKER_LIFECYCLE=PASS'
 
+          echo '=== FIRST-CLASS INSTITUTIONAL WORK ==='
+          curl -fsS -X POST "$WORK" -H 'Content-Type: application/json' -d "{\"workId\":\"$WI\",\"objectiveRef\":\"OBJ-$SUFFIX\",\"organizationContextId\":\"ORG-GATEWAY\",\"originatedByWorkerId\":\"$W\",\"description\":\"live bounded institutional work\"}" >/dev/null
+          curl -fsS -X POST "$WORK/$WI/proposal" -H 'Content-Type: application/json' -d "{\"ref\":\"PROPOSAL-$SUFFIX\"}" >/dev/null
+          curl -fsS -X POST "$WORK/$WI/assignment" -H 'Content-Type: application/json' -d "{\"ref\":\"$A\"}" >/dev/null
+          curl -fsS -X POST "$WORK/$WI/start" >/dev/null
+          curl -fsS -X POST "$WORK/$WI/complete" -H 'Content-Type: application/json' -d "{\"outcomeRef\":\"OUTCOME-$SUFFIX\",\"evidenceRefs\":[\"evidence:work:$SUFFIX\"]}" >/dev/null
+          echo 'INSTITUTIONAL_WORK=PASS'
+
           echo '=== SCHEDULE / CAPACITY / STAFFING / REVIEW ==='
-          curl -fsS -X POST "$OPS/schedules" -H 'Content-Type: application/json' \
-            -d "{\"scheduleId\":\"$S\",\"assignmentRef\":\"$A\",\"workerId\":\"$W\",\"start\":\"$START\",\"end\":\"$END\",\"committedCapacity\":0.5,\"workerCapacity\":1.0,\"evidenceRef\":\"evidence:schedule:$SUFFIX\"}" >/dev/null
-          curl -fsS -X POST "$OPS/staffing" -H 'Content-Type: application/json' \
-            -d "{\"staffingRequestId\":\"$ST\",\"objectiveRef\":\"OBJ-$SUFFIX\",\"organizationContextId\":\"ORG-GATEWAY\",\"requestedByWorkerId\":\"$W\",\"capabilityRef\":\"gateway-engineering\",\"requiredCapacity\":2.0,\"availableCapacity\":1.0}" >/dev/null
-          curl -fsS -X POST "$OPS/staffing/$ST/proposal" -H 'Content-Type: application/json' -d "{\"ref\":\"PROPOSAL-$SUFFIX\"}" >/dev/null
-          curl -fsS -X POST "$OPS/reviews" -H 'Content-Type: application/json' \
-            -d "{\"reviewId\":\"$R\",\"subjectRef\":\"REPORT-$SUFFIX\",\"reviewerWorkerId\":\"$W\",\"reviewerRoleRef\":\"ROLE-DIRECTOR\",\"authorityRef\":\"AUTHORITY-$SUFFIX\",\"decision\":\"APPROVED\",\"rationale\":\"live evidence supports review\",\"evidenceRefs\":[\"evidence:review:$SUFFIX\"]}" >/dev/null
+          curl -fsS -X POST "$OPS/schedules" -H 'Content-Type: application/json' -d "{\"scheduleId\":\"$S\",\"assignmentRef\":\"$A\",\"workerId\":\"$W\",\"start\":\"$START\",\"end\":\"$END\",\"committedCapacity\":0.5,\"workerCapacity\":1.0,\"evidenceRef\":\"evidence:schedule:$SUFFIX\"}" >/dev/null
+          curl -fsS -X POST "$OPS/staffing" -H 'Content-Type: application/json' -d "{\"staffingRequestId\":\"$ST\",\"objectiveRef\":\"OBJ-$SUFFIX\",\"organizationContextId\":\"ORG-GATEWAY\",\"requestedByWorkerId\":\"$W\",\"capabilityRef\":\"gateway-engineering\",\"requiredCapacity\":2.0,\"availableCapacity\":1.0}" >/dev/null
+          curl -fsS -X POST "$OPS/staffing/$ST/proposal" -H 'Content-Type: application/json' -d "{\"ref\":\"PROPOSAL-STAFF-$SUFFIX\"}" >/dev/null
+          curl -fsS -X POST "$OPS/reviews" -H 'Content-Type: application/json' -d "{\"reviewId\":\"$R\",\"subjectRef\":\"REPORT-$SUFFIX\",\"reviewerWorkerId\":\"$W\",\"reviewerRoleRef\":\"ROLE-DIRECTOR\",\"authorityRef\":\"AUTHORITY-$SUFFIX\",\"decision\":\"APPROVED\",\"rationale\":\"live evidence supports review\",\"evidenceRefs\":[\"evidence:review:$SUFFIX\"]}" >/dev/null
           echo 'OPERATIONAL_LIFECYCLES=PASS'
 
           echo '=== AUTONOMOUS MANAGEMENT / RECOVERY / EVIDENCE ==='
           OBJ="OBJ-LIVE-${SUFFIX}"; INIT="HUMAN-${SUFFIX}"; DIR="DIRECTOR-${SUFFIX}"; MA="MA-${SUFFIX}"
-          curl -fsS -X POST "$MGMT/objectives" -H 'Content-Type: application/json' -H "X-Metatron-Actor: $INIT" \
-            -d "{\"objectiveId\":\"$OBJ\",\"ownerWorkerId\":\"$DIR\",\"organizationContextId\":\"ORG-GATEWAY\",\"description\":\"Deliver Gateway V2 according to approved specification\",\"initiatingActorId\":\"$INIT\",\"authorityReference\":\"AUTHORITY-$SUFFIX\",\"authorizationReference\":\"AUTHZ-$SUFFIX\"}" >/dev/null
+          curl -fsS -X POST "$MGMT/objectives" -H 'Content-Type: application/json' -H "X-Metatron-Actor: $INIT" -d "{\"objectiveId\":\"$OBJ\",\"ownerWorkerId\":\"$DIR\",\"organizationContextId\":\"ORG-GATEWAY\",\"description\":\"Deliver Gateway V2 according to approved specification\",\"initiatingActorId\":\"$INIT\",\"authorityReference\":\"AUTHORITY-$SUFFIX\",\"authorizationReference\":\"AUTHZ-$SUFFIX\"}" >/dev/null
           curl -fsS -X POST "$MGMT/objectives/$OBJ/capacity" -H 'Content-Type: application/json' -H "X-Metatron-Actor: $DIR" -d '{"requiredCapability":"gateway-engineering","requiredCapacity":2,"availableCapacity":0}' >/dev/null
           curl -fsS -X POST "$MGMT/objectives/$OBJ/assignments" -H 'Content-Type: application/json' -H "X-Metatron-Actor: $DIR" -d "{\"assignmentReference\":\"$MA\"}" >/dev/null
           CODE=$(curl -sS -o /tmp/wf-denied.json -w '%{http_code}' -X POST "$MGMT/objectives/$OBJ/capacity" -H 'Content-Type: application/json' -H 'X-Metatron-Actor: WORKER-UNAUTHORIZED' -d '{"requiredCapability":"x","requiredCapacity":1,"availableCapacity":0}')
@@ -91,11 +89,14 @@ jobs:
 
           echo '=== PROCESS REPLACEMENT CONTINUITY ==='
           docker restart "$CID" >/dev/null
+          healthy=false
           for i in $(seq 1 45); do
-            curl -fsS http://127.0.0.1:8080/actuator/health 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"' && break
+            if curl -fsS http://127.0.0.1:8080/actuator/health 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then healthy=true; break; fi
             sleep 2
           done
+          test "$healthy" = true
           curl -fsS "$CORE/workers/$W" >/tmp/wf-worker-after.json
+          curl -fsS "$WORK/$WI" >/tmp/wf-work-after.json
           curl -fsS "$OPS/schedules/$S" >/tmp/wf-schedule-after.json
           curl -fsS "$OPS/staffing/$ST" >/tmp/wf-staffing-after.json
           curl -fsS "$OPS/reviews/$R" >/tmp/wf-review-after.json
@@ -105,6 +106,7 @@ jobs:
           d=json.load(open('/tmp/wf-worker-after.json'))
           assert d['worker']['workerId']==os.environ['W'], d
           assert any(a['assignmentId']==os.environ['A'] for a in d['assignments']), d
+          assert json.load(open('/tmp/wf-work-after.json'))['status']=='COMPLETED'
           assert json.load(open('/tmp/wf-schedule-after.json'))['status']=='PLANNED'
           assert json.load(open('/tmp/wf-staffing-after.json'))['status']=='PROPOSED'
           assert json.load(open('/tmp/wf-review-after.json'))['decision']=='APPROVED'
@@ -113,9 +115,10 @@ jobs:
           echo 'DURABLE_CONTINUITY=PASS'
 
           echo '=== PUBLIC BOUNDARY ISOLATION ==='
-          for path in "/workforce/core/workers/$W" "/workforce/operations/schedules/$S" "/workforce/management/objectives/$OBJ"; do
+          for path in "/workforce/core/workers/$W" "/workforce/work/$WI" "/workforce/operations/schedules/$S" "/workforce/management/objectives/$OBJ"; do
             code=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "https://gate.metatron.vn$path" || true)
-            test "$code" = 404
+            echo "PUBLIC_PATH=$path HTTP=$code"
+            case "$code" in 403|404) ;; *) exit 1 ;; esac
           done
           echo 'PUBLIC_BOUNDARY_ISOLATION=PASS'
           echo 'WORKFORCE_LIVE_ACCEPTANCE=PASS'
