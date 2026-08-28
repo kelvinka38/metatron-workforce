@@ -6,6 +6,18 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class StaffingService {
     private final Map<String, StaffingRequest> requests = new ConcurrentHashMap<>();
+    private final StaffingStateStore store;
+
+    public StaffingService() { this(new StaffingStateStore() {
+        private List<StaffingRequest> state = List.of();
+        public List<StaffingRequest> load(){ return state; }
+        public void save(List<StaffingRequest> requests){ state = List.copyOf(requests); }
+    }); }
+
+    public StaffingService(StaffingStateStore store) {
+        this.store = Objects.requireNonNull(store);
+        store.load().forEach(r -> requests.put(r.staffingRequestId(), r));
+    }
 
     public synchronized StaffingRequest detect(String id, String objectiveRef, String organizationContextId,
             String managerWorkerId, String capabilityRef, double required, double available, Instant at) {
@@ -13,7 +25,7 @@ public final class StaffingService {
                 capabilityRef, required, available, StaffingRequest.Status.OPEN, null, at, at);
         if (request.gap() <= 0) throw new IllegalArgumentException("staffing request requires a positive capacity gap");
         if (requests.putIfAbsent(id, request) != null) throw new IllegalStateException("staffing request already exists");
-        return request;
+        persist(); return request;
     }
 
     public synchronized StaffingRequest propose(String id, String proposalRef, Instant at) {
@@ -47,7 +59,8 @@ public final class StaffingService {
         StaffingRequest next = new StaffingRequest(old.staffingRequestId(), old.objectiveRef(), old.organizationContextId(),
                 old.requestedByWorkerId(), old.capabilityRef(), old.requiredCapacity(), old.availableCapacity(), status,
                 ref, old.createdAt(), Objects.requireNonNull(at));
-        requests.put(id, next); return next;
+        requests.put(id, next); persist(); return next;
     }
+    private void persist(){ store.save(List.copyOf(requests.values())); }
     private static void requireText(String value,String field){ if(value==null||value.isBlank()) throw new IllegalArgumentException(field+" required"); }
 }
