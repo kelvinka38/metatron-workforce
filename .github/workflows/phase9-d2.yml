@@ -1,21 +1,27 @@
 name: Phase 9 D2
 
 on:
-  push:
-    branches:
-      - phase9-d2-executable-boundaries
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
+
+concurrency:
+  group: workforce-phase9-d2-acceptance
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '22'
+          cache: gradle
       - name: Run full regression suite
-        run: bash ./gradlew clean test
+        run: ./gradlew clean test --no-daemon --max-workers=1
