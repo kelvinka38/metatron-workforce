@@ -1,4 +1,4 @@
-name: Live Gateway Head Execution
+name: Live Gateway Head Blocker Inspection
 
 on:
   push:
@@ -10,44 +10,24 @@ permissions:
   contents: read
 
 jobs:
-  execute:
+  inspect:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
-      - name: Execute governed Gateway Head institutional work
+      - name: Inspect blocked Gateway Head institutional work
         shell: bash
         run: |
           set -euo pipefail
           BASE=http://127.0.0.1:8080
-          OUT=/tmp/gateway-head-result.json
-          CODE=$(curl -sS -o "$OUT" -w '%{http_code}' -X POST \
-            -H 'X-Metatron-Actor: FOUNDER' \
-            "$BASE/workforce/management/gateway-head/execute?workerId=WORKER-GATEWAY-HEAD-01&workId=WORK-GATEWAY-HEAD-20260828")
-          echo "HTTP=$CODE"
-          cat "$OUT"; echo
+          echo '=== WORK ==='
+          curl -fsS "$BASE/workforce/work/WORK-GATEWAY-HEAD-20260828" | tee /tmp/work.json
+          echo
+          echo '=== WORKER ==='
+          curl -fsS "$BASE/workforce/core/workers/WORKER-GATEWAY-HEAD-01" | tee /tmp/worker.json
+          echo
           python3 - <<'PY'
           import json
-          data=json.load(open('/tmp/gateway-head-result.json'))
-          print('STATUS='+str(data.get('status')))
-          print('REASON='+str(data.get('reason','')))
-          print('NEXT_ACTION='+str(data.get('nextAction','')))
+          w=json.load(open('/tmp/work.json'))
+          print('WORK_STATUS='+w['status'])
+          print('EVIDENCE_REFS='+repr(w.get('evidenceRefs',[])))
+          print('OUTCOME_REF='+str(w.get('outcomeRef')))
           PY
-          test "$CODE" = 200
-          python3 - <<'PY'
-          import json
-          data=json.load(open('/tmp/gateway-head-result.json'))
-          assert data['workerId']=='WORKER-GATEWAY-HEAD-01'
-          assert data['role']=='ROLE-HEAD-OF-GATEWAY'
-          assert len(data['documentsRead']) >= 6
-          assert data['gatewayAudit']['state']=='COMPLETED'
-          print('WORKER='+data['workerId'])
-          print('ROLE='+data['role'])
-          print('DOCUMENTS_READ='+str(len(data['documentsRead'])))
-          for d in data['documentsRead']:
-              print('DOC='+d['path']+' SHA='+d['sha']+' BYTES='+str(d['bytes']))
-          print('AUDIT='+data['gatewayAudit']['state'])
-          print('STATUS='+data['status'])
-          print('NEXT_ACTION='+data['nextAction'])
-          print('WORK_STATE='+str(data.get('workState','')))
-          print('EVIDENCE_COUNT='+str(len(data['evidence'])))
-          PY
-          echo 'LIVE_GATEWAY_HEAD_EXECUTION=PASS'
