@@ -19,14 +19,14 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Normalize POSIX line endings
         run: |
           find . -type f \( -name 'gradlew' -o -name '*.sh' \) -exec sed -i 's/\r$//' {} +
 
       - name: Setup Java 22
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '22'
