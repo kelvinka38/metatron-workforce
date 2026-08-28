@@ -15,7 +15,7 @@ import java.util.Objects;
 
 /** Live Google Gemini transport behind the provider-neutral LLM contract. */
 public final class GoogleLlmProviderClient implements LlmProviderClient {
-    private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(30);
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
