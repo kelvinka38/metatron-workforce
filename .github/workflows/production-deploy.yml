@@ -126,6 +126,7 @@ jobs:
           WORKSPACE="$GITHUB_WORKSPACE"
           COMPOSE="$WORKSPACE/deploy/docker-compose.yml"
           PROJECT=deploy
+          DEPLOY_STARTED_AT=$(date +%s)
 
           echo '=== PRE-FLIGHT ==='
           test -d "$BASE"
@@ -140,14 +141,15 @@ jobs:
           swapon --show || true
 
           cd "$WORKSPACE"
+          set -a
+          source "$BASE/.env"
+          set +a
+
+          # Deployment identity always wins over persisted environment values.
           export METATRON_VERSION=0.1.0
           export METATRON_ENVIRONMENT=production
           export METATRON_IMAGE_TAG="$SHA"
           export METATRON_COMMIT_SHA="$SHA"
-
-          set -a
-          source "$BASE/.env"
-          set +a
 
           echo '=== CAPTURE KNOWN-GOOD ROLLBACK ==='
           CURRENT_CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce 2>/dev/null || true)
@@ -268,17 +270,21 @@ jobs:
           PY
 
           curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" >/tmp/telegram-webhook-info.json
-          python3 - <<'PY'
-          import json
+          DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" python3 - <<'PY'
+          import json, os
           with open('/tmp/telegram-webhook-info.json') as f:
               data=json.load(f)
           assert data.get('ok') is True, data
           result=data['result']
           expected='https://gate.metatron.vn/telegram/webhook'
           assert result.get('url') == expected, result
-          assert not result.get('last_error_message'), result
+          started=int(os.environ['DEPLOY_STARTED_AT'])
+          last_error=int(result.get('last_error_date') or 0)
+          assert last_error < started, result
           print('WEBHOOK_URL=' + result['url'])
           print('PENDING_UPDATE_COUNT=' + str(result.get('pending_update_count', 0)))
+          if result.get('last_error_message'):
+              print('STALE_LAST_ERROR=' + result['last_error_message'])
           PY
 
           echo '=== DEPLOY IDENTITY VERIFICATION ==='
