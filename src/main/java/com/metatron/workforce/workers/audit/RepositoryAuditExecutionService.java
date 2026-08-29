@@ -58,8 +58,17 @@ public final class RepositoryAuditExecutionService {
         work.assign(workId, assignmentRef, Instant.now());
         work.start(workId, Instant.now());
 
-        WorkerResult result = runtime.execute(workerFactory.get(), workId, objective);
         String runtimeEvidenceRef = "runtime-evidence:" + workId;
+        WorkerResult result;
+        try {
+            result = runtime.execute(workerFactory.get(), workId, objective);
+        } catch (Exception failure) {
+            result = new WorkerResult("WorkerRuntime", "FAILED",
+                    "verdict=FAILED\nreason=runtime evidence persistence failed: "
+                            + failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage()),
+                    Instant.now());
+        }
+
         String authorityEvidenceRef = "authority:" + authorityReference.trim();
         String authorizationEvidenceRef = "authorization:" + authorizationReference.trim();
 
