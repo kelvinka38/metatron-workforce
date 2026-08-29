@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -34,10 +35,33 @@ class RepositoryAuditWorkerTest {
 
         assertEquals("PASS", result.status());
         assertTrue(result.evidence().contains("source=github-api"));
+        assertTrue(result.evidence().contains("authenticated=false"));
         assertTrue(result.evidence().contains("repository=kelvinka38/bios"));
         assertTrue(result.evidence().contains("commitSha=0123456789abcdef0123456789abcdef01234567"));
         assertTrue(result.evidence().contains("metadataHttpStatus=200"));
         assertTrue(result.evidence().contains("commitHttpStatus=200"));
+    }
+
+    @Test
+    void configuredTokenIsUsedForAuthenticatedPrivateReads() throws Exception {
+        AtomicReference<String> authorization = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/repos/kelvinka38/bios", exchange -> {
+            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            respond(exchange, 200, "{\"default_branch\":\"main\"}");
+        });
+        server.createContext("/repos/kelvinka38/bios/commits/main", exchange -> respond(exchange, 200,
+                "{\"sha\":\"0123456789abcdef0123456789abcdef01234567\"}"));
+        server.start();
+
+        RepositoryAuditWorker worker = new RepositoryAuditWorker(HttpClient.newHttpClient(),
+                "http://127.0.0.1:" + server.getAddress().getPort(), "secret-token");
+        WorkerResult result = worker.execute(new WorkerContext("AUDIT-PRIVATE", "Audit kelvinka38/bios", Instant.now()));
+
+        assertEquals("PASS", result.status());
+        assertEquals("Bearer secret-token", authorization.get());
+        assertTrue(result.evidence().contains("authenticated=true"));
+        assertFalse(result.evidence().contains("secret-token"));
     }
 
     @Test
