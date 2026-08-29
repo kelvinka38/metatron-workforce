@@ -1,4 +1,5 @@
 name: BIOS Production Deploy
+# Terminal completion redeploy: deploy the current canonical BIOS main SHA after checkpoint closure.
 
 on:
   push:
