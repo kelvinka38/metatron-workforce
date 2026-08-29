@@ -1,0 +1,84 @@
+name: Telegram One Message Worker Live Acceptance
+
+on:
+  workflow_run:
+    workflows: ["Production Deploy"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metatron-telegram-one-message-worker-live-acceptance
+  cancel-in-progress: true
+
+jobs:
+  accept-one-message-worker:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    steps:
+      - name: Prove one Telegram message autonomously completes BIOS audit Work
+        shell: bash
+        env:
+          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          docker exec "$CID" sh -c 'test -n "$GITHUB_TOKEN"'
+
+          UPDATE_ID=$(date +%s%N | cut -c1-18)
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BODY=$(python3 - <<PY
+          import json
+          uid=int('${TELEGRAM_ALLOWED_USER_ID}')
+          print(json.dumps({"update_id":int('${UPDATE_ID}'),"message":{"message_id":int('${UPDATE_ID}')%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":"Audit BIOS"}}))
+          PY
+          )
+
+          HTTP_STATUS=$(curl -sS -o /tmp/telegram-one-message.json -w '%{http_code}' \
+            --proto '=https' --tlsv1.2 --max-time 20 \
+            -X POST https://gate.metatron.vn/telegram/webhook \
+            -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+            -H 'Content-Type: application/json' \
+            --data-binary "$BODY")
+          echo "TELEGRAM_ONE_MESSAGE_HTTP_STATUS=$HTTP_STATUS"
+          test "$HTTP_STATUS" = 200
+
+          TERMINAL=false
+          for i in $(seq 1 90); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if printf '%s' "$LOGS" | grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID" \
+              && printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
+              && printf '%s' "$LOGS" | grep -q "METATRON WORK COMPLETED repository=kelvinka38/bios"; then
+              TERMINAL=true
+              break
+            fi
+            sleep 2
+          done
+          test "$TERMINAL" = true
+
+          EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:telegram-founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
+          test -n "$EVIDENCE"
+          docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
+          docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
+          docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
+
+          curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
+          echo 'TELEGRAM_IDENTITY_RESOLUTION=PASS'
+          echo 'ONE_MESSAGE_TO_INSTITUTIONAL_WORK=PASS'
+          echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
+          echo 'GATEWAY_GOVERNED_GITHUB_EGRESS=PASS'
+          echo 'WORK_EVIDENCE_PRESERVED=PASS'
+          echo 'TELEGRAM_TERMINAL_RESULT_RETURNED=PASS'
+          echo 'TELEGRAM_ONE_MESSAGE_WORKER_ACCEPTANCE=PASS'
