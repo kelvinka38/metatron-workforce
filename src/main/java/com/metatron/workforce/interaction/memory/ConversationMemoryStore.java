@@ -8,5 +8,10 @@ package com.metatron.workforce.interaction.memory;
 public interface ConversationMemoryStore {
     String context(String conversationId, int maxTurns, int maxChars);
 
+    default String contextFor(String conversationId, String currentText,
+                              int maxRecentTurns, int maxRelevantTurns, int maxChars) {
+        return context(conversationId, maxRecentTurns, maxChars);
+    }
+
     void appendTurn(String conversationId, String humanText, String metatronText);
 }

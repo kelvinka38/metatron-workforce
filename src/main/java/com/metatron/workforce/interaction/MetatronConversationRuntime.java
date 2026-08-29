@@ -31,7 +31,12 @@ public final class MetatronConversationRuntime {
         Objects.requireNonNull(channel, "channel");
         if (channel.isBlank()) throw new IllegalArgumentException("channel must not be blank");
 
-        String history = memory.context(interaction.conversationId(), maxTurns, maxChars);
+        String history = memory.contextFor(
+                interaction.conversationId(),
+                interaction.text(),
+                maxTurns,
+                Math.max(4, maxTurns / 4),
+                maxChars);
         String answer = intelligence.respond(
                 interaction.human().actorId(),
                 interaction.text(),
