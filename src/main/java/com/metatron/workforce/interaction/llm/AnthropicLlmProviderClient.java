@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -58,13 +59,32 @@ public final class AnthropicLlmProviderClient implements LlmProviderClient {
             }
             String text = root.path("content").path(0).path("text").asText("");
             if (text.isBlank()) throw new IllegalStateException("anthropic_response_invalid");
-            return new LlmResponse(provider(), request.model(), text, root.path("id").asText(""));
+            JsonNode usage = root.path("usage");
+            long input = token(usage, "input_tokens");
+            long output = token(usage, "output_tokens");
+            long total = input >= 0 && output >= 0 ? input + output : LlmUsage.UNKNOWN;
+            LlmUsage llmUsage = new LlmUsage(input, output, total);
+            Map<String, String> telemetry = new LinkedHashMap<>();
+            header(response, "anthropic-ratelimit-requests-remaining").ifPresent(v -> telemetry.put("remaining_requests", v));
+            header(response, "anthropic-ratelimit-tokens-remaining").ifPresent(v -> telemetry.put("remaining_tokens", v));
+            header(response, "anthropic-ratelimit-requests-reset").ifPresent(v -> telemetry.put("reset_requests", v));
+            header(response, "anthropic-ratelimit-tokens-reset").ifPresent(v -> telemetry.put("reset_tokens", v));
+            return new LlmResponse(provider(), request.model(), text, root.path("id").asText(""), llmUsage, telemetry);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("anthropic_request_interrupted", e);
         } catch (IOException e) {
             throw new IllegalStateException("anthropic_request_failed", e);
         }
+    }
+
+    private static long token(JsonNode usage, String field) {
+        JsonNode node = usage.path(field);
+        return node.isIntegralNumber() ? node.asLong() : LlmUsage.UNKNOWN;
+    }
+
+    private static java.util.Optional<String> header(HttpResponse<?> response, String name) {
+        return response.headers().firstValue(name).filter(value -> !value.isBlank());
     }
 
     private static String compactError(JsonNode root) {

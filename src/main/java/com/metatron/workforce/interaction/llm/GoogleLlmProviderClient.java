@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,13 +60,27 @@ public final class GoogleLlmProviderClient implements LlmProviderClient {
             }
             String text = root.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText("");
             if (text.isBlank()) throw new IllegalStateException("google_response_invalid");
-            return new LlmResponse(provider(), request.model(), text, root.path("responseId").asText(""));
+            JsonNode usage = root.path("usageMetadata");
+            LlmUsage llmUsage = new LlmUsage(
+                    token(usage, "promptTokenCount"),
+                    token(usage, "candidatesTokenCount"),
+                    token(usage, "totalTokenCount"));
+            Map<String, String> telemetry = new LinkedHashMap<>();
+            response.headers().firstValue("x-ratelimit-remaining")
+                    .filter(value -> !value.isBlank())
+                    .ifPresent(value -> telemetry.put("remaining_requests", value));
+            return new LlmResponse(provider(), request.model(), text, root.path("responseId").asText(""), llmUsage, telemetry);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("google_request_interrupted", e);
         } catch (IOException e) {
             throw new IllegalStateException("google_request_failed", e);
         }
+    }
+
+    private static long token(JsonNode usage, String field) {
+        JsonNode node = usage.path(field);
+        return node.isIntegralNumber() ? node.asLong() : LlmUsage.UNKNOWN;
     }
 
     private static String compactError(JsonNode root) {

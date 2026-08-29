@@ -96,7 +96,7 @@ public final class MetatronIntelligenceResponder {
         MultiModelDeliberationCoordinator deliberationCoordinator = new MultiModelDeliberationCoordinator(
                 intelligenceEngine, this.toolFabric, objectMapper);
         this.fabric = new IntelligenceFabric(
-                new IntelligencePlanner(new ConfiguredProviderRoutingPolicy(configuredProviders)),
+                new IntelligencePlanner(new AdaptiveProviderRoutingPolicy(configuredProviders, router.telemetry())),
                 intelligenceEngine,
                 new EvidencePreservingIntelligenceSynthesizer(),
                 new EvidenceBackedGovernance(),

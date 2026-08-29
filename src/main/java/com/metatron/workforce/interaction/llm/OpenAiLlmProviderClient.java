@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -58,13 +59,32 @@ public final class OpenAiLlmProviderClient implements LlmProviderClient {
             }
             String text = root.path("choices").path(0).path("message").path("content").asText("");
             if (text.isBlank()) throw new IllegalStateException("openai_response_invalid");
-            return new LlmResponse(provider(), request.model(), text, root.path("id").asText(""));
+            JsonNode usage = root.path("usage");
+            LlmUsage llmUsage = new LlmUsage(
+                    token(usage, "prompt_tokens"),
+                    token(usage, "completion_tokens"),
+                    token(usage, "total_tokens"));
+            Map<String, String> telemetry = new LinkedHashMap<>();
+            header(response, "x-ratelimit-remaining-requests").ifPresent(v -> telemetry.put("remaining_requests", v));
+            header(response, "x-ratelimit-remaining-tokens").ifPresent(v -> telemetry.put("remaining_tokens", v));
+            header(response, "x-ratelimit-reset-requests").ifPresent(v -> telemetry.put("reset_requests", v));
+            header(response, "x-ratelimit-reset-tokens").ifPresent(v -> telemetry.put("reset_tokens", v));
+            return new LlmResponse(provider(), request.model(), text, root.path("id").asText(""), llmUsage, telemetry);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("openai_request_interrupted", e);
         } catch (IOException e) {
             throw new IllegalStateException("openai_request_failed", e);
         }
+    }
+
+    private static long token(JsonNode usage, String field) {
+        JsonNode node = usage.path(field);
+        return node.isIntegralNumber() ? node.asLong() : LlmUsage.UNKNOWN;
+    }
+
+    private static java.util.Optional<String> header(HttpResponse<?> response, String name) {
+        return response.headers().firstValue(name).filter(value -> !value.isBlank());
     }
 
     private static String compactError(JsonNode root) {
