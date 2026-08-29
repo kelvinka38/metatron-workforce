@@ -18,16 +18,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== CONTAINERS ON GATEWAY NETWORK ==='
-          docker network inspect metatron-gateway-online --format '{{range .Containers}}{{println .Name .IPv4Address}}{{end}}'
-          echo '=== RUNNING CONTAINERS ==='
-          docker ps --format 'NAME={{.Names}} IMAGE={{.Image}} PORTS={{.Ports}}'
-          echo '=== ENVOY CANDIDATES ==='
-          docker ps --format '{{.Names}} {{.Image}}' | grep -Ei 'envoy|gateway' || true
           ENVOY=$(docker ps --format '{{.Names}} {{.Image}}' | awk 'tolower($0) ~ /envoy/ {print $1; exit}')
           test -n "$ENVOY"
           echo "ENVOY_CONTAINER=$ENVOY"
-          echo '=== ENVOY CONFIG REFERENCES ==='
-          docker exec "$ENVOY" sh -c 'grep -Rni "bios\|workforce\|cluster" /etc/envoy 2>/dev/null | head -200' || true
-          echo '=== ENVOY ADMIN/HEALTH ==='
-          docker exec "$ENVOY" sh -c 'wget -qO- http://127.0.0.1:9901/config_dump 2>/dev/null | head -c 20000' || true
+          echo '=== LIVE ENVOY CONFIG ==='
+          docker exec "$ENVOY" sh -c 'nl -ba /etc/envoy/envoy.yaml | sed -n "1,180p"'
+          echo '=== ENVOY MOUNTS ==='
+          docker inspect "$ENVOY" --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
+          echo '=== ENVOY LABELS / COMPOSE SOURCE ==='
+          docker inspect "$ENVOY" --format '{{json .Config.Labels}}'
+          echo '=== BIOS DIRECT VS ENVOY ==='
+          docker run --rm --network metatron-gateway-online python:3.12-slim python -c "import urllib.request; print('DIRECT_BIOS_HTTP='+str(urllib.request.urlopen('http://bios:8080/health',timeout=3).status))"
+          docker exec "$ENVOY" sh -c 'wget -S -O- -T 3 http://bios:8080/health 2>&1 | head -20' || true
+          docker exec "$ENVOY" sh -c 'wget -S -O- -T 3 http://bios:8081/health 2>&1 | head -20' || true
