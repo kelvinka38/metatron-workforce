@@ -8,28 +8,25 @@ import java.nio.file.Path;
 
 public class EvidenceWriter {
 
+    private final Path root;
+
+    public EvidenceWriter() {
+        this(Path.of(env("METATRON_RUNTIME_EVIDENCE_DIR", "runtime-evidence")));
+    }
+
+    EvidenceWriter(Path root) {
+        this.root = root;
+    }
 
     public Path write(
             String taskId,
             WorkerResult result
     ) throws IOException {
 
-
-        Path directory =
-                Path.of(
-                    "runtime-evidence",
-                    taskId
-                );
-
-
+        Path directory = root.resolve(taskId);
         Files.createDirectories(directory);
 
-
-        Path file =
-                directory.resolve(
-                    "execution.json"
-                );
-
+        Path file = directory.resolve("execution.json");
 
         String json =
                 """
@@ -48,13 +45,12 @@ public class EvidenceWriter {
                     result.completedAt()
                 );
 
-
-        Files.writeString(
-                file,
-                json
-        );
-
-
+        Files.writeString(file, json);
         return file;
+    }
+
+    private static String env(String name, String fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 }
