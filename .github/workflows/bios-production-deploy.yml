@@ -23,7 +23,7 @@ jobs:
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
-          BIOS_BASE=/opt/metatron/bios
+          BIOS_BASE="$HOME/.metatron/bios"
           STAGE=/tmp/metatron-bios-deploy
           test -r "$WORKFORCE_BASE/.env"
           set -a; source "$WORKFORCE_BASE/.env"; set +a
