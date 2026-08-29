@@ -2,112 +2,256 @@
 
 ## Status
 
-**PRODUCTION RUNTIME INTEGRATED — LIVE CAPACITY TELEMETRY AND GENERALIZED EXECUTION REMAIN OPEN**
+**FOUNDER-APPROVED ARCHITECTURE FOUNDATION IMPLEMENTED LOCALLY — BUILD PASS — GITHUB PUBLICATION / PRODUCTION DEPLOYMENT NOT YET COMPLETE**
 
 Canonical semantic authority:
 
 `kelvinka38/metatron-institution/10_INTELLIGENCE/SOT.md`
 
-Engineering interpretation:
+Approved engineering baselines:
 
-`docs/ARCHITECTURE/METATRON_INTELLIGENCE_ARCHITECTURE_FINAL_PROPOSAL.md`
+- `docs/ARCHITECTURE/METATRON_INTELLIGENCE_ARCHITECTURE_FINAL_PROPOSAL.md`
+- `docs/ARCHITECTURE/METATRON_INTELLIGENCE_DETAILED_ARCHITECTURE.md`
+- `docs/ARCHITECTURE/METATRON_INTELLIGENCE_TRACEABILITY_MATRIX.md`
 
-## Implemented
+Repository governance entry points:
 
-- `IntelligenceMode`: progressive governance modes.
-- `CollaborationMode`: single / consensus / lead-review boundary.
-- `IntelligenceRequest`: requester, objective, context, evidence, capability, consequence, budgets, authority and output contract.
-- `ProviderCapacity`: capacity-snapshot data model for genuinely measured capacity.
-- `CapacityAwareRoutingPolicy`: deterministic routing when a real capacity snapshot is supplied.
-- `ConfiguredProviderRoutingPolicy`: production-safe routing when only transport configuration is known; it does not fabricate quota, latency, cost, token, or concurrency telemetry.
-- `IntelligencePlanner`: provider-neutral routing and budget enforcement.
-- `IntelligenceEngine`: provider-neutral execution boundary.
-- `RouterBackedIntelligenceEngine`: bridge to the low-level `LlmProviderRouter`.
-- `IntelligenceGovernance`: BIOS/conformance boundary.
-- `BiosConformanceValidator`: deterministic runtime enforcement of machine-checkable BIOS invariants available at the Workforce boundary.
-- `EvidenceBackedGovernance`: invokes the BIOS validator after provider execution and synthesis.
-- `IntelligenceSynthesizer`: multi-provider synthesis contract.
-- `IntelligenceFabric`: shared provider execution, attribution, evidence enrichment, synthesis and governance flow.
-- `IntelligenceResult`: one governed result with provider attribution preserved.
-- `WebSearchToolAdapter`: read-only external evidence retrieval, including current Bitcoin source fallback.
-- `CurrentTimeToolAdapter`: deterministic current-time capability.
-- Telegram natural-language responder integrated with the canonical Intelligence Fabric.
-- Telegram consequential intent classification is fail-closed: execution/decision wording does not become authority.
-- Read-only Gateway audit capability is connected to the Telegram interaction path when configured.
-- Unit tests cover governance, evidence, provider attribution, configured routing, and fail-closed Telegram execution/decision intent.
+- `AGENTS.md`
+- `.github/copilot-instructions.md`
 
-## Authority and evidence boundary
+## Current implementation checkpoint
 
-The runtime enforces these distinctions:
+Local Workforce source revision:
 
 ```text
+4c733c991da4ba3185eceb45144e372b2cab2c00
+```
+
+This revision implements the first architecture dependency chain and passed both the full Gradle test suite and a clean Gradle build before commit.
+
+It is currently local-only because the repository enforces `OFFICIAL_GITHUB_APP_ONLY` for publication. The connected GitHub write binding available to this session still routes to the retired `https://mcp.metatron.vn/mcp` endpoint. The server-side `GITHUB_TOKEN` was explicitly tested and rejected as a GitHub App installation token (`/installation/repositories` returned HTTP 403), so the publication guard correctly failed closed instead of falling back to PAT-style push.
+
+Production MUST NOT be described as running this revision until GitHub publication and the normal deployment verification gate both succeed.
+
+## Implemented — approved architecture foundation
+
+### 1. Frontier semantic interface
+
+Implemented:
+
+- `FrontierSemanticInterpreter`
+- `NormalizedRequest`
+- `IntelligenceDepth`
+- `DeterministicCapability`
+
+General multilingual understanding, translation, slang, colloquial language, typo handling, shorthand and semantic normalization are delegated to configured frontier models.
+
+The runtime no longer uses Java keyword classification as the principal Human-intent architecture for:
+
+- discussion vs reasoning vs decision vs execution;
+- FAST / ANALYZE / DEEP depth;
+- provider request;
+- multi-model collaboration mode;
+- external-freshness requirement.
+
+A semantic provider is required for arbitrary natural-language interpretation. When no frontier provider is configured, Workforce fails explicitly with `semantic_provider_required` instead of guessing intent through a fallback keyword tree.
+
+FAST ordinary conversation may reuse the semantic call's direct response so the semantic boundary does not automatically double model cost.
+
+### 2. Intelligence Case runtime coordination
+
+Implemented:
+
+- `IntelligenceCase`
+- `IntelligenceCaseStatus`
+- `IntelligenceCaseStore`
+- `InMemoryIntelligenceCaseStore`
+
+`MetatronConversationRuntime` now passes the canonical conversation id into Intelligence. One active Case can therefore continue across follow-up turns independently of the inbound channel adapter.
+
+Case state currently coordinates:
+
+- objective;
+- requested depth;
+- information requirements;
+- evidence references;
+- assumptions;
+- hypotheses / unknowns / contradictions containers;
+- reasoning artifact references;
+- latest conclusion / recommendation;
+- references to external institutional state.
+
+Case remains a runtime coordination construct and does not own Worker, Meeting, Authorization, Execution, Observation, Outcome or Knowledge state.
+
+Durable Case persistence across process restart is still open; the current default store is process-local.
+
+### 3. Information-requirement state
+
+Implemented:
+
+- `InformationRequirement`
+- `InformationRequirementStatus`
+- `InformationRequirementPlanner`
+
+Supported states:
+
+```text
+SATISFIED
+MISSING
+CONFLICTED
+UNRESOLVABLE
+DEFERRED
+```
+
+Requirements preserve the reason required, preferred source classes, evidence references, freshness/quality expectation, acquisition cost/latency hints, authority/access requirement and impact if unknown.
+
+### 4. Analytical protocol composition
+
+Implemented:
+
+- `AnalyticalProtocolType`
+- `AnalyticalProtocol`
+- `AnalyticalProtocolRegistry`
+
+Available runtime protocols:
+
+```text
+AUDIT
+COMPARE
+ROOT_CAUSE
+PERFORMANCE
+FORECAST
+INVESTMENT
+INCIDENT
+RISK
+IMPROVEMENT
+DECISION
+```
+
+Frontier semantics selects protocol composition by meaning. Deterministic protocol definitions then produce minimum information requirements, deterministic operations, reasoning operations, falsification checks and output contracts.
+
+This intentionally avoids turning analytical templates into Keyword Engine 2.0.
+
+### 5. Semantic-driven external evidence acquisition
+
+`IntelligenceRequest` now carries `freshExternalDataRequired`.
+
+`IntelligenceFabric` external research is triggered by that normalized semantic contract rather than scanning Human text for words such as `latest`, `today`, `price`, `hôm nay`, etc.
+
+The existing evidence-preservation guard remains in place. If provider synthesis contradicts or denies already-retrieved external evidence, the runtime can return the evidence directly rather than fabricate or erase retrieval reality.
+
+### 6. Provider-neutral Intelligence Fabric
+
+Existing provider-neutral architecture remains in force:
+
+- `IntelligenceRequest`
+- `IntelligencePlanner`
+- `IntelligenceEngine`
+- `RouterBackedIntelligenceEngine`
+- `ConfiguredProviderRoutingPolicy`
+- `CapacityAwareRoutingPolicy`
+- `IntelligenceFabric`
+- `IntelligenceResult`
+- `IntelligenceSynthesizer`
+- `EvidencePreservingIntelligenceSynthesizer`
+- `EvidenceBackedGovernance`
+- `BiosConformanceValidator`
+
+Provider identity remains independent from Worker identity and institutional authority.
+
+### 7. Progressive depth contract
+
+The Human-facing semantic contract now carries:
+
+```text
+FAST
+ANALYZE
+DEEP
+```
+
+The Human controls desired intelligence depth. Runtime resource budgets are derived from that contract; depth is not encoded as a fixed number of model calls.
+
+### 8. Deterministic capability routing
+
+Semantic interpretation can select deterministic/validated capability classes such as current time and Gateway read audit rather than asking the reasoning layer to calculate facts that a deterministic capability already knows.
+
+One legacy Gateway-audit text shortcut remains as a compatibility path for the already deployed read-only capability. It is explicitly transitional and is not the general intent architecture.
+
+## Existing canonical boundaries preserved
+
+The runtime continues to enforce:
+
+```text
+LLM != WORKER
+MODEL PROVIDER != INSTITUTIONAL ROLE
 INTELLIGENCE != AUTHORITY
 USER INTENT != AUTHORITY
 USER REQUEST != AUTHORIZATION
 CHANNEL IDENTITY != AUTHORITY EVIDENCE
 MODEL OUTPUT != EXECUTION EVIDENCE
+CLAIM != EVIDENCE
+CONSENSUS != CORRECTNESS
+DECISION != EXECUTION
+EXECUTION_SUCCESS != OUTCOME_SUCCESS
 WEB EVIDENCE != AUTHORIZATION
 ```
 
-Governed reasoning requires evidence references. Decision/execution envelopes require authority context at the Intelligence governance layer, while material side effects remain downstream of the dedicated institutional authorization / execution-admission path.
+Natural-language interpretation can describe intent but cannot manufacture institutional authority, authorization, Worker identity, evidence or Knowledge.
 
-Web enrichment may propagate caller-supplied authority context but may not manufacture it. The read-only tool path contributes evidence references, not authority.
+## Existing capabilities retained
 
-## Provider routing truthfulness
+- provider-aware failover through configured GPT / Gemini / Claude transports;
+- deterministic current-time capability;
+- read-only Gateway audit capability when configured;
+- external web evidence adapter;
+- evidence-preserving fallback;
+- BIOS / governance validation for applicable reasoning paths;
+- provider attribution;
+- conversation memory independent of Telegram transport;
+- multi-provider independent execution and evidence-preserving synthesis contracts.
 
-Production Telegram runtime knows which provider transports have credentials configured. That fact alone is **not** live capacity telemetry.
+## Build / test evidence for current local checkpoint
 
-Therefore production routing now uses:
-
-```text
-ConfiguredProviderRoutingPolicy
-```
-
-and no longer invents values such as available tokens, concurrency, latency, or cost merely to satisfy `ProviderCapacity`.
-
-`CapacityAwareRoutingPolicy` remains available for a future measured provider-capacity snapshot.
-
-## Current production evidence
-
-Exact production source revision:
+For local revision `4c733c991da4ba3185eceb45144e372b2cab2c00`:
 
 ```text
-315c41b89e89bc767b6bf9bec568352faebd6ec3
+./gradlew test        PASS
+./gradlew clean build PASS
 ```
 
-Evidence for that exact revision:
+Tests added/updated cover:
 
-```text
-BUILD / TEST: PASS
-PRODUCTION DEPLOY: PASS
-DEPLOYED SHA IDENTITY: PASS
-WORKFORCE LOCAL P95: 0.0031 s
-PUBLIC GATEWAY HEALTH: PASS
-INTERNET EGRESS: PASS
-TELEGRAM WEBHOOK: PASS
-WORKFORCE LIVE ACCEPTANCE: PASS
-G12 PRODUCTION READINESS: PASS
-```
+- frontier semantic normalization of Vietnamese slang/colloquial requests;
+- no-keyword fallback when semantic capacity is absent;
+- FAST direct-response reuse;
+- Intelligence Case continuity across follow-ups;
+- protocol-composed information requirements;
+- explicit current-external-evidence requirement;
+- semantic-driven web acquisition;
+- existing Gateway read capability compatibility and fail-closed behavior.
 
-Production deployment run: `33226689228`.
-Workforce Live Acceptance run: `33226791833`.
-G12 Production Readiness Evidence run: `33226807293`.
+## Still open — do not fabricate as completed
 
-## Still open
-
-These are separate capabilities and MUST NOT be fabricated as completed:
-
-1. Live provider quota / concurrency / token / latency / cost telemetry feeding `CapacityAwareRoutingPolicy`.
-2. Provider-specific runtime health feedback and adaptive routing based on measured outcomes.
-3. Worker-to-Worker structured messaging integrated with Intelligence escalation.
-4. Generalized institutional execution from Intelligence decisions through Assignment / Authorization / Gateway / execution-admission contracts.
-5. Production multi-model consensus / lead-review synthesis and evidence adjudication policy beyond the current single-provider Telegram path.
-6. Full external execution outcome verification and feedback closure for consequential actions.
+1. Publish local commits to GitHub through a working Official GitHub App / approved write binding.
+2. Durable Intelligence Case persistence across process/container restarts.
+3. Resolve information requirements against validated Knowledge, institutional artifacts, connected systems and Worker work products before unnecessary frontier reasoning.
+4. General deterministic computation planner for metrics/formulas/reconciliation beyond currently connected deterministic tools.
+5. Full protocol-aware acquisition loop with information-value prioritization and reassessment after each material acquisition.
+6. Production multi-model contradiction normalization, targeted challenge round and evidence adjudication beyond the current independent-provider + evidence-preserving synthesis baseline.
+7. Workplace-owned Meeting integration for institutional deliberation.
+8. Worker-to-Worker structured messaging with Intelligence escalation.
+9. Generalized institutional execution through Assignment / Authorization / Gateway / execution-admission contracts.
+10. Outcome / observation references back into Case and the existing Experience → Reflection → Learning → Improvement chain.
+11. Knowledge-admission integration for validated learning candidates.
+12. Live provider quota / concurrency / token / latency / cost telemetry and measured adaptive routing.
+13. Remove the remaining legacy Gateway-audit natural-language compatibility shortcut after semantic capability routing is production-proven.
 
 ## Completion rule
 
-The BIOS conformance boundary is implemented and production-verified. The currently connected Telegram Intelligence path and its read-only tools are production-deployed.
+Do not call Metatron Intelligence globally complete merely because this foundation builds.
 
-Intelligence as an institutional capability is **not** declared globally complete until the remaining telemetry, multi-engine, worker-messaging, generalized execution, outcome-verification, and feedback-loop gates are independently evidenced.
+The implementation is complete only when the remaining cross-domain contracts are independently implemented and evidenced without stealing canonical ownership.
 
-The implementation deliberately avoids turning BIOS into a provider prompt, an LLM judge, an authority source, or an execution authority.
+The accepted design rule remains:
+
+> SOT and policy define truth, semantics, ownership, authority and hard boundaries. Inside those boundaries, build the strongest useful product rather than a weaker duplicate of frontier models.
