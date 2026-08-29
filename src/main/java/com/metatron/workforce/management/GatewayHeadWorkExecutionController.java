@@ -29,25 +29,19 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Bounded execution bridge for a Gateway Head institutional assignment.
- *
- * Required Gateway guidance is resolved from the public, read-only Workforce
- * publication and must produce provenance-bearing receipts before execution is
- * admitted. Guidance is a constraint/precondition; it never creates authority.
- */
+/** Bounded execution bridge for a Gateway Head institutional assignment. */
 @RestController
 @RequestMapping("/workforce/management/gateway-head")
 public final class GatewayHeadWorkExecutionController {
     private static final String REQUIRED_ROLE = "ROLE-HEAD-OF-GATEWAY";
     private static final String AUDIT_CAPABILITY = "gateway.audit.read";
     private static final String CANONICAL_REPOSITORY = "kelvinka38/metatron-institution";
-    private static final String CANONICAL_REF = "b3516179879dc90dd482660efef71894069470c3";
+    private static final String CANONICAL_REF = "f59adbf0296e059189ccb01bff6d99ea8a9d050d";
     private static final String PUBLIC_BASE = "/public/docs/gateway/";
     private static final String RESOURCE_BASE = "static/public/docs/gateway/";
 
     private static final List<PublishedDoc> DOCS = List.of(
-            new PublishedDoc("SOT.md", "06_GATEWAY/SOT.md", "b6426c31dbbf52e8cc3668fc551602066803d21a"),
+            new PublishedDoc("SOT.md", "06_GATEWAY/SOT.md", "380f3407001ee94ea3049984ca08f9ccfb278f24"),
             new PublishedDoc("CONTRACTS.md", "06_GATEWAY/CONTRACTS.md", "70e1e089e144d0fc9632cfb15f94d55f05e56d2b"),
             new PublishedDoc("GATEWAY_CURRENT_STATE.md", "06_GATEWAY/GATEWAY_CURRENT_STATE.md", "edcce4ad183a7f0f3d5d4943a11ee5f54aec7536"),
             new PublishedDoc("GATEWAY_PRODUCTION_ARCHITECTURE.md", "06_GATEWAY/GATEWAY_PRODUCTION_ARCHITECTURE.md", "6df7b66bfa6a27f2f42425dee1da2342710f3f6d"),
@@ -66,10 +60,14 @@ public final class GatewayHeadWorkExecutionController {
     @PostMapping("/execute")
     public ResponseEntity<Map<String, Object>> execute(
             @RequestHeader(value = "X-Metatron-Actor", defaultValue = "") String actor,
+            @RequestHeader(value = "X-Metatron-Authorization", defaultValue = "") String authorizationReference,
             @RequestParam String workerId,
             @RequestParam String workId) {
         if (!"FOUNDER".equals(actor)) {
             return ResponseEntity.status(403).body(Map.of("status", "UNAUTHORIZED", "reason", "FOUNDER actor required"));
+        }
+        if (authorizationReference.isBlank()) {
+            return ResponseEntity.status(403).body(Map.of("status", "UNAUTHORIZED", "reason", "admitted authorization reference required"));
         }
 
         WorkforceCoreService.Worker worker = core.worker(workerId);
@@ -95,13 +93,10 @@ public final class GatewayHeadWorkExecutionController {
         }
 
         List<GuidanceRequirement> requirements = DOCS.stream().map(spec -> new GuidanceRequirement(
-                "gateway:" + spec.publicName(),
-                PUBLIC_BASE + spec.publicName(),
-                upstreamRef(spec))).toList();
+                "gateway:" + spec.publicName(), PUBLIC_BASE + spec.publicName(), upstreamRef(spec))).toList();
         Assignment executionAssignment = new Assignment(
                 work.assignmentRef() == null || work.assignmentRef().isBlank() ? "work:" + workId : work.assignmentRef(),
-                workerId,
-                requirements);
+                workerId, requirements);
 
         List<GuidanceReceipt> guidanceReceipts;
         try {
@@ -109,7 +104,7 @@ public final class GatewayHeadWorkExecutionController {
             ExecutionRequest admissionRequest = new ExecutionRequest(
                     "GUIDANCE-ADMISSION-" + workId + "-" + Instant.now().toEpochMilli(),
                     executionAssignment,
-                    new Authorization("founder-gateway-head:" + workerId, workerId),
+                    new Authorization(authorizationReference.trim(), workerId),
                     guidanceReceipts,
                     Instant.now());
             if (new ExecutionAdmissionService().admit(admissionRequest) != ExecutionState.ADMITTED) {
@@ -119,10 +114,8 @@ public final class GatewayHeadWorkExecutionController {
             String blocker = "guidance:required-read-failed:" + failure.getMessage();
             workService.block(workId, blocker, Instant.now());
             return ResponseEntity.unprocessableEntity().body(Map.of(
-                    "status", "BLOCKED",
-                    "reason", "required Gateway guidance was not satisfied",
-                    "detail", String.valueOf(failure.getMessage()),
-                    "knowledgeSurface", PUBLIC_BASE));
+                    "status", "BLOCKED", "reason", "required Gateway guidance was not satisfied",
+                    "detail", String.valueOf(failure.getMessage()), "knowledgeSurface", PUBLIC_BASE));
         }
 
         List<Map<String, Object>> documents = new ArrayList<>();
@@ -136,8 +129,7 @@ public final class GatewayHeadWorkExecutionController {
                     String failure = "public-knowledge:missing:" + spec.publicName();
                     workService.block(workId, failure, Instant.now());
                     return ResponseEntity.unprocessableEntity().body(Map.of(
-                            "status", "BLOCKED",
-                            "reason", "published Gateway document unavailable",
+                            "status", "BLOCKED", "reason", "published Gateway document unavailable",
                             "path", PUBLIC_BASE + spec.publicName()));
                 }
                 String content;
@@ -156,21 +148,16 @@ public final class GatewayHeadWorkExecutionController {
                         .findFirst().orElseThrow();
                 evidence.add("guidance-receipt:" + receipt.guidanceId() + ":sha256:" + receipt.contentSha256());
                 documents.add(Map.of(
-                        "path", PUBLIC_BASE + spec.publicName(),
-                        "sourcePath", spec.sourcePath(),
-                        "sourceCommit", CANONICAL_REF,
-                        "sourceBlobSha", spec.sourceBlobSha(),
-                        "contentSha256", receipt.contentSha256(),
-                        "readAt", receipt.readAt().toString(),
-                        "bytes", content.getBytes(StandardCharsets.UTF_8).length,
-                        "evidence", publication,
+                        "path", PUBLIC_BASE + spec.publicName(), "sourcePath", spec.sourcePath(),
+                        "sourceCommit", CANONICAL_REF, "sourceBlobSha", spec.sourceBlobSha(),
+                        "contentSha256", receipt.contentSha256(), "readAt", receipt.readAt().toString(),
+                        "bytes", content.getBytes(StandardCharsets.UTF_8).length, "evidence", publication,
                         "authority", "DERIVATIVE_NOT_SOT"));
             } catch (Exception failure) {
                 String ref = "public-knowledge:read-failed:" + spec.publicName();
                 workService.block(workId, ref, Instant.now());
                 return ResponseEntity.internalServerError().body(Map.of(
-                        "status", "FAILED",
-                        "reason", "published Gateway document read failed",
+                        "status", "FAILED", "reason", "published Gateway document read failed",
                         "path", PUBLIC_BASE + spec.publicName()));
             }
         }
@@ -179,15 +166,14 @@ public final class GatewayHeadWorkExecutionController {
         if (auditUrl.isBlank()) {
             workService.block(workId, "gateway:METATRON_GATEWAY_AUDIT_URL_MISSING", Instant.now());
             return ResponseEntity.unprocessableEntity().body(Map.of(
-                    "status", "BLOCKED",
-                    "reason", "Gateway audit endpoint unavailable",
-                    "documents", documents));
+                    "status", "BLOCKED", "reason", "Gateway audit endpoint unavailable", "documents", documents));
         }
 
         ExecutionCommand command = new ExecutionCommand("EXEC-GATEWAY-HEAD-" + Instant.now().toEpochMilli(), AUDIT_CAPABILITY, Instant.now());
         ExecutionResult audit = new GatewayAuditCapability(auditUrl, env("METATRON_GATEWAY_AUDIT_TOKEN")).execute(command);
         evidence.add("execution:" + audit.executionId());
         evidence.add("gateway:audit:" + audit.state());
+        evidence.add("authorization:" + authorizationReference.trim());
 
         String docs = publishedKnowledge.toString();
         boolean declaresAuthorityBoundary = docs.contains("authority") || docs.contains("Authority") || docs.contains("AUTHORITY");
@@ -207,12 +193,10 @@ public final class GatewayHeadWorkExecutionController {
         result.put("guidanceReceiptCount", guidanceReceipts.size());
         result.put("canonicalRepository", CANONICAL_REPOSITORY);
         result.put("canonicalRef", CANONICAL_REF);
+        result.put("authorizationReference", authorizationReference.trim());
         result.put("documentsRead", documents);
-        result.put("gatewayAudit", Map.of(
-                "executionId", audit.executionId(),
-                "state", audit.state().name(),
-                "message", audit.message(),
-                "completedAt", audit.completedAt().toString()));
+        result.put("gatewayAudit", Map.of("executionId", audit.executionId(), "state", audit.state().name(),
+                "message", audit.message(), "completedAt", audit.completedAt().toString()));
         result.put("authorityBoundaryObserved", declaresAuthorityBoundary);
         result.put("productionArchitectureObserved", hasProductionArchitecture);
         result.put("crossRepositoryCredentialUsed", false);
