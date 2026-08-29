@@ -18,6 +18,7 @@ import com.metatron.workforce.interaction.tools.ToolResult;
 import com.metatron.workforce.interaction.tools.WebSearchToolAdapter;
 
 import java.net.http.HttpClient;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -53,7 +54,7 @@ public final class MetatronIntelligenceResponder {
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper) {
         this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
-                objectMapper, "", "", new InMemoryIntelligenceCaseStore());
+                objectMapper, "", "", defaultCaseStore(objectMapper));
     }
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
@@ -61,7 +62,7 @@ public final class MetatronIntelligenceResponder {
                                          String anthropicModel, ObjectMapper objectMapper,
                                          String gatewayAuditUrl, String gatewayAuditToken) {
         this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
-                objectMapper, gatewayAuditUrl, gatewayAuditToken, new InMemoryIntelligenceCaseStore());
+                objectMapper, gatewayAuditUrl, gatewayAuditToken, defaultCaseStore(objectMapper));
     }
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
@@ -268,6 +269,14 @@ public final class MetatronIntelligenceResponder {
             case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
             case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
         };
+    }
+
+    private static IntelligenceCaseStore defaultCaseStore(ObjectMapper objectMapper) {
+        String configured = System.getenv("METATRON_INTELLIGENCE_CASE_PATH");
+        String path = configured == null || configured.isBlank()
+                ? "/var/lib/metatron-workforce/intelligence-cases"
+                : configured.trim();
+        return new PersistentIntelligenceCaseStore(Path.of(path), objectMapper);
     }
 
     private static String normalizeProvider(String provider) {
