@@ -5,14 +5,13 @@ import com.metatron.workforce.execution.ExecutionCapabilityRegistry;
 import com.metatron.workforce.execution.ExecutionCommand;
 import com.metatron.workforce.execution.ExecutionResult;
 import com.metatron.workforce.execution.GatewayAuditCapability;
-import com.metatron.workforce.interaction.intelligence.CapacityAwareRoutingPolicy;
+import com.metatron.workforce.interaction.intelligence.ConfiguredProviderRoutingPolicy;
 import com.metatron.workforce.interaction.intelligence.CollaborationMode;
 import com.metatron.workforce.interaction.intelligence.EvidenceBackedGovernance;
 import com.metatron.workforce.interaction.intelligence.IntelligenceFabric;
 import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
 import com.metatron.workforce.interaction.intelligence.IntelligencePlanner;
 import com.metatron.workforce.interaction.intelligence.IntelligenceRequest;
-import com.metatron.workforce.interaction.intelligence.ProviderCapacity;
 import com.metatron.workforce.interaction.intelligence.RouterBackedIntelligenceEngine;
 import com.metatron.workforce.interaction.llm.AnthropicLlmProviderClient;
 import com.metatron.workforce.interaction.llm.GoogleLlmProviderClient;
@@ -70,23 +69,23 @@ public final class TelegramIntelligenceResponder {
                 .version(HttpClient.Version.HTTP_2)
                 .build();
         List<LlmProviderClient> clients = new ArrayList<>();
-        List<ProviderCapacity> capacities = new ArrayList<>();
+        List<LlmProvider> configuredProviders = new ArrayList<>();
         if (present(openAiApiKey)) {
             clients.add(new OpenAiLlmProviderClient(openAiApiKey, httpClient, objectMapper));
-            capacities.add(new ProviderCapacity(LlmProvider.OPENAI, true, 100, 1, 100_000, 500, 1));
+            configuredProviders.add(LlmProvider.OPENAI);
         }
         if (present(googleApiKey)) {
             clients.add(new GoogleLlmProviderClient(googleApiKey, httpClient, objectMapper));
-            capacities.add(new ProviderCapacity(LlmProvider.GOOGLE, true, 90, 1, 100_000, 500, 1));
+            configuredProviders.add(LlmProvider.GOOGLE);
         }
         if (present(anthropicApiKey)) {
             clients.add(new AnthropicLlmProviderClient(anthropicApiKey, httpClient, objectMapper));
-            capacities.add(new ProviderCapacity(LlmProvider.ANTHROPIC, true, 80, 1, 100_000, 700, 1));
+            configuredProviders.add(LlmProvider.ANTHROPIC);
         }
         this.configuredProvider = normalizeProvider(provider);
         Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
         this.fabric = new IntelligenceFabric(
-                new IntelligencePlanner(new CapacityAwareRoutingPolicy(capacities)),
+                new IntelligencePlanner(new ConfiguredProviderRoutingPolicy(configuredProviders)),
                 new RouterBackedIntelligenceEngine(new LlmProviderRouter(clients), modelSelector),
                 (request, responses) -> responses.getFirst().text(),
                 new EvidenceBackedGovernance());
