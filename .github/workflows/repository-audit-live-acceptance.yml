@@ -32,12 +32,17 @@ jobs:
           docker exec "$CID" sh -c 'test -n "$GITHUB_TOKEN"'
 
           BODY='{"organizationContextId":"METATRON","repository":"kelvinka38/bios"}'
-          curl -fsS -X POST http://127.0.0.1:8080/workforce/execution/repository-audit \
+          HTTP_STATUS=$(curl -sS -o /tmp/repository-audit-live.json -w '%{http_code}' -X POST \
+            http://127.0.0.1:8080/workforce/execution/repository-audit \
             -H 'Content-Type: application/json' \
             -H 'X-Metatron-Actor: FOUNDER' \
             -H 'X-Metatron-Authority: LIVE-ACCEPTANCE-OBSERVATION-AUTHORITY' \
             -H 'X-Metatron-Authorization: LIVE-ACCEPTANCE-REPOSITORY-READ' \
-            -d "$BODY" >/tmp/repository-audit-live.json
+            -d "$BODY")
+          echo "REPOSITORY_AUDIT_HTTP_STATUS=$HTTP_STATUS"
+          cat /tmp/repository-audit-live.json
+          echo
+          test "$HTTP_STATUS" = "200"
 
           python3 - <<'PY'
           import json

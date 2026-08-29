@@ -79,7 +79,7 @@ public final class RepositoryAuditExecutionService {
             terminal = work.complete(workId, "repository-audit:PASS:" + repository.trim(),
                     List.of(runtimeEvidenceRef, authorityEvidenceRef, authorizationEvidenceRef), Instant.now());
         } else {
-            terminal = work.block(workId, runtimeEvidenceRef, Instant.now());
+            terminal = work.block(workId, "worker-result:" + result.worker() + ":" + result.status(), Instant.now());
         }
 
         return new ExecutionReceipt(executionId, actor.trim(), authorityReference.trim(), authorizationReference.trim(),
