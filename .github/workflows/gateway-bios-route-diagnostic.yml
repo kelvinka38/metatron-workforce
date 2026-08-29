@@ -18,16 +18,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ENVOY=$(docker ps --format '{{.Names}} {{.Image}}' | awk 'tolower($0) ~ /envoy/ {print $1; exit}')
-          test -n "$ENVOY"
-          echo "ENVOY_CONTAINER=$ENVOY"
-          echo '=== LIVE ENVOY CONFIG ==='
-          docker exec "$ENVOY" sh -c 'nl -ba /etc/envoy/envoy.yaml | sed -n "1,180p"'
-          echo '=== ENVOY MOUNTS ==='
-          docker inspect "$ENVOY" --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
-          echo '=== ENVOY LABELS / COMPOSE SOURCE ==='
-          docker inspect "$ENVOY" --format '{{json .Config.Labels}}'
-          echo '=== BIOS DIRECT VS ENVOY ==='
-          docker run --rm --network metatron-gateway-online python:3.12-slim python -c "import urllib.request; print('DIRECT_BIOS_HTTP='+str(urllib.request.urlopen('http://bios:8080/health',timeout=3).status))"
-          docker exec "$ENVOY" sh -c 'wget -S -O- -T 3 http://bios:8080/health 2>&1 | head -20' || true
-          docker exec "$ENVOY" sh -c 'wget -S -O- -T 3 http://bios:8081/health 2>&1 | head -20' || true
+          ENVOY=source-envoy-1
+          GW=gateway-v2
+          echo '=== GATEWAY V2 MOUNTS / LABELS ==='
+          docker inspect "$GW" --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
+          docker inspect "$GW" --format '{{json .Config.Labels}}'
+          echo '=== GATEWAY V2 FILES ==='
+          docker exec "$GW" sh -c 'find /app /srv /opt -maxdepth 3 -type f 2>/dev/null | sort | head -200' || true
+          echo '=== GATEWAY V2 SOURCE BIOS/EGRESS REFERENCES ==='
+          docker exec "$GW" sh -c 'grep -Rni "bios\|egress\|capability\|authorization" /app /srv /opt 2>/dev/null | head -300' || true
+          echo '=== HOST GATEWAY SOURCE FILES ==='
+          find /opt/metatron/gateway-g6/source -maxdepth 3 -type f -printf '%p\n' | sort | head -200
+          echo '=== HOST GATEWAY BIOS/EGRESS REFERENCES ==='
+          grep -Rni 'bios\|egress\|capability\|authorization' /opt/metatron/gateway-g6/source --exclude='*.log' 2>/dev/null | head -300 || true
+          echo '=== CURRENT ENVOY BIOS CLUSTER ==='
+          grep -n -A8 -B3 'name: bios' /opt/metatron/gateway-g6/source/envoy-online.yaml || true
