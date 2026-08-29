@@ -91,14 +91,19 @@ public final class MetatronIntelligenceResponder {
         Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
         LlmProviderRouter router = new LlmProviderRouter(clients);
         this.semanticInterpreter = new FrontierSemanticInterpreter(router, modelSelector, configuredProviders, objectMapper);
+        this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter(), new WebSearchToolAdapter()));
+        RouterBackedIntelligenceEngine intelligenceEngine = new RouterBackedIntelligenceEngine(router, modelSelector);
+        MultiModelDeliberationCoordinator deliberationCoordinator = new MultiModelDeliberationCoordinator(
+                intelligenceEngine, this.toolFabric, objectMapper);
         this.fabric = new IntelligenceFabric(
                 new IntelligencePlanner(new ConfiguredProviderRoutingPolicy(configuredProviders)),
-                new RouterBackedIntelligenceEngine(router, modelSelector),
+                intelligenceEngine,
                 new EvidencePreservingIntelligenceSynthesizer(),
-                new EvidenceBackedGovernance());
+                new EvidenceBackedGovernance(),
+                this.toolFabric,
+                deliberationCoordinator);
         if (present(gatewayAuditUrl)) this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of("gateway.audit.read", new GatewayAuditCapability(gatewayAuditUrl, gatewayAuditToken)));
         else this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
-        this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter(), new WebSearchToolAdapter()));
         this.acquisitionService = new InformationRequirementAcquisitionService(
                 defaultKnowledgeRetrievalService(), this.toolFabric);
         this.externalEvidenceGuard = new ExternalEvidenceResponseGuard();
@@ -245,7 +250,9 @@ public final class MetatronIntelligenceResponder {
                 }
             }
 
-            caseStore.save(intelligenceCase.withResult(result.text(), request.evidenceReferences()));
+            List<String> resultEvidence = result.evidenceReferences().isEmpty()
+                    ? request.evidenceReferences() : result.evidenceReferences();
+            caseStore.save(intelligenceCase.withResult(result.text(), resultEvidence));
             return result.text();
         } finally {
             LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}",

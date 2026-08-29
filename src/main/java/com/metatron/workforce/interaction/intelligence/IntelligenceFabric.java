@@ -10,8 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /** Shared provider-neutral intelligence capacity boundary. */
 public final class IntelligenceFabric {
@@ -23,13 +25,14 @@ public final class IntelligenceFabric {
     private final IntelligenceGovernance governance;
     private final DefaultToolFabric toolFabric;
     private final ExternalEvidenceResponseGuard externalEvidenceGuard;
+    private final MultiModelDeliberationCoordinator deliberationCoordinator;
 
     public IntelligenceFabric(IntelligencePlanner planner,
                               IntelligenceEngine engine,
                               IntelligenceSynthesizer synthesizer,
                               IntelligenceGovernance governance) {
         this(planner, engine, synthesizer, governance,
-                new DefaultToolFabric(List.of(new WebSearchToolAdapter())));
+                new DefaultToolFabric(List.of(new WebSearchToolAdapter())), null);
     }
 
     public IntelligenceFabric(IntelligencePlanner planner,
@@ -37,12 +40,22 @@ public final class IntelligenceFabric {
                               IntelligenceSynthesizer synthesizer,
                               IntelligenceGovernance governance,
                               DefaultToolFabric toolFabric) {
+        this(planner, engine, synthesizer, governance, toolFabric, null);
+    }
+
+    public IntelligenceFabric(IntelligencePlanner planner,
+                              IntelligenceEngine engine,
+                              IntelligenceSynthesizer synthesizer,
+                              IntelligenceGovernance governance,
+                              DefaultToolFabric toolFabric,
+                              MultiModelDeliberationCoordinator deliberationCoordinator) {
         this.planner = Objects.requireNonNull(planner, "planner");
         this.engine = Objects.requireNonNull(engine, "engine");
         this.synthesizer = Objects.requireNonNull(synthesizer, "synthesizer");
         this.governance = Objects.requireNonNull(governance, "governance");
         this.toolFabric = Objects.requireNonNull(toolFabric, "toolFabric");
         this.externalEvidenceGuard = new ExternalEvidenceResponseGuard();
+        this.deliberationCoordinator = deliberationCoordinator;
     }
 
     public IntelligencePlan plan(IntelligenceRequest request) {
@@ -56,7 +69,7 @@ public final class IntelligenceFabric {
         IntelligencePlan plan = planner.plan(enrichedRequest);
         List<LlmResponse> responses = new ArrayList<>();
         List<RuntimeException> failures = new ArrayList<>();
-        boolean hasExternalEvidence = enrichment.webEvidence() != null && enrichment.webEvidence().success();
+        boolean hasInitialExternalEvidence = enrichment.webEvidence() != null && enrichment.webEvidence().success();
 
         for (LlmProvider provider : plan.providers()) {
             try {
@@ -65,7 +78,7 @@ public final class IntelligenceFabric {
                 if (response.provider() != provider) {
                     throw new IllegalStateException("provider attribution mismatch for " + provider);
                 }
-                if (hasExternalEvidence) externalEvidenceGuard.validate(response.text());
+                if (hasInitialExternalEvidence) externalEvidenceGuard.validate(response.text());
                 responses.add(response);
                 if (plan.collaborationMode() == CollaborationMode.SINGLE) break;
             } catch (RuntimeException failure) {
@@ -78,11 +91,12 @@ public final class IntelligenceFabric {
         }
 
         if (responses.isEmpty()) {
-            if (hasExternalEvidence) {
+            if (hasInitialExternalEvidence) {
                 String fallback = renderWebEvidenceFallback(enrichment.webEvidence());
                 LOG.warn("intelligence_provider_outputs_rejected_web_evidence_preserved request_id={} providers={} evidence_count={}",
                         enrichedRequest.requestId(), plan.providers(), enrichment.webEvidence().evidenceReferences().size());
-                return new IntelligenceResult(enrichedRequest.requestId(), fallback, List.of());
+                return new IntelligenceResult(enrichedRequest.requestId(), fallback, List.of(),
+                        enrichment.webEvidence().evidenceReferences());
             }
             IllegalStateException failure = new IllegalStateException(
                     "all selected intelligence providers failed: " + plan.providers());
@@ -92,17 +106,36 @@ public final class IntelligenceFabric {
             throw failure;
         }
 
+        List<LlmResponse> synthesisResponses = List.copyOf(responses);
+        String deliberationPrelude = "";
+        List<String> deliberationEvidence = List.of();
+        if (plan.collaborationMode() != CollaborationMode.SINGLE
+                && deliberationCoordinator != null
+                && responses.size() >= 2) {
+            MultiModelDeliberationCoordinator.DeliberationOutcome outcome =
+                    deliberationCoordinator.deliberate(enrichedRequest, List.copyOf(responses));
+            synthesisResponses = outcome.responsesForSynthesis();
+            deliberationPrelude = deliberationCoordinator.renderPrelude(outcome);
+            deliberationEvidence = outcome.addedEvidenceReferences();
+        }
+
         String text = plan.collaborationMode() == CollaborationMode.SINGLE
-                ? responses.getFirst().text()
-                : Objects.requireNonNull(synthesizer.synthesize(enrichedRequest, List.copyOf(responses)),
+                ? synthesisResponses.getFirst().text()
+                : Objects.requireNonNull(synthesizer.synthesize(enrichedRequest, synthesisResponses),
                         "synthesized intelligence result");
+        if (!deliberationPrelude.isBlank()) text = deliberationPrelude + "\n\n" + text;
 
-        if (hasExternalEvidence) externalEvidenceGuard.validate(text);
-        if (plan.requiresReasoning()) governance.validate(enrichedRequest, List.copyOf(responses), text);
+        boolean hasAnyExternalEvidence = hasInitialExternalEvidence || !deliberationEvidence.isEmpty();
+        if (hasAnyExternalEvidence) externalEvidenceGuard.validate(text);
+        if (plan.requiresReasoning()) governance.validate(enrichedRequest, synthesisResponses, text);
 
+        Set<String> resultEvidence = new LinkedHashSet<>(enrichedRequest.evidenceReferences());
+        resultEvidence.addAll(deliberationEvidence);
         return new IntelligenceResult(
                 enrichedRequest.requestId(), text,
-                responses.stream().map(response -> new IntelligenceResult.ProviderResult(response.provider(), response)).toList());
+                synthesisResponses.stream()
+                        .map(response -> new IntelligenceResult.ProviderResult(response.provider(), response)).toList(),
+                List.copyOf(resultEvidence));
     }
 
     /**
