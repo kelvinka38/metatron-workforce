@@ -6,17 +6,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-/**
- * Production-safe multi-model synthesis that preserves independent provider attribution.
- * Agreement is never promoted to evidence, truth, or authority.
- */
+/** Production-safe multi-model synthesis preserving independent provider attribution. */
 public final class EvidencePreservingMultiModelSynthesizer implements IntelligenceSynthesizer {
     @Override
     public String synthesize(IntelligenceRequest request, List<LlmResponse> responses) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(responses, "responses");
         if (responses.size() < 2) throw new IllegalStateException("MULTI_MODEL_SYNTHESIS_REQUIRES_MULTIPLE_RESPONSES");
-
         return switch (request.collaborationMode()) {
             case SINGLE -> throw new IllegalStateException("SINGLE_MODE_MUST_NOT_USE_MULTI_MODEL_SYNTHESIS");
             case CONSENSUS -> renderConsensus(responses);
@@ -67,7 +63,7 @@ public final class EvidencePreservingMultiModelSynthesizer implements Intelligen
     }
 
     private static String boundary(StringBuilder out) {
-        return out.append("\nnote=Model output does not create evidence, institutional truth, or authority; disagreement is preserved and not resolved by majority vote.").toString().trim();
+        return out.append("\nnote=Reviewer output does not create authority. Model output does not create evidence or institutional truth; disagreement is preserved and not resolved by majority vote.").toString().trim();
     }
 
     private static String normalize(String text) {
