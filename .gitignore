@@ -20,5 +20,9 @@ Thumbs.db
 /runtime-evidence/production/
 /runtime-state/production/
 /runtime-evidence/task-001/
+/runtime-evidence/work_*/
+
+# Local deployment backups
+/deploy/*.bak.*
 
 .env

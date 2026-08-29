@@ -14,8 +14,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
@@ -34,6 +35,8 @@ public final class TelegramWebhookController {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramWebhookController.class);
     private static final int INTERACTION_THREADS = 4;
     private static final int INTERACTION_QUEUE = 64;
+    private static final int MEMORY_MAX_TURNS = 24;
+    private static final int MEMORY_MAX_CHARS = 24000;
 
     private final String secret;
     private final TelegramWebhookAdapter adapter;
@@ -60,6 +63,7 @@ public final class TelegramWebhookController {
             @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
             RepositoryAuditExecutionService repositoryAuditExecutionService,
+            @Value("${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/telegram-conversations}") String telegramMemoryPath,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
@@ -91,11 +95,16 @@ public final class TelegramWebhookController {
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
                 openAiModel, googleModel, anthropicModel, objectMapper,
                 gatewayAuditUrl, gatewayAuditToken);
+        PersistentTelegramConversationMemory memory = new PersistentTelegramConversationMemory(
+                Path.of(telegramMemoryPath), objectMapper);
         this.orchestrator = new MetatronInteractionOrchestrator(interaction -> {
+            String history = memory.context(interaction.conversationId(), MEMORY_MAX_TURNS, MEMORY_MAX_CHARS);
             String answer = intelligence.respond(
                     interaction.human().actorId(),
                     interaction.text(),
-                    interaction.externalMessageReference());
+                    interaction.externalMessageReference(),
+                    history);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
             return new MetatronInteractionOrchestrator.InteractionResponse(
                     interaction.conversationId(), answer,
                     "interaction:" + interaction.externalMessageReference());

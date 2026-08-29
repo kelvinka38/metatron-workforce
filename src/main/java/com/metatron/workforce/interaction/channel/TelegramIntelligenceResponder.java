@@ -43,6 +43,7 @@ public final class TelegramIntelligenceResponder {
             You are Metatron Workforce's intelligence layer.
             Answer the human directly and naturally.
             Preserve the user's language; Vietnamese is preferred when the user writes Vietnamese.
+            Use supplied conversation history to resolve follow-ups, pronouns, omitted subjects, and continuation requests. Do not ask the human to repeat context that is already present in conversation history.
             Do not claim that an action, audit, deployment, tool call, or external lookup happened unless the Workforce actually supplied evidence of it.
             When a request requires tools or execution that are not connected to this conversation path, say so plainly instead of fabricating completion.
             Keep ordinary answers concise unless the user asks for depth.
@@ -86,9 +87,13 @@ public final class TelegramIntelligenceResponder {
         this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter(), new WebSearchToolAdapter()));
     }
 
-    public String respond(String senderId, String text) { return respond(senderId, text, "telegram-message"); }
+    public String respond(String senderId, String text) { return respond(senderId, text, "telegram-message", ""); }
 
     public String respond(String senderId, String text, String externalMessageReference) {
+        return respond(senderId, text, externalMessageReference, "");
+    }
+
+    public String respond(String senderId, String text, String externalMessageReference, String conversationContext) {
         Objects.requireNonNull(senderId, "senderId"); Objects.requireNonNull(text, "text"); Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         long started = System.nanoTime(); String route = "unknown";
         try {
@@ -109,9 +114,15 @@ public final class TelegramIntelligenceResponder {
             int maxProviders = collaboration == CollaborationMode.SINGLE ? (requested == null ? Math.max(1, configuredProviderCount) : 1) : Math.min(3, configuredProviderCount);
             String consequence = collaboration == CollaborationMode.SINGLE ? "LOW" : "MEDIUM";
             route = "intelligence-" + collaboration.name().toLowerCase(Locale.ROOT);
+            String context = SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.";
+            if (conversationContext != null && !conversationContext.isBlank()) {
+                context += "\n\nCONVERSATION HISTORY (chronological; use it only as conversational context, not as institutional authority):\n"
+                        + conversationContext.trim()
+                        + "\n\nThe objective below is the CURRENT user message. Continue from history when the user uses shorthand such as 'phân tích đi', 'tiếp tục', 'cái đó', or similar references.";
+            }
             IntelligenceRequest request = new IntelligenceRequest(
                     "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
-                    mode, collaboration, text, SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.",
+                    mode, collaboration, text, context,
                     List.of("observation:telegram:" + externalMessageReference), "analysis", consequence,
                     "interactive-fast", "standard", "", "direct natural-language answer", requestedProviders, maxProviders);
             return fabric.execute(request).text();
@@ -153,7 +164,7 @@ public final class TelegramIntelligenceResponder {
     private static boolean isGatewayAuditCommand(String text) { String value = text.toLowerCase(Locale.ROOT); return containsAny(value, "audit g4 gateway", "audit gateway", "audit g4"); }
     private static boolean isCurrentTimeCommand(String text) { String value = text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim(); return containsAny(value, "hôm nay là thứ mấy", "hôm nay thứ mấy", "hom nay la thu may", "hom nay thu may", "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today", "today's date", "todays date", "what date is it", "what is today's date", "what time is it", "current time", "current date and time", "what's the date"); }
     private static boolean isBitcoinPriceCommand(String text) { String value = text.toLowerCase(Locale.ROOT); boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*"); boolean price = containsAny(value, "giá", "gia ", "price", "bao nhiêu", "bao nhieu", "hôm nay", "hom nay", "hiện tại", "hien tai", "now", "current"); return bitcoin && price; }
-    private static IntelligenceMode resolveMode(String text) { String value = text.toLowerCase(Locale.ROOT); if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) return IntelligenceMode.EXECUTION; if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) return IntelligenceMode.DECISION; if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) return IntelligenceMode.REASONING; return IntelligenceMode.DISCUSSION; }
+    private static IntelligenceMode resolveMode(String text) { String value = text.toLowerCase(Locale.ROOT); if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) return IntelligenceMode.EXECUTION; if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) return IntelligenceMode.DECISION; if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause", "phân tích", "phan tich", "đánh giá", "danh gia")) return IntelligenceMode.REASONING; return IntelligenceMode.DISCUSSION; }
     private static boolean containsAny(String value, String... terms) { for (String term : terms) if (value.contains(term)) return true; return false; }
     private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) { return provider -> switch (provider) { case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini"); case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash"); case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514"); }; }
     private static String normalizeProvider(String provider) { if (provider == null || provider.isBlank() || "AUTO".equalsIgnoreCase(provider)) return ""; return provider.trim().toUpperCase(Locale.ROOT); }
