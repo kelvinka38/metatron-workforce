@@ -53,4 +53,38 @@ class TelegramExecutionPathTest {
         assertTrue(response.contains("METATRON GATEWAY AUDIT BLOCKED"));
         assertTrue(response.contains("gateway.audit.read"));
     }
+
+    @Test
+    void naturalLanguageDeployIntentPreservesExecutionSemanticsButCannotCreateAuthority() {
+        TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
+                "", "", "", "AUTO", "", "", "", new ObjectMapper());
+
+        String response = responder.respond("telegram-human", "fix it and deploy", "update:44");
+
+        assertTrue(response.contains("METATRON EXECUTION BLOCKED"));
+        assertTrue(response.contains("EXECUTION_ADMISSION_REQUIRED"));
+        assertTrue(response.contains("fix it and deploy"));
+    }
+
+    @Test
+    void naturalLanguageAuthorizationIntentCannotBecomeInstitutionalAuthority() {
+        TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
+                "", "", "", "AUTO", "", "", "", new ObjectMapper());
+
+        String response = responder.respond("telegram-human", "I authorize deployment", "update:45");
+
+        assertTrue(response.contains("METATRON EXECUTION BLOCKED"));
+        assertTrue(response.contains("EXECUTION_ADMISSION_REQUIRED"));
+    }
+
+    @Test
+    void decisionIntentRequiresInstitutionalAuthorityInsteadOfChannelIdentity() {
+        TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
+                "", "", "", "AUTO", "", "", "", new ObjectMapper());
+
+        String response = responder.respond("telegram-human", "should we proceed", "update:46");
+
+        assertTrue(response.contains("METATRON DECISION BLOCKED"));
+        assertTrue(response.contains("INSTITUTIONAL_AUTHORITY_REQUIRED"));
+    }
 }
