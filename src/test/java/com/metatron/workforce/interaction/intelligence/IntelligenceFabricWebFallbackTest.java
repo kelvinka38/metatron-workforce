@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.*;
 final class IntelligenceFabricWebFallbackTest {
 
     @Test
-    void returnsFreshWebEvidenceWhenEveryProviderFails() {
+    void returnsFreshWebEvidenceWhenSemanticContractRequiresExternalRealityAndEveryProviderFails() {
         IntelligencePlanner planner = new IntelligencePlanner(request ->
                 List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE, LlmProvider.ANTHROPIC));
 
@@ -42,9 +42,9 @@ final class IntelligenceFabricWebFallbackTest {
 
         IntelligenceRequest request = new IntelligenceRequest(
                 "gold-live", "telegram-human", IntelligenceMode.DISCUSSION, CollaborationMode.SINGLE,
-                "Giá vàng hôm nay", "telegram", List.of(), "analysis", "LOW",
+                "current gold price", "telegram", List.of(), "analysis", "LOW",
                 "interactive-fast", "standard", "telegram-human", "direct answer",
-                List.of(), 3);
+                List.of(), 3, true);
 
         IntelligenceResult result = assertDoesNotThrow(() -> fabric.execute(request));
 

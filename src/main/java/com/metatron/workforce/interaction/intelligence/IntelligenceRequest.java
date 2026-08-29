@@ -21,7 +21,30 @@ public record IntelligenceRequest(
         String authorityContext,
         String requiredOutput,
         List<LlmProvider> requestedProviders,
-        int maxProviders) {
+        int maxProviders,
+        boolean freshExternalDataRequired) {
+
+    /** Backward-compatible constructor for callers that do not require external freshness. */
+    public IntelligenceRequest(
+            String requestId,
+            String requester,
+            IntelligenceMode mode,
+            CollaborationMode collaborationMode,
+            String objective,
+            String context,
+            List<String> evidenceReferences,
+            String requiredCapability,
+            String consequence,
+            String latencyBudget,
+            String costBudget,
+            String authorityContext,
+            String requiredOutput,
+            List<LlmProvider> requestedProviders,
+            int maxProviders) {
+        this(requestId, requester, mode, collaborationMode, objective, context, evidenceReferences,
+                requiredCapability, consequence, latencyBudget, costBudget, authorityContext, requiredOutput,
+                requestedProviders, maxProviders, false);
+    }
 
     public IntelligenceRequest {
         Objects.requireNonNull(requestId, "requestId");

@@ -11,10 +11,9 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 
-/** Shared intelligence capacity boundary above concrete provider transport. */
+/** Shared provider-neutral intelligence capacity boundary. */
 public final class IntelligenceFabric {
     private static final Logger LOG = LoggerFactory.getLogger(IntelligenceFabric.class);
 
@@ -25,21 +24,19 @@ public final class IntelligenceFabric {
     private final DefaultToolFabric toolFabric;
     private final ExternalEvidenceResponseGuard externalEvidenceGuard;
 
-    public IntelligenceFabric(
-            IntelligencePlanner planner,
-            IntelligenceEngine engine,
-            IntelligenceSynthesizer synthesizer,
-            IntelligenceGovernance governance) {
+    public IntelligenceFabric(IntelligencePlanner planner,
+                              IntelligenceEngine engine,
+                              IntelligenceSynthesizer synthesizer,
+                              IntelligenceGovernance governance) {
         this(planner, engine, synthesizer, governance,
                 new DefaultToolFabric(List.of(new WebSearchToolAdapter())));
     }
 
-    public IntelligenceFabric(
-            IntelligencePlanner planner,
-            IntelligenceEngine engine,
-            IntelligenceSynthesizer synthesizer,
-            IntelligenceGovernance governance,
-            DefaultToolFabric toolFabric) {
+    public IntelligenceFabric(IntelligencePlanner planner,
+                              IntelligenceEngine engine,
+                              IntelligenceSynthesizer synthesizer,
+                              IntelligenceGovernance governance,
+                              DefaultToolFabric toolFabric) {
         this.planner = Objects.requireNonNull(planner, "planner");
         this.engine = Objects.requireNonNull(engine, "engine");
         this.synthesizer = Objects.requireNonNull(synthesizer, "synthesizer");
@@ -64,20 +61,16 @@ public final class IntelligenceFabric {
         for (LlmProvider provider : plan.providers()) {
             try {
                 LlmResponse response = Objects.requireNonNull(
-                        engine.execute(provider, enrichedRequest),
-                        "intelligence engine response");
+                        engine.execute(provider, enrichedRequest), "intelligence engine response");
                 if (response.provider() != provider) {
                     throw new IllegalStateException("provider attribution mismatch for " + provider);
                 }
-                if (hasExternalEvidence) {
-                    externalEvidenceGuard.validate(response.text());
-                }
+                if (hasExternalEvidence) externalEvidenceGuard.validate(response.text());
                 responses.add(response);
                 if (plan.collaborationMode() == CollaborationMode.SINGLE) break;
             } catch (RuntimeException failure) {
                 RuntimeException wrapped = new IllegalStateException(
-                        "intelligence provider failed: " + provider + ": " + failure.getMessage(),
-                        failure);
+                        "intelligence provider failed: " + provider + ": " + failure.getMessage(), failure);
                 failures.add(wrapped);
                 LOG.warn("intelligence_provider_failed request_id={} provider={} reason={}",
                         enrichedRequest.requestId(), provider, failure.getMessage());
@@ -108,29 +101,23 @@ public final class IntelligenceFabric {
         if (plan.requiresReasoning()) governance.validate(enrichedRequest, List.copyOf(responses), text);
 
         return new IntelligenceResult(
-                enrichedRequest.requestId(),
-                text,
-                responses.stream()
-                        .map(response -> new IntelligenceResult.ProviderResult(response.provider(), response))
-                        .toList());
+                enrichedRequest.requestId(), text,
+                responses.stream().map(response -> new IntelligenceResult.ProviderResult(response.provider(), response)).toList());
     }
 
+    /**
+     * External research is triggered by the frontier-normalized semantic contract,
+     * never by Java keyword matching over Human text.
+     */
     private WebEnrichment enrichWithWebEvidence(IntelligenceRequest request) {
-        String researchObjective = resolveResearchObjective(request);
-        if (!requiresWebResearch(researchObjective)) return new WebEnrichment(request, null);
+        if (!request.freshExternalDataRequired()) return new WebEnrichment(request, null);
 
         List<String> authority = request.authorityContext().isBlank()
-                ? List.of()
-                : List.of(request.authorityContext());
-
+                ? List.of() : List.of(request.authorityContext());
         ToolRequest toolRequest = new ToolRequest(
-                "web-research-" + request.requestId(),
-                request.requester(),
-                WebSearchToolAdapter.CAPABILITY,
-                "internet:web-search",
-                "search",
-                researchObjective,
-                authority);
+                "web-research-" + request.requestId(), request.requester(),
+                WebSearchToolAdapter.CAPABILITY, "internet:web-search", "search",
+                request.objective(), authority);
         ToolResult result = toolFabric.execute(toolRequest);
         if (!result.success()) {
             LOG.warn("web_research_unavailable request_id={} reason={}", request.requestId(), result.output());
@@ -140,50 +127,23 @@ public final class IntelligenceFabric {
         List<String> evidence = new ArrayList<>(request.evidenceReferences());
         evidence.addAll(result.evidenceReferences());
         String context = request.context()
-                + "\n\nRESOLVED RESEARCH OBJECTIVE:\n" + researchObjective
                 + "\n\nWEB RESEARCH EVIDENCE (retrieved by Workforce before provider reasoning):\n"
                 + result.output()
                 + "\n\nEXTERNAL-EVIDENCE CONTRACT:\n"
-                + "Workforce has already accessed external web/search sources for this request. "
-                + "You MUST use the supplied evidence when answering. You MUST NOT say that you lack web access, "
-                + "real-time-data access, browsing, search, or the ability to inspect sources. "
-                + "If the evidence does not contain the exact requested numeric fact, say exactly what the retrieved sources do and do not establish, "
-                + "and name the sources; do not deny that retrieval occurred. Never invent a value absent from evidence.\n";
+                + "Workforce has already accessed external sources for this request. "
+                + "Use supplied evidence. Do not deny that retrieval occurred. "
+                + "If the evidence does not establish the requested fact, state exactly what is and is not established. "
+                + "Never invent a value absent from evidence.\n";
 
-        LOG.info("web_research_complete request_id={} result_count={} resolved_objective_length={}",
-                request.requestId(), result.evidenceReferences().size(), researchObjective.length());
+        LOG.info("web_research_complete request_id={} result_count={} normalized_objective_length={}",
+                request.requestId(), result.evidenceReferences().size(), request.objective().length());
 
         IntelligenceRequest enriched = new IntelligenceRequest(
                 request.requestId(), request.requester(), request.mode(), request.collaborationMode(),
                 request.objective(), context, evidence, request.requiredCapability(), request.consequence(),
                 request.latencyBudget(), request.costBudget(), request.authorityContext(), request.requiredOutput(),
-                request.requestedProviders(), request.maxProviders());
+                request.requestedProviders(), request.maxProviders(), request.freshExternalDataRequired());
         return new WebEnrichment(enriched, result);
-    }
-
-    private static String resolveResearchObjective(IntelligenceRequest request) {
-        String objective = request.objective() == null ? "" : request.objective().trim();
-        if (!isConversationalContinuation(objective)) return objective;
-
-        String context = request.context() == null ? "" : request.context();
-        String lastUser = "";
-        for (String line : context.lines().toList()) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("User: ")) lastUser = trimmed.substring(6).trim();
-        }
-        if (lastUser.isBlank()) return objective;
-        return lastUser + "\nFollow-up instruction: " + objective;
-    }
-
-    private static boolean isConversationalContinuation(String objective) {
-        String value = objective == null ? "" : objective.toLowerCase(Locale.ROOT).trim();
-        if (value.isBlank() || value.length() > 120) return false;
-        return containsAny(value,
-                "phân tích đi", "phan tich di", "phân tích tiếp", "phan tich tiep",
-                "tiếp tục", "tiep tuc", "làm đi", "lam di", "làm tiếp", "lam tiep",
-                "cái đó", "cai do", "vậy đi", "vay di", "do it", "continue", "go on",
-                "analyze it", "analyse it", "proceed", "truy cập", "truy cap", "vô xem", "vo xem",
-                "mở xem", "mo xem", "xem đi", "xem thử", "check it", "look it up", "access it", "search it");
     }
 
     private static String renderWebEvidenceFallback(ToolResult result) {
@@ -191,7 +151,6 @@ public final class IntelligenceFabric {
         if (output.isBlank()) {
             return "Workforce đã truy xuất external evidence nhưng payload không đủ dữ liệu để trả lời an toàn.";
         }
-
         List<String> useful = output.lines()
                 .map(String::trim)
                 .filter(line -> !line.isBlank())
@@ -212,23 +171,6 @@ public final class IntelligenceFabric {
         }
         answer.append("\nProvider synthesis không đạt evidence-consistency contract, nên Metatron trả evidence trực tiếp thay vì bịa hoặc phủ nhận khả năng truy xuất.");
         return answer.toString().trim();
-    }
-
-    private static boolean requiresWebResearch(String objective) {
-        String value = objective == null ? "" : objective.toLowerCase(Locale.ROOT).trim();
-        if (value.isBlank()) return false;
-        return containsAny(value,
-                "latest", "current", "today", "now", "news", "weather", "price", "rate",
-                "search", "internet", "online", "who is", "what is", "where is", "when is", "how much",
-                "forecast", "prediction", "predict", "market", "trend", "browse", "access", "look it up", "check it",
-                "hôm nay", "hiện tại", "mới nhất", "tin tức", "thời tiết", "giá ", "tỷ giá", "tỉ giá",
-                "là gì", "ai là", "ở đâu", "khi nào", "bao nhiêu", "tìm kiếm", "dự báo", "dự đoán",
-                "thị trường", "xu hướng", "truy cập", "truy cap", "vô xem", "vo xem", "mở xem", "mo xem");
-    }
-
-    private static boolean containsAny(String value, String... candidates) {
-        for (String candidate : candidates) if (value.contains(candidate)) return true;
-        return false;
     }
 
     private record WebEnrichment(IntelligenceRequest request, ToolResult webEvidence) {}

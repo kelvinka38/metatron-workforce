@@ -32,22 +32,15 @@ public final class MetatronConversationRuntime {
         if (channel.isBlank()) throw new IllegalArgumentException("channel must not be blank");
 
         String history = memory.contextFor(
-                interaction.conversationId(),
-                interaction.text(),
-                maxTurns,
-                Math.max(4, maxTurns / 4),
-                maxChars);
+                interaction.conversationId(), interaction.text(), maxTurns,
+                Math.max(4, maxTurns / 4), maxChars);
         String answer = intelligence.respond(
-                interaction.human().actorId(),
-                interaction.text(),
-                interaction.externalMessageReference(),
-                channel,
-                history);
+                interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
+                channel, interaction.conversationId(), history);
         memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
 
         return new MetatronInteractionOrchestrator.InteractionResponse(
-                interaction.conversationId(),
-                answer,
+                interaction.conversationId(), answer,
                 "interaction:" + interaction.externalMessageReference());
     }
 }

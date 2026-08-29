@@ -27,24 +27,23 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 
-/**
- * Channel-neutral natural-language intelligence boundary for Metatron.
- * Transports supply normalized human identity, channel id, message reference and conversation context.
- */
+/** Channel-neutral Human intelligence boundary. */
 public final class MetatronIntelligenceResponder {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(MetatronIntelligenceResponder.class);
     private static final String SYSTEM_CONTEXT = """
             You are Metatron Workforce's intelligence layer.
-            Answer the human directly and naturally.
-            Preserve the user's language; Vietnamese is preferred when the user writes Vietnamese.
-            Use supplied conversation history to resolve follow-ups, pronouns, omitted subjects, and continuation requests. Do not ask the human to repeat context that is already present in conversation history.
-            Treat the inbound channel as transport metadata only. Intelligence, memory, evidence, authority and reasoning belong to Metatron, not to the transport.
-            Do not claim that an action, audit, deployment, tool call, or external lookup happened unless the Workforce actually supplied evidence of it.
-            When a request requires tools or execution that are not connected to this interaction path, say so plainly instead of fabricating completion.
-            Keep ordinary answers concise unless the human asks for depth.
+            Answer the Human directly and naturally in the Human's language.
+            The semantic objective supplied to you was normalized by a frontier model from the Human's original utterance.
+            Use supplied conversation history and Case context to preserve continuity.
+            Treat the inbound channel as transport metadata only.
+            Do not claim that an action, audit, deployment, tool call, or external lookup happened unless Workforce supplied evidence of it.
+            Claims, evidence, authority, authorization, execution and outcome are distinct.
+            When evidence is insufficient or conflicting, preserve that uncertainty instead of fabricating completion.
             """;
 
     private final IntelligenceFabric fabric;
+    private final FrontierSemanticInterpreter semanticInterpreter;
+    private final IntelligenceCaseStore caseStore;
     private final String configuredProvider;
     private final int configuredProviderCount;
     private final ExecutionCapabilityRegistry capabilityRegistry;
@@ -54,15 +53,26 @@ public final class MetatronIntelligenceResponder {
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper) {
         this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
-                objectMapper, "", "");
+                objectMapper, "", "", new InMemoryIntelligenceCaseStore());
     }
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper,
                                          String gatewayAuditUrl, String gatewayAuditToken) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
+                objectMapper, gatewayAuditUrl, gatewayAuditToken, new InMemoryIntelligenceCaseStore());
+    }
+
+    public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
+                                         String provider, String openAiModel, String googleModel,
+                                         String anthropicModel, ObjectMapper objectMapper,
+                                         String gatewayAuditUrl, String gatewayAuditToken,
+                                         IntelligenceCaseStore caseStore) {
         Objects.requireNonNull(objectMapper, "objectMapper");
-        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).version(HttpClient.Version.HTTP_2).build();
+        this.caseStore = Objects.requireNonNull(caseStore, "caseStore");
+        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
+                .version(HttpClient.Version.HTTP_2).build();
         List<LlmProviderClient> clients = new ArrayList<>();
         List<LlmProvider> configuredProviders = new ArrayList<>();
         if (present(openAiApiKey)) { clients.add(new OpenAiLlmProviderClient(openAiApiKey, httpClient, objectMapper)); configuredProviders.add(LlmProvider.OPENAI); }
@@ -71,9 +81,11 @@ public final class MetatronIntelligenceResponder {
         this.configuredProvider = normalizeProvider(provider);
         this.configuredProviderCount = configuredProviders.size();
         Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
+        LlmProviderRouter router = new LlmProviderRouter(clients);
+        this.semanticInterpreter = new FrontierSemanticInterpreter(router, modelSelector, configuredProviders, objectMapper);
         this.fabric = new IntelligenceFabric(
                 new IntelligencePlanner(new ConfiguredProviderRoutingPolicy(configuredProviders)),
-                new RouterBackedIntelligenceEngine(new LlmProviderRouter(clients), modelSelector),
+                new RouterBackedIntelligenceEngine(router, modelSelector),
                 new EvidencePreservingIntelligenceSynthesizer(),
                 new EvidenceBackedGovernance());
         if (present(gatewayAuditUrl)) this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of("gateway.audit.read", new GatewayAuditCapability(gatewayAuditUrl, gatewayAuditToken)));
@@ -82,81 +94,124 @@ public final class MetatronIntelligenceResponder {
     }
 
     public String respond(String humanId, String text, String externalMessageReference, String channel, String conversationContext) {
+        return respond(humanId, text, externalMessageReference, channel,
+                "conversation:" + channel + ":human:" + humanId, conversationContext);
+    }
+
+    public String respond(String humanId, String text, String externalMessageReference, String channel,
+                          String conversationId, String conversationContext) {
         Objects.requireNonNull(humanId, "humanId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         Objects.requireNonNull(channel, "channel");
+        Objects.requireNonNull(conversationId, "conversationId");
         long started = System.nanoTime();
         String route = "unknown";
         try {
-            String normalized = text.trim().toLowerCase(Locale.ROOT);
-            if (isStartCommand(normalized)) {
+            String command = text.trim().toLowerCase(Locale.ROOT);
+            if ("/start".equals(command) || "/help".equals(command)) {
                 route = "deterministic-start";
-                return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Metatron giữ context theo conversation và có thể dùng Gemini / Claude / OpenAI cùng các capability được kết nối.";
+                return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Frontier models hiểu ngôn ngữ/slang/typo; Metatron xử lý context, evidence, logic, governance và capability phía sau.";
             }
-            if (isGatewayAuditCommand(text)) { route = "gateway-audit"; return executeGatewayAudit(humanId, text, externalMessageReference, channel); }
-            if (isCurrentTimeCommand(text)) { route = "deterministic-time"; return executeCurrentTime(humanId, externalMessageReference, channel); }
-            if (isBitcoinPriceCommand(text)) { route = "deterministic-bitcoin-price"; return executeCurrentBitcoinPrice(humanId, text, externalMessageReference, channel); }
 
-            LlmProvider requested = explicitProvider(text);
+            if (isLegacyGatewayAuditCompatibility(text)) {
+                route = "gateway-audit-compatibility";
+                return executeGatewayAudit(humanId, text, externalMessageReference, channel);
+            }
+
+            NormalizedRequest normalized = semanticInterpreter.interpret(text, conversationContext, channel);
+            IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
+            route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
+
+            if (normalized.deterministicCapability() == DeterministicCapability.CURRENT_TIME) {
+                route = "deterministic-time-semantic";
+                String answer = executeCurrentTime(humanId, externalMessageReference, channel);
+                caseStore.save(intelligenceCase.withResult(answer, List.of("observation:" + channel + ":" + externalMessageReference)));
+                return answer;
+            }
+            if (normalized.deterministicCapability() == DeterministicCapability.GATEWAY_AUDIT) {
+                route = "gateway-audit-semantic";
+                String answer = executeGatewayAudit(humanId, text, externalMessageReference, channel);
+                caseStore.save(intelligenceCase.withResult(answer, List.of("observation:" + channel + ":" + externalMessageReference)));
+                return answer;
+            }
+
+            if (normalized.mode() == IntelligenceMode.EXECUTION) {
+                route = "execution-admission-blocked";
+                caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+                return "METATRON EXECUTION BLOCKED\nreason=EXECUTION_ADMISSION_REQUIRED\ncase_id=" + intelligenceCase.caseId() + "\nobjective=" + normalized.objective();
+            }
+            if (normalized.mode() == IntelligenceMode.DECISION) {
+                route = "decision-authority-blocked";
+                caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+                return "METATRON DECISION BLOCKED\nreason=INSTITUTIONAL_AUTHORITY_REQUIRED\ncase_id=" + intelligenceCase.caseId() + "\nobjective=" + normalized.objective();
+            }
+
+            if (normalized.canReturnFastDirectly()) {
+                route = "frontier-semantic-fast";
+                caseStore.save(intelligenceCase.withResult(normalized.directResponse(), List.of()));
+                return normalized.directResponse();
+            }
+
+            LlmProvider requested = normalized.explicitlyRequestedProvider();
             if (requested == null && !configuredProvider.isBlank()) requested = LlmProvider.valueOf(configuredProvider);
             List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
-            IntelligenceMode mode = resolveMode(text);
-            if (mode == IntelligenceMode.EXECUTION) { route = "execution-admission-blocked"; return "METATRON EXECUTION BLOCKED\nreason=EXECUTION_ADMISSION_REQUIRED\nrequest=" + text.trim(); }
-            if (mode == IntelligenceMode.DECISION) { route = "decision-authority-blocked"; return "METATRON DECISION BLOCKED\nreason=INSTITUTIONAL_AUTHORITY_REQUIRED\nrequest=" + text.trim(); }
+            CollaborationMode collaboration = normalized.collaborationMode();
+            if (configuredProviderCount < 2 && collaboration != CollaborationMode.SINGLE) collaboration = CollaborationMode.SINGLE;
+            int maxProviders = collaboration == CollaborationMode.SINGLE
+                    ? (requested == null ? Math.max(1, configuredProviderCount) : 1)
+                    : Math.min(3, configuredProviderCount);
 
-            CollaborationMode collaboration = resolveCollaborationMode(text, requested, configuredProviderCount);
-            int maxProviders = collaboration == CollaborationMode.SINGLE ? (requested == null ? Math.max(1, configuredProviderCount) : 1) : Math.min(3, configuredProviderCount);
-            String consequence = collaboration == CollaborationMode.SINGLE ? "LOW" : "MEDIUM";
-            route = "intelligence-" + collaboration.name().toLowerCase(Locale.ROOT);
-            String context = SYSTEM_CONTEXT + "\nInbound channel: " + channel + ". The channel is transport only.";
-            if (conversationContext != null && !conversationContext.isBlank()) {
-                context += "\n\nCONVERSATION HISTORY (chronological; conversational context only, not institutional authority):\n"
-                        + conversationContext.trim()
-                        + "\n\nThe objective below is the CURRENT human message. Continue from history for shorthand such as 'phân tích đi', 'tiếp tục', 'cái đó', or equivalent references.";
-            }
+            caseStore.save(intelligenceCase.transition(
+                    normalized.freshExternalDataRequired() ? IntelligenceCaseStatus.ACQUISITION : IntelligenceCaseStatus.REASONING));
+            String context = buildContext(channel, conversationContext, normalized, intelligenceCase);
             IntelligenceRequest request = new IntelligenceRequest(
                     "interaction-" + humanId + "-" + System.nanoTime(), "human:" + humanId,
-                    mode, collaboration, text, context,
-                    List.of("observation:" + channel + ":" + externalMessageReference), "analysis", consequence,
-                    "interactive-fast", "standard", "", "direct natural-language answer", requestedProviders, maxProviders);
-            return fabric.execute(request).text();
+                    normalized.mode(), collaboration, normalized.objective(), context,
+                    List.of("observation:" + channel + ":" + externalMessageReference), "analysis",
+                    consequence(normalized), latencyBudget(normalized.requestedDepth()), costBudget(normalized.requestedDepth()),
+                    "", normalized.requestedOutput(), requestedProviders, maxProviders,
+                    normalized.freshExternalDataRequired());
+            route = "intelligence-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT)
+                    + "-" + collaboration.name().toLowerCase(Locale.ROOT);
+            IntelligenceResult result = fabric.execute(request);
+            caseStore.save(intelligenceCase.withResult(result.text(), request.evidenceReferences()));
+            return result.text();
         } finally {
-            LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}", channel, route,
-                    (System.nanoTime() - started) / 1_000_000L, text.length());
+            LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}",
+                    channel, route, (System.nanoTime() - started) / 1_000_000L, text.length());
         }
     }
 
-    private static CollaborationMode resolveCollaborationMode(String text, LlmProvider requested, int providerCount) {
-        if (requested != null || providerCount < 2) return CollaborationMode.SINGLE;
-        String value = text.toLowerCase(Locale.ROOT);
-        if (containsAny(value, "adversarial review", "red team", "challenge this", "phản biện", "phan bien")) return CollaborationMode.ADVERSARIAL_REVIEW;
-        if (containsAny(value, "second opinion", "ý kiến thứ hai", "y kien thu hai")) return CollaborationMode.INDEPENDENT_SECOND_OPINION;
-        if (containsAny(value, "lead review", "reviewer", "lead + review")) return CollaborationMode.LEAD_REVIEW;
-        if (containsAny(value, "multi-model", "multi model", "cross-check", "cross check", "consensus", "đối chiếu", "doi chieu")) return CollaborationMode.CONSENSUS;
-        return CollaborationMode.SINGLE;
-    }
-
-    private String executeCurrentBitcoinPrice(String humanId, String text, String externalMessageReference, String channel) {
-        ToolRequest request = new ToolRequest("btc-price-" + humanId + "-" + System.nanoTime(), "human:" + humanId,
-                WebSearchToolAdapter.CAPABILITY, "runtime:workforce", "read", text, List.of(channel + ":" + externalMessageReference));
-        ToolResult result = toolFabric.execute(request);
-        if (!result.success()) throw new IllegalStateException("bitcoin_price_read_failed:" + result.output());
-        Map<String, String> fields = parseKeyValueOutput(result.output());
-        String usd = fields.getOrDefault("price_usd", "không xác định");
-        String vnd = fields.getOrDefault("price_vnd", "");
-        String source = fields.getOrDefault("source", "external source");
-        String updated = fields.getOrDefault("source_updated_at", fields.getOrDefault("retrieved_at", ""));
-        StringBuilder answer = new StringBuilder("Giá Bitcoin (BTC) hiện tại:\n• USD: ~$").append(formatNumber(usd));
-        if (!vnd.isBlank()) answer.append("\n• VND: ~").append(formatNumber(vnd)).append(" VNĐ");
-        answer.append("\nNguồn: ").append(source);
-        if (!updated.isBlank()) answer.append(" · cập nhật: ").append(updated);
-        return answer.toString();
+    private static String buildContext(String channel, String conversationContext,
+                                       NormalizedRequest normalized, IntelligenceCase intelligenceCase) {
+        StringBuilder context = new StringBuilder(SYSTEM_CONTEXT)
+                .append("\nInbound channel: ").append(channel).append(". Channel is transport only.")
+                .append("\n\nINTELLIGENCE CASE (runtime coordination only; external institutional state remains referenced):")
+                .append("\ncase_id=").append(intelligenceCase.caseId())
+                .append("\ncase_status=").append(intelligenceCase.status())
+                .append("\nprevious_conclusion=").append(intelligenceCase.latestConclusion())
+                .append("\nprevious_unknowns=").append(intelligenceCase.unknowns())
+                .append("\n\nNORMALIZED SEMANTIC REQUEST (interpretation, not authority/evidence):")
+                .append("\nobjective=").append(normalized.objective())
+                .append("\ntarget=").append(normalized.target())
+                .append("\nconstraints=").append(normalized.constraints())
+                .append("\nrequested_depth=").append(normalized.requestedDepth())
+                .append("\nexplicit_assumptions=").append(normalized.explicitAssumptions())
+                .append("\nexplicit_prohibitions=").append(normalized.explicitProhibitions())
+                .append("\ntemporal_context=").append(normalized.temporalContext())
+                .append("\nunresolved_semantic_ambiguity=").append(normalized.unresolvedSemanticAmbiguity());
+        if (conversationContext != null && !conversationContext.isBlank()) {
+            context.append("\n\nCONVERSATION HISTORY (chronological; context only, never authority):\n")
+                    .append(conversationContext.trim());
+        }
+        return context.toString();
     }
 
     private String executeCurrentTime(String humanId, String externalMessageReference, String channel) {
         ToolRequest request = new ToolRequest("time-" + humanId + "-" + System.nanoTime(), "human:" + humanId,
-                CurrentTimeToolAdapter.CAPABILITY, "runtime:workforce", "read", "current date and time", List.of(channel + ":" + externalMessageReference));
+                CurrentTimeToolAdapter.CAPABILITY, "runtime:workforce", "read", "current date and time",
+                List.of(channel + ":" + externalMessageReference));
         ToolResult result = toolFabric.execute(request);
         if (!result.success()) throw new IllegalStateException("current_time_read_failed:" + result.output());
         Map<String, String> fields = parseKeyValueOutput(result.output());
@@ -182,17 +237,43 @@ public final class MetatronIntelligenceResponder {
         }
     }
 
-    private static String formatNumber(String value) { try { return java.text.NumberFormat.getNumberInstance(Locale.US).format(new java.math.BigDecimal(value)); } catch (RuntimeException ignored) { return value; } }
-    private static Map<String, String> parseKeyValueOutput(String output) { return output.lines().map(line -> line.split("=", 2)).filter(parts -> parts.length == 2).collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1], (a, b) -> b)); }
-    private static boolean isStartCommand(String normalized) { return "/start".equals(normalized) || "/help".equals(normalized); }
-    private static LlmProvider explicitProvider(String text) { String value = text.toLowerCase(Locale.ROOT); if (containsAny(value, "hey gemini", "hi gemini", "gemini:")) return LlmProvider.GOOGLE; if (containsAny(value, "hey claude", "hi claude", "claude:")) return LlmProvider.ANTHROPIC; if (containsAny(value, "hey openai", "hi openai", "openai:")) return LlmProvider.OPENAI; return null; }
-    private static boolean isGatewayAuditCommand(String text) { String value = text.toLowerCase(Locale.ROOT); return containsAny(value, "audit g4 gateway", "audit gateway", "audit g4"); }
-    private static boolean isCurrentTimeCommand(String text) { String value = text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim(); return containsAny(value, "hôm nay là thứ mấy", "hôm nay thứ mấy", "hom nay la thu may", "hom nay thu may", "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today", "today's date", "todays date", "what date is it", "what is today's date", "what time is it", "current time", "current date and time", "what's the date"); }
-    private static boolean isBitcoinPriceCommand(String text) { String value = text.toLowerCase(Locale.ROOT); boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*"); boolean price = containsAny(value, "giá", "gia ", "price", "bao nhiêu", "bao nhieu", "hôm nay", "hom nay", "hiện tại", "hien tai", "now", "current"); return bitcoin && price; }
-    private static IntelligenceMode resolveMode(String text) { String value = text.toLowerCase(Locale.ROOT); if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) return IntelligenceMode.EXECUTION; if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) return IntelligenceMode.DECISION; if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause", "phân tích", "phan tich", "đánh giá", "danh gia")) return IntelligenceMode.REASONING; return IntelligenceMode.DISCUSSION; }
-    private static boolean containsAny(String value, String... terms) { for (String term : terms) if (value.contains(term)) return true; return false; }
-    private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) { return provider -> switch (provider) { case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini"); case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash"); case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514"); }; }
-    private static String normalizeProvider(String provider) { if (provider == null || provider.isBlank() || "AUTO".equalsIgnoreCase(provider)) return ""; return provider.trim().toUpperCase(Locale.ROOT); }
+    /** Existing deployed read-only shortcut retained only until capability selection is fully semantic. */
+    private static boolean isLegacyGatewayAuditCompatibility(String text) {
+        String value = text.toLowerCase(Locale.ROOT);
+        return value.contains("audit gateway") || value.contains("audit g4 gateway") || value.contains("audit g4");
+    }
+
+    private static String consequence(NormalizedRequest request) {
+        if (request.requestedDepth() == IntelligenceDepth.DEEP) return "HIGH";
+        if (request.requestedDepth() == IntelligenceDepth.ANALYZE || request.mode() == IntelligenceMode.REASONING) return "MEDIUM";
+        return "LOW";
+    }
+
+    private static String latencyBudget(IntelligenceDepth depth) {
+        return switch (depth) { case FAST -> "interactive-fast"; case ANALYZE -> "interactive-analysis"; case DEEP -> "extended-investigation"; };
+    }
+
+    private static String costBudget(IntelligenceDepth depth) {
+        return switch (depth) { case FAST -> "standard"; case ANALYZE -> "expanded"; case DEEP -> "deep"; };
+    }
+
+    private static Map<String, String> parseKeyValueOutput(String output) {
+        return output.lines().map(line -> line.split("=", 2)).filter(parts -> parts.length == 2)
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1], (a, b) -> b));
+    }
+
+    private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) {
+        return provider -> switch (provider) {
+            case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini");
+            case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
+            case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
+        };
+    }
+
+    private static String normalizeProvider(String provider) {
+        if (provider == null || provider.isBlank() || "AUTO".equalsIgnoreCase(provider)) return "";
+        return provider.trim().toUpperCase(Locale.ROOT);
+    }
     private static String defaultModel(String configured, String fallback) { return configured == null || configured.isBlank() ? fallback : configured.trim(); }
     private static boolean present(String value) { return value != null && !value.isBlank(); }
 }

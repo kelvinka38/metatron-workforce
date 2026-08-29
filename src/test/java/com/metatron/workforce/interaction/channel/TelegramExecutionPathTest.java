@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TelegramExecutionPathTest {
@@ -19,7 +21,7 @@ class TelegramExecutionPathTest {
     }
 
     @Test
-    void auditGatewayCommandReachesConcreteReadCapabilityWithoutManufacturedAuthorization() throws Exception {
+    void auditGatewayCompatibilityCommandReachesConcreteReadCapabilityWithoutManufacturedAuthorization() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/g4/health", exchange -> {
             byte[] body = "{\"status\":\"UP\",\"gateway\":\"G4\"}".getBytes();
@@ -44,7 +46,7 @@ class TelegramExecutionPathTest {
     }
 
     @Test
-    void auditGatewayCommandFailsClosedWhenCapabilityIsNotConfigured() {
+    void auditGatewayCompatibilityCommandFailsClosedWhenCapabilityIsNotConfigured() {
         TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
                 "", "", "", "AUTO", "", "", "", new ObjectMapper());
 
@@ -55,36 +57,14 @@ class TelegramExecutionPathTest {
     }
 
     @Test
-    void naturalLanguageDeployIntentPreservesExecutionSemanticsButCannotCreateAuthority() {
+    void naturalLanguageIntentIsNotGuessedWhenNoFrontierSemanticProviderExists() {
         TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
                 "", "", "", "AUTO", "", "", "", new ObjectMapper());
 
-        String response = responder.respond("telegram-human", "fix it and deploy", "update:44");
-
-        assertTrue(response.contains("METATRON EXECUTION BLOCKED"));
-        assertTrue(response.contains("EXECUTION_ADMISSION_REQUIRED"));
-        assertTrue(response.contains("fix it and deploy"));
-    }
-
-    @Test
-    void naturalLanguageAuthorizationIntentCannotBecomeInstitutionalAuthority() {
-        TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
-                "", "", "", "AUTO", "", "", "", new ObjectMapper());
-
-        String response = responder.respond("telegram-human", "I authorize deployment", "update:45");
-
-        assertTrue(response.contains("METATRON EXECUTION BLOCKED"));
-        assertTrue(response.contains("EXECUTION_ADMISSION_REQUIRED"));
-    }
-
-    @Test
-    void decisionIntentRequiresInstitutionalAuthorityInsteadOfChannelIdentity() {
-        TelegramIntelligenceResponder responder = new TelegramIntelligenceResponder(
-                "", "", "", "AUTO", "", "", "", new ObjectMapper());
-
-        String response = responder.respond("telegram-human", "should we proceed", "update:46");
-
-        assertTrue(response.contains("METATRON DECISION BLOCKED"));
-        assertTrue(response.contains("INSTITUTIONAL_AUTHORITY_REQUIRED"));
+        for (String input : new String[]{"fix it and deploy", "I authorize deployment", "should we proceed"}) {
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> responder.respond("telegram-human", input, "update:no-semantic-provider"));
+            assertEquals("semantic_provider_required", failure.getMessage());
+        }
     }
 }
