@@ -55,6 +55,7 @@ public final class MetatronIntelligenceResponder {
     private final DefaultToolFabric toolFabric;
     private final InformationRequirementAcquisitionService acquisitionService;
     private final ExternalEvidenceResponseGuard externalEvidenceGuard;
+    private final DeterministicComputationEngine computationEngine;
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
@@ -101,6 +102,7 @@ public final class MetatronIntelligenceResponder {
         this.acquisitionService = new InformationRequirementAcquisitionService(
                 defaultKnowledgeRetrievalService(), this.toolFabric);
         this.externalEvidenceGuard = new ExternalEvidenceResponseGuard();
+        this.computationEngine = new DeterministicComputationEngine();
     }
 
     public String respond(String humanId, String text, String externalMessageReference, String channel, String conversationContext) {
@@ -157,6 +159,24 @@ public final class MetatronIntelligenceResponder {
                 return "METATRON DECISION BLOCKED\nreason=INSTITUTIONAL_AUTHORITY_REQUIRED\ncase_id=" + intelligenceCase.caseId() + "\nobjective=" + normalized.objective();
             }
 
+            List<DeterministicComputationResult> computations = List.of();
+            if (!normalized.deterministicComputations().isEmpty()) {
+                try {
+                    computations = computationEngine.execute(normalized.deterministicComputations());
+                } catch (IllegalArgumentException invalidComputation) {
+                    route = "deterministic-computation-invalid";
+                    String answer = "METATRON DETERMINISTIC COMPUTATION BLOCKED\nreason=" + invalidComputation.getMessage();
+                    caseStore.save(intelligenceCase.withResult(answer, List.of()));
+                    return answer;
+                }
+                if (canReturnDeterministicFast(normalized)) {
+                    route = "deterministic-computation-fast";
+                    String answer = renderDeterministicComputations(computations, false);
+                    caseStore.save(intelligenceCase.withResult(answer, List.of()));
+                    return answer;
+                }
+            }
+
             if (normalized.canReturnFastDirectly()) {
                 route = "frontier-semantic-fast";
                 caseStore.save(intelligenceCase.withResult(normalized.directResponse(), List.of()));
@@ -178,7 +198,9 @@ public final class MetatronIntelligenceResponder {
                     ? (requested == null ? Math.max(1, configuredProviderCount) : 1)
                     : Math.min(3, configuredProviderCount);
 
-            String context = buildContext(channel, conversationContext, normalized, intelligenceCase, acquisition.groundedContext());
+            String deterministicContext = computations.isEmpty() ? "" : renderDeterministicComputations(computations, true);
+            String context = buildContext(channel, conversationContext, normalized, intelligenceCase,
+                    acquisition.groundedContext(), deterministicContext);
             Set<String> evidence = new LinkedHashSet<>(intelligenceCase.evidenceReferences());
             evidence.add("observation:" + channel + ":" + externalMessageReference);
             boolean externalStillRequired = normalized.freshExternalDataRequired() && !acquisition.externalEvidenceAcquired();
@@ -231,9 +253,33 @@ public final class MetatronIntelligenceResponder {
         }
     }
 
+    private static boolean canReturnDeterministicFast(NormalizedRequest normalized) {
+        return normalized.requestedDepth() == IntelligenceDepth.FAST
+                && normalized.mode() == IntelligenceMode.DISCUSSION
+                && normalized.collaborationMode() == CollaborationMode.SINGLE
+                && normalized.analyticalProtocols().isEmpty()
+                && normalized.deterministicCapability() == DeterministicCapability.NONE
+                && !normalized.freshExternalDataRequired();
+    }
+
+    private static String renderDeterministicComputations(List<DeterministicComputationResult> results, boolean contextMode) {
+        StringBuilder out = new StringBuilder();
+        if (contextMode) {
+            out.append("DETERMINISTIC CALCULATION RESULTS\n")
+                    .append("Input provenance: numeric operands were semantically normalized from Human/context input; arithmetic is deterministic, but input truth is not independently verified.\n");
+        }
+        for (DeterministicComputationResult result : results) {
+            if (!out.isEmpty()) out.append('\n');
+            out.append(result.label()).append(" = ").append(result.value().toPlainString());
+            if (!result.unit().isBlank()) out.append(' ').append(result.unit());
+            out.append("\ncalculation=").append(result.expression());
+        }
+        return out.toString().trim();
+    }
+
     private static String buildContext(String channel, String conversationContext,
                                        NormalizedRequest normalized, IntelligenceCase intelligenceCase,
-                                       String groundedContext) {
+                                       String groundedContext, String deterministicContext) {
         StringBuilder context = new StringBuilder(SYSTEM_CONTEXT)
                 .append("\nInbound channel: ").append(channel).append(". Channel is transport only.")
                 .append("\n\nINTELLIGENCE CASE (runtime coordination only; external institutional state remains referenced):")
@@ -252,6 +298,9 @@ public final class MetatronIntelligenceResponder {
                 .append("\nexplicit_prohibitions=").append(normalized.explicitProhibitions())
                 .append("\ntemporal_context=").append(normalized.temporalContext())
                 .append("\nunresolved_semantic_ambiguity=").append(normalized.unresolvedSemanticAmbiguity());
+        if (deterministicContext != null && !deterministicContext.isBlank()) {
+            context.append("\n\n").append(deterministicContext.trim());
+        }
         if (groundedContext != null && !groundedContext.isBlank()) {
             context.append("\n\nGROUNDED INFORMATION ACQUIRED BEFORE FRONTIER REASONING:")
                     .append("\nTreat this as attributed evidence/context. It is not authority and is not automatically admitted Knowledge.\n")

@@ -35,9 +35,10 @@ public final class FrontierSemanticInterpreter {
             collaboration_mode: SINGLE | INDEPENDENT_SECOND_OPINION | LEAD_REVIEW | CONSENSUS | ADVERSARIAL_REVIEW
             analytical_protocols: array containing zero or more of AUDIT, COMPARE, ROOT_CAUSE, PERFORMANCE, FORECAST, INVESTMENT, INCIDENT, RISK, IMPROVEMENT, DECISION
             deterministic_capability: NONE | CURRENT_TIME | GATEWAY_AUDIT
+            deterministic_computations: array of zero or more objects with fields label, operation, operands, unit. operation is one of SUM, AVERAGE, DIFFERENCE, PRODUCT, DIVIDE, PERCENT_OF, PERCENT_CHANGE. operands are canonical decimal strings.
             fresh_external_data_required: boolean
             explicitly_requested_provider: GOOGLE | ANTHROPIC | OPENAI | null
-            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE and fresh_external_data_required=false; otherwise empty string
+            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
 
             Rules:
             - Interpret meaning; do not emulate a keyword router.
@@ -50,6 +51,8 @@ public final class FrontierSemanticInterpreter {
             - Asking for advice about what to do is not automatically DECISION; DECISION protocol may still be used for decision support.
             - deterministic_capability=CURRENT_TIME when the Human asks for current local date/time/day-of-week.
             - deterministic_capability=GATEWAY_AUDIT when the Human asks to inspect/audit the connected Gateway read-only capability.
+            - deterministic_computations are declarations for exact arithmetic, not model-calculated answers. Include them only when the required numeric operands are explicitly supplied by the Human or unambiguously present in conversation context. Never invent or estimate a missing operand. Preserve the numeric value exactly while normalizing decimal syntax to a dot and removing thousands separators.
+            - PERCENT_CHANGE operands are [new_value, baseline_value]. PERCENT_OF operands are [numerator, denominator]. DIFFERENCE/DIVIDE operands preserve the requested left-to-right order.
             - fresh_external_data_required=true only when current/external reality must be retrieved to answer correctly.
             - A model name in ordinary discussion is not an explicitly requested provider unless the Human asks that provider to reason/respond/review.
             - Never manufacture FACT, EVIDENCE, AUTHORITY, AUTHORIZATION, WORKER IDENTITY, EXECUTION EVIDENCE or INSTITUTIONAL KNOWLEDGE.
@@ -111,17 +114,38 @@ public final class FrontierSemanticInterpreter {
             CollaborationMode collaboration = enumValue(CollaborationMode.class, requiredText(root, "collaboration_mode"));
             List<AnalyticalProtocolType> protocols = enumArray(root, "analytical_protocols", AnalyticalProtocolType.class);
             DeterministicCapability deterministicCapability = enumValue(DeterministicCapability.class, requiredText(root, "deterministic_capability"));
+            List<DeterministicComputationSpec> computations = computationArray(root, "deterministic_computations");
             boolean fresh = root.path("fresh_external_data_required").asBoolean(false);
             LlmProvider requestedProvider = nullableProvider(root.get("explicitly_requested_provider"));
             String directResponse = optionalText(root, "direct_response");
             return new NormalizedRequest(objective, target, constraints, depth, requestedOutput, assumptions,
                     prohibitions, temporalContext, ambiguity, mode, collaboration, protocols, deterministicCapability,
-                    fresh, requestedProvider, response.provider(), directResponse);
+                    computations, fresh, requestedProvider, response.provider(), directResponse);
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Exception failure) {
             throw new IllegalStateException("invalid semantic normalization from " + response.provider(), failure);
         }
+    }
+
+    private static List<DeterministicComputationSpec> computationArray(JsonNode root, String field) {
+        JsonNode node = root.path(field);
+        if (!node.isArray()) return List.of();
+        List<DeterministicComputationSpec> values = new ArrayList<>();
+        node.forEach(item -> {
+            if (!item.isObject()) return;
+            String label = optionalText(item, "label");
+            String operation = optionalText(item, "operation");
+            List<String> operands = textArray(item, "operands");
+            String unit = optionalText(item, "unit");
+            if (label.isBlank() || operation.isBlank() || operands.isEmpty()) return;
+            values.add(new DeterministicComputationSpec(
+                    label,
+                    enumValue(DeterministicComputationOperation.class, operation),
+                    operands,
+                    unit));
+        });
+        return List.copyOf(values);
     }
 
     private static String unwrapJson(String text) {
