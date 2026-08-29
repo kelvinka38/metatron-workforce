@@ -40,20 +40,17 @@ jobs:
           : > "$REPORT"
           pass(){ echo "$1=PASS" | tee -a "$REPORT"; }
 
-          # Data-plane / internal isolation / hardened runtime.
           test "$(docker inspect "$CID" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
           test "$(docker inspect "$CID" --format '{{.HostConfig.Privileged}}')" = false
           docker inspect "$CID" --format '{{json .HostConfig.PortBindings}}' | grep -q '127.0.0.1'
           pass DATA_PLANE_INTERNAL_BINDING
           pass RUNTIME_HARDENING
 
-          # Intended public TLS boundary.
           curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health >/tmp/gateway-final/public-health.json
           grep -q '"status":"UP"' /tmp/gateway-final/public-health.json
           pass HUMAN_MACHINE_PUBLIC_INGRESS
           pass TLS_BOUNDARY
 
-          # Authentication fails closed before protected processing.
           UNAUTH=$(curl -sS -o /tmp/gateway-final/unauthorized.out -w '%{http_code}' --max-time 10 \
             -X POST https://gate.metatron.vn/telegram/webhook \
             -H 'Content-Type: application/json' \
@@ -61,17 +58,16 @@ jobs:
           test "$UNAUTH" = 401
           pass AUTHENTICATION_FAIL_CLOSED
 
-          # Valid channel authentication does not authorize an unknown institutional identity.
           UNKNOWN=$(curl -sS -o /tmp/gateway-final/unknown.out -w '%{http_code}' \
             -X POST http://127.0.0.1:8080/telegram/webhook \
             -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_WEBHOOK_SECRET}" \
             -H 'Content-Type: application/json' \
             -d '{"update_id":991002,"message":{"from":{"id":922337203685477000},"chat":{"id":922337203685477000,"type":"private"},"text":"identity-probe"}}')
           test "$UNKNOWN" = 200
-          docker logs --since 30s "$CID" 2>&1 | grep -q 'Telegram user is not authorized for this Metatron workspace'
+          docker logs --since 30s "$CID" > /tmp/gateway-final/identity-probe.log 2>&1 || true
+          grep -q 'Telegram user is not authorized for this Metatron workspace' /tmp/gateway-final/identity-probe.log
           pass AUTHN_AUTHZ_IDENTITY_SEPARATION
 
-          # Structural/protocol validation and replay-safe acknowledgement.
           BAD=$(curl -sS -o /tmp/gateway-final/bad.out -w '%{http_code}' \
             -X POST http://127.0.0.1:8080/telegram/webhook \
             -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_WEBHOOK_SECRET}" \
@@ -86,7 +82,6 @@ jobs:
           test "$A" = 200; test "$B" = 200
           pass REPLAY_DUPLICATE_BOUNDARY
 
-          # Governed institutional egress: authorization-bound, private destination, provenance-bearing.
           AUDIT=$(curl -sS -o /tmp/gateway-final/audit.json -w '%{http_code}' -X POST \
             http://127.0.0.1:8080/workforce/execution/repository-audit \
             -H 'Content-Type: application/json' \
@@ -112,7 +107,6 @@ jobs:
           pass EXTERNAL_RETRIEVAL_PROVENANCE
           pass CORRELATION_EVIDENCE
 
-          # Egress without admitted authorization must fail closed.
           DENIED=$(curl -sS -o /tmp/gateway-final/denied.json -w '%{http_code}' -X POST \
             http://127.0.0.1:8080/workforce/execution/repository-audit \
             -H 'Content-Type: application/json' \
@@ -123,7 +117,6 @@ jobs:
           test "$DENIED" != 200
           pass UNAUTHORIZED_EGRESS_DENIAL
 
-          # Secret/source separation and live rollback source exist.
           ! grep -Rqs "${GITHUB_TOKEN}" "$BASE/src" "$BASE/deploy" "$BASE/.github" 2>/dev/null
           docker image inspect metatron-workforce:rollback >/dev/null
           pass SECRET_SOURCE_SEPARATION
