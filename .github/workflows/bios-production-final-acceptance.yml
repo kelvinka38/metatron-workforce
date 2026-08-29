@@ -34,7 +34,7 @@ jobs:
           echo 'BIOS_LIVE_HEALTH=PASS'
 
           echo '=== AUDIT DURABILITY AFTER RESTART ==='
-          docker exec "$CID" python - <<'PY'
+          docker exec -i "$CID" python - <<'PY'
           import sqlite3
           db=sqlite3.connect('/data/bios_runtime.db')
           rows=db.execute("SELECT event_type,case_id FROM audit_events WHERE case_id IS NOT NULL ORDER BY id DESC").fetchall()
@@ -52,7 +52,7 @@ jobs:
           PY
 
           echo '=== LIVE RATE LIMIT FROM ISOLATED GATEWAY CLIENT ==='
-          docker run --rm --network metatron-gateway-online \
+          docker run --rm -i --network metatron-gateway-online \
             -e BIOS_API_KEY="$BIOS_API_KEY" python:3.12-slim python - <<'PY'
           import os, urllib.request, urllib.error
           key=os.environ['BIOS_API_KEY']
