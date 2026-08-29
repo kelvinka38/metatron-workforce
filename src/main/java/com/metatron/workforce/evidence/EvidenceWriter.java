@@ -23,7 +23,7 @@ public class EvidenceWriter {
             WorkerResult result
     ) throws IOException {
 
-        Path directory = root.resolve(taskId);
+        Path directory = root.resolve(safePathSegment(taskId));
         Files.createDirectories(directory);
 
         Path file = directory.resolve("execution.json");
@@ -47,6 +47,13 @@ public class EvidenceWriter {
 
         Files.writeString(file, json);
         return file;
+    }
+
+    private static String safePathSegment(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("taskId required");
+        }
+        return value.trim().replaceAll("[\\\\/:*?\"<>|\\r\\n]+", "_");
     }
 
     private static String env(String name, String fallback) {
