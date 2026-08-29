@@ -26,7 +26,7 @@ public final class RepositoryAuditExecutionService {
 
     @Autowired
     public RepositoryAuditExecutionService(WorkService work) {
-        this(work, new WorkerRuntime(), RepositoryAuditWorker::new);
+        this(work, new WorkerRuntime(), (Function<String, Worker>) RepositoryAuditWorker::new);
     }
 
     RepositoryAuditExecutionService(WorkService work, WorkerRuntime runtime, Function<String, Worker> workerFactory) {
@@ -37,7 +37,7 @@ public final class RepositoryAuditExecutionService {
 
     /** Compatibility constructor for deterministic tests that inject a local worker. */
     RepositoryAuditExecutionService(WorkService work, WorkerRuntime runtime, Supplier<Worker> workerFactory) {
-        this(work, runtime, ignoredAuthorization -> workerFactory.get());
+        this(work, runtime, (Function<String, Worker>) ignoredAuthorization -> workerFactory.get());
     }
 
     public ExecutionReceipt execute(String actor, String authorityReference, String authorizationReference,
