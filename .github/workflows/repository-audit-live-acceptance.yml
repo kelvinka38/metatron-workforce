@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove one dispatch audits private BIOS and reaches terminal Work
+      - name: Prove one dispatch performs substantive private BIOS audit and reaches terminal Work
         shell: bash
         env:
           TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
@@ -30,7 +30,6 @@ jobs:
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$TARGET_SHA"
           docker exec "$CID" sh -c 'test -n "$GITHUB_TOKEN"'
-
           BODY='{"organizationContextId":"METATRON","repository":"kelvinka38/bios"}'
           HTTP_STATUS=$(curl -sS -o /tmp/repository-audit-live.json -w '%{http_code}' -X POST \
             http://127.0.0.1:8080/workforce/execution/repository-audit \
@@ -39,26 +38,23 @@ jobs:
             -H 'X-Metatron-Authority: LIVE-ACCEPTANCE-OBSERVATION-AUTHORITY' \
             -H 'X-Metatron-Authorization: LIVE-ACCEPTANCE-REPOSITORY-READ' \
             -d "$BODY")
-          echo "REPOSITORY_AUDIT_HTTP_STATUS=$HTTP_STATUS"
-          cat /tmp/repository-audit-live.json
-          echo
+          echo "REPOSITORY_AUDIT_HTTP_STATUS=$HTTP_STATUS"; cat /tmp/repository-audit-live.json; echo
           test "$HTTP_STATUS" = "200"
-
           python3 - <<'PY'
-          import json
+          import json,re
           d=json.load(open('/tmp/repository-audit-live.json'))
-          assert d['repository']=='kelvinka38/bios', d
-          assert d['workerResult']['worker']=='RepositoryAuditWorker', d
-          assert d['workerResult']['status']=='PASS', d
-          evidence=d['workerResult']['evidence']
-          assert 'source=github-api' in evidence, evidence
-          assert 'authenticated=true' in evidence, evidence
-          assert 'repository=kelvinka38/bios' in evidence, evidence
-          assert 'commitSha=' in evidence, evidence
-          assert 'verdict=PASS' in evidence, evidence
-          assert d['work']['status']=='COMPLETED', d
-          assert d['work']['outcomeRef']=='repository-audit:PASS:kelvinka38/bios', d
-          assert any(x.startswith('runtime-evidence:') for x in d['work']['evidenceRefs']), d
-          print('PRIVATE_BIOS_REPOSITORY_AUDIT=PASS')
+          e=d['workerResult']['evidence']
+          assert d['repository']=='kelvinka38/bios'
+          assert d['workerResult']['worker']=='RepositoryAuditWorker'
+          assert d['workerResult']['status']=='PASS'
+          for marker in ['Repository Audit Report','source=github-api','authenticated=true','repository=kelvinka38/bios','treeHttpStatus=200','repositoryFilesObserved=','contentFilesRead=','contentBytesRead=','sotSignals=','findings=','observedPaths=','verdict=PASS']:
+              assert marker in e,(marker,e)
+          sha=re.search(r'commitSha=([0-9a-f]{40})',e); assert sha,e
+          files=int(re.search(r'contentFilesRead=(\d+)',e).group(1)); assert files>0,e
+          size=int(re.search(r'contentBytesRead=(\d+)',e).group(1)); assert size>0,e
+          assert d['work']['status']=='COMPLETED'
+          assert d['work']['outcomeRef']=='repository-audit:PASS:kelvinka38/bios'
+          assert any(x.startswith('runtime-evidence:') for x in d['work']['evidenceRefs'])
+          print('PRIVATE_BIOS_SUBSTANTIVE_AUDIT=PASS')
           print('ONE_DISPATCH_TERMINAL_WORK=PASS')
           PY
