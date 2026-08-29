@@ -5,6 +5,7 @@ import com.metatron.workforce.work.InstitutionalWork;
 import com.metatron.workforce.work.WorkService;
 import com.metatron.workforce.workers.Worker;
 import com.metatron.workforce.workers.WorkerResult;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -29,6 +30,7 @@ public final class RepositoryAuditExecutionService {
     private final WorkerRuntime runtime;
     private final Supplier<Worker> workerFactory;
 
+    @Autowired
     public RepositoryAuditExecutionService(WorkService work) {
         this(work, new WorkerRuntime(), RepositoryAuditWorker::new);
     }
