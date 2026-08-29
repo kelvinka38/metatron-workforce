@@ -67,12 +67,7 @@ public final class IntelligenceFabric {
                     throw new IllegalStateException("provider attribution mismatch for " + provider);
                 }
                 responses.add(response);
-
-                // SINGLE mode only needs the first successful provider. In multi-provider
-                // mode we continue so the synthesizer receives every successful response.
-                if (plan.collaborationMode() == CollaborationMode.SINGLE) {
-                    break;
-                }
+                if (plan.collaborationMode() == CollaborationMode.SINGLE) break;
             } catch (RuntimeException failure) {
                 RuntimeException wrapped = new IllegalStateException(
                         "intelligence provider failed: " + provider + ": " + failure.getMessage(),
@@ -90,7 +85,6 @@ public final class IntelligenceFabric {
                         enrichedRequest.requestId(), plan.providers(), enrichment.webEvidence().evidenceReferences().size());
                 return new IntelligenceResult(enrichedRequest.requestId(), fallback, List.of());
             }
-
             IllegalStateException failure = new IllegalStateException(
                     "all selected intelligence providers failed: " + plan.providers());
             failures.forEach(failure::addSuppressed);
@@ -104,9 +98,7 @@ public final class IntelligenceFabric {
                 : Objects.requireNonNull(synthesizer.synthesize(enrichedRequest, List.copyOf(responses)),
                         "synthesized intelligence result");
 
-        if (plan.requiresReasoning()) {
-            governance.validate(enrichedRequest, List.copyOf(responses), text);
-        }
+        if (plan.requiresReasoning()) governance.validate(enrichedRequest, List.copyOf(responses), text);
 
         return new IntelligenceResult(
                 enrichedRequest.requestId(),
@@ -117,10 +109,9 @@ public final class IntelligenceFabric {
     }
 
     private WebEnrichment enrichWithWebEvidence(IntelligenceRequest request) {
-        if (!requiresWebResearch(request.objective())) return new WebEnrichment(request, null);
+        String researchObjective = resolveResearchObjective(request);
+        if (!requiresWebResearch(researchObjective)) return new WebEnrichment(request, null);
 
-        // Intelligence may propagate authority context supplied by the caller, but it must
-        // never manufacture authority merely because it selected an evidence-gathering tool.
         List<String> authority = request.authorityContext().isBlank()
                 ? List.of()
                 : List.of(request.authorityContext());
@@ -131,7 +122,7 @@ public final class IntelligenceFabric {
                 WebSearchToolAdapter.CAPABILITY,
                 "internet:web-search",
                 "search",
-                request.objective(),
+                researchObjective,
                 authority);
         ToolResult result = toolFabric.execute(toolRequest);
         if (!result.success()) {
@@ -142,31 +133,46 @@ public final class IntelligenceFabric {
         List<String> evidence = new ArrayList<>(request.evidenceReferences());
         evidence.addAll(result.evidenceReferences());
         String context = request.context()
+                + "\n\nRESOLVED RESEARCH OBJECTIVE:\n" + researchObjective
                 + "\n\nWEB RESEARCH EVIDENCE (retrieved by Workforce before reasoning):\n"
                 + result.output()
                 + "\n\nUse this evidence for current/external claims. Cite or name the source when useful. "
                 + "Do not claim a web lookup occurred unless this evidence block is present.\n";
 
-        LOG.info("web_research_complete request_id={} result_count={}",
-                request.requestId(), result.evidenceReferences().size());
+        LOG.info("web_research_complete request_id={} result_count={} resolved_objective_length={}",
+                request.requestId(), result.evidenceReferences().size(), researchObjective.length());
 
         IntelligenceRequest enriched = new IntelligenceRequest(
-                request.requestId(),
-                request.requester(),
-                request.mode(),
-                request.collaborationMode(),
-                request.objective(),
-                context,
-                evidence,
-                request.requiredCapability(),
-                request.consequence(),
-                request.latencyBudget(),
-                request.costBudget(),
-                request.authorityContext(),
-                request.requiredOutput(),
-                request.requestedProviders(),
-                request.maxProviders());
+                request.requestId(), request.requester(), request.mode(), request.collaborationMode(),
+                request.objective(), context, evidence, request.requiredCapability(), request.consequence(),
+                request.latencyBudget(), request.costBudget(), request.authorityContext(), request.requiredOutput(),
+                request.requestedProviders(), request.maxProviders());
         return new WebEnrichment(enriched, result);
+    }
+
+    private static String resolveResearchObjective(IntelligenceRequest request) {
+        String objective = request.objective() == null ? "" : request.objective().trim();
+        if (!isConversationalContinuation(objective)) return objective;
+
+        String context = request.context() == null ? "" : request.context();
+        String lastUser = "";
+        for (String line : context.lines().toList()) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("User: ")) lastUser = trimmed.substring(6).trim();
+        }
+        if (lastUser.isBlank()) return objective;
+        return lastUser + "\nFollow-up instruction: " + objective;
+    }
+
+    private static boolean isConversationalContinuation(String objective) {
+        String value = objective == null ? "" : objective.toLowerCase(Locale.ROOT).trim();
+        if (value.isBlank()) return false;
+        if (value.length() > 90) return false;
+        return containsAny(value,
+                "phân tích đi", "phan tich di", "phân tích tiếp", "phan tich tiep",
+                "tiếp tục", "tiep tuc", "làm đi", "lam di", "làm tiếp", "lam tiep",
+                "cái đó", "cai do", "vậy đi", "vay di", "do it", "continue", "go on",
+                "analyze it", "analyse it", "proceed");
     }
 
     private static String renderWebEvidenceFallback(ToolResult result) {
@@ -182,20 +188,15 @@ public final class IntelligenceFabric {
                 .filter(line -> !line.equals("CURRENT EXTERNAL DATA"))
                 .filter(line -> !line.startsWith("query="))
                 .filter(line -> !line.startsWith("retrieved_at="))
-                .limit(18)
+                .limit(24)
                 .toList();
 
         StringBuilder answer = new StringBuilder("Thông tin web mới nhất Workforce vừa truy xuất:\n");
         for (String line : useful) {
-            if (line.startsWith("url=")) {
-                answer.append("Nguồn: ").append(line.substring(4)).append('\n');
-            } else if (line.startsWith("snippet=")) {
-                answer.append(line.substring(8)).append('\n');
-            } else if (line.matches("\\[[0-9]+].*")) {
-                answer.append("\n").append(line).append('\n');
-            } else {
-                answer.append(line).append('\n');
-            }
+            if (line.startsWith("url=")) answer.append("Nguồn: ").append(line.substring(4)).append('\n');
+            else if (line.startsWith("snippet=")) answer.append(line.substring(8)).append('\n');
+            else if (line.matches("\\[[0-9]+].*")) answer.append("\n").append(line).append('\n');
+            else answer.append(line).append('\n');
         }
         answer.append("\nDữ liệu trên được trả trực tiếp từ external evidence; không bịa kết quả khi lớp AI synthesis tạm không khả dụng.");
         return answer.toString().trim();
@@ -207,14 +208,14 @@ public final class IntelligenceFabric {
         return containsAny(value,
                 "latest", "current", "today", "now", "news", "weather", "price", "rate",
                 "search", "internet", "online", "who is", "what is", "where is", "when is", "how much",
+                "forecast", "prediction", "predict", "market", "trend",
                 "hôm nay", "hiện tại", "mới nhất", "tin tức", "thời tiết", "giá ", "tỷ giá", "tỉ giá",
-                "là gì", "ai là", "ở đâu", "khi nào", "bao nhiêu", "tìm kiếm");
+                "là gì", "ai là", "ở đâu", "khi nào", "bao nhiêu", "tìm kiếm", "dự báo", "dự đoán",
+                "thị trường", "xu hướng");
     }
 
     private static boolean containsAny(String value, String... candidates) {
-        for (String candidate : candidates) {
-            if (value.contains(candidate)) return true;
-        }
+        for (String candidate : candidates) if (value.contains(candidate)) return true;
         return false;
     }
 

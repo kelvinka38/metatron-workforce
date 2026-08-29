@@ -11,22 +11,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ConfiguredProviderRoutingPolicyTest {
 
     @Test
-    void preservesConfiguredPriorityWithoutClaimingLiveCapacity() {
+    void autoRoutingUsesProviderAgnosticOperationalPriority() {
         ConfiguredProviderRoutingPolicy policy = new ConfiguredProviderRoutingPolicy(
                 List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE, LlmProvider.ANTHROPIC));
 
         assertEquals(
-                List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE),
+                List.of(LlmProvider.GOOGLE, LlmProvider.ANTHROPIC),
                 policy.select(request(List.of(), 2)));
     }
 
     @Test
-    void explicitProviderMustActuallyBeConfigured() {
+    void explicitProviderMustActuallyBeConfiguredAndIsNeverReordered() {
         ConfiguredProviderRoutingPolicy policy = new ConfiguredProviderRoutingPolicy(
-                List.of(LlmProvider.OPENAI));
+                List.of(LlmProvider.OPENAI, LlmProvider.GOOGLE));
 
         assertEquals(List.of(), policy.select(request(List.of(LlmProvider.ANTHROPIC), 1)));
         assertEquals(List.of(LlmProvider.OPENAI), policy.select(request(List.of(LlmProvider.OPENAI), 1)));
+        assertEquals(List.of(LlmProvider.GOOGLE), policy.select(request(List.of(LlmProvider.GOOGLE), 1)));
     }
 
     @Test
