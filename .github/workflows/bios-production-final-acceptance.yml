@@ -1,4 +1,5 @@
 name: BIOS Production Final Acceptance
+# Terminal completion verification for the currently deployed canonical BIOS main SHA.
 
 on:
   push:
