@@ -1,0 +1,33 @@
+name: Gateway BIOS Route Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/gateway-bios-route-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    steps:
+      - name: Inspect live Gateway to BIOS route
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== CONTAINERS ON GATEWAY NETWORK ==='
+          docker network inspect metatron-gateway-online --format '{{range .Containers}}{{println .Name .IPv4Address}}{{end}}'
+          echo '=== RUNNING CONTAINERS ==='
+          docker ps --format 'NAME={{.Names}} IMAGE={{.Image}} PORTS={{.Ports}}'
+          echo '=== ENVOY CANDIDATES ==='
+          docker ps --format '{{.Names}} {{.Image}}' | grep -Ei 'envoy|gateway' || true
+          ENVOY=$(docker ps --format '{{.Names}} {{.Image}}' | awk 'tolower($0) ~ /envoy/ {print $1; exit}')
+          test -n "$ENVOY"
+          echo "ENVOY_CONTAINER=$ENVOY"
+          echo '=== ENVOY CONFIG REFERENCES ==='
+          docker exec "$ENVOY" sh -c 'grep -Rni "bios\|workforce\|cluster" /etc/envoy 2>/dev/null | head -200' || true
+          echo '=== ENVOY ADMIN/HEALTH ==='
+          docker exec "$ENVOY" sh -c 'wget -qO- http://127.0.0.1:9901/config_dump 2>/dev/null | head -c 20000' || true
