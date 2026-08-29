@@ -39,7 +39,7 @@ public final class TelegramInstitutionalWorkDispatcher {
         return Optional.of("METATRON WORK " + verdict
                 + " repository=" + receipt.repository()
                 + " worker=" + receipt.workerResult().worker()
-                + " work=" + receipt.work().id()
+                + " work=" + receipt.work().workId()
                 + " status=" + workState
                 + " evidence=preserved");
     }
