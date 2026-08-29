@@ -66,15 +66,23 @@ jobs:
           echo '=== BUILD / DEPLOY ==='
           docker build --pull -t "metatron-bios:$BIOS_SHA" .
           docker compose -p bios --env-file "$BIOS_BASE/.env" -f deploy/docker-compose.yml up -d --force-recreate bios
-          for i in $(seq 1 45); do
-            if curl -fsS http://127.0.0.1:18080/health >/tmp/bios-health.json 2>/dev/null; then break; fi
-            sleep 2
-          done
-          grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' /tmp/bios-health.json
-
           CID=$(docker compose -p bios --env-file "$BIOS_BASE/.env" -f deploy/docker-compose.yml ps -q bios)
           test -n "$CID"
-          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          healthy=false
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:18080/health >/tmp/bios-health.json 2>/dev/null \
+              && [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}' 2>/dev/null || true)" = healthy ]; then
+              healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$healthy" != true ]; then
+            docker logs --tail 200 "$CID" || true
+            exit 1
+          fi
+          grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' /tmp/bios-health.json
+
           test "$(docker inspect "$CID" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
           test "$(docker inspect "$CID" --format '{{.HostConfig.Privileged}}')" = false
           docker inspect "$CID" --format '{{json .NetworkSettings.Networks}}' | grep -q 'metatron-gateway-online'
