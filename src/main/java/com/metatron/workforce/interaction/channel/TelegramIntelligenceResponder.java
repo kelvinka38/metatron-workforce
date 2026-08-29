@@ -1,173 +1,41 @@
 package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.metatron.workforce.execution.ExecutionCapabilityRegistry;
-import com.metatron.workforce.execution.ExecutionCommand;
-import com.metatron.workforce.execution.ExecutionResult;
-import com.metatron.workforce.execution.GatewayAuditCapability;
-import com.metatron.workforce.interaction.intelligence.ConfiguredProviderRoutingPolicy;
-import com.metatron.workforce.interaction.intelligence.CollaborationMode;
-import com.metatron.workforce.interaction.intelligence.EvidenceBackedGovernance;
-import com.metatron.workforce.interaction.intelligence.EvidencePreservingIntelligenceSynthesizer;
-import com.metatron.workforce.interaction.intelligence.IntelligenceFabric;
-import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
-import com.metatron.workforce.interaction.intelligence.IntelligencePlanner;
-import com.metatron.workforce.interaction.intelligence.IntelligenceRequest;
-import com.metatron.workforce.interaction.intelligence.RouterBackedIntelligenceEngine;
-import com.metatron.workforce.interaction.llm.AnthropicLlmProviderClient;
-import com.metatron.workforce.interaction.llm.GoogleLlmProviderClient;
-import com.metatron.workforce.interaction.llm.LlmProvider;
-import com.metatron.workforce.interaction.llm.LlmProviderClient;
-import com.metatron.workforce.interaction.llm.LlmProviderRouter;
-import com.metatron.workforce.interaction.llm.OpenAiLlmProviderClient;
-import com.metatron.workforce.interaction.tools.CurrentTimeToolAdapter;
-import com.metatron.workforce.interaction.tools.DefaultToolFabric;
-import com.metatron.workforce.interaction.tools.ToolRequest;
-import com.metatron.workforce.interaction.tools.ToolResult;
-import com.metatron.workforce.interaction.tools.WebSearchToolAdapter;
+import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 
-import java.net.http.HttpClient;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.function.Function;
-
-/** Natural-language response path through the canonical Intelligence Fabric. */
+/**
+ * Compatibility wrapper for the Telegram transport.
+ * Canonical intelligence is channel-neutral and lives in MetatronIntelligenceResponder.
+ */
+@Deprecated
 public final class TelegramIntelligenceResponder {
-    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramIntelligenceResponder.class);
-    private static final String SYSTEM_CONTEXT = """
-            You are Metatron Workforce's intelligence layer.
-            Answer the human directly and naturally.
-            Preserve the user's language; Vietnamese is preferred when the user writes Vietnamese.
-            Use supplied conversation history to resolve follow-ups, pronouns, omitted subjects, and continuation requests. Do not ask the human to repeat context that is already present in conversation history.
-            Do not claim that an action, audit, deployment, tool call, or external lookup happened unless the Workforce actually supplied evidence of it.
-            When a request requires tools or execution that are not connected to this conversation path, say so plainly instead of fabricating completion.
-            Keep ordinary answers concise unless the user asks for depth.
-            """;
-
-    private final IntelligenceFabric fabric;
-    private final String configuredProvider;
-    private final int configuredProviderCount;
-    private final ExecutionCapabilityRegistry capabilityRegistry;
-    private final DefaultToolFabric toolFabric;
+    private final MetatronIntelligenceResponder delegate;
 
     public TelegramIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper) {
-        this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
-                objectMapper, "", "");
+        this.delegate = new MetatronIntelligenceResponder(openAiApiKey, googleApiKey, anthropicApiKey,
+                provider, openAiModel, googleModel, anthropicModel, objectMapper);
     }
 
     public TelegramIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper,
                                          String gatewayAuditUrl, String gatewayAuditToken) {
-        Objects.requireNonNull(objectMapper, "objectMapper");
-        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).version(HttpClient.Version.HTTP_2).build();
-        List<LlmProviderClient> clients = new ArrayList<>();
-        List<LlmProvider> configuredProviders = new ArrayList<>();
-        if (present(openAiApiKey)) { clients.add(new OpenAiLlmProviderClient(openAiApiKey, httpClient, objectMapper)); configuredProviders.add(LlmProvider.OPENAI); }
-        if (present(googleApiKey)) { clients.add(new GoogleLlmProviderClient(googleApiKey, httpClient, objectMapper)); configuredProviders.add(LlmProvider.GOOGLE); }
-        if (present(anthropicApiKey)) { clients.add(new AnthropicLlmProviderClient(anthropicApiKey, httpClient, objectMapper)); configuredProviders.add(LlmProvider.ANTHROPIC); }
-        this.configuredProvider = normalizeProvider(provider);
-        this.configuredProviderCount = configuredProviders.size();
-        Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
-        this.fabric = new IntelligenceFabric(
-                new IntelligencePlanner(new ConfiguredProviderRoutingPolicy(configuredProviders)),
-                new RouterBackedIntelligenceEngine(new LlmProviderRouter(clients), modelSelector),
-                new EvidencePreservingIntelligenceSynthesizer(),
-                new EvidenceBackedGovernance());
-
-        if (present(gatewayAuditUrl)) this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of("gateway.audit.read", new GatewayAuditCapability(gatewayAuditUrl, gatewayAuditToken)));
-        else this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
-        this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter(), new WebSearchToolAdapter()));
+        this.delegate = new MetatronIntelligenceResponder(openAiApiKey, googleApiKey, anthropicApiKey,
+                provider, openAiModel, googleModel, anthropicModel, objectMapper,
+                gatewayAuditUrl, gatewayAuditToken);
     }
 
-    public String respond(String senderId, String text) { return respond(senderId, text, "telegram-message", ""); }
+    public String respond(String senderId, String text) {
+        return delegate.respond(senderId, text, "telegram-message", "telegram", "");
+    }
 
     public String respond(String senderId, String text, String externalMessageReference) {
-        return respond(senderId, text, externalMessageReference, "");
+        return delegate.respond(senderId, text, externalMessageReference, "telegram", "");
     }
 
     public String respond(String senderId, String text, String externalMessageReference, String conversationContext) {
-        Objects.requireNonNull(senderId, "senderId"); Objects.requireNonNull(text, "text"); Objects.requireNonNull(externalMessageReference, "externalMessageReference");
-        long started = System.nanoTime(); String route = "unknown";
-        try {
-            String normalized = text.trim().toLowerCase(Locale.ROOT);
-            if (isStartCommand(normalized)) { route = "deterministic-start"; return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên, ví dụ:\n• audit g4 gateway\n• hôm nay thứ mấy?\n• hỏi thông tin mới nhất về ...\n• phân tích ...\n• Hey Gemini / Hey Claude / Hey OpenAI"; }
-            if (isGatewayAuditCommand(text)) { route = "gateway-audit"; return executeGatewayAudit(senderId, text, externalMessageReference); }
-            if (isCurrentTimeCommand(text)) { route = "deterministic-time"; return executeCurrentTime(senderId, externalMessageReference); }
-            if (isBitcoinPriceCommand(text)) { route = "deterministic-bitcoin-price"; return executeCurrentBitcoinPrice(senderId, text, externalMessageReference); }
-
-            LlmProvider requested = explicitProvider(text);
-            if (requested == null && !configuredProvider.isBlank()) requested = LlmProvider.valueOf(configuredProvider);
-            List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
-            IntelligenceMode mode = resolveMode(text);
-            if (mode == IntelligenceMode.EXECUTION) { route = "execution-admission-blocked"; return "METATRON EXECUTION BLOCKED\nreason=EXECUTION_ADMISSION_REQUIRED\nrequest=" + text.trim(); }
-            if (mode == IntelligenceMode.DECISION) { route = "decision-authority-blocked"; return "METATRON DECISION BLOCKED\nreason=INSTITUTIONAL_AUTHORITY_REQUIRED\nrequest=" + text.trim(); }
-
-            CollaborationMode collaboration = resolveCollaborationMode(text, requested, configuredProviderCount);
-            int maxProviders = collaboration == CollaborationMode.SINGLE ? (requested == null ? Math.max(1, configuredProviderCount) : 1) : Math.min(3, configuredProviderCount);
-            String consequence = collaboration == CollaborationMode.SINGLE ? "LOW" : "MEDIUM";
-            route = "intelligence-" + collaboration.name().toLowerCase(Locale.ROOT);
-            String context = SYSTEM_CONTEXT + "\nThe current inbound channel is Telegram.";
-            if (conversationContext != null && !conversationContext.isBlank()) {
-                context += "\n\nCONVERSATION HISTORY (chronological; use it only as conversational context, not as institutional authority):\n"
-                        + conversationContext.trim()
-                        + "\n\nThe objective below is the CURRENT user message. Continue from history when the user uses shorthand such as 'phân tích đi', 'tiếp tục', 'cái đó', or similar references.";
-            }
-            IntelligenceRequest request = new IntelligenceRequest(
-                    "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
-                    mode, collaboration, text, context,
-                    List.of("observation:telegram:" + externalMessageReference), "analysis", consequence,
-                    "interactive-fast", "standard", "", "direct natural-language answer", requestedProviders, maxProviders);
-            return fabric.execute(request).text();
-        } finally {
-            LOG.info("telegram_intelligence_latency route={} elapsed_ms={} text_length={}", route, (System.nanoTime() - started) / 1_000_000L, text.length());
-        }
+        return delegate.respond(senderId, text, externalMessageReference, "telegram", conversationContext);
     }
-
-    private static CollaborationMode resolveCollaborationMode(String text, LlmProvider requested, int providerCount) {
-        if (requested != null || providerCount < 2) return CollaborationMode.SINGLE;
-        String value = text.toLowerCase(Locale.ROOT);
-        if (containsAny(value, "adversarial review", "red team", "challenge this", "phản biện", "phan bien")) return CollaborationMode.ADVERSARIAL_REVIEW;
-        if (containsAny(value, "second opinion", "ý kiến thứ hai", "y kien thu hai")) return CollaborationMode.INDEPENDENT_SECOND_OPINION;
-        if (containsAny(value, "lead review", "reviewer", "lead + review")) return CollaborationMode.LEAD_REVIEW;
-        if (containsAny(value, "multi-model", "multi model", "cross-check", "cross check", "consensus", "đối chiếu", "doi chieu")) return CollaborationMode.CONSENSUS;
-        return CollaborationMode.SINGLE;
-    }
-
-    private String executeCurrentBitcoinPrice(String senderId, String text, String externalMessageReference) {
-        ToolRequest request = new ToolRequest("telegram-btc-price-" + senderId + "-" + System.nanoTime(), "telegram-human", WebSearchToolAdapter.CAPABILITY, "runtime:workforce", "read", text, List.of("telegram:" + externalMessageReference));
-        ToolResult result = toolFabric.execute(request); if (!result.success()) throw new IllegalStateException("bitcoin_price_read_failed:" + result.output());
-        Map<String, String> fields = parseKeyValueOutput(result.output()); String usd = fields.getOrDefault("price_usd", "không xác định"); String vnd = fields.getOrDefault("price_vnd", ""); String source = fields.getOrDefault("source", "external source"); String updated = fields.getOrDefault("source_updated_at", fields.getOrDefault("retrieved_at", ""));
-        StringBuilder answer = new StringBuilder("Giá Bitcoin (BTC) hiện tại:\n• USD: ~$").append(formatNumber(usd)); if (!vnd.isBlank()) answer.append("\n• VND: ~").append(formatNumber(vnd)).append(" VNĐ"); answer.append("\nNguồn: ").append(source); if (!updated.isBlank()) answer.append(" · cập nhật: ").append(updated); return answer.toString();
-    }
-
-    private static String formatNumber(String value) { try { return java.text.NumberFormat.getNumberInstance(Locale.US).format(new java.math.BigDecimal(value)); } catch (RuntimeException ignored) { return value; } }
-    private static boolean isStartCommand(String normalized) { return "/start".equals(normalized) || "/help".equals(normalized); }
-    private static LlmProvider explicitProvider(String text) { String value = text.toLowerCase(Locale.ROOT); if (containsAny(value, "hey gemini", "hi gemini", "gemini:")) return LlmProvider.GOOGLE; if (containsAny(value, "hey claude", "hi claude", "claude:")) return LlmProvider.ANTHROPIC; if (containsAny(value, "hey openai", "hi openai", "openai:")) return LlmProvider.OPENAI; return null; }
-
-    private String executeCurrentTime(String senderId, String externalMessageReference) {
-        ToolRequest request = new ToolRequest("telegram-time-" + senderId + "-" + System.nanoTime(), "telegram-human", CurrentTimeToolAdapter.CAPABILITY, "runtime:workforce", "read", "current date and time", List.of("telegram:" + externalMessageReference));
-        ToolResult result = toolFabric.execute(request); if (!result.success()) throw new IllegalStateException("current_time_read_failed:" + result.output()); Map<String, String> fields = parseKeyValueOutput(result.output());
-        String day = switch (fields.getOrDefault("day_of_week", "")) { case "MONDAY" -> "Thứ Hai"; case "TUESDAY" -> "Thứ Ba"; case "WEDNESDAY" -> "Thứ Tư"; case "THURSDAY" -> "Thứ Năm"; case "FRIDAY" -> "Thứ Sáu"; case "SATURDAY" -> "Thứ Bảy"; case "SUNDAY" -> "Chủ Nhật"; default -> fields.getOrDefault("day_of_week", "không xác định"); };
-        return "Hôm nay là " + day + ", ngày " + fields.getOrDefault("current_date", "không xác định") + ". Giờ hiện tại: " + fields.getOrDefault("current_time", "không xác định") + " (giờ Việt Nam).";
-    }
-
-    private static Map<String, String> parseKeyValueOutput(String output) { return output.lines().map(line -> line.split("=", 2)).filter(parts -> parts.length == 2).collect(java.util.stream.Collectors.toUnmodifiableMap(parts -> parts[0], parts -> parts[1], (a, b) -> b)); }
-    private String executeGatewayAudit(String senderId, String text, String externalMessageReference) { String executionId = "telegram-audit-" + senderId + "-" + System.nanoTime(); try { ExecutionResult result = capabilityRegistry.require("gateway.audit.read").execute(new ExecutionCommand(executionId, "gateway.audit.read", Instant.now())); return "METATRON GATEWAY AUDIT RESULT\nexecution_id=" + result.executionId() + "\ncapability=" + result.capability() + "\nsuccess=" + result.success() + "\nsummary=" + result.summary() + "\nevidence=" + result.evidence() + "\nsource=telegram:" + externalMessageReference + "\nrequest=" + text.trim(); } catch (RuntimeException failure) { return "METATRON GATEWAY AUDIT BLOCKED\nexecution_id=" + executionId + "\nreason=" + failure.getMessage(); } }
-    private static boolean isGatewayAuditCommand(String text) { String value = text.toLowerCase(Locale.ROOT); return containsAny(value, "audit g4 gateway", "audit gateway", "audit g4"); }
-    private static boolean isCurrentTimeCommand(String text) { String value = text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim(); return containsAny(value, "hôm nay là thứ mấy", "hôm nay thứ mấy", "hom nay la thu may", "hom nay thu may", "thứ mấy hôm nay", "thu may hom nay", "what day is today", "what day today", "today's date", "todays date", "what date is it", "what is today's date", "what time is it", "current time", "current date and time", "what's the date"); }
-    private static boolean isBitcoinPriceCommand(String text) { String value = text.toLowerCase(Locale.ROOT); boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*"); boolean price = containsAny(value, "giá", "gia ", "price", "bao nhiêu", "bao nhieu", "hôm nay", "hom nay", "hiện tại", "hien tai", "now", "current"); return bitcoin && price; }
-    private static IntelligenceMode resolveMode(String text) { String value = text.toLowerCase(Locale.ROOT); if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) return IntelligenceMode.EXECUTION; if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) return IntelligenceMode.DECISION; if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause", "phân tích", "phan tich", "đánh giá", "danh gia")) return IntelligenceMode.REASONING; return IntelligenceMode.DISCUSSION; }
-    private static boolean containsAny(String value, String... terms) { for (String term : terms) if (value.contains(term)) return true; return false; }
-    private static Function<LlmProvider, String> modelSelector(String openAiModel, String googleModel, String anthropicModel) { return provider -> switch (provider) { case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini"); case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash"); case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514"); }; }
-    private static String normalizeProvider(String provider) { if (provider == null || provider.isBlank() || "AUTO".equalsIgnoreCase(provider)) return ""; return provider.trim().toUpperCase(Locale.ROOT); }
-    private static String defaultModel(String configured, String fallback) { return configured == null || configured.isBlank() ? fallback : configured.trim(); }
-    private static boolean present(String value) { return value != null && !value.isBlank(); }
 }
