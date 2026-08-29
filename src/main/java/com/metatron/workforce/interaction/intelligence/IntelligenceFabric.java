@@ -23,6 +23,7 @@ public final class IntelligenceFabric {
     private final IntelligenceSynthesizer synthesizer;
     private final IntelligenceGovernance governance;
     private final DefaultToolFabric toolFabric;
+    private final ExternalEvidenceResponseGuard externalEvidenceGuard;
 
     public IntelligenceFabric(
             IntelligencePlanner planner,
@@ -44,6 +45,7 @@ public final class IntelligenceFabric {
         this.synthesizer = Objects.requireNonNull(synthesizer, "synthesizer");
         this.governance = Objects.requireNonNull(governance, "governance");
         this.toolFabric = Objects.requireNonNull(toolFabric, "toolFabric");
+        this.externalEvidenceGuard = new ExternalEvidenceResponseGuard();
     }
 
     public IntelligencePlan plan(IntelligenceRequest request) {
@@ -57,6 +59,7 @@ public final class IntelligenceFabric {
         IntelligencePlan plan = planner.plan(enrichedRequest);
         List<LlmResponse> responses = new ArrayList<>();
         List<RuntimeException> failures = new ArrayList<>();
+        boolean hasExternalEvidence = enrichment.webEvidence() != null && enrichment.webEvidence().success();
 
         for (LlmProvider provider : plan.providers()) {
             try {
@@ -65,6 +68,9 @@ public final class IntelligenceFabric {
                         "intelligence engine response");
                 if (response.provider() != provider) {
                     throw new IllegalStateException("provider attribution mismatch for " + provider);
+                }
+                if (hasExternalEvidence) {
+                    externalEvidenceGuard.validate(response.text());
                 }
                 responses.add(response);
                 if (plan.collaborationMode() == CollaborationMode.SINGLE) break;
@@ -79,9 +85,9 @@ public final class IntelligenceFabric {
         }
 
         if (responses.isEmpty()) {
-            if (enrichment.webEvidence() != null && enrichment.webEvidence().success()) {
+            if (hasExternalEvidence) {
                 String fallback = renderWebEvidenceFallback(enrichment.webEvidence());
-                LOG.warn("intelligence_all_providers_failed_web_evidence_preserved request_id={} providers={} evidence_count={}",
+                LOG.warn("intelligence_provider_outputs_rejected_web_evidence_preserved request_id={} providers={} evidence_count={}",
                         enrichedRequest.requestId(), plan.providers(), enrichment.webEvidence().evidenceReferences().size());
                 return new IntelligenceResult(enrichedRequest.requestId(), fallback, List.of());
             }
@@ -98,6 +104,7 @@ public final class IntelligenceFabric {
                 : Objects.requireNonNull(synthesizer.synthesize(enrichedRequest, List.copyOf(responses)),
                         "synthesized intelligence result");
 
+        if (hasExternalEvidence) externalEvidenceGuard.validate(text);
         if (plan.requiresReasoning()) governance.validate(enrichedRequest, List.copyOf(responses), text);
 
         return new IntelligenceResult(
@@ -134,10 +141,14 @@ public final class IntelligenceFabric {
         evidence.addAll(result.evidenceReferences());
         String context = request.context()
                 + "\n\nRESOLVED RESEARCH OBJECTIVE:\n" + researchObjective
-                + "\n\nWEB RESEARCH EVIDENCE (retrieved by Workforce before reasoning):\n"
+                + "\n\nWEB RESEARCH EVIDENCE (retrieved by Workforce before provider reasoning):\n"
                 + result.output()
-                + "\n\nUse this evidence for current/external claims. Cite or name the source when useful. "
-                + "Do not claim a web lookup occurred unless this evidence block is present.\n";
+                + "\n\nEXTERNAL-EVIDENCE CONTRACT:\n"
+                + "Workforce has already accessed external web/search sources for this request. "
+                + "You MUST use the supplied evidence when answering. You MUST NOT say that you lack web access, "
+                + "real-time-data access, browsing, search, or the ability to inspect sources. "
+                + "If the evidence does not contain the exact requested numeric fact, say exactly what the retrieved sources do and do not establish, "
+                + "and name the sources; do not deny that retrieval occurred. Never invent a value absent from evidence.\n";
 
         LOG.info("web_research_complete request_id={} result_count={} resolved_objective_length={}",
                 request.requestId(), result.evidenceReferences().size(), researchObjective.length());
@@ -166,19 +177,19 @@ public final class IntelligenceFabric {
 
     private static boolean isConversationalContinuation(String objective) {
         String value = objective == null ? "" : objective.toLowerCase(Locale.ROOT).trim();
-        if (value.isBlank()) return false;
-        if (value.length() > 90) return false;
+        if (value.isBlank() || value.length() > 120) return false;
         return containsAny(value,
                 "phân tích đi", "phan tich di", "phân tích tiếp", "phan tich tiep",
                 "tiếp tục", "tiep tuc", "làm đi", "lam di", "làm tiếp", "lam tiep",
                 "cái đó", "cai do", "vậy đi", "vay di", "do it", "continue", "go on",
-                "analyze it", "analyse it", "proceed");
+                "analyze it", "analyse it", "proceed", "truy cập", "truy cap", "vô xem", "vo xem",
+                "mở xem", "mo xem", "xem đi", "xem thử", "check it", "look it up", "access it", "search it");
     }
 
     private static String renderWebEvidenceFallback(ToolResult result) {
         String output = result.output() == null ? "" : result.output().trim();
         if (output.isBlank()) {
-            return "Không thể tạo bản tổng hợp AI, nhưng Workforce đã xác nhận có external evidence. Hãy thử lại.";
+            return "Workforce đã truy xuất external evidence nhưng payload không đủ dữ liệu để trả lời an toàn.";
         }
 
         List<String> useful = output.lines()
@@ -188,17 +199,18 @@ public final class IntelligenceFabric {
                 .filter(line -> !line.equals("CURRENT EXTERNAL DATA"))
                 .filter(line -> !line.startsWith("query="))
                 .filter(line -> !line.startsWith("retrieved_at="))
-                .limit(24)
+                .limit(36)
                 .toList();
 
-        StringBuilder answer = new StringBuilder("Thông tin web mới nhất Workforce vừa truy xuất:\n");
+        StringBuilder answer = new StringBuilder("Workforce đã truy xuất web cho yêu cầu này. Evidence hiện có:\n");
         for (String line : useful) {
             if (line.startsWith("url=")) answer.append("Nguồn: ").append(line.substring(4)).append('\n');
             else if (line.startsWith("snippet=")) answer.append(line.substring(8)).append('\n');
+            else if (line.startsWith("source_excerpt=")) answer.append(line.substring(15)).append('\n');
             else if (line.matches("\\[[0-9]+].*")) answer.append("\n").append(line).append('\n');
             else answer.append(line).append('\n');
         }
-        answer.append("\nDữ liệu trên được trả trực tiếp từ external evidence; không bịa kết quả khi lớp AI synthesis tạm không khả dụng.");
+        answer.append("\nProvider synthesis không đạt evidence-consistency contract, nên Metatron trả evidence trực tiếp thay vì bịa hoặc phủ nhận khả năng truy xuất.");
         return answer.toString().trim();
     }
 
@@ -208,10 +220,10 @@ public final class IntelligenceFabric {
         return containsAny(value,
                 "latest", "current", "today", "now", "news", "weather", "price", "rate",
                 "search", "internet", "online", "who is", "what is", "where is", "when is", "how much",
-                "forecast", "prediction", "predict", "market", "trend",
+                "forecast", "prediction", "predict", "market", "trend", "browse", "access", "look it up", "check it",
                 "hôm nay", "hiện tại", "mới nhất", "tin tức", "thời tiết", "giá ", "tỷ giá", "tỉ giá",
                 "là gì", "ai là", "ở đâu", "khi nào", "bao nhiêu", "tìm kiếm", "dự báo", "dự đoán",
-                "thị trường", "xu hướng");
+                "thị trường", "xu hướng", "truy cập", "truy cap", "vô xem", "vo xem", "mở xem", "mo xem");
     }
 
     private static boolean containsAny(String value, String... candidates) {
