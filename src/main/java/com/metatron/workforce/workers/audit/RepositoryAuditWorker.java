@@ -1,14 +1,12 @@
 package com.metatron.workforce.workers.audit;
 
+import com.metatron.workforce.gateway.GatewayEgressClient;
 import com.metatron.workforce.workers.Worker;
 import com.metatron.workforce.workers.WorkerContext;
 import com.metatron.workforce.workers.WorkerResult;
 
-import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -19,7 +17,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Real, read-only GitHub repository audit. PASS means the audit completed with real observations, not that findings are empty. */
+/** Real, read-only GitHub repository audit using governed Gateway egress. */
 public final class RepositoryAuditWorker implements Worker {
     private static final Pattern REPOSITORY = Pattern.compile("(?i)(?:https?://github\\.com/)?([a-z0-9_.-]+)/([a-z0-9_.-]+)");
     private static final Pattern DEFAULT_BRANCH = Pattern.compile("\\\"default_branch\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
@@ -28,33 +26,51 @@ public final class RepositoryAuditWorker implements Worker {
     private static final int MAX_FILES = 80;
     private static final int MAX_BYTES = 2_000_000;
 
-    private final HttpClient http;
-    private final String apiBase;
-    private final String githubToken;
+    private final GatewayEgressClient egress;
+    private final boolean authenticated;
 
+    /** Direct construction has no admitted authorization and therefore fails closed on external access. */
     public RepositoryAuditWorker() {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), "https://api.github.com", env("GITHUB_TOKEN"));
+        this("");
     }
-    RepositoryAuditWorker(HttpClient http, String apiBase) { this(http, apiBase, ""); }
+
+    /** Production constructor: authorization is preserved from the admitted execution request. */
+    public RepositoryAuditWorker(String authorizationReference) {
+        String token = env("GITHUB_TOKEN");
+        this.egress = new GatewayEgressClient(
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
+                "https://api.github.com", token, authorizationReference);
+        this.authenticated = !token.isBlank();
+    }
+
+    RepositoryAuditWorker(HttpClient http, String apiBase) {
+        this(http, apiBase, "");
+    }
+
     RepositoryAuditWorker(HttpClient http, String apiBase, String githubToken) {
-        this.http=http; this.apiBase=apiBase.replaceAll("/+$", ""); this.githubToken=githubToken==null?"":githubToken.trim();
+        this.egress = new GatewayEgressClient(http, apiBase, githubToken, "TEST-OBSERVATION-AUTHORIZATION");
+        this.authenticated = githubToken != null && !githubToken.isBlank();
     }
 
     @Override public WorkerResult execute(WorkerContext context) {
         Instant completedAt=Instant.now();
         String target=extractRepository(context.objective());
         if(target==null) return failed(context,"repository target missing; objective must contain owner/repo or github.com/owner/repo",completedAt);
+        List<String> crossingEvidence = new ArrayList<>();
         try {
-            HttpResponse<String> metadata=get("/repos/"+target,"application/vnd.github+json");
+            GatewayEgressClient.EgressResponse metadata=get("/repos/"+target,"application/vnd.github+json", crossingEvidence);
+            if(metadata.denied()) return failed(context,"Gateway egress denied repository metadata: "+metadata.denialReason(),completedAt);
             if(metadata.statusCode()!=200) return failed(context,"repository metadata HTTP "+metadata.statusCode()+" target="+target,completedAt);
             String branch=capture(DEFAULT_BRANCH,metadata.body());
             if(branch==null) return failed(context,"GitHub response missing default_branch target="+target,completedAt);
-            HttpResponse<String> commit=get("/repos/"+target+"/commits/"+encode(branch),"application/vnd.github+json");
+            GatewayEgressClient.EgressResponse commit=get("/repos/"+target+"/commits/"+encode(branch),"application/vnd.github+json", crossingEvidence);
+            if(commit.denied()) return failed(context,"Gateway egress denied commit read: "+commit.denialReason(),completedAt);
             if(commit.statusCode()!=200) return failed(context,"default branch commit HTTP "+commit.statusCode()+" target="+target+" branch="+branch,completedAt);
             String commitSha=capture(SHA,commit.body());
             if(commitSha==null) return failed(context,"GitHub response missing commit SHA target="+target,completedAt);
 
-            HttpResponse<String> tree=get("/repos/"+target+"/git/trees/"+commitSha+"?recursive=1","application/vnd.github+json");
+            GatewayEgressClient.EgressResponse tree=get("/repos/"+target+"/git/trees/"+commitSha+"?recursive=1","application/vnd.github+json", crossingEvidence);
+            if(tree.denied()) return failed(context,"Gateway egress denied repository tree: "+tree.denialReason(),completedAt);
             if(tree.statusCode()!=200) return failed(context,"repository tree HTTP "+tree.statusCode()+" target="+target,completedAt);
             List<String> paths=paths(tree.body());
             if(paths.isEmpty()) return failed(context,"repository tree contains no auditable files target="+target,completedAt);
@@ -65,7 +81,8 @@ public final class RepositoryAuditWorker implements Worker {
             List<String> findings=new ArrayList<>();
             for(String path:selected){
                 if(read>=MAX_FILES || bytes>=MAX_BYTES) break;
-                HttpResponse<String> file=get("/repos/"+target+"/contents/"+encodePath(path)+"?ref="+commitSha,"application/vnd.github.raw+json");
+                GatewayEgressClient.EgressResponse file=get("/repos/"+target+"/contents/"+encodePath(path)+"?ref="+commitSha,"application/vnd.github.raw+json", crossingEvidence);
+                if(file.denied()){ findings.add("EGRESS_DENIED "+path+" reason="+file.denialReason()); continue; }
                 if(file.statusCode()!=200){ findings.add("UNREADABLE "+path+" HTTP="+file.statusCode()); continue; }
                 String body=file.body(); read++; bytes+=body.getBytes(StandardCharsets.UTF_8).length; observed.add(path);
                 String lower=path.toLowerCase();
@@ -82,16 +99,23 @@ public final class RepositoryAuditWorker implements Worker {
             if(sot==0) findings.add("NO_SOT_MARKER_IN_AUDITED_CONTENT");
             String findingText=findings.isEmpty()?"NONE":String.join(" | ",findings);
             String evidence="Repository Audit Report\n"+
-                    "task="+context.taskId()+"\nobjective="+context.objective()+"\nsource=github-api\nauthenticated="+!githubToken.isBlank()+
+                    "task="+context.taskId()+"\nobjective="+context.objective()+"\nsource=gateway-egress/github-api\nauthenticated="+authenticated+
                     "\nrepository="+target+"\ndefaultBranch="+branch+"\ncommitSha="+commitSha+
                     "\ntreeHttpStatus="+tree.statusCode()+"\nrepositoryFilesObserved="+paths.size()+"\ncontentFilesRead="+read+
                     "\ncontentBytesRead="+bytes+"\nsotSignals="+sot+"\ndocumentFilesRead="+docs+"\nsourceFilesRead="+source+
-                    "\ntestFilesRead="+tests+"\nfindings="+findingText+"\nobservedPaths="+String.join(",",observed)+
+                    "\ntestFilesRead="+tests+"\ngatewayEgressCrossings="+crossingEvidence.size()+
+                    "\ngatewayEgressProvenance="+String.join(" | ",crossingEvidence)+
+                    "\nfindings="+findingText+"\nobservedPaths="+String.join(",",observed)+
                     "\nobservedAt="+completedAt+"\nverdict=PASS\n";
             return new WorkerResult("RepositoryAuditWorker","PASS",evidence,completedAt);
         } catch(Exception e){ return failed(context,"GitHub read failed: "+e.getClass().getSimpleName()+": "+String.valueOf(e.getMessage()),completedAt); }
     }
 
+    private GatewayEgressClient.EgressResponse get(String path,String accept,List<String> evidence)throws Exception{
+        GatewayEgressClient.EgressResponse response=egress.get(path,accept);
+        if(!response.provenance().isBlank()) evidence.add(response.provenance());
+        return response;
+    }
     private List<String> paths(String json){ List<String> out=new ArrayList<>(); Matcher m=TREE_PATH.matcher(json==null?"":json); while(m.find()) out.add(m.group(1)); return out; }
     private List<String> select(List<String> paths){
         List<String> priority=new ArrayList<>(), rest=new ArrayList<>();
@@ -99,10 +123,6 @@ public final class RepositoryAuditWorker implements Worker {
         LinkedHashSet<String> all=new LinkedHashSet<>(); all.addAll(priority); all.addAll(rest); return new ArrayList<>(all);
     }
     private boolean auditable(String l){ return l.endsWith(".md")||l.endsWith(".txt")||l.endsWith(".java")||l.endsWith(".kt")||l.endsWith(".py")||l.endsWith(".js")||l.endsWith(".ts")||l.endsWith(".go")||l.endsWith(".rs")||l.endsWith(".yml")||l.endsWith(".yaml")||l.endsWith(".json"); }
-    private HttpResponse<String> get(String path,String accept)throws Exception{
-        HttpRequest.Builder b=HttpRequest.newBuilder(URI.create(apiBase+path)).timeout(Duration.ofSeconds(15)).header("Accept",accept).header("X-GitHub-Api-Version","2022-11-28").header("User-Agent","metatron-workforce-repository-audit");
-        if(!githubToken.isBlank()) b.header("Authorization","Bearer "+githubToken); return http.send(b.GET().build(),HttpResponse.BodyHandlers.ofString());
-    }
     private static String encode(String s){ return URLEncoder.encode(s,StandardCharsets.UTF_8).replace("+","%20"); }
     private static String encodePath(String p){ String[] parts=p.split("/"); StringBuilder b=new StringBuilder(); for(String x:parts){ if(b.length()>0)b.append('/'); b.append(encode(x)); } return b.toString(); }
     private static int count(String s,String needle){ int n=0,i=0; while((i=s.indexOf(needle,i))>=0){n++;i+=needle.length();} return n; }
