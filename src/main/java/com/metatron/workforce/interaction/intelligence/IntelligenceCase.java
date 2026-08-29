@@ -68,6 +68,18 @@ public record IntelligenceCase(
                 createdAt, Instant.now());
     }
 
+    public IntelligenceCase withInformationAssessment(List<InformationRequirement> requirements,
+                                                      List<String> evidenceRefs,
+                                                      IntelligenceCaseStatus nextStatus) {
+        return new IntelligenceCase(caseId, conversationId, requester, objective, requestedDepth,
+                Objects.requireNonNull(nextStatus, "nextStatus"),
+                requirements == null ? informationRequirements : List.copyOf(requirements),
+                evidenceRefs == null ? evidenceReferences : List.copyOf(evidenceRefs),
+                assumptions, hypotheses, unknowns, contradictions, reasoningArtifactReferences,
+                latestConclusion, latestRecommendation, externalInstitutionalReferences,
+                createdAt, Instant.now());
+    }
+
     public IntelligenceCase withResult(String conclusion, List<String> evidenceRefs) {
         return new IntelligenceCase(caseId, conversationId, requester, objective, requestedDepth,
                 IntelligenceCaseStatus.RESULT_READY, informationRequirements,

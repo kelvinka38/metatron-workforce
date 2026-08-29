@@ -37,4 +37,13 @@ public record InformationRequirement(
             throw new IllegalArgumentException("requirementId and question must not be blank");
         }
     }
+
+    public InformationRequirement withResolution(InformationRequirementStatus nextStatus, List<String> evidenceRefs) {
+        Objects.requireNonNull(nextStatus, "nextStatus");
+        return new InformationRequirement(
+                requirementId, question, reasonRequired, nextStatus, preferredSourceClasses,
+                evidenceRefs == null ? evidenceReferences : List.copyOf(evidenceRefs),
+                freshnessRequirement, qualityRequirement, acquisitionCostHint, latencyHint,
+                authorityRequirement, impactIfUnknown);
+    }
 }
