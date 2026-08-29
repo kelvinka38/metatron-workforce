@@ -3,12 +3,12 @@
 > PUBLIC READ-ONLY DERIVATIVE — NOT SOT
 >
 > Canonical authority: `kelvinka38/metatron-institution/06_GATEWAY/SOT.md`
-> Source commit: `b3516179879dc90dd482660efef71894069470c3`
-> Source blob: `b6426c31dbbf52e8cc3668fc551602066803d21a`
+> Source commit: `f59adbf0296e059189ccb01bff6d99ea8a9d050d`
+> Source blob: `380f3407001ee94ea3049984ca08f9ccfb278f24`
 
 ## Purpose
 
-Gateway is the controlled institutional boundary between Metatron and external actors, systems, channels, networks, providers and services. It owns boundary enforcement and Gateway-specific operational outcomes. It does not own institutional authority, Worker identity, Workforce, Intelligence, Execution semantics, institutional knowledge or business logic.
+Gateway is the continuously managed controlled institutional boundary between Metatron and external actors, systems, channels, networks, providers and services. It owns boundary enforcement and Gateway-specific operational outcomes without acquiring the institutional semantics behind the boundary.
 
 ## Accountable executive
 
@@ -16,19 +16,23 @@ The canonical accountable operational executive is the **Gateway Director**. The
 
 `ASSESS → PLAN → STAFF → BUILD/CHANGE → OPERATE → OBSERVE → MAINTAIN → DEFEND → RECOVER → IMPROVE → REPORT`
 
-The Director may manage normal Gateway operations and delegated changes, but may not redefine upstream SOT/security policy or grant itself new authority.
+The Director may exercise delegated operational authority but may not redefine upstream SOT/security policy or self-grant authority.
 
 ## Canonical ingress
 
-`External Interaction → Identity Resolution → Authentication → Authorization Enforcement → Validation → Admission → Routing → Internal Capability`
+`EXTERNAL INTERACTION → CHANNEL VALIDATION → IDENTITY RESOLUTION → AUTHENTICATION → AUTHORIZATION ENFORCEMENT → STRUCTURAL/PROTOCOL VALIDATION → ADMISSION → DESTINATION RESOLUTION → ROUTING → INTERNAL CAPABILITY`
 
-Authentication is not authorization. Authorization is not validation. Validation is not admission. Admission is not execution.
+`IDENTITY ≠ AUTHENTICATION ≠ AUTHORIZATION ≠ VALIDATION ≠ ADMISSION ≠ EXECUTION`
+
+`INTENT ≠ AUTHORIZATION`
+
+`NETWORK REACHABILITY ≠ AUTHORITY`
 
 ## Canonical egress
 
-`Internal Capability → Egress Policy Evaluation → Destination Validation → Credential / Identity Isolation → External System`
+`INTERNAL CAPABILITY → EXTERNAL ACCESS REQUEST → AUTHORITY/AUTHORIZATION → DESTINATION POLICY → CREDENTIAL/IDENTITY ISOLATION → GATEWAY EGRESS → APPROVED EXTERNAL DESTINATION → RETURN VALIDATION → PROVENANCE/RETRIEVAL EVIDENCE → REQUESTING CAPABILITY`
 
-Internet/external data is governed boundary access; external content does not acquire institutional authority by crossing Gateway.
+The requesting domain owns why/what and interpretation. Gateway owns whether/how the boundary is crossed and the crossing evidence. External content never acquires institutional authority merely by crossing Gateway.
 
 ## Operational mandate
 
@@ -46,18 +50,16 @@ Control-plane authority is never inferred from ordinary data-plane reachability.
 
 Every production change must be attributable, authorized, observable and recoverable where applicable:
 
-`CHANGE REQUEST → RISK CLASSIFICATION → AUTHORITY CHECK → IMPACT/DEPENDENCY REVIEW → IMPLEMENTATION PLAN → ROLLBACK/RECOVERY PLAN → EXECUTE → VERIFY → OBSERVE → ACCEPT → EVIDENCE → CLOSE`
+`CHANGE REQUEST → RISK → AUTHORITY → IMPACT/DEPENDENCY REVIEW → PLAN → ROLLBACK/RECOVERY PLAN → EXECUTE → VERIFY → OBSERVE → ACCEPT → EVIDENCE → CLOSE`
 
 Undocumented manual production mutation does not become canonical state.
 
 ## Transformation rule
 
-A Gateway Director follows:
-
-`READ CANONICAL DESIGN → AUDIT CURRENT STATE → CLASSIFY GAPS → PROPOSE TRANSFORMATION PLAN → STAFF THROUGH WORKFORCE → IMPLEMENT COMPLETE TARGET → INTEGRATE → FORMALLY TEST → FIX → RETEST → ACCEPT → OPERATE CONTINUOUSLY`
+`READ FROZEN DESIGN → AUDIT CURRENT STATE → CLASSIFY GAPS → TRANSFORMATION PLAN → STAFF THROUGH WORKFORCE → IMPLEMENT COMPLETE → INTEGRATE → FORMAL TEST → FIX → RETEST → ACCEPT → OPERATE CONTINUOUSLY`
 
 Current compliant implementation is reused; Gateway is not rewritten for aesthetic/technology preference alone.
 
 ## Core security invariants
 
-Gateway enforces authority but does not invent authority. Network reachability is not authority. Invalid/unauthorized interactions cannot reach protected internal capabilities. Privileged changes are attributable and authorized. Correlation/provenance survives controlled boundary crossing. External providers/content do not become Metatron authority. Autonomous operation remains observable and accountable.
+Gateway enforces authority but does not invent it. Intent resolution is not authorization. Authentication is not authorization. Admission is not execution. Network reachability is not authority. Invalid/unauthorized interactions cannot reach protected internal capabilities. Privileged changes are attributable and authorized. Correlation/provenance survives controlled boundary crossing. External providers/content do not become Metatron authority. Autonomous operation remains observable and accountable. Founder is not the routine Gateway operator.
