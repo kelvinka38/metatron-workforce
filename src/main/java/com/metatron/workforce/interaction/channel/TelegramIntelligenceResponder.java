@@ -138,8 +138,20 @@ public final class TelegramIntelligenceResponder {
             List<LlmProvider> requestedProviders = requested == null ? List.of() : List.of(requested);
             int maxProviders = requested == null ? 3 : 1;
             IntelligenceMode mode = resolveMode(text);
-            String consequence = mode == IntelligenceMode.EXECUTION ? "HIGH" : mode == IntelligenceMode.DECISION ? "MEDIUM" : "LOW";
 
+            // Preserve the requested governance mode, but never manufacture institutional authority
+            // from Telegram identity or natural-language intent. Material decisions/execution must enter
+            // the dedicated authority / authorization / execution-admission path with verified evidence.
+            if (mode == IntelligenceMode.EXECUTION) {
+                route = "execution-admission-blocked";
+                return "METATRON EXECUTION BLOCKED\nreason=EXECUTION_ADMISSION_REQUIRED\nrequest=" + text.trim();
+            }
+            if (mode == IntelligenceMode.DECISION) {
+                route = "decision-authority-blocked";
+                return "METATRON DECISION BLOCKED\nreason=INSTITUTIONAL_AUTHORITY_REQUIRED\nrequest=" + text.trim();
+            }
+
+            String consequence = "LOW";
             route = "intelligence";
             IntelligenceRequest request = new IntelligenceRequest(
                     "telegram-" + senderId + "-" + System.nanoTime(), "telegram:" + senderId,
@@ -250,12 +262,13 @@ public final class TelegramIntelligenceResponder {
 
     private static IntelligenceMode resolveMode(String text) {
         String value = text.toLowerCase(Locale.ROOT);
-        // Natural-language action or decision phrasing expresses intent only. It may
-        // increase reasoning scrutiny, but it cannot create DECISION/EXECUTION authority.
-        if (containsAny(value,
-                "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy",
-                "decide", "approve", "authorize", "should we proceed", "make the decision",
-                "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) {
+        if (containsAny(value, "deploy", "execute", "run the fix", "ship it", "push to production", "fix it and deploy")) {
+            return IntelligenceMode.EXECUTION;
+        }
+        if (containsAny(value, "decide", "approve", "authorize", "should we proceed", "make the decision")) {
+            return IntelligenceMode.DECISION;
+        }
+        if (containsAny(value, "audit", "analyze", "analyse", "review", "diagnose", "compare", "investigate", "why", "root cause")) {
             return IntelligenceMode.REASONING;
         }
         return IntelligenceMode.DISCUSSION;
