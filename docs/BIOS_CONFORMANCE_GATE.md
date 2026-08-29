@@ -2,7 +2,7 @@
 
 ## Status
 
-**BOUNDARY RECONCILED — RUNTIME PATCH REQUIRED**
+**RUNTIME RECONCILED — PRODUCTION VERIFIED**
 
 This document describes the Workforce-side boundary used when Workforce participates in a BIOS Product / Case / Program flow. BIOS is a Product / Node and does not own Workforce or institutional authority semantics.
 
@@ -12,83 +12,95 @@ This document describes the Workforce-side boundary used when Workforce particip
 BIOS PRODUCT CONFORMANCE ≠ WORKFORCE GOVERNANCE
 BIOS PROGRAM ≠ ASSIGNMENT
 USER INTENT ≠ AUTHORIZATION
+USER REQUEST ≠ AUTHORIZATION
+NATURAL-LANGUAGE EXECUTION INTENT ≠ AUTHORITY PROOF
 GUIDANCE ≠ AUTHORIZATION
 PUBLICATION ≠ SOT
 INTELLIGENCE OUTPUT ≠ EXECUTION EVIDENCE
+DECISION ≠ EXECUTION
 ```
 
-Workforce must consume canonical institutional authority and its own execution semantics. A BIOS request may supply product context, required evidence, consequence, Program information, or a requested action; it cannot manufacture authority.
+Workforce consumes canonical institutional authority and its own execution semantics. A BIOS request may supply product context, required evidence, consequence, Program information, or a requested action; it cannot manufacture authority.
 
-## Current executable implementation
+## Executable runtime boundaries
 
-The current `main` implementation does **not** contain the previously documented `BiosConformanceValidator` / `EvidenceBackedGovernance` runtime gate.
-
-The current BIOS-named executable boundary is:
+The reconciled runtime has two distinct BIOS-facing enforcement locations:
 
 ```text
 com.metatron.workforce.bios.BiosExecutionKernel
 ```
 
-and it is wired through:
+for the BIOS interaction boundary, and:
 
 ```text
-com.metatron.workforce.interaction.MetatronInteractionOrchestrator
+com.metatron.workforce.interaction.intelligence.BiosConformanceValidator
+com.metatron.workforce.interaction.intelligence.EvidenceBackedGovernance
 ```
 
-The previous documentation naming `BiosConformanceValidator` as the executable implementation is historical/stale and MUST NOT be used as evidence of current runtime behavior.
+for governed Intelligence results.
 
-## Known semantic defect
+`BiosExecutionKernel` no longer treats conversational phrases such as `I authorize`, `approved`, or `thực hiện ngay` as authorization proof. EXECUTION intent fails closed with `BIOS_EXECUTION_ADMISSION_REQUIRED` rather than creating a parallel authority model.
 
-`BiosExecutionKernel` currently classifies natural-language execution intent and may treat phrases such as `i authorize`, `approved`, or `thực hiện ngay` as sufficient for its local execution-admission check.
+Telegram interaction preserves consequential intent classification while keeping channel identity and natural-language intent outside institutional authority. Requests such as `fix it and deploy` remain execution intent, but the public interaction path returns a deterministic execution-admission block unless a proper institutional execution path is available.
 
-That behavior is not a valid institutional authorization proof.
-
-The required invariant is:
+The required invariant is therefore executable:
 
 ```text
 NATURAL-LANGUAGE EXECUTION INTENT
         ↓
-INTENT CLASSIFICATION
-        ≠
-AUTHORIZATION
+EXECUTION INTENT CLASSIFICATION
+        ↓
+NO VERIFIED INSTITUTIONAL ADMISSION
+        ↓
+FAIL CLOSED
 ```
 
-Actual execution must remain fail-closed on the applicable Workforce/institutional authorization mechanism.
+## Workforce execution authority boundary
 
-## Existing stronger Workforce boundary
-
-`ExecutionAdmissionService` already requires an Assignment and Authorization and separately verifies required guidance. Its semantic distinction is the correct direction:
+`ExecutionAdmissionService` remains the stronger material-execution boundary. It requires Assignment and Authorization and separately verifies required guidance.
 
 ```text
 GUIDANCE != AUTHORIZATION
+PROGRAM != ASSIGNMENT
+INTENT != AUTHORITY
 ```
 
-The interaction boundary must not weaken that execution model.
+The interaction and Intelligence layers must not weaken that model.
 
-## Required runtime reconciliation
+## Intelligence authority provenance
 
-The next implementation patch must:
+Web enrichment may propagate authority context supplied by its caller, but Intelligence does not manufacture authority merely because it selected a read-only evidence tool.
 
-1. preserve DISCUSSION and REASONING interaction behavior;
-2. preserve execution-intent classification;
-3. remove conversational phrases as authorization proof;
-4. prevent `BiosExecutionKernel` from creating a parallel authority model;
-5. route material execution through an actual authorization/admission contract before side effects;
-6. preserve provenance requirements for consequential outputs;
-7. add tests proving execution intent without authority fails closed;
-8. add tests proving an authorized execution path can proceed through the proper authority mechanism;
-9. run `./gradlew clean test bootJar --no-daemon` after the patch;
-10. keep production deployment/evidence separate from CI evidence.
+Configured provider transports are also no longer represented as fabricated live capacity/quota/latency/cost snapshots. `ConfiguredProviderRoutingPolicy` represents configuration only; `CapacityAwareRoutingPolicy` remains reserved for genuine capacity snapshots.
 
-## Verification status
+## Verification evidence
 
-This document is SOT/downstream reconciliation evidence only. It is **not** CI verification and **not** production evidence.
-
-Runtime status remains:
+Production source commit:
 
 ```text
-SOT BOUNDARY: RECONCILED
-CURRENT BIOS-NAMED INTERACTION RUNTIME: SEMANTIC PATCH REQUIRED
-CI AFTER PATCH: PENDING
-PRODUCTION AFTER PATCH: NOT CLAIMED
+315c41b89e89bc767b6bf9bec568352faebd6ec3
 ```
+
+For that exact source revision:
+
+```text
+BUILD / TEST: PASS
+PRODUCTION DEPLOY: PASS
+DEPLOYED SHA IDENTITY: PASS
+WORKFORCE LOCAL P95: 0.0031 s
+PUBLIC GATEWAY HEALTH: PASS
+INTERNET EGRESS: PASS
+TELEGRAM WEBHOOK: PASS
+WORKFORCE LIVE ACCEPTANCE: PASS
+G12 PRODUCTION READINESS: PASS
+```
+
+Production deployment run: `33226689228`.
+Workforce Live Acceptance run: `33226791833`.
+G12 Production Readiness Evidence run: `33226807293`.
+
+Production evidence is kept distinct from repository documentation and from CI-only evidence.
+
+## Remaining boundary rule
+
+This reconciliation does **not** mean natural-language requests can authorize side effects. Any future path that allows a Telegram or Intelligence request to progress from intent into material execution must bind to institutional Assignment / Authorization / execution-admission evidence before side effects occur.
