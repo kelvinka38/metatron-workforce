@@ -7,6 +7,7 @@ import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
 import com.metatron.workforce.phase3.ActorRef;
+import com.metatron.workforce.workers.audit.RepositoryAuditExecutionService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -38,6 +40,7 @@ public final class TelegramWebhookController {
     private final TelegramBotGateway gateway;
     private final MetatronInteractionOrchestrator orchestrator;
     private final TelegramIdentityResolver identityResolver;
+    private final TelegramInstitutionalWorkDispatcher workDispatcher;
     private final ObjectMapper objectMapper;
     private final TelegramUpdateDeduplicator updateDeduplicator;
     private final ThreadPoolExecutor interactionExecutor;
@@ -56,6 +59,7 @@ public final class TelegramWebhookController {
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
             @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
+            RepositoryAuditExecutionService repositoryAuditExecutionService,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
@@ -81,6 +85,7 @@ public final class TelegramWebhookController {
                 new ActorRef("telegram-human", ActorRef.ActorType.HUMAN),
                 new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
                 organizationContextId.trim());
+        this.workDispatcher = new TelegramInstitutionalWorkDispatcher(repositoryAuditExecutionService);
 
         TelegramIntelligenceResponder intelligence = new TelegramIntelligenceResponder(
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
@@ -203,11 +208,22 @@ public final class TelegramWebhookController {
         long processingStarted = System.nanoTime();
         long queueMs = (processingStarted - acceptedAt) / 1_000_000L;
         try {
-            MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
-            String safeAnswer = validateAnswer(inbound.text(), response.text());
+            Optional<String> institutional = workDispatcher.dispatch(interaction);
+            String safeAnswer;
+            String provenance;
+            if (institutional.isPresent()) {
+                safeAnswer = institutional.get();
+                provenance = "institutional-work:" + interaction.externalMessageReference();
+                LOG.info("telegram_institutional_work_terminal update_id={} telegram_user={} chat={} result={}",
+                        updateId, telegramUserId, chatId, safeAnswer);
+            } else {
+                MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
+                safeAnswer = validateAnswer(inbound.text(), response.text());
+                provenance = response.provenanceReference();
+            }
             long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
             LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} queue_ms={} answer_ms={}",
-                    updateId, telegramUserId, chatId, safeAnswer.length(), response.provenanceReference(), queueMs, answerMs);
+                    updateId, telegramUserId, chatId, safeAnswer.length(), provenance, queueMs, answerMs);
             long sendStarted = System.nanoTime();
             String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
             long sendMs = (System.nanoTime() - sendStarted) / 1_000_000L;
@@ -219,7 +235,7 @@ public final class TelegramWebhookController {
             try {
                 String delivery = gateway.send(new ChannelMessage(
                         "telegram", inbound.senderId(),
-                        "Metatron could not produce an AI response for this message. The failure has been recorded for recovery."));
+                        "Metatron could not complete this interaction. The failure has been recorded for recovery."));
                 LOG.info("telegram_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
             } catch (RuntimeException sendFailure) {
                 LOG.error("telegram_failure_notification_failed update_id={}", updateId, sendFailure);
