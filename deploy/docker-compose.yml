@@ -35,6 +35,7 @@ services:
       METATRON_ENVIRONMENT: "${METATRON_ENVIRONMENT:-production}"
       METATRON_MANAGEMENT_STATE_PATH: "${METATRON_MANAGEMENT_STATE_PATH:-/var/lib/metatron-workforce/management-state.json}"
       METATRON_WORKFORCE_CORE_STATE_PATH: "${METATRON_WORKFORCE_CORE_STATE_PATH:-/var/lib/metatron-workforce/workforce-core-state.json}"
+      METATRON_RUNTIME_EVIDENCE_DIR: "${METATRON_RUNTIME_EVIDENCE_DIR:-/var/lib/metatron-workforce/runtime-evidence}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_WEBHOOK_SECRET: "${TELEGRAM_WEBHOOK_SECRET:-}"
       TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID:-}"
