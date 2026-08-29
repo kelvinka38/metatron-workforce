@@ -12,33 +12,32 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
-/**
- * Institutional execution bridge for read-only repository audits.
- *
- * Authority and authorization are supplied by the admitted upstream caller and
- * preserved as references. This service never mints authority. One dispatch
- * creates Work, assigns it, starts a real WorkerRuntime execution, persists
- * evidence, and advances Work to COMPLETED or BLOCKED.
- */
+/** Institutional execution bridge for read-only repository audits. */
 @Service
 public final class RepositoryAuditExecutionService {
     static final String WORKER_ID = "WORKER-REPOSITORY-AUDITOR";
 
     private final WorkService work;
     private final WorkerRuntime runtime;
-    private final Supplier<Worker> workerFactory;
+    private final Function<String, Worker> workerFactory;
 
     @Autowired
     public RepositoryAuditExecutionService(WorkService work) {
         this(work, new WorkerRuntime(), RepositoryAuditWorker::new);
     }
 
-    RepositoryAuditExecutionService(WorkService work, WorkerRuntime runtime, Supplier<Worker> workerFactory) {
+    RepositoryAuditExecutionService(WorkService work, WorkerRuntime runtime, Function<String, Worker> workerFactory) {
         this.work = Objects.requireNonNull(work);
         this.runtime = Objects.requireNonNull(runtime);
         this.workerFactory = Objects.requireNonNull(workerFactory);
+    }
+
+    /** Compatibility constructor for deterministic tests that inject a local worker. */
+    RepositoryAuditExecutionService(WorkService work, WorkerRuntime runtime, Supplier<Worker> workerFactory) {
+        this(work, runtime, ignoredAuthorization -> workerFactory.get());
     }
 
     public ExecutionReceipt execute(String actor, String authorityReference, String authorizationReference,
@@ -63,7 +62,7 @@ public final class RepositoryAuditExecutionService {
         String runtimeEvidenceRef = "runtime-evidence:" + workId;
         WorkerResult result;
         try {
-            result = runtime.execute(workerFactory.get(), workId, objective);
+            result = runtime.execute(workerFactory.apply(authorizationReference.trim()), workId, objective);
         } catch (Exception failure) {
             result = new WorkerResult("WorkerRuntime", "FAILED",
                     "verdict=FAILED\nreason=runtime evidence persistence failed: "
