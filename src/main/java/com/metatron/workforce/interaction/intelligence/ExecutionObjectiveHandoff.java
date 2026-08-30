@@ -1,5 +1,6 @@
 package com.metatron.workforce.interaction.intelligence;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -9,6 +10,9 @@ import java.util.Objects;
  * Human intent into execution authority or authorization.
  */
 public interface ExecutionObjectiveHandoff {
+    /** Real executable capabilities currently exposed to autonomous management. */
+    default List<String> capabilityCatalog() { return List.of(); }
+
     HandoffReceipt submit(
             String humanId,
             String organizationContextId,
