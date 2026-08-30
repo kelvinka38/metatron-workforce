@@ -94,7 +94,14 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
         final String admittedChannel = requireText(channel, "channel");
         Objects.requireNonNull(request, "request");
 
-        String objectiveId = "objective:intelligence-case:" + admittedCaseId;
+        /*
+         * A Case coordinates one bounded intelligence problem and may reference many institutional Objectives.
+         * Therefore Objective identity is request-scoped, not Case-scoped. The provider-neutral external message
+         * reference supplies stable request-instance correlation/idempotency only; it is never Authority evidence.
+         * Re-delivery of the same provider request remains idempotent, while a new Human execution request in the
+         * same Case receives its own Objective/queue/execution lifecycle.
+         */
+        String objectiveId = objectiveId(admittedCaseId, admittedExternalMessageReference);
         Instant now = Instant.now();
         ManagementObjective objective;
         try {
@@ -104,7 +111,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                     objectiveId,
                     headWorkerId,
                     admittedOrganizationContextId,
-                    renderObjective(request, admittedChannel, admittedExternalMessageReference),
+                    renderObjective(request, admittedCaseId, conversationId, admittedChannel, admittedExternalMessageReference),
                     "human:" + admittedHumanId,
                     "workplace-request-admission:" + admittedHumanId + ":" + headWorkerId,
                     now);
@@ -208,13 +215,20 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                 });
     }
 
-    private static String renderObjective(NormalizedRequest request, String channel, String externalMessageReference) {
+    private static String objectiveId(String caseId, String externalMessageReference) {
+        return "objective:intelligence-case:" + caseId + ":request:" + externalMessageReference;
+    }
+
+    private static String renderObjective(NormalizedRequest request, String caseId, String conversationId,
+                                          String channel, String externalMessageReference) {
         StringBuilder description = new StringBuilder(request.objective());
         if (!request.target().isBlank()) description.append("\nTarget: ").append(request.target());
         if (!request.constraints().isEmpty()) description.append("\nConstraints: ").append(String.join("; ", request.constraints()));
         if (!request.explicitProhibitions().isEmpty()) description.append("\nProhibitions: ").append(String.join("; ", request.explicitProhibitions()));
         if (!request.executionWorkPlan().isEmpty()) description.append("\nPlanned steps: ").append(request.executionWorkPlan().size());
-        description.append("\nIngress: ").append(channel).append("/").append(externalMessageReference);
+        description.append("\nCase: ").append(caseId)
+                .append("\nConversation: ").append(conversationId)
+                .append("\nIngress: ").append(channel).append("/").append(externalMessageReference);
         return description.toString();
     }
 
