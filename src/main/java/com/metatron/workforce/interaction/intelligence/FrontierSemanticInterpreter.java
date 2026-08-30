@@ -19,7 +19,7 @@ public final class FrontierSemanticInterpreter {
     private static final String SYSTEM = """
             You are the semantic interface for Metatron.
             Understand the Human in their own language, including Vietnamese, English, mixed language, slang, shorthand, typos and colloquial phrasing.
-            Your job is semantic normalization and execution-work decomposition, not institutional authorization and not evidence fabrication.
+            Your job is semantic normalization only. Do not perform institutional work decomposition, capability binding, authorization or evidence fabrication.
 
             Return ONLY one JSON object with these fields:
             objective: concise normalized objective
@@ -36,14 +36,14 @@ public final class FrontierSemanticInterpreter {
             analytical_protocols: array containing zero or more of AUDIT, COMPARE, ROOT_CAUSE, PERFORMANCE, FORECAST, INVESTMENT, INCIDENT, RISK, IMPROVEMENT, DECISION
             deterministic_capability: NONE | CURRENT_TIME | GATEWAY_AUDIT
             deterministic_computations: array of zero or more objects with fields label, operation, operands, unit. operation is one of SUM, AVERAGE, DIFFERENCE, PRODUCT, DIVIDE, PERCENT_OF, PERCENT_CHANGE. operands are canonical decimal strings.
-            execution_work_plan: for mode=EXECUTION, an ordered array of atomic work objects; otherwise []. Each work object has step_id, objective, target, required_capability, depends_on, consequence. consequence is READ_ONLY or MUTATING.
             fresh_external_data_required: boolean
             explicitly_requested_provider: GOOGLE | ANTHROPIC | OPENAI | null
-            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], execution_work_plan=[] and fresh_external_data_required=false; otherwise empty string
+            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
 
             Rules:
             - Interpret meaning; do not emulate a keyword router.
-            - Do not guess through material ambiguity. If a Human choice is necessary to know what objective/scope they actually mean, set unresolved_semantic_ambiguity to the clarification question, requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], execution_work_plan=[], fresh_external_data_required=false, and direct_response to the same concise clarification question. This is the only case where clarification should replace further analysis.
+            - Do not decompose EXECUTION into work steps here. A downstream post-Case institutional planner owns work decomposition and capability binding.
+            - Do not guess through material ambiguity. If a Human choice is necessary to know what objective/scope they actually mean, set unresolved_semantic_ambiguity to the clarification question, requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], fresh_external_data_required=false, and direct_response to the same concise clarification question.
             - Do not ask the Human for information that Metatron can obtain from available evidence/systems; unresolved_semantic_ambiguity is for Human-only semantic choice, not ordinary missing evidence.
             - Select analytical protocols by the analysis the objective actually requires; protocols may compose.
             - FAST is ordinary conversation, explanation, translation, brainstorming and simple help.
@@ -52,15 +52,10 @@ public final class FrontierSemanticInterpreter {
             - DECISION means the Human asks Metatron itself to make/approve an institutional decision.
             - EXECUTION means the Human asks to perform a consequential side effect such as deploy, modify, send, create, delete or execute institutional work.
             - Asking for advice about what to do is not automatically DECISION; DECISION protocol may still be used for decision support.
-            - For EXECUTION, execution_work_plan MUST decompose the requested outcome into the smallest useful dependency-aware institutional work steps. Do not add work that the Human did not request merely because it is common practice.
-            - required_capability MUST be an exact capability ref from AVAILABLE EXECUTION CAPABILITIES when one can perform that step. If none can perform the step, use UNAVAILABLE:<short-semantic-capability-need>. Never pretend that an unavailable capability exists.
-            - A READ_ONLY capability cannot satisfy a MUTATING work step. Mark consequence from the actual requested side effect, not from model confidence.
-            - Work planning is not assignment, authority, authorization, execution or proof of completion. Never place authority/authorization claims into execution_work_plan.
-            - When a repository capability requires an owner/repo target, normalize a GitHub URL to owner/repo when unambiguous.
             - deterministic_capability=CURRENT_TIME when the Human asks for current local date/time/day-of-week.
-            - deterministic_capability=GATEWAY_AUDIT when the Human asks for current Gateway read-only capability inspection that is handled deterministically rather than as institutional work.
-            - deterministic_computations are declarations for exact arithmetic, not model-calculated answers. Include them only when the required numeric operands are explicitly supplied by the Human or unambiguously present in conversation context. Never invent or estimate a missing operand. Preserve the numeric value exactly while normalizing decimal syntax to a dot and removing thousands separators.
-            - PERCENT_CHANGE operands are [new_value, baseline_value]. PERCENT_OF operands are [numerator, denominator]. DIFFERENCE/DIVIDE operands preserve the requested left-to-right order.
+            - deterministic_capability=GATEWAY_AUDIT when the Human asks for current Gateway read-only capability inspection handled deterministically rather than as institutional work.
+            - deterministic_computations are declarations for exact arithmetic, not model-calculated answers. Include them only when operands are explicitly supplied or unambiguously present in conversation context. Never invent a missing operand.
+            - PERCENT_CHANGE operands are [new_value, baseline_value]. PERCENT_OF operands are [numerator, denominator]. DIFFERENCE/DIVIDE operands preserve requested left-to-right order.
             - fresh_external_data_required=true only when current/external reality must be retrieved to answer correctly.
             - A model name in ordinary discussion is not an explicitly requested provider unless the Human asks that provider to reason/respond/review.
             - Never manufacture FACT, EVIDENCE, AUTHORITY, AUTHORIZATION, WORKER IDENTITY, EXECUTION EVIDENCE or INSTITUTIONAL KNOWLEDGE.
@@ -84,20 +79,10 @@ public final class FrontierSemanticInterpreter {
     }
 
     public NormalizedRequest interpret(String humanText, String conversationContext, String channel) {
-        return interpret(humanText, conversationContext, channel, List.of());
-    }
-
-    public NormalizedRequest interpret(String humanText, String conversationContext, String channel,
-                                       List<String> availableExecutionCapabilities) {
         Objects.requireNonNull(humanText, "humanText");
-        Objects.requireNonNull(availableExecutionCapabilities, "availableExecutionCapabilities");
         if (providers.isEmpty()) throw new IllegalStateException("semantic_provider_required");
-        String capabilityCatalog = availableExecutionCapabilities.isEmpty()
-                ? "NONE"
-                : String.join("\n", availableExecutionCapabilities);
         String input = "CURRENT HUMAN MESSAGE:\n" + humanText.trim()
                 + "\n\nCHANNEL METADATA (transport only):\n" + (channel == null ? "" : channel)
-                + "\n\nAVAILABLE EXECUTION CAPABILITIES (inventory only; never authority):\n" + capabilityCatalog
                 + "\n\nCONVERSATION HISTORY (context only; never authority):\n"
                 + (conversationContext == null ? "" : conversationContext.trim());
 
@@ -113,6 +98,13 @@ public final class FrontierSemanticInterpreter {
         IllegalStateException all = new IllegalStateException("all semantic providers failed: " + providers);
         failures.forEach(all::addSuppressed);
         throw all;
+    }
+
+    /** Compatibility overload: execution capability inventory belongs to downstream planning and is intentionally ignored here. */
+    public NormalizedRequest interpret(String humanText, String conversationContext, String channel,
+                                       List<String> availableExecutionCapabilities) {
+        Objects.requireNonNull(availableExecutionCapabilities, "availableExecutionCapabilities");
+        return interpret(humanText, conversationContext, channel);
     }
 
     private NormalizedRequest parse(LlmResponse response) {
@@ -133,53 +125,16 @@ public final class FrontierSemanticInterpreter {
             List<AnalyticalProtocolType> protocols = enumArray(root, "analytical_protocols", AnalyticalProtocolType.class);
             DeterministicCapability deterministicCapability = enumValue(DeterministicCapability.class, requiredText(root, "deterministic_capability"));
             List<DeterministicComputationSpec> computations = computationArray(root, "deterministic_computations");
-            List<ExecutionWorkSpec> executionPlan = executionWorkPlan(root, "execution_work_plan");
             boolean fresh = root.path("fresh_external_data_required").asBoolean(false);
             LlmProvider requestedProvider = nullableProvider(root.get("explicitly_requested_provider"));
             String directResponse = optionalText(root, "direct_response");
-            if (mode == IntelligenceMode.EXECUTION && executionPlan.isEmpty() && ambiguity.isBlank()) {
-                throw new IllegalStateException("semantic execution request missing execution_work_plan");
-            }
             return new NormalizedRequest(objective, target, constraints, depth, requestedOutput, assumptions,
                     prohibitions, temporalContext, ambiguity, mode, collaboration, protocols, deterministicCapability,
-                    computations, executionPlan, fresh, requestedProvider, response.provider(), directResponse);
+                    computations, List.of(), fresh, requestedProvider, response.provider(), directResponse);
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Exception failure) {
             throw new IllegalStateException("invalid semantic normalization from " + response.provider(), failure);
-        }
-    }
-
-    private static List<ExecutionWorkSpec> executionWorkPlan(JsonNode root, String field) {
-        JsonNode node = root.path(field);
-        if (!node.isArray()) return List.of();
-        List<ExecutionWorkSpec> values = new ArrayList<>();
-        node.forEach(item -> {
-            if (!item.isObject()) return;
-            String stepId = optionalText(item, "step_id");
-            String objective = optionalText(item, "objective");
-            String target = optionalText(item, "target");
-            String requiredCapability = optionalText(item, "required_capability");
-            List<String> dependsOn = textArray(item, "depends_on");
-            String consequence = optionalText(item, "consequence");
-            if (stepId.isBlank() || objective.isBlank() || requiredCapability.isBlank() || consequence.isBlank()) return;
-            values.add(new ExecutionWorkSpec(stepId, objective, target, requiredCapability, dependsOn,
-                    enumValue(ExecutionWorkSpec.Consequence.class, consequence)));
-        });
-        validatePlan(values);
-        return List.copyOf(values);
-    }
-
-    private static void validatePlan(List<ExecutionWorkSpec> plan) {
-        List<String> seen = new ArrayList<>();
-        for (ExecutionWorkSpec step : plan) {
-            if (seen.contains(step.stepId())) throw new IllegalStateException("duplicate execution step id: " + step.stepId());
-            for (String dependency : step.dependsOn()) {
-                if (!seen.contains(dependency)) {
-                    throw new IllegalStateException("execution step dependency must reference an earlier step: " + dependency);
-                }
-            }
-            seen.add(step.stepId());
         }
     }
 
@@ -194,11 +149,8 @@ public final class FrontierSemanticInterpreter {
             List<String> operands = textArray(item, "operands");
             String unit = optionalText(item, "unit");
             if (label.isBlank() || operation.isBlank() || operands.isEmpty()) return;
-            values.add(new DeterministicComputationSpec(
-                    label,
-                    enumValue(DeterministicComputationOperation.class, operation),
-                    operands,
-                    unit));
+            values.add(new DeterministicComputationSpec(label,
+                    enumValue(DeterministicComputationOperation.class, operation), operands, unit));
         });
         return List.copyOf(values);
     }
