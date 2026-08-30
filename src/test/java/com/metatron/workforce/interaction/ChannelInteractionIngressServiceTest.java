@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 final class ChannelInteractionIngressServiceTest {
     @Test
@@ -37,11 +38,15 @@ final class ChannelInteractionIngressServiceTest {
         assertEquals("ok:telegram", ingress.handle(telegram).text());
         assertEquals("ok:zalo", ingress.handle(zalo).text());
         assertEquals(2, observed.size());
+        assertEquals(human, observed.get(0).human());
+        assertEquals(human, observed.get(1).human());
         assertEquals(canonicalConversation, observed.get(0).conversationId());
         assertEquals(canonicalConversation, observed.get(1).conversationId());
         assertEquals("telegram", observed.get(0).channelProvider());
         assertEquals("zalo", observed.get(1).channelProvider());
         assertEquals("telegram:chat:200", observed.get(0).externalConversationReference());
         assertEquals("zalo:conversation:def", observed.get(1).externalConversationReference());
+        assertNotEquals(observed.get(0).externalConversationReference(), observed.get(0).conversationId());
+        assertNotEquals(observed.get(1).externalConversationReference(), observed.get(1).conversationId());
     }
 }
