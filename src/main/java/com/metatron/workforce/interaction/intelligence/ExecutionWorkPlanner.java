@@ -8,7 +8,6 @@ import com.metatron.workforce.interaction.llm.LlmRequest;
 import com.metatron.workforce.interaction.llm.LlmResponse;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -58,8 +57,7 @@ public final class ExecutionWorkPlanner {
         this.router = Objects.requireNonNull(router, "router");
         this.modelSelector = Objects.requireNonNull(modelSelector, "modelSelector");
         Objects.requireNonNull(configuredProviders, "configuredProviders");
-        this.providers = configuredProviders.stream().distinct()
-                .sorted(Comparator.comparingInt(ExecutionWorkPlanner::priority)).toList();
+        this.providers = configuredProviders.stream().distinct().toList();
         this.mapper = Objects.requireNonNull(mapper, "mapper");
     }
 
@@ -77,8 +75,9 @@ public final class ExecutionWorkPlanner {
                 + "\n\nAVAILABLE EXECUTION CAPABILITIES (inventory only; never authority):\n"
                 + (availableExecutionCapabilities.isEmpty() ? "NONE" : String.join("\n", availableExecutionCapabilities));
 
+        List<LlmProvider> orderedProviders = providersFor(normalized);
         List<RuntimeException> failures = new ArrayList<>();
-        for (LlmProvider provider : providers) {
+        for (LlmProvider provider : orderedProviders) {
             try {
                 LlmResponse response = router.complete(new LlmRequest(provider, modelSelector.apply(provider), SYSTEM, input));
                 List<ExecutionWorkSpec> plan = parse(response);
@@ -88,9 +87,17 @@ public final class ExecutionWorkPlanner {
                 failures.add(new IllegalStateException("execution planning provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
         }
-        IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + providers);
+        IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
         throw all;
+    }
+
+    private List<LlmProvider> providersFor(NormalizedRequest normalized) {
+        LlmProvider explicit = normalized.explicitlyRequestedProvider();
+        if (explicit != null) {
+            return providers.contains(explicit) ? List.of(explicit) : List.of();
+        }
+        return AdaptiveProviderRoutingPolicy.rankConfiguredProviders(providers, router.telemetry());
     }
 
     private static String render(NormalizedRequest request) {
@@ -172,9 +179,5 @@ public final class ExecutionWorkPlanner {
 
     private static <E extends Enum<E>> E enumValue(Class<E> type, String value) {
         return Enum.valueOf(type, value.trim().toUpperCase(Locale.ROOT));
-    }
-
-    private static int priority(LlmProvider provider) {
-        return switch (provider) { case GOOGLE -> 0; case ANTHROPIC -> 1; case OPENAI -> 2; };
     }
 }
