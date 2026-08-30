@@ -60,7 +60,7 @@ public final class MetatronConversationRuntime {
                 : depthControl.contract(interaction.conversationId());
         String answer = intelligence.respond(
                 interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
-                channel, interaction.conversationId(), history, contract);
+                channel, interaction.conversationId(), interaction.organizationContextId(), history, contract);
         memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
 
         return new MetatronInteractionOrchestrator.InteractionResponse(
