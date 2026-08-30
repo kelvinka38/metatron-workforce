@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.workers.audit.RepositoryAuditExecutionService;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +29,9 @@ public final class RepositoryAuditAutonomousCapability implements AutonomousExec
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
+        if (request.workSpec().consequence() != ExecutionWorkSpec.Consequence.READ_ONLY) {
+            throw new SecurityException("repository.audit.read cannot execute MUTATING work");
+        }
         String repository = requireRepositoryTarget(request.workSpec().target());
         RepositoryAuditExecutionService.ExecutionReceipt receipt = repositoryAudit.execute(
                 request.humanId(),
