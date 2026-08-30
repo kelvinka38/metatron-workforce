@@ -8,7 +8,6 @@ import com.metatron.workforce.interaction.llm.LlmRequest;
 import com.metatron.workforce.interaction.llm.LlmResponse;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -73,8 +72,7 @@ public final class FrontierSemanticInterpreter {
         this.router = Objects.requireNonNull(router, "router");
         this.modelSelector = Objects.requireNonNull(modelSelector, "modelSelector");
         Objects.requireNonNull(configuredProviders, "configuredProviders");
-        this.providers = configuredProviders.stream().distinct()
-                .sorted(Comparator.comparingInt(FrontierSemanticInterpreter::priority)).toList();
+        this.providers = configuredProviders.stream().distinct().toList();
         this.mapper = Objects.requireNonNull(mapper, "mapper");
     }
 
@@ -87,7 +85,9 @@ public final class FrontierSemanticInterpreter {
                 + (conversationContext == null ? "" : conversationContext.trim());
 
         List<RuntimeException> failures = new ArrayList<>();
-        for (LlmProvider provider : providers) {
+        List<LlmProvider> orderedProviders = AdaptiveProviderRoutingPolicy.rankConfiguredProviders(
+                providers, router.telemetry());
+        for (LlmProvider provider : orderedProviders) {
             try {
                 LlmResponse response = router.complete(new LlmRequest(provider, modelSelector.apply(provider), SYSTEM, input));
                 return parse(response);
@@ -95,7 +95,7 @@ public final class FrontierSemanticInterpreter {
                 failures.add(new IllegalStateException("semantic provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
         }
-        IllegalStateException all = new IllegalStateException("all semantic providers failed: " + providers);
+        IllegalStateException all = new IllegalStateException("all semantic providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
         throw all;
     }
@@ -204,9 +204,5 @@ public final class FrontierSemanticInterpreter {
 
     private static <E extends Enum<E>> E enumValue(Class<E> type, String value) {
         return Enum.valueOf(type, value.trim().toUpperCase(Locale.ROOT));
-    }
-
-    private static int priority(LlmProvider provider) {
-        return switch (provider) { case GOOGLE -> 0; case ANTHROPIC -> 1; case OPENAI -> 2; };
     }
 }
