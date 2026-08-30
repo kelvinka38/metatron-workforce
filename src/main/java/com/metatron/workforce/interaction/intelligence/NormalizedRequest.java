@@ -5,10 +5,7 @@ import com.metatron.workforce.interaction.llm.LlmProvider;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Semantic normalization of one Human utterance.
- * semanticProvider is null only when the normalization was produced deterministically without an LLM.
- */
+/** Frontier-model-produced semantic normalization of one Human utterance. */
 public record NormalizedRequest(
         String objective,
         String target,
@@ -30,7 +27,6 @@ public record NormalizedRequest(
         LlmProvider semanticProvider,
         String directResponse) {
 
-    /** Backward-compatible constructor for callers with arithmetic but no execution work plan. */
     public NormalizedRequest(
             String objective,
             String target,
@@ -56,7 +52,6 @@ public record NormalizedRequest(
                 freshExternalDataRequired, explicitlyRequestedProvider, semanticProvider, directResponse);
     }
 
-    /** Backward-compatible constructor for callers with no arithmetic or execution work plan. */
     public NormalizedRequest(
             String objective,
             String target,
@@ -97,6 +92,7 @@ public record NormalizedRequest(
         Objects.requireNonNull(deterministicCapability, "deterministicCapability");
         Objects.requireNonNull(deterministicComputations, "deterministicComputations");
         Objects.requireNonNull(executionWorkPlan, "executionWorkPlan");
+        Objects.requireNonNull(semanticProvider, "semanticProvider");
         Objects.requireNonNull(directResponse, "directResponse");
         constraints = List.copyOf(constraints);
         explicitAssumptions = List.copyOf(explicitAssumptions);
@@ -126,11 +122,6 @@ public record NormalizedRequest(
                 && !directResponse.isBlank();
     }
 
-    public boolean deterministicallyNormalized() {
-        return semanticProvider == null;
-    }
-
-    /** Applies a Human-selected depth without changing any other semantic interpretation or work plan. */
     public NormalizedRequest withRequestedDepth(IntelligenceDepth depth) {
         return new NormalizedRequest(objective, target, constraints, Objects.requireNonNull(depth, "depth"),
                 requestedOutput, explicitAssumptions, explicitProhibitions, temporalContext,
