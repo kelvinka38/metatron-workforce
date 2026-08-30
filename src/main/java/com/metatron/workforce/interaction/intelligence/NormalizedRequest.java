@@ -90,4 +90,13 @@ public record NormalizedRequest(
                 && !freshExternalDataRequired
                 && !directResponse.isBlank();
     }
+
+    /** Applies a Human-selected depth without changing any other semantic interpretation. */
+    public NormalizedRequest withRequestedDepth(IntelligenceDepth depth) {
+        return new NormalizedRequest(objective, target, constraints, Objects.requireNonNull(depth, "depth"),
+                requestedOutput, explicitAssumptions, explicitProhibitions, temporalContext,
+                unresolvedSemanticAmbiguity, mode, collaborationMode, analyticalProtocols,
+                deterministicCapability, deterministicComputations, freshExternalDataRequired,
+                explicitlyRequestedProvider, semanticProvider, directResponse);
+    }
 }
