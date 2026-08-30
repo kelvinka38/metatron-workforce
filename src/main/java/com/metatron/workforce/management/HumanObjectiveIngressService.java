@@ -57,15 +57,15 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
             String externalMessageReference,
             String channel,
             NormalizedRequest request) {
-        humanId = requireText(humanId, "humanId");
-        organizationContextId = requireText(organizationContextId, "organizationContextId");
-        caseId = requireText(caseId, "caseId");
+        final String admittedHumanId = requireText(humanId, "humanId");
+        final String admittedOrganizationContextId = requireText(organizationContextId, "organizationContextId");
+        final String admittedCaseId = requireText(caseId, "caseId");
         requireText(conversationId, "conversationId");
-        externalMessageReference = requireText(externalMessageReference, "externalMessageReference");
-        channel = requireText(channel, "channel");
+        final String admittedExternalMessageReference = requireText(externalMessageReference, "externalMessageReference");
+        final String admittedChannel = requireText(channel, "channel");
         Objects.requireNonNull(request, "request");
 
-        String objectiveId = "objective:intelligence-case:" + caseId;
+        String objectiveId = "objective:intelligence-case:" + admittedCaseId;
         Instant now = Instant.now();
         ManagementObjective objective;
         try {
@@ -76,15 +76,15 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
             objective = management.acceptObjective(
                     objectiveId,
                     headWorkerId,
-                    organizationContextId,
-                    renderObjective(request, channel, externalMessageReference),
-                    "human:" + humanId,
+                    admittedOrganizationContextId,
+                    renderObjective(request, admittedChannel, admittedExternalMessageReference),
+                    "human:" + admittedHumanId,
                     "authority:workplace-request-intake",
-                    "authorization:workplace-request-only:" + externalMessageReference,
+                    "authorization:workplace-request-only:" + admittedExternalMessageReference,
                     now);
         }
 
-        ActorRef human = new ActorRef(humanId, ActorRef.ActorType.HUMAN);
+        ActorRef human = new ActorRef(admittedHumanId, ActorRef.ActorType.HUMAN);
         ActorRef head = new ActorRef(headWorkerId, ActorRef.ActorType.WORKER);
         WorkQueueItem queue = workQueue.items().stream()
                 .filter(item -> item.referencedObjectId().equals(objectiveId)
@@ -93,7 +93,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                 .findFirst()
                 .orElseGet(() -> {
                     WorkQueueItem created = workQueue.create(
-                            head, organizationContextId, human,
+                            head, admittedOrganizationContextId, human,
                             WorkQueueItem.ItemType.REQUEST, objectiveId, WorkQueueItem.Priority.HIGH, null);
                     WorkQueueItem delivered = workQueue.deliver(created.queueItemId());
                     return workQueue.acknowledge(delivered.queueItemId());
