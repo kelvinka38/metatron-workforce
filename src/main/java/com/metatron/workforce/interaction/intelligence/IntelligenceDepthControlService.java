@@ -4,6 +4,9 @@ import java.util.Objects;
 
 /** Channel-neutral Human control surface for the approved FAST / ANALYZE / DEEP depth contract. */
 public final class IntelligenceDepthControlService {
+    private static final String USAGE =
+            "Depth controls: /fast, /analyze, /deep, /auto, /depth (or /mode).";
+
     private final IntelligenceDepthPreferenceStore store;
     private final IntelligenceDepthSelectionParser parser;
 
@@ -34,6 +37,8 @@ public final class IntelligenceDepthControlService {
                 IntelligenceDepthContract current = store.get(conversationId);
                 yield new ControlResult(true, current, renderStatus(current));
             }
+            case INVALID -> new ControlResult(true, store.get(conversationId()),
+                    "Invalid intelligence-depth control. " + USAGE);
             case NONE -> ControlResult.notControl(store.get(conversationId));
         };
     }
