@@ -64,10 +64,11 @@ jobs:
           for i in $(seq 1 100); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 
-            # Architecture-valid full execution: semantic cognition and post-Case planning succeeded,
-            # then Workforce admitted/executed the governed capability.
-            if printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
-              && printf '%s' "$LOGS" | grep -q 'route=execution-objective-workforce-terminal' \
+            # Use here-strings instead of producer | grep -q pipelines. Under `set -o pipefail`,
+            # grep -q can exit after the first match and SIGPIPE the producer, turning a true
+            # terminal predicate into a false negative when the log buffer is large.
+            if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
+              && grep -q 'route=execution-objective-workforce-terminal' <<<"$LOGS" \
               && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
               OUTCOME=EXECUTED
               break
@@ -76,9 +77,9 @@ jobs:
             # Architecture-valid fail-closed: frontier semantic/planning capacity is unavailable.
             # The adapter must return a terminal failure to the Human and MUST NOT admit this update
             # into Workforce execution through raw-text/keyword fallback.
-            if printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
-              && printf '%s' "$LOGS" | grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" \
-              && printf '%s' "$LOGS" | grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed'; then
+            if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
+              && grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" <<<"$LOGS" \
+              && grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed' <<<"$LOGS"; then
               if docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
                 echo 'FAIL_CLOSED_REQUEST_WAS_WRONGLY_ADMITTED_TO_WORKFORCE' >&2
                 exit 1
@@ -96,7 +97,7 @@ jobs:
             exit 1
           fi
 
-          if printf '%s' "$LOGS" | grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID"; then
+          if grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID" <<<"$LOGS"; then
             echo 'LEGACY_TELEGRAM_DISPATCHER_WAS_USED' >&2
             exit 1
           fi
