@@ -8,6 +8,7 @@ import com.metatron.workforce.interaction.MetatronConversationRuntime;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
 import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
+import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
 import com.metatron.workforce.phase3.ActorRef;
@@ -71,6 +72,7 @@ public final class TelegramWebhookController {
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
             RepositoryAuditExecutionService repositoryAuditExecutionService,
             IntelligenceCaseStore intelligenceCaseStore,
+            IntelligenceDepthControlService intelligenceDepthControlService,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/telegram-conversations}}") String conversationMemoryPath,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
@@ -107,6 +109,7 @@ public final class TelegramWebhookController {
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
+                Objects.requireNonNull(intelligenceDepthControlService, "intelligenceDepthControlService"),
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
 
