@@ -42,6 +42,48 @@ final class PersistentIntelligenceCaseStoreTest {
     }
 
     @Test
+    void explicitNewSemanticProblemStartsNewCaseWithoutDestroyingHistory() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        PersistentIntelligenceCaseStore store = new PersistentIntelligenceCaseStore(tempDir, mapper);
+        IntelligenceCase first = store.openOrUpdate(
+                "conversation:bounded", "human:1", normalized("analyze revenue decline", IntelligenceDepth.ANALYZE));
+        store.save(first.withResult("Revenue root cause", List.of("evidence:revenue")));
+
+        IntelligenceCase second = store.openOrUpdate(
+                "conversation:bounded", "human:1",
+                normalized("assess hiring risk", IntelligenceDepth.ANALYZE, CaseContinuity.NEW));
+
+        assertNotEquals(first.caseId(), second.caseId());
+        assertEquals(second.caseId(), store.findActive("conversation:bounded").orElseThrow().caseId());
+        IntelligenceCase historical = store.findByCaseId(first.caseId()).orElseThrow();
+        assertEquals("Revenue root cause", historical.latestConclusion());
+        assertEquals(List.of("evidence:revenue"), historical.evidenceReferences());
+    }
+
+    @Test
+    void continuingCasePreservesSatisfiedRequirementEvidence() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        PersistentIntelligenceCaseStore store = new PersistentIntelligenceCaseStore(tempDir, mapper);
+        IntelligenceCase first = store.openOrUpdate(
+                "conversation:requirements", "human:1",
+                normalized("analyze revenue decline", IntelligenceDepth.ANALYZE));
+        InformationRequirement prior = first.informationRequirements().getFirst()
+                .withResolution(InformationRequirementStatus.SATISFIED, List.of("evidence:metric"));
+        store.save(first.withInformationAssessment(List.of(prior), List.of("evidence:metric"),
+                IntelligenceCaseStatus.REASONING));
+
+        IntelligenceCase resumed = store.openOrUpdate(
+                "conversation:requirements", "human:1",
+                normalized("continue root-cause analysis", IntelligenceDepth.DEEP, CaseContinuity.CONTINUE));
+
+        assertEquals(first.caseId(), resumed.caseId());
+        assertTrue(resumed.informationRequirements().stream().anyMatch(requirement ->
+                requirement.status() == InformationRequirementStatus.SATISFIED
+                        && requirement.evidenceReferences().contains("evidence:metric")));
+        assertTrue(resumed.evidenceReferences().contains("evidence:metric"));
+    }
+
+    @Test
     void resolvesStableCaseIdAcrossStoreRecreation() {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         PersistentIntelligenceCaseStore firstStore = new PersistentIntelligenceCaseStore(tempDir, mapper);
@@ -76,9 +118,13 @@ final class PersistentIntelligenceCaseStoreTest {
     }
 
     private static NormalizedRequest normalized(String objective, IntelligenceDepth depth) {
+        return normalized(objective, depth, CaseContinuity.CONTINUE);
+    }
+
+    private static NormalizedRequest normalized(String objective, IntelligenceDepth depth, CaseContinuity continuity) {
         return new NormalizedRequest(objective, "", List.of(), depth, "direct natural-language answer",
                 List.of(), List.of(), "", "", IntelligenceMode.REASONING, CollaborationMode.SINGLE,
-                List.of(AnalyticalProtocolType.ROOT_CAUSE), DeterministicCapability.NONE, false,
-                null, LlmProvider.GOOGLE, "");
+                List.of(AnalyticalProtocolType.ROOT_CAUSE), DeterministicCapability.NONE, List.of(), List.of(),
+                false, null, LlmProvider.GOOGLE, continuity, "");
     }
 }
