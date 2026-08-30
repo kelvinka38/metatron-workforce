@@ -38,8 +38,8 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
         this.headWorkerId = requireText(headWorkerId, "headWorkerId");
         Objects.requireNonNull(clock, "clock");
         AuthorizationPolicy requestAdmission = (source, recipient, organizationContextId) -> {
-            boolean allowed = source.actorType() == ActorRef.ActorType.HUMAN
-                    && recipient.actorType() == ActorRef.ActorType.WORKER
+            boolean allowed = source.type() == ActorRef.ActorType.HUMAN
+                    && recipient.type() == ActorRef.ActorType.WORKER
                     && this.headWorkerId.equals(recipient.actorId())
                     && organizationContextId != null && !organizationContextId.isBlank();
             String reference = "workplace-request-admission:" + source.actorId() + ":" + recipient.actorId();
