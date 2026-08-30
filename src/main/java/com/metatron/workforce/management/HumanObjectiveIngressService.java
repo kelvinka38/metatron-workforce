@@ -8,6 +8,7 @@ import com.metatron.workforce.phase3.AuthorizationContext;
 import com.metatron.workforce.phase3.AuthorizationPolicy;
 import com.metatron.workforce.phase3.WorkQueueItem;
 import com.metatron.workforce.phase3.WorkQueueService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +34,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
     private final WorkQueueService workQueue;
     private final Map<String, AutonomousExecutionCapability> capabilities;
 
+    @Autowired
     public HumanObjectiveIngressService(
             ManagementAutonomyService management,
             List<AutonomousExecutionCapability> executionCapabilities,
