@@ -1,154 +1,77 @@
-# WORKFORCE AUTONOMOUS MANAGEMENT — IMPLEMENTATION CONTRACT
+# WORKFORCE AUTONOMOUS MANAGEMENT — IMPLEMENTATION STATUS AND CONTRACT
 
-**Status:** INTEGRATED IMPLEMENTATION CONTRACT  
+**Status:** BOUNDED INTEGRATED PRIMITIVES — AUTONOMY CLOSURE IN PROGRESS  
 **Canonical upstream:** `metatron-institution/05_WORKFORCE/WORKFORCE_AUTONOMOUS_MANAGEMENT_OPERATING_SPEC.md`  
-**Authority:** Implementation derivative only; this document is not a Source of Truth.
+**Current program:** `docs/AUTONOMY_CLOSURE/IMPLEMENTATION_MASTER_PLAN.md`  
+**Authority:** Implementation derivative only; not a Source of Truth
 
 ## Purpose
 
-Implement a production-safe Workforce composition that makes Objective ownership, staffing-gap detection, Workplace coordination, canonical authorization, Execution handoff, runtime correlation, local recovery/replanning, escalation, durable continuity, and attributable completion explicit and testable without redefining canonical Workforce semantics.
+This document records what the existing autonomous-management composition actually proves and what the ratified Autonomy Closure still requires.
 
-## Implemented Composition
+## Existing bounded composition
 
-```text
-AUTHORIZED HUMAN
-  ↓ objective
-MANAGEMENT OBJECTIVE
-  ↓ persistent Worker ownership
-WORKPLACE QUEUE
-  ↓ request / staffing proposal / report
-WORKFORCE MANAGEMENT
-  ↓ assignment reference
-PHASE-6 AUTHORIZATION
-  ↓ allowed authorization reference
-EXECUTION HANDOFF
-  ↓
-RUNTIME EXECUTION CORRELATION
-  ↓
-EXECUTION SERVICE
-  ↓
-OUTCOME / EVIDENCE
-  ↓
-LOCAL RECOVERY / REPLAN WHEN REQUIRED
-  ↓
-EVIDENCE-BACKED DELIVERY
-  ↓
-WORKPLACE REPORT TO HUMAN
-```
+The repository contains:
 
-## Durable Objective Continuity
+- `ManagementAutonomyService` with a durable `ManagementStateStore` boundary;
+- `FileManagementStateStore` Objective/history persistence;
+- owner Worker references and management transitions;
+- `AutonomousManagementCoordinator` composition with Workplace queue, authorization, execution handoff and runtime correlation;
+- staffing-gap representation;
+- local recovery/replan transitions;
+- evidence-required delivery;
+- bounded tests including `GatewayDirectorNorthStarAcceptanceTest`.
 
-`ManagementAutonomyService` accepts a `ManagementStateStore` boundary. `FileManagementStateStore` persists Objective state and attributable management-event history as JSON using atomic replacement where the filesystem supports it.
+These are valid institutional primitives and bounded composition evidence.
 
-A process/runtime replacement may construct a new `ManagementAutonomyService` from the same store and recover:
+## Explicit limitation
 
-- Objective identity;
-- persistent owner Worker identity;
-- organization context;
-- status;
-- Assignment references;
-- evidence references;
-- management event history.
+The existing acceptance tests drive service methods in the required sequence. They prove that primitives compose when called correctly; they do not prove a persistent Manager Runner autonomously decides and advances every transition.
 
-The default no-argument constructor remains an in-memory compatibility surface for transient callers and historical tests. Production composition is expected to inject durable storage.
+The existing composition does not yet establish:
 
-## Workplace Integration
+- transactional accept/persist/detach conversational ingress;
+- a durable autonomous Management Runner with fencing;
+- durable outbox/inbox across all Objective boundaries;
+- a versioned Work Graph and general ready-set scheduler;
+- autonomous staffing/admission/AI Worker formation;
+- production lease/heartbeat/checkpoint recovery for unfinished Work;
+- independent general Observation criterion closure;
+- ChatGPT channel integration;
+- full Workplace persistence/control integration;
+- L10 production evidence.
 
-`AutonomousManagementCoordinator` uses the existing Phase-3 `WorkQueueService`; it does not create a parallel Workplace model.
+## Current code-boundary corrections
 
-Current integrated flows are:
+1. `HumanObjectiveIngressService.submit()` is a synchronous compatibility path, not the target Objective lifetime owner.
+2. `WorkQueueService`/interaction executors may support bounded interaction but are not the durable autonomy backbone.
+3. `StaffingService` request lifecycle is not autonomous staffing completion.
+4. `RemoteRuntimeExecutor.executeAsync()` is a transport primitive, not a Workforce scheduler.
+5. `RepositoryAuditAutonomousCapability` proves one bounded capability, not general execution.
+6. local management recovery transitions are not proof of operational retry/reassign/replan.
+7. capability-produced evidence is not a substitute for a general Observation contract.
 
-- Human objective → Director `REQUEST` queue item → delivered and acknowledged;
-- detected capability/capacity gap → legitimate `PROPOSAL` queue item to a staffing authority;
-- completed Objective → `REPORT` queue item back to the Human recipient.
-
-A staffing proposal does not manufacture a Participant or Worker. Participant recognition/admission remains with the legitimate upstream authority; Workforce owns the staffing demand and Worker-side consequence only.
-
-## Authorization, Execution, and Runtime Integration
-
-Before an execution handoff is created, the coordinator calls the existing Phase-6 `AuthorizationService.authorize(...)` against `WorkProposal`, `ApprovalDecision`, and `AuthorizationRequest`.
-
-Denied authorization fails closed and no `ExecutionHandoffRequest` is produced.
-
-An allowed path:
-
-1. records the Assignment reference against the Objective;
-2. preserves the canonical authorization reference;
-3. creates the existing Phase-3 `ExecutionHandoffRequest`;
-4. creates runtime execution correlation through `RuntimeExecutionCoordinator`;
-5. invokes the existing `ExecutionService.executeAuthorized(...)`, which revalidates authorization before execution;
-6. returns the Execution record without transferring Execution semantics into Workforce management.
-
-## Boundaries
-
-The implementation does not:
-
-- create authority;
-- decide constitutional legitimacy;
-- bypass approval or authorization;
-- make Workplace queue state authoritative Work state;
-- own Execution lifecycle semantics;
-- own runtime lifecycle;
-- own accounting truth;
-- create Workers from model sessions;
-- implement recruitment marketplace semantics;
-- replace Organization, Execution, Intelligence, Economy, Knowledge, Observation, Gateway, Data, or Library.
-
-## Invariants
-
-1. Objective ownership is anchored to persistent `workerId`, never runtime/model/session ID.
-2. Assignment references remain independent records; Objective does not become an Execution aggregate.
-3. Capacity gap detection returns explicit staffing demand rather than pretending capacity is infinite.
-4. Staffing demand may enter an authorized staffing/admission path but cannot manufacture institutional identity.
-5. No Execution handoff exists before canonical Phase-6 authorization succeeds.
-6. Execution revalidates authorization at its own boundary.
-7. Runtime replacement does not replace Worker or Objective identity.
-8. Recovery/replan is a management coordination action and does not claim execution success.
-9. Escalation is explicit and attributable; Human escalation is not the default for every failure.
-10. Delivery requires evidence.
-11. Every material management transition is timestamped and attributable.
-12. Invalid terminal-state transitions fail closed.
-
-## North-Star Automated Acceptance
-
-`GatewayDirectorNorthStarAcceptanceTest` proves the bounded integration path:
+## Target composition
 
 ```text
-Founder submits Gateway V2 Objective
-  ↓
-Gateway Director accepts and acknowledges it
-  ↓
-capacity gap detected
-  ↓
-staffing proposal emitted to legitimate authority
-  ↓
-Assignment recorded
-  ↓
-Phase-6 authorization succeeds
-  ↓
-Execution handoff + runtime correlation created
-  ↓
-Execution succeeds
-  ↓
-variance occurs
-  ↓
-Director performs local recovery/replan
-  ↓
-Objective remains owned by the same persistent Worker
-  ↓
-delivery requires evidence
-  ↓
-report returned through Workplace
-  ↓
-service/runtime replacement
-  ↓
-Objective + event history remain durable
+Interaction Provider
+-> Gateway admission
+-> Workforce acceptance transaction
+-> persistent Manager Runner
+-> Intelligence-assisted understanding/plan proposal
+-> versioned Work Graph
+-> Workforce allocation/staffing
+-> Governance authorization
+-> durable Execution/runtime dispatch
+-> Observation evidence
+-> Workforce recovery/replan/closure
+-> Workplace/channel progress and delivery
 ```
 
-A separate denial test proves that denied authorization cannot create an Execution handoff.
+## Boundaries retained
 
-## Acceptance Boundary
+Implementation MUST NOT create authority, own constitutional legitimacy, make Workplace projections authoritative, own Execution/Cloud semantics, turn model sessions into Workers, bypass admission/qualification, or promote unverified output into Knowledge.
 
-Passing this automated scenario proves the **Workforce autonomous-management integration slice** across durable management state, Workplace queue, Authorization, Execution handoff, runtime correlation, Execution, recovery, and evidence-backed delivery.
+## Acceptance
 
-It does **not** assert that Gateway V2 itself has been built or accepted. Gateway V2 remains the downstream bounded institutional project used for the later live Workforce acceptance scenario. Full Workforce institutional acceptance requires production deployment of this integration and a formal acceptance decision against the canonical Workforce acceptance requirements.
+Existing bounded tests remain regression requirements. General completion requires all four golden slices and the upstream 45-condition production gate. Until then this component is reported as `PARTIAL / BOUNDED`, never `AUTONOMY COMPLETE`.

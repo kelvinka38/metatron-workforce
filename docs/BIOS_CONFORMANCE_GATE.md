@@ -1,106 +1,85 @@
-# Workforce BIOS Product Conformance Boundary
+# WORKFORCE BIOS PRODUCT CONFORMANCE BOUNDARY
 
-## Status
+**Status:** HISTORICAL BOUNDED EVIDENCE — AUTONOMY-CLOSURE REVALIDATION REQUIRED  
+**Current canonical integration contract:** `docs/BIOS_OBJECTIVE_INTEGRATION_CONTRACT.md` plus the upstream Workforce autonomy-closure package
 
-**RUNTIME RECONCILED — PRODUCTION VERIFIED**
+## 1. Purpose
 
-This document describes the Workforce-side boundary used when Workforce participates in a BIOS Product / Case / Program flow. BIOS is a Product / Node and does not own Workforce or institutional authority semantics.
+This document preserves the BIOS conformance evidence previously established for its exact source revision while preventing that evidence from being generalized to the current live BIOS-to-Workforce Objective path.
 
-## Canonical distinctions
+BIOS is a Product/Node with its own canonical semantics. It does not own Workforce, Worker identity, Assignment, institutional authority, Execution or Observation.
 
-```text
-BIOS PRODUCT CONFORMANCE ≠ WORKFORCE GOVERNANCE
-BIOS PROGRAM ≠ ASSIGNMENT
-USER INTENT ≠ AUTHORIZATION
-USER REQUEST ≠ AUTHORIZATION
-NATURAL-LANGUAGE EXECUTION INTENT ≠ AUTHORITY PROOF
-GUIDANCE ≠ AUTHORIZATION
-PUBLICATION ≠ SOT
-INTELLIGENCE OUTPUT ≠ EXECUTION EVIDENCE
-DECISION ≠ EXECUTION
-```
-
-Workforce consumes canonical institutional authority and its own execution semantics. A BIOS request may supply product context, required evidence, consequence, Program information, or a requested action; it cannot manufacture authority.
-
-## Executable runtime boundaries
-
-The reconciled runtime has two distinct BIOS-facing enforcement locations:
+## 2. Canonical distinctions
 
 ```text
-com.metatron.workforce.bios.BiosExecutionKernel
-```
-
-for the BIOS interaction boundary, and:
-
-```text
-com.metatron.workforce.interaction.intelligence.BiosConformanceValidator
-com.metatron.workforce.interaction.intelligence.EvidenceBackedGovernance
-```
-
-for governed Intelligence results.
-
-`BiosExecutionKernel` no longer treats conversational phrases such as `I authorize`, `approved`, or `thực hiện ngay` as authorization proof. EXECUTION intent fails closed with `BIOS_EXECUTION_ADMISSION_REQUIRED` rather than creating a parallel authority model.
-
-Telegram interaction preserves consequential intent classification while keeping channel identity and natural-language intent outside institutional authority. Requests such as `fix it and deploy` remain execution intent, but the public interaction path returns a deterministic execution-admission block unless a proper institutional execution path is available.
-
-The required invariant is therefore executable:
-
-```text
-NATURAL-LANGUAGE EXECUTION INTENT
-        ↓
-EXECUTION INTENT CLASSIFICATION
-        ↓
-NO VERIFIED INSTITUTIONAL ADMISSION
-        ↓
-FAIL CLOSED
-```
-
-## Workforce execution authority boundary
-
-`ExecutionAdmissionService` remains the stronger material-execution boundary. It requires Assignment and Authorization and separately verifies required guidance.
-
-```text
+BIOS PRODUCT CONFORMANCE != WORKFORCE GOVERNANCE
+BIOS PROGRAM != WORKFORCE OBJECTIVE ACCEPTANCE
+BIOS PROGRAM != ASSIGNMENT
+USER INTENT != AUTHORIZATION
 GUIDANCE != AUTHORIZATION
-PROGRAM != ASSIGNMENT
-INTENT != AUTHORITY
+INTELLIGENCE OUTPUT != EXECUTION EVIDENCE
+DECISION != EXECUTION
+EXECUTION SUCCESS != OBJECTIVE SUCCESS
 ```
 
-The interaction and Intelligence layers must not weaken that model.
+A BIOS-originated Program/Objective context enters the same Gateway admission and Workforce durable-acceptance contract as another authorized source. It cannot manufacture a Worker, authority, capacity, execution success or outcome evidence.
 
-## Intelligence authority provenance
+## 3. Historical evidence
 
-Web enrichment may propagate authority context supplied by its caller, but Intelligence does not manufacture authority merely because it selected a read-only evidence tool.
-
-Configured provider transports are also no longer represented as fabricated live capacity/quota/latency/cost snapshots. `ConfiguredProviderRoutingPolicy` represents configuration only; `CapacityAwareRoutingPolicy` remains reserved for genuine capacity snapshots.
-
-## Verification evidence
-
-Production source commit:
+Previous production evidence was bound to source commit:
 
 ```text
 315c41b89e89bc767b6bf9bec568352faebd6ec3
 ```
 
-For that exact source revision:
+At that revision, build/test, production deploy, deployed identity, Gateway health, Telegram webhook, Workforce live acceptance and G12 evidence passed. Recorded runs:
+
+- Production deployment: `33226689228`
+- Workforce Live Acceptance: `33226791833`
+- G12 Production Readiness Evidence: `33226807293`
+
+That evidence remains historical evidence for that exact revision and tested boundary.
+
+## 4. Current-state correction
+
+The prior revision described specific behavior of `BiosExecutionKernel` as if it were permanently current. Code and documentation have since moved. Do not use the historical description to infer current-main behavior without re-auditing the implementation at the exact SHA.
+
+Current Autonomy Closure audit distinguishes:
+
+- independent BIOS service deployment/acceptance;
+- Workforce local BIOS compatibility/conformance code;
+- the desired BIOS Objective integration contract;
+- the still-unproven live BIOS service -> durable Workforce Objective -> verified Outcome production path.
+
+A local kernel, test, route probe or independent BIOS deployment does not by itself prove that complete path.
+
+## 5. Current required path
 
 ```text
-BUILD / TEST: PASS
-PRODUCTION DEPLOY: PASS
-DEPLOYED SHA IDENTITY: PASS
-WORKFORCE LOCAL P95: 0.0031 s
-PUBLIC GATEWAY HEALTH: PASS
-INTERNET EGRESS: PASS
-TELEGRAM WEBHOOK: PASS
-WORKFORCE LIVE ACCEPTANCE: PASS
-G12 PRODUCTION READINESS: PASS
+BIOS Case/Program context
+-> Gateway admission and routing
+-> Workforce durable Objective acceptance + accountable owner
+-> Workforce-managed plan/staffing/Assignment
+-> Governance authorization
+-> Execution/runtime
+-> Observation evidence
+-> Workforce closure package
+-> BIOS Outcome/State/Learning update
 ```
 
-Production deployment run: `33226689228`.
-Workforce Live Acceptance run: `33226791833`.
-G12 Production Readiness Evidence run: `33226807293`.
+## 6. Revalidation gate
 
-Production evidence is kept distinct from repository documentation and from CI-only evidence.
+Current integration may be reported as accepted only when production evidence proves:
 
-## Remaining boundary rule
+1. exact live BIOS service and Workforce deployment identities;
+2. durable Objective acceptance independent of chat/model lifetime;
+3. exactly one accountable Manager Worker;
+4. capability/capacity allocation and legitimate staffing;
+5. Assignment and Authorization before side effects;
+6. canonical Execution/runtime use;
+7. routine failure recovery;
+8. Observation-backed Objective closure;
+9. correlated Outcome returned to BIOS;
+10. no manual hidden orchestration.
 
-This reconciliation does **not** mean natural-language requests can authorize side effects. Any future path that allows a Telegram or Intelligence request to progress from intent into material execution must bind to institutional Assignment / Authorization / execution-admission evidence before side effects occur.
+Until this gate passes, report BIOS-to-Workforce Objective integration as `CONTRACT APPROVED / LIVE END-TO-END NOT YET ACCEPTED`.

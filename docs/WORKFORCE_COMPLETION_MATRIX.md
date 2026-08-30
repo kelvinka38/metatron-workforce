@@ -1,42 +1,46 @@
 # WORKFORCE COMPLETION MATRIX
 
-Status: FINAL IMPLEMENTATION CONFORMANCE MATRIX
+**Status:** CURRENT IMPLEMENTATION CONFORMANCE MATRIX — AUTONOMY CLOSURE REVISION  
+**Canonical upstream:** `kelvinka38/metatron-institution/05_WORKFORCE/`  
+**General autonomy verdict:** PARTIAL / NOT YET ACCEPTED
 
-Canonical upstream: `kelvinka38/metatron-institution/05_WORKFORCE/` Workforce SOT and approved operating specifications. This matrix is not a competing Source of Truth.
+## Required interpretation
 
-| Capability | Production implementation / evidence |
-|---|---|
-| Participant → Worker → Participation | Workforce core service/API; live acceptance PASS |
-| Persistent Worker identity | durable core state; process-replacement continuity PASS |
-| Capability / Qualification / Availability | core state/API; live lifecycle PASS |
-| Objective ownership / management autonomy | management service/coordinator; live autonomous-management PASS |
-| First-class Work | InstitutionalWork + durable Work store/API; live Work lifecycle PASS |
-| Assignment | persistent core Assignment; live lifecycle PASS |
-| Schedule / finite capacity | operations schedule/capacity; live operations PASS |
-| Staffing | durable staffing request/proposal; restart continuity PASS |
-| Review | durable institutional review; restart continuity PASS |
-| Workplace communication / meetings / queue | Phase 3 services and acceptance suite |
-| Authority / Authorization separation | external authority refs + Phase 6 authorization semantics |
-| Execution handoff / runtime | execution handoff + runtime binding/recovery; durable recovery tests |
-| Reports / performance / economics | Phase 7/10 evidence and acceptance |
-| Experience / reflection / learning | Phase 8 services and acceptance |
-| Escalation / local recovery | management + Phase 4 escalation; live recovery PASS |
-| Provider independence | Worker identity/state independent of model/runtime provider |
-| Production durability | core, management, Work, schedule, staffing, review, runtime state survive process replacement |
-| Production boundary | all `/workforce/*` internal surfaces return 404 publicly; Telegram canonical ingress remains 401 on invalid secret |
+Earlier revisions described the audited implementation scope as final. The evidence remains useful for the exact primitives and bounded live scenarios tested, but it does not prove the Founder-ratified L10 Workforce Autonomy Closure.
 
-## Acceptance Evidence
+This revision is the authoritative implementation-status interpretation. See `docs/AUTONOMY_CLOSURE/`.
 
-Implementation/deployment SHA: `6f5b06e78d82d4e93f1cfa632d64557b64ea744c`.
+| Capability | Existing implementation/evidence | Current verdict |
+|---|---|---|
+| Participant -> Worker -> Participation | Core service/API and live lifecycle | Implemented substrate |
+| Persistent Worker identity | durable Core state and replacement tests | Implemented substrate |
+| Capability/Qualification/Availability | Core state/API | Implemented substrate |
+| Objective ownership state | management service/store and bounded tests | Partial; acceptance/fencing/Runner incomplete |
+| First-class Work | InstitutionalWork and durable store/API | Implemented substrate; DAG scheduler incomplete |
+| Assignment | persistent Core Assignment | Implemented substrate |
+| Schedule/finite capacity | operational schedule/capacity APIs/tests | Partial; autonomous ready-set allocation incomplete |
+| Staffing | durable request/proposal lifecycle | Partial; autonomous staffing/formation incomplete |
+| Workplace/Meeting Room | canonical design, services/tests/dashboard | Partial production product/integration |
+| Authorization separation | Phase-6 semantics and denial tests | Implemented substrate; durable dispatch/revocation proof pending |
+| Execution/runtime | handoff, runtime correlation/recovery primitives | Partial; general scheduler/lease recovery path pending |
+| Intelligence | reasoning/memory/provider product and live bounded evidence | Implemented service; management ownership boundary must invert |
+| Observation/evidence | bounded capability evidence | Partial; independent criterion closure pending |
+| Reporting/performance/economics | services and bounded acceptance | Partial L9 enforcement/visibility |
+| Experience/learning | services and acceptance tests | Bounded; general verified admission loop pending |
+| Local recovery/replan | management transition primitives/tests | Partial; autonomous operational recovery pending |
+| Telegram | production repository-audit slice | Bounded capability, not durable general autonomy |
+| ChatGPT adapter | no production Workforce adapter proof | Missing |
+| BIOS integration | approved contract and independent BIOS service | Live Objective-path integration not proved |
+| General L10 autonomy | no complete material production Objective evidence | NOT YET ACCEPTED |
 
-Production deployment run: `33153971165` — PASS.
+## Historical evidence retained
 
-Workforce Live Acceptance run: `33154091624`, attempt 2 — PASS.
+Historical implementation/deployment evidence at `6f5b06e78d82d4e93f1cfa632d64557b64ea744c`, production deployment run `33153971165`, Workforce Live Acceptance `33154091624` attempt 2, and Gateway boundary repair run `33155111510` remains valid for the tested Core/API/durability/boundary scope.
 
-Verified in that live acceptance: deployment identity, Worker lifecycle, first-class institutional Work, operational lifecycles, autonomous management/recovery/evidence, process-replacement durable continuity, and public-boundary isolation.
+Later production evidence through `9020efe23f4aebca5205917668261f1bdf642373` proves bounded Telegram repository-audit and Intelligence product behavior.
 
-Gateway boundary repair evidence: `metatron-institution` run `33155111510` — PASS; all Workforce internal route families 404 publicly and Telegram invalid-secret regression returns 401.
+These runs do not prove persistent autonomous management, dynamic staffing, durable DAG scheduling, general runtime recovery and Observation closure as a complete loop.
 
-## Completion Rule
+## Completion rule
 
-The implementation has no known material missing/stubbed canonical Workforce capability in the audited scope. Final repository closure is accepted only after the closure commit itself passes CI, exact-SHA production deployment, post-deploy live Workforce acceptance and G12 evidence certification.
+The repository may report exact component or bounded-slice completion. It MUST NOT report general Workforce completion until all critical gates in upstream `WORKFORCE_AUTONOMY_CLOSURE_ACCEPTANCE_SPEC.md` pass in production with exact source/deploy identity and no hidden Human/interface orchestration.

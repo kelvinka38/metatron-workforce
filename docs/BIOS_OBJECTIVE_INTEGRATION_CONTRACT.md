@@ -7,6 +7,12 @@
 
 ---
 
+## CURRENT IMPLEMENTATION CLAIM BOUNDARY
+
+This approved contract defines the target boundary; contract approval is not live end-to-end acceptance. Current production evidence proves BIOS independently and proves bounded Workforce paths, but does not yet prove the live BIOS service -> durable Workforce Objective -> verified Outcome path. Report that path as `CONTRACT APPROVED / LIVE END-TO-END NOT YET ACCEPTED` until the Autonomy Closure production gate passes.
+
+---
+
 # 1. PURPOSE
 
 This document records how BIOS Product #1 consumes Workforce without redefining Workforce semantics.

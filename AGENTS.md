@@ -1,5 +1,18 @@
 # METATRON WORKFORCE — AGENT / WORKER GOVERNING ENTRY
 
+## RATIFIED WORKFORCE AUTONOMY CLOSURE — MANDATORY CURRENT BASELINE
+
+Founder approved Workforce Autonomy Closure on 2026-08-31. Before work on ingress, management, staffing, scheduling, runtime, Workplace, Intelligence handoff, BIOS handoff, Observation or completion claims, read `docs/AUTONOMY_CLOSURE/README.md` and every upstream canonical contract it lists.
+
+Current general autonomy status is `PARTIAL / NOT YET ACCEPTED`. Existing APIs, tests, green workflows, async primitives and bounded Telegram repository-audit evidence MUST NOT be generalized to L10 autonomy.
+
+Non-negotiable target:
+
+> Once Workforce durably accepts an Objective and assigns its accountable Manager Worker, Objective lifetime no longer depends on ChatGPT, Telegram, another channel, a model session, a process, or a runtime remaining alive.
+
+Every relevant PR must identify the canonical clauses, domain owners, durability/idempotency/fencing behavior, failure/reconciliation behavior, evidence level and remaining production gates.
+
+
 ## Status
 
 **MANDATORY REPOSITORY ENTRY POINT**

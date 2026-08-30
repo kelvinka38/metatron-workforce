@@ -1,8 +1,12 @@
 # METATRON WORKPLACE — IMPLEMENTATION REFERENCE
 
-Status: FROZEN DESIGN REFERENCE — IMPLEMENTATION NOT AUTHORIZED
+Status: FROZEN CANONICAL DESIGN REFERENCE — AUTONOMY-CLOSURE INTEGRATION AUTHORIZED; WHOLESALE REDESIGN NOT AUTHORIZED
 
 Canonical Workplace design is owned by `kelvinka38/metatron-institution`, not this implementation repository.
+
+## Autonomy Closure authorization update — 2026-08-31
+
+Founder approval authorizes only the Workplace implementation/integration required for durable Objective progress, Conversation, Meeting/Meeting Room reuse, Decision/exception handling, evidence presentation and cross-channel continuity under the ratified Workforce Autonomy Closure program. It does not authorize replacing the frozen Workplace architecture, inventing a second Meeting Room, or moving Objective/Execution/Observation truth into Workplace projections.
 
 Frozen canonical baseline was merged to `metatron-institution/main` at commit:
 

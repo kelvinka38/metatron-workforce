@@ -1,5 +1,9 @@
 # MASTER_EXECUTION_CHECKLIST.md
 
+## AUTONOMY CLOSURE SUPERSESSION NOTICE — 2026-08-31
+
+This register remains historical/current only for the execution-runtime certification scope it names. It does not govern or prove general Workforce autonomy. The Founder-approved active program is `docs/AUTONOMY_CLOSURE/IMPLEMENTATION_MASTER_PLAN.md`; status and completion claims follow `docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md` and the upstream autonomy-closure production gate.
+
 ## Status
 
 CANONICAL EXECUTION REGISTER — RECONCILED 2026-08-25
