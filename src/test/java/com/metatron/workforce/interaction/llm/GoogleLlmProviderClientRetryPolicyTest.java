@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,7 +13,36 @@ class GoogleLlmProviderClientRetryPolicyTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void retriesRateLimitAndTransientServerFailures() {
+    void treatsRateLimitAndTransientServerFailuresAsCapacityFailures() {
+        assertTrue(GoogleLlmProviderClient.isCapacityFailure(429));
+        assertTrue(GoogleLlmProviderClient.isCapacityFailure(500));
+        assertTrue(GoogleLlmProviderClient.isCapacityFailure(502));
+        assertTrue(GoogleLlmProviderClient.isCapacityFailure(503));
+        assertTrue(GoogleLlmProviderClient.isCapacityFailure(504));
+    }
+
+    @Test
+    void doesNotTreatPermanentClientFailuresAsCapacityFailures() {
+        assertFalse(GoogleLlmProviderClient.isCapacityFailure(400));
+        assertFalse(GoogleLlmProviderClient.isCapacityFailure(401));
+        assertFalse(GoogleLlmProviderClient.isCapacityFailure(403));
+        assertFalse(GoogleLlmProviderClient.isCapacityFailure(404));
+    }
+
+    @Test
+    void preservesConfiguredModelThenFallsBackAcrossDistinctFlashLiteCapacity() {
+        assertEquals(List.of("gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"),
+                GoogleLlmProviderClient.modelCandidates("gemini-3.6-flash"));
+    }
+
+    @Test
+    void doesNotDuplicateConfiguredFallbackModel() {
+        assertEquals(List.of("gemini-3.5-flash-lite", "gemini-3.1-flash-lite"),
+                GoogleLlmProviderClient.modelCandidates("gemini-3.5-flash-lite"));
+    }
+
+    @Test
+    void retriesRateLimitAndTransientServerFailuresCompatibilityContract() {
         assertTrue(GoogleLlmProviderClient.isRetryableStatus(429));
         assertTrue(GoogleLlmProviderClient.isRetryableStatus(500));
         assertTrue(GoogleLlmProviderClient.isRetryableStatus(502));
@@ -21,7 +51,7 @@ class GoogleLlmProviderClientRetryPolicyTest {
     }
 
     @Test
-    void doesNotRetryPermanentClientFailures() {
+    void doesNotRetryPermanentClientFailuresCompatibilityContract() {
         assertFalse(GoogleLlmProviderClient.isRetryableStatus(400));
         assertFalse(GoogleLlmProviderClient.isRetryableStatus(401));
         assertFalse(GoogleLlmProviderClient.isRetryableStatus(403));

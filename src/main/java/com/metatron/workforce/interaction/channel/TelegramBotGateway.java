@@ -8,6 +8,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -35,9 +37,11 @@ public final class TelegramBotGateway implements ChannelGateway {
             throw new IllegalArgumentException("telegram_message_required");
         }
         try {
-            String body = objectMapper.writeValueAsString(Map.of(
-                    "chat_id", message.senderId(),
-                    "text", message.text()));
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("chat_id", message.senderId());
+            payload.put("text", message.text());
+            payload.put("reply_markup", depthControlReplyMarkup());
+            String body = objectMapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.telegram.org/bot" + botToken + "/sendMessage"))
                     .timeout(Duration.ofSeconds(10))
@@ -63,6 +67,20 @@ public final class TelegramBotGateway implements ChannelGateway {
         } catch (IOException e) {
             throw new IllegalStateException("telegram_send_failed:" + e.getClass().getSimpleName() + ":" + safeMessage(e), e);
         }
+    }
+
+    /**
+     * Telegram renders provider-native controls, but the command strings are the canonical
+     * channel-neutral depth-control surface consumed by IntelligenceDepthControlService.
+     */
+    static Map<String, Object> depthControlReplyMarkup() {
+        return Map.of(
+                "keyboard", List.of(
+                        List.of("/fast", "/analyze", "/deep"),
+                        List.of("/auto", "/mode")),
+                "resize_keyboard", true,
+                "is_persistent", true,
+                "input_field_placeholder", "Ask Metatron…");
     }
 
     private static String safeMessage(Exception e) {
