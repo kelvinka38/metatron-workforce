@@ -13,6 +13,7 @@ import com.metatron.workforce.interaction.tools.WebSearchToolAdapter;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -40,7 +41,7 @@ final class InformationRequirementAcquisitionServiceTest {
         InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
                 new KnowledgeRetrievalService(List.of(source)), new DefaultToolFabric(List.of(web)));
         NormalizedRequest normalized = normalized(false);
-        IntelligenceCase intelligenceCase = caseWith(requirement(
+        IntelligenceCase intelligenceCase = caseWith(requirement("ir-1", "gateway audit state",
                 List.of("institutional artifact", "connected system/API")));
 
         var result = service.acquire(intelligenceCase, normalized, "human:1");
@@ -56,23 +57,28 @@ final class InformationRequirementAcquisitionServiceTest {
     }
 
     @Test
-    void acquiresFreshExternalEvidenceOnceAndMarksRequirementSatisfied() {
+    void acquiresFreshExternalEvidenceAndMarksRequirementSatisfied() {
         AtomicInteger webCalls = new AtomicInteger();
+        List<String> queries = new ArrayList<>();
         ToolAdapter web = new ToolAdapter() {
             @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
             @Override public ToolResult execute(ToolRequest request) {
                 webCalls.incrementAndGet();
+                queries.add(request.input());
                 return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
                         true, "CURRENT EXTERNAL DATA\nmetric=42", List.of("https://example.test/evidence"));
             }
         };
         InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
                 new KnowledgeRetrievalService(List.of()), new DefaultToolFabric(List.of(web)));
-        IntelligenceCase intelligenceCase = caseWith(requirement(List.of("web/external research")));
+        IntelligenceCase intelligenceCase = caseWith(requirement("ir-1", "gateway audit state",
+                List.of("web/external research")));
 
         var result = service.acquire(intelligenceCase, normalized(true), "human:1");
 
         assertEquals(1, webCalls.get());
+        assertTrue(queries.getFirst().contains("gateway audit state"));
+        assertTrue(queries.getFirst().contains("objective=audit gateway"));
         assertTrue(result.externalEvidenceAcquired());
         assertEquals(1, result.satisfiedRequirements());
         assertEquals(InformationRequirementStatus.SATISFIED,
@@ -81,17 +87,98 @@ final class InformationRequirementAcquisitionServiceTest {
         assertTrue(result.groundedFallback().contains("metric=42"));
     }
 
-    private static InformationRequirement requirement(List<String> sources) {
-        return new InformationRequirement("ir-1", "gateway audit state", "required for audit",
+    @Test
+    void acquiresEachExternalRequirementWithItsOwnQuestionAndEvidence() {
+        AtomicInteger webCalls = new AtomicInteger();
+        List<String> queries = new ArrayList<>();
+        ToolAdapter web = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) {
+                int call = webCalls.incrementAndGet();
+                queries.add(request.input());
+                return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                        true, "CURRENT EXTERNAL DATA\nquery=" + request.input(),
+                        List.of("https://example.test/evidence-" + call));
+            }
+        };
+        InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
+                new KnowledgeRetrievalService(List.of()), new DefaultToolFabric(List.of(web)));
+        IntelligenceCase intelligenceCase = caseWith(List.of(
+                requirement("ir-gateway", "current gateway state", List.of("web/external research")),
+                requirement("ir-deploy", "current deployment state", List.of("web/external research"))));
+
+        var result = service.acquire(intelligenceCase, normalized(true), "human:1");
+
+        assertEquals(2, webCalls.get());
+        assertEquals(2, result.satisfiedRequirements());
+        assertEquals(0, result.unresolvedRequirements());
+        assertTrue(queries.stream().anyMatch(query -> query.contains("current gateway state")));
+        assertTrue(queries.stream().anyMatch(query -> query.contains("current deployment state")));
+        assertTrue(result.intelligenceCase().evidenceReferences().contains("https://example.test/evidence-1"));
+        assertTrue(result.intelligenceCase().evidenceReferences().contains("https://example.test/evidence-2"));
+        assertTrue(result.groundedContext().contains("requirement_id=ir-gateway"));
+        assertTrue(result.groundedContext().contains("requirement_id=ir-deploy"));
+    }
+
+    @Test
+    void failedExternalRequirementDoesNotPoisonAnotherRequirement() {
+        AtomicInteger webCalls = new AtomicInteger();
+        ToolAdapter web = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) {
+                webCalls.incrementAndGet();
+                if (request.input().startsWith("current gateway state")) {
+                    return ToolResult.failure(request, "source unavailable");
+                }
+                return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                        true, "CURRENT EXTERNAL DATA\ndeployment=healthy",
+                        List.of("https://example.test/deployment"));
+            }
+        };
+        InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
+                new KnowledgeRetrievalService(List.of()), new DefaultToolFabric(List.of(web)));
+        IntelligenceCase intelligenceCase = caseWith(List.of(
+                requirement("ir-gateway", "current gateway state", List.of("web/external research")),
+                requirement("ir-deploy", "current deployment state", List.of("web/external research"))));
+
+        var result = service.acquire(intelligenceCase, normalized(true), "human:1");
+
+        assertEquals(2, webCalls.get());
+        assertEquals(1, result.satisfiedRequirements());
+        assertEquals(1, result.unresolvedRequirements());
+        assertTrue(result.externalEvidenceAcquired());
+        assertEquals(InformationRequirementStatus.UNRESOLVABLE,
+                status(result, "ir-gateway"));
+        assertEquals(InformationRequirementStatus.SATISFIED,
+                status(result, "ir-deploy"));
+        assertTrue(result.groundedFallback().contains("deployment=healthy"));
+        assertFalse(result.groundedFallback().contains("source unavailable"));
+    }
+
+    private static InformationRequirementStatus status(InformationRequirementAcquisitionService.AcquisitionResult result,
+                                                       String requirementId) {
+        return result.intelligenceCase().informationRequirements().stream()
+                .filter(requirement -> requirement.requirementId().equals(requirementId))
+                .findFirst()
+                .orElseThrow()
+                .status();
+    }
+
+    private static InformationRequirement requirement(String id, String question, List<String> sources) {
+        return new InformationRequirement(id, question, "required for audit",
                 InformationRequirementStatus.MISSING, sources, List.of(), "current", "grounded",
                 "low", "interactive", "read access", "material");
     }
 
     private static IntelligenceCase caseWith(InformationRequirement requirement) {
+        return caseWith(List.of(requirement));
+    }
+
+    private static IntelligenceCase caseWith(List<InformationRequirement> requirements) {
         Instant now = Instant.now();
         return new IntelligenceCase("case-1", "conversation:1", "human:1", "audit gateway",
                 IntelligenceDepth.ANALYZE, IntelligenceCaseStatus.INFORMATION_ASSESSMENT,
-                List.of(requirement), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                requirements, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 "", "", List.of(), now, now);
     }
 

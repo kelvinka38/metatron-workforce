@@ -42,20 +42,17 @@ public final class InformationRequirementAcquisitionService {
         List<InformationRequirement> requirements = new ArrayList<>(intelligenceCase.informationRequirements());
         Set<String> caseEvidence = new LinkedHashSet<>(intelligenceCase.evidenceReferences());
         StringBuilder groundedContext = new StringBuilder();
-        ToolResult external = null;
-        boolean externalAttempted = false;
+        StringBuilder groundedExternalEvidence = new StringBuilder();
+        boolean externalEvidenceAcquired = false;
         int acquisitions = 0;
         int acquisitionBudget = budget(normalized.requestedDepth(), requirements.size());
 
         while (acquisitions < acquisitionBudget) {
-            int next = selectNext(requirements, normalized, externalAttempted);
+            int next = selectNext(requirements, normalized);
             if (next < 0) break;
 
             InformationRequirement requirement = requirements.get(next);
-            AcquisitionAttempt attempt = acquireOne(requirement, normalized, requester,
-                    intelligenceCase.caseId(), external, externalAttempted);
-            external = attempt.external();
-            externalAttempted = attempt.externalAttempted();
+            AcquisitionAttempt attempt = acquireOne(requirement, normalized, requester, intelligenceCase.caseId());
             acquisitions++;
 
             if (attempt.satisfied()) {
@@ -64,6 +61,10 @@ public final class InformationRequirementAcquisitionService {
                         InformationRequirementStatus.SATISFIED,
                         attempt.evidenceReferences()));
                 appendBounded(groundedContext, attempt.groundedContext());
+                if (attempt.externalResult() != null && attempt.externalResult().success()) {
+                    externalEvidenceAcquired = true;
+                    appendBounded(groundedExternalEvidence, attempt.groundedContext());
+                }
                 continue;
             }
 
@@ -97,12 +98,11 @@ public final class InformationRequirementAcquisitionService {
                 List.copyOf(caseEvidence),
                 IntelligenceCaseStatus.REASONING);
 
-        boolean externalEvidenceAcquired = external != null && external.success();
         return new AcquisitionResult(
                 updated,
                 trim(groundedContext.toString(), MAX_CONTEXT_CHARS),
                 externalEvidenceAcquired,
-                externalEvidenceAcquired ? renderGroundedFallback(external) : "",
+                externalEvidenceAcquired ? renderGroundedFallback(groundedExternalEvidence.toString()) : "",
                 satisfied,
                 unresolved);
     }
@@ -110,9 +110,7 @@ public final class InformationRequirementAcquisitionService {
     private AcquisitionAttempt acquireOne(InformationRequirement requirement,
                                           NormalizedRequest normalized,
                                           String requester,
-                                          String caseId,
-                                          ToolResult existingExternal,
-                                          boolean externalAttempted) {
+                                          String caseId) {
         List<KnowledgeDocument> documents = retrieveKnowledge(normalized, requirement);
         if (!documents.isEmpty()) {
             List<String> refs = new ArrayList<>();
@@ -121,34 +119,28 @@ public final class InformationRequirementAcquisitionService {
                 refs.addAll(document.evidenceReferences());
                 appendKnowledge(context, requirement, document);
             }
-            return new AcquisitionAttempt(true, false, refs, context.toString(), existingExternal, externalAttempted);
+            return new AcquisitionAttempt(true, false, refs, context.toString(), null);
         }
 
         if (shouldAcquireExternal(normalized, requirement)) {
-            ToolResult external = existingExternal;
-            boolean attempted = externalAttempted;
-            if (!attempted) {
-                external = acquireExternal(normalized, requester, caseId);
-                attempted = true;
-            }
-            if (external != null && external.success()) {
+            ToolResult external = acquireExternal(normalized, requirement, requester, caseId);
+            if (external.success()) {
                 StringBuilder context = new StringBuilder();
                 appendTool(context, requirement, external);
-                return new AcquisitionAttempt(true, false, external.evidenceReferences(), context.toString(), external, attempted);
+                return new AcquisitionAttempt(true, false, external.evidenceReferences(), context.toString(), external);
             }
-            return new AcquisitionAttempt(false, true, List.of(), "", external, attempted);
+            return new AcquisitionAttempt(false, true, List.of(), "", external);
         }
 
-        return new AcquisitionAttempt(false, false, List.of(), "", existingExternal, externalAttempted);
+        return new AcquisitionAttempt(false, false, List.of(), "", null);
     }
 
     private int selectNext(List<InformationRequirement> requirements,
-                           NormalizedRequest normalized,
-                           boolean externalAttempted) {
+                           NormalizedRequest normalized) {
         return java.util.stream.IntStream.range(0, requirements.size())
                 .filter(index -> acquirable(requirements.get(index)))
                 .boxed()
-                .max(Comparator.comparingInt(index -> informationValue(requirements.get(index), normalized, externalAttempted)))
+                .max(Comparator.comparingInt(index -> informationValue(requirements.get(index), normalized)))
                 .orElse(-1);
     }
 
@@ -162,8 +154,7 @@ public final class InformationRequirementAcquisitionService {
      * this method never reinterprets the Human's raw text.
      */
     private static int informationValue(InformationRequirement requirement,
-                                        NormalizedRequest normalized,
-                                        boolean externalAttempted) {
+                                        NormalizedRequest normalized) {
         int score = 0;
         if (requirement.status() == InformationRequirementStatus.CONFLICTED) score += 50;
         score += impactScore(requirement.impactIfUnknown());
@@ -172,7 +163,6 @@ public final class InformationRequirementAcquisitionService {
         score -= costPenalty(requirement.acquisitionCostHint());
         score -= latencyPenalty(requirement.latencyHint());
         if (normalized.freshExternalDataRequired() && shouldAcquireExternal(normalized, requirement)) score += 30;
-        if (externalAttempted && shouldAcquireExternal(normalized, requirement)) score += 10;
         return score;
     }
 
@@ -229,14 +219,20 @@ public final class InformationRequirementAcquisitionService {
         }
     }
 
-    private ToolResult acquireExternal(NormalizedRequest normalized, String requester, String caseId) {
+    private ToolResult acquireExternal(NormalizedRequest normalized,
+                                       InformationRequirement requirement,
+                                       String requester,
+                                       String caseId) {
+        String query = requirement.question().isBlank()
+                ? normalized.objective()
+                : requirement.question() + "\nobjective=" + normalized.objective();
         ToolRequest request = new ToolRequest(
-                "ir-web-" + caseId + "-" + System.nanoTime(),
+                "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
                 requester,
                 WebSearchToolAdapter.CAPABILITY,
                 "internet:web-search",
                 "search",
-                normalized.objective(),
+                query,
                 List.of());
         try {
             return tools.execute(request);
@@ -274,11 +270,11 @@ public final class InformationRequirementAcquisitionService {
         target.append(value, 0, Math.min(value.length(), remaining));
     }
 
-    private static String renderGroundedFallback(ToolResult result) {
-        if (result == null || !result.success() || result.output().isBlank()) return "";
+    private static String renderGroundedFallback(String groundedEvidence) {
+        if (groundedEvidence == null || groundedEvidence.isBlank()) return "";
         return "Metatron acquired grounded external evidence before frontier reasoning. "
-                + "Provider synthesis was unavailable or violated the evidence contract, so the grounded evidence is returned directly:\n\n"
-                + result.output().trim();
+                + "Provider synthesis was unavailable or violated the evidence contract, so the requirement-scoped grounded evidence is returned directly:\n\n"
+                + trim(groundedEvidence, MAX_CONTEXT_CHARS).trim();
     }
 
     private static String trim(String value, int maxChars) {
@@ -295,8 +291,7 @@ public final class InformationRequirementAcquisitionService {
             boolean unresolvable,
             List<String> evidenceReferences,
             String groundedContext,
-            ToolResult external,
-            boolean externalAttempted) {
+            ToolResult externalResult) {
         private AcquisitionAttempt {
             evidenceReferences = List.copyOf(Objects.requireNonNull(evidenceReferences, "evidenceReferences"));
             Objects.requireNonNull(groundedContext, "groundedContext");
