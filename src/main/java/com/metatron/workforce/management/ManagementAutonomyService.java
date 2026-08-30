@@ -44,6 +44,26 @@ public final class ManagementAutonomyService {
         return objective;
     }
 
+    /**
+     * Accepts an authenticated/admitted Human request as a management objective without pretending
+     * that the request carries institutional execution Authority or Authorization.
+     */
+    public synchronized ManagementObjective acceptHumanObjective(String objectiveId, String ownerWorkerId,
+            String organizationContextId, String description, String humanActorId,
+            String requestAdmissionReference, Instant at) {
+        Objects.requireNonNull(at, "at");
+        requireText(humanActorId, "humanActorId");
+        requireText(requestAdmissionReference, "requestAdmissionReference");
+        if (objectives.containsKey(objectiveId)) throw new IllegalStateException("objective already exists: " + objectiveId);
+        ManagementObjective objective = new ManagementObjective(objectiveId, ownerWorkerId, organizationContextId,
+                description, ManagementObjective.Status.ACTIVE, List.of(), List.of(), at, at);
+        objectives.put(objectiveId, objective);
+        append(objectiveId, humanActorId, ManagementEvent.Type.OBJECTIVE_ACCEPTED,
+                description + "; owner=" + ownerWorkerId + "; request_admission=" + requestAdmissionReference
+                        + "; execution_authorization=NONE", at);
+        return objective;
+    }
+
     public synchronized ManagementObjective addAssignmentReference(String objectiveId, String actorWorkerId,
             String assignmentRef, Instant at) {
         requireText(assignmentRef, "assignmentRef"); ManagementObjective current = activeObjective(objectiveId); requireOwnerOrManagerActor(current, actorWorkerId);
