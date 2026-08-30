@@ -16,17 +16,20 @@ class IntelligenceDepthControlServiceTest {
         IntelligenceDepthControlService first = new IntelligenceDepthControlService(
                 new PersistentIntelligenceDepthPreferenceStore(temp));
 
-        var selected = first.handle(conversation, "/deep");
+        var selected = first.handle(conversation, "🔬 Deep");
         assertTrue(selected.controlHandled());
         assertEquals(IntelligenceDepth.DEEP, selected.contract().selectedDepth());
+        assertTrue(selected.response().startsWith("🔬 DEEP · METATRON"));
 
         IntelligenceDepthControlService restarted = new IntelligenceDepthControlService(
                 new PersistentIntelligenceDepthPreferenceStore(temp));
         assertEquals(IntelligenceDepth.DEEP, restarted.contract(conversation).selectedDepth());
-        assertTrue(restarted.handle(conversation, "/mode").response().contains("DEEP"));
+        assertEquals("🔬 DEEP · METATRON", restarted.responseSignature(conversation));
+        assertTrue(restarted.handle(conversation, "🎛 Mode").response().contains("DEEP"));
 
-        restarted.handle(conversation, "/auto");
+        var automatic = restarted.handle(conversation, "🤖 Auto");
         assertFalse(restarted.contract(conversation).explicitlySelected());
+        assertTrue(automatic.response().startsWith("🤖 AUTO · METATRON"));
     }
 
     @Test
@@ -41,7 +44,7 @@ class IntelligenceDepthControlServiceTest {
         assertTrue(invalid.controlHandled());
         assertEquals(IntelligenceDepth.DEEP, invalid.contract().selectedDepth());
         assertTrue(invalid.response().contains("Invalid intelligence-depth control"));
-        assertTrue(invalid.response().contains("/auto"));
+        assertTrue(invalid.response().contains("🤖 Auto"));
     }
 
     @Test
