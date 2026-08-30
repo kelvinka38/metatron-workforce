@@ -127,7 +127,7 @@ final class InformationRequirementAcquisitionServiceTest {
             @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
             @Override public ToolResult execute(ToolRequest request) {
                 webCalls.incrementAndGet();
-                if (request.input().contains("gateway")) {
+                if (request.input().startsWith("current gateway state")) {
                     return ToolResult.failure(request, "source unavailable");
                 }
                 return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
