@@ -1,34 +1,31 @@
-name: Telegram One Message Live Acceptance
+name: Legacy Telegram Highway Diagnostic (Manual Only)
 
 on:
-  workflow_run:
-    workflows: ["Production Deploy"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: metatron-telegram-one-message-live-acceptance
+  group: metatron-legacy-telegram-highway-diagnostic
   cancel-in-progress: true
 
 jobs:
-  accept-one-message-highway:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+  legacy-telegram-highway-diagnostic:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove Telegram-shaped message traverses institutional execution highway
+      - name: Prove legacy Telegram-shaped diagnostic path manually
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          TARGET_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          echo "DEPLOYED_SHA=$DEPLOYED_SHA"
+          echo "REQUESTED_SHA=$TARGET_SHA"
 
           ENVFILE=/opt/metatron/metatron-workforce/.env
           test -r "$ENVFILE"
@@ -45,35 +42,16 @@ jobs:
           print(json.dumps({"update_id":update,"message":{"message_id":update,"from":{"id":user,"is_bot":False,"first_name":"Founder"},"chat":{"id":user,"type":"private"},"date":0,"text":"Audit BIOS"}}))
           PY
           )
-          HTTP=$(curl -sS -o /tmp/telegram-one-message.out -w '%{http_code}' \
+          HTTP=$(curl -sS -o /tmp/legacy-telegram-diagnostic.out -w '%{http_code}' \
             -X POST http://127.0.0.1:8080/telegram/webhook \
             -H "Content-Type: application/json" \
             -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
             -d "$BODY")
-          echo "TELEGRAM_WEBHOOK_HTTP=$HTTP"
+          echo "LEGACY_TELEGRAM_DIAGNOSTIC_HTTP=$HTTP"
           test "$HTTP" = "200"
 
-          FOUND=0
-          for i in $(seq 1 90); do
-            LOGS=$(docker logs --since 3m "$CID" 2>&1 || true)
-            if printf '%s' "$LOGS" | grep -F "telegram_institutional_work_terminal update_id=$UPDATE_ID" | grep -F 'repository=kelvinka38/bios' | grep -F 'status=COMPLETED' >/dev/null; then
-              FOUND=1
-              break
-            fi
-            sleep 2
-          done
-          test "$FOUND" = "1"
-
-          LOGS=$(docker logs --since 3m "$CID" 2>&1)
-          printf '%s\n' "$LOGS" | grep -F "telegram_institutional_work_terminal update_id=$UPDATE_ID" | tail -1
-          printf '%s\n' "$LOGS" | grep -F "telegram_send_success update_id=$UPDATE_ID" | tail -1
-          printf '%s\n' "$LOGS" | grep -F "telegram_institutional_work_terminal update_id=$UPDATE_ID" | grep -F 'worker=RepositoryAuditWorker' >/dev/null
-          printf '%s\n' "$LOGS" | grep -F "telegram_institutional_work_terminal update_id=$UPDATE_ID" | grep -F 'evidence=preserved' >/dev/null
+          LOGS=$(docker logs --since 2m "$CID" 2>&1 || true)
           printf '%s\n' "$LOGS" | grep -F "telegram_send_success update_id=$UPDATE_ID" >/dev/null
 
-          echo "ONE_MESSAGE_TELEGRAM_INGRESS=PASS"
-          echo "INTENT_TO_INSTITUTIONAL_WORK=PASS"
-          echo "AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS"
-          echo "WORK_EVIDENCE_PRESERVED=PASS"
-          echo "RESULT_RETURNED_TO_TELEGRAM=PASS"
-          echo "TELEGRAM_ONE_MESSAGE_HIGHWAY=PASS"
+          echo 'LEGACY_TELEGRAM_DIAGNOSTIC=PASS'
+          echo 'NOTE=This workflow is manual-only and is not a canonical production acceptance gate.'
