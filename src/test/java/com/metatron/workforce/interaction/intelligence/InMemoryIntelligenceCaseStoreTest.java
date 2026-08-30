@@ -25,6 +25,22 @@ final class InMemoryIntelligenceCaseStoreTest {
         assertEquals(List.of("evidence:1"), resumed.evidenceReferences());
         assertFalse(resumed.informationRequirements().isEmpty());
         assertTrue(resumed.externalInstitutionalReferences().isEmpty());
+        assertEquals(resumed.caseId(), store.findByCaseId(resumed.caseId()).orElseThrow().caseId());
+    }
+
+    @Test
+    void retainsResolvedHistoricalCaseAfterConversationStartsNewCase() {
+        InMemoryIntelligenceCaseStore store = new InMemoryIntelligenceCaseStore();
+        IntelligenceCase first = store.openOrUpdate(
+                "conversation:history", "human:1", normalized("first objective", IntelligenceDepth.ANALYZE));
+        store.save(first.transition(IntelligenceCaseStatus.RESOLVED));
+
+        IntelligenceCase second = store.openOrUpdate(
+                "conversation:history", "human:1", normalized("second objective", IntelligenceDepth.DEEP));
+
+        assertNotEquals(first.caseId(), second.caseId());
+        assertEquals(second.caseId(), store.findActive("conversation:history").orElseThrow().caseId());
+        assertEquals(IntelligenceCaseStatus.RESOLVED, store.findByCaseId(first.caseId()).orElseThrow().status());
     }
 
     private static NormalizedRequest normalized(String objective, IntelligenceDepth depth) {
