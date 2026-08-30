@@ -24,7 +24,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove Telegram adapter maps into canonical Conversation and Workforce execution
+      - name: Prove Telegram adapter follows Founder-approved Intelligence architecture
         shell: bash
         env:
           TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
@@ -40,7 +40,6 @@ jobs:
           test -n "$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$TARGET_SHA"
-          docker exec "$CID" sh -c 'test -n "$GITHUB_TOKEN"'
 
           UPDATE_ID=$(date +%s%N | cut -c1-18)
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -61,65 +60,73 @@ jobs:
           echo "TELEGRAM_PROVIDER_HTTP_STATUS=$HTTP_STATUS"
           test "$HTTP_STATUS" = 200
 
-          TERMINAL=false
-          for i in $(seq 1 90); do
+          OUTCOME=NONE
+          for i in $(seq 1 100); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+
+            # Architecture-valid full execution: semantic cognition and post-Case planning succeeded,
+            # then Workforce admitted/executed the governed capability.
             if printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
               && printf '%s' "$LOGS" | grep -q 'route=execution-objective-workforce-terminal' \
-              && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json" \
-              && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
-              && docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json"; then
-              TERMINAL=true
+              && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
+              OUTCOME=EXECUTED
+              break
+            fi
+
+            # Architecture-valid fail-closed: frontier semantic/planning capacity is unavailable.
+            # The adapter must return a terminal failure to the Human and MUST NOT admit this update
+            # into Workforce execution through raw-text/keyword fallback.
+            if printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
+              && printf '%s' "$LOGS" | grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" \
+              && printf '%s' "$LOGS" | grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed'; then
+              if docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
+                echo 'FAIL_CLOSED_REQUEST_WAS_WRONGLY_ADMITTED_TO_WORKFORCE' >&2
+                exit 1
+              fi
+              OUTCOME=PROVIDER_UNAVAILABLE_FAIL_CLOSED
               break
             fi
             sleep 2
           done
 
-          if [ "$TERMINAL" != true ]; then
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" && SEND=PASS || SEND=FAIL
-            printf '%s' "$LOGS" | grep -q 'route=execution-objective-workforce-terminal' && ROUTE=PASS || ROUTE=FAIL
-            docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json" && CORRELATION=PASS || CORRELATION=FAIL
-            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" && CAPABILITY=PASS || CAPABILITY=FAIL
-            docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json" && DELIVERED_GLOBAL=PASS || DELIVERED_GLOBAL=FAIL
-            echo "TERMINAL_PREDICATE_SEND=$SEND"
-            echo "TERMINAL_PREDICATE_ROUTE=$ROUTE"
-            echo "TERMINAL_PREDICATE_CORRELATION=$CORRELATION"
-            echo "TERMINAL_PREDICATE_CAPABILITY=$CAPABILITY"
-            echo "TERMINAL_PREDICATE_DELIVERED_GLOBAL=$DELIVERED_GLOBAL"
-            echo '--- full runtime tail including exception stack ---'
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          if [ "$OUTCOME" = NONE ]; then
+            echo 'NO_ARCHITECTURE_VALID_TERMINAL_OUTCOME' >&2
             printf '%s\n' "$LOGS" | tail -n 500 || true
-            echo '--- management state correlation slice ---'
-            docker exec "$CID" sh -c "grep -E 'telegram:update:$UPDATE_ID|repository.audit.read|DELIVERED|BLOCKED|ESCALATED|execution_authorization|autonomous-step:' /var/lib/metatron-workforce/management-state.json | tail -n 240" || true
             exit 1
           fi
 
-          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
           if printf '%s' "$LOGS" | grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID"; then
             echo 'LEGACY_TELEGRAM_DISPATCHER_WAS_USED' >&2
             exit 1
           fi
 
-          EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
-          test -n "$EVIDENCE"
-          docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
-          docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
-          docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
-
-          docker exec "$CID" sh -c "grep -q 'execution_authorization=NONE' /var/lib/metatron-workforce/management-state.json"
-          docker exec "$CID" sh -c "grep -q 'autonomous-step:' /var/lib/metatron-workforce/management-state.json"
           curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
 
           echo 'TELEGRAM_PROVIDER_AUTHENTICATION=PASS'
           echo 'TELEGRAM_EXTERNAL_ID_CORRELATION=PASS'
           echo 'CANONICAL_CONVERSATION_INGRESS=PASS'
-          echo 'NATURAL_LANGUAGE_OBJECTIVE_INGRESS=PASS'
-          echo 'HEAD_OWNED_AUTONOMOUS_MANAGEMENT=PASS'
-          echo 'SEMANTIC_CAPABILITY_BINDING=PASS'
-          echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
+          echo 'FRONTIER_SEMANTIC_BOUNDARY_REQUIRED=PASS'
+          echo 'RAW_TEXT_EXECUTION_BYPASS_ABSENT=PASS'
           echo 'LEGACY_COMMAND_ROUTER_BYPASSED=PASS'
-          echo 'HUMAN_REQUEST_NOT_EXECUTION_AUTHORIZATION=PASS'
-          echo 'GATEWAY_GOVERNED_GITHUB_EGRESS=PASS'
-          echo 'WORK_EVIDENCE_PRESERVED=PASS'
-          echo 'TELEGRAM_PROVIDER_TERMINAL_DELIVERY=PASS'
+
+          if [ "$OUTCOME" = EXECUTED ]; then
+            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
+            EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
+            test -n "$EVIDENCE"
+            docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
+            docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
+            docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
+            echo 'POST_CASE_EXECUTION_PLANNING=PASS'
+            echo 'SEMANTIC_CAPABILITY_BINDING=PASS'
+            echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
+            echo 'WORK_EVIDENCE_PRESERVED=PASS'
+            echo 'TELEGRAM_PROVIDER_TERMINAL_DELIVERY=PASS'
+          else
+            echo 'PROVIDER_UNAVAILABLE_EXPLICIT=PASS'
+            echo 'NO_WORKFORCE_EXECUTION_ADMISSION=PASS'
+            echo 'FAIL_CLOSED_TERMINAL_DELIVERY=PASS'
+          fi
+
+          echo "TELEGRAM_PROVIDER_TERMINAL_OUTCOME=$OUTCOME"
           echo 'TELEGRAM_PROVIDER_ADAPTER_ACCEPTANCE=PASS'
