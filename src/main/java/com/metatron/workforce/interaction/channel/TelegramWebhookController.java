@@ -4,14 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.adapter.telegram.ConfiguredTelegramIdentityResolver;
 import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
-import com.metatron.workforce.interaction.MetatronConversationRuntime;
+import com.metatron.workforce.interaction.ChannelInteractionIngressService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
-import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
-import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
-import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
-import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
-import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
 import com.metatron.workforce.phase3.ActorRef;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,7 +15,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Map;
@@ -32,8 +26,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Telegram transport adapter. It only authenticates, normalizes and delivers messages.
- * Conversation memory, Human depth control and institutional execution live in the channel-neutral Metatron runtime.
+ * Telegram transport adapter. It authenticates Telegram, maps external identifiers to canonical
+ * Metatron interaction context, submits to the shared channel-neutral ingress, and delivers the
+ * resulting response. It owns no Conversation, intelligence, depth, Workforce or execution state.
  */
 @RestController
 @RequestMapping("/telegram")
@@ -42,13 +37,11 @@ public final class TelegramWebhookController {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramWebhookController.class);
     private static final int INTERACTION_THREADS = 4;
     private static final int INTERACTION_QUEUE = 64;
-    private static final int MEMORY_MAX_TURNS = 32;
-    private static final int MEMORY_MAX_CHARS = 32000;
 
     private final String secret;
     private final TelegramWebhookAdapter adapter;
     private final TelegramBotGateway gateway;
-    private final MetatronInteractionOrchestrator orchestrator;
+    private final ChannelInteractionIngressService interactionIngress;
     private final TelegramIdentityResolver identityResolver;
     private final ObjectMapper objectMapper;
     private final TelegramUpdateDeduplicator updateDeduplicator;
@@ -59,19 +52,7 @@ public final class TelegramWebhookController {
             @Value("${telegram.bot-token:${TELEGRAM_BOT_TOKEN:}}") String botToken,
             @Value("${TELEGRAM_ALLOWED_USER_ID:}") String allowedTelegramUserId,
             @Value("${METATRON_ORGANIZATION_ID:}") String organizationContextId,
-            @Value("${OPENAI_API_KEY:}") String openAiApiKey,
-            @Value("${GEMINI_API_KEY:}") String googleApiKey,
-            @Value("${ANTHROPIC_API_KEY:}") String anthropicApiKey,
-            @Value("${METATRON_LLM_PROVIDER:AUTO}") String provider,
-            @Value("${OPENAI_MODEL:}") String openAiModel,
-            @Value("${GEMINI_MODEL:}") String googleModel,
-            @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
-            @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
-            @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
-            IntelligenceCaseStore intelligenceCaseStore,
-            IntelligenceDepthControlService intelligenceDepthControlService,
-            ExecutionObjectiveHandoff executionObjectiveHandoff,
-            @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/telegram-conversations}}") String conversationMemoryPath,
+            ChannelInteractionIngressService interactionIngress,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
@@ -97,22 +78,7 @@ public final class TelegramWebhookController {
                 new ActorRef("human-primary", ActorRef.ActorType.HUMAN),
                 new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
                 organizationContextId.trim());
-
-        MetatronIntelligenceResponder intelligence = new MetatronIntelligenceResponder(
-                openAiApiKey, googleApiKey, anthropicApiKey, provider,
-                openAiModel, googleModel, anthropicModel, objectMapper,
-                gatewayAuditUrl, gatewayAuditToken,
-                Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
-                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"));
-        MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
-                new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
-                intelligence,
-                Objects.requireNonNull(intelligenceDepthControlService, "intelligenceDepthControlService"),
-                MEMORY_MAX_TURNS,
-                MEMORY_MAX_CHARS);
-
-        this.orchestrator = new MetatronInteractionOrchestrator(
-                interaction -> conversationRuntime.handle(interaction, "telegram"));
+        this.interactionIngress = Objects.requireNonNull(interactionIngress, "interactionIngress");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.updateDeduplicator = new TelegramUpdateDeduplicator();
         this.interactionExecutor = new ThreadPoolExecutor(
@@ -185,6 +151,9 @@ public final class TelegramWebhookController {
             MetatronInteraction interaction = new MetatronInteraction(
                     identity.human(), identity.target(), identity.organizationContextId(),
                     "conversation:human:" + identity.human().actorId(),
+                    "telegram",
+                    "telegram:user:" + telegramUserId,
+                    "telegram:chat:" + chatId,
                     "telegram:update:" + updateId,
                     inbound.text());
 
@@ -219,7 +188,7 @@ public final class TelegramWebhookController {
         long processingStarted = System.nanoTime();
         long queueMs = (processingStarted - acceptedAt) / 1_000_000L;
         try {
-            MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
+            MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
             String safeAnswer = validateAnswer(inbound.text(), response.text());
             String provenance = response.provenanceReference();
             long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
