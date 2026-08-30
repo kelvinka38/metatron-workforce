@@ -9,23 +9,27 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Live Google Gemini transport behind the provider-neutral LLM contract. */
 public final class GoogleLlmProviderClient implements LlmProviderClient {
     private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(30);
-    private static final int MAX_ATTEMPTS = 3;
     private static final long MAX_SINGLE_RETRY_DELAY_MILLIS = 65_000L;
-    private static final long MAX_TOTAL_RETRY_WAIT_MILLIS = 70_000L;
     private static final Pattern RETRY_DELAY_PATTERN = Pattern.compile("(?i)([0-9]+(?:\\.[0-9]+)?)(ms|s)");
     private static final Pattern MESSAGE_RETRY_PATTERN = Pattern.compile("(?i)please\\s+retry\\s+in\\s+([0-9]+(?:\\.[0-9]+)?)(ms|s)");
+    private static final List<String> CAPACITY_FALLBACK_MODELS = List.of(
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite");
 
     private final String apiKey;
     private final HttpClient httpClient;
@@ -55,18 +59,12 @@ public final class GoogleLlmProviderClient implements LlmProviderClient {
                             "parts", List.of(Map.of("text", request.userInput()))
                     ))
             ));
-            URI uri = URI.create("https://generativelanguage.googleapis.com/v1beta/models/"
-                    + request.model() + ":generateContent?key=" + apiKey);
-            HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(uri)
-                    .timeout(INTERACTIVE_TIMEOUT)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
 
-            long accumulatedRetryWaitMillis = 0L;
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-                HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            List<String> candidates = modelCandidates(request.model());
+            List<String> failures = new ArrayList<>();
+            for (int index = 0; index < candidates.size(); index++) {
+                String model = candidates.get(index);
+                HttpResponse<String> response = httpClient.send(httpRequest(model, body), HttpResponse.BodyHandlers.ofString());
                 JsonNode root = objectMapper.readTree(response.body());
                 if (response.statusCode() / 100 == 2) {
                     String text = root.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText("");
@@ -80,25 +78,21 @@ public final class GoogleLlmProviderClient implements LlmProviderClient {
                     response.headers().firstValue("x-ratelimit-remaining")
                             .filter(value -> !value.isBlank())
                             .ifPresent(value -> telemetry.put("remaining_requests", value));
-                    if (attempt > 1) telemetry.put("transport_attempts", Integer.toString(attempt));
-                    if (accumulatedRetryWaitMillis > 0) telemetry.put("retry_wait_ms", Long.toString(accumulatedRetryWaitMillis));
-                    return new LlmResponse(provider(), request.model(), text, root.path("responseId").asText(""), llmUsage, telemetry);
+                    telemetry.put("model_attempts", Integer.toString(index + 1));
+                    if (!model.equals(request.model())) {
+                        telemetry.put("configured_model", request.model());
+                        telemetry.put("capacity_model_fallback", model);
+                    }
+                    return new LlmResponse(provider(), model, text, root.path("responseId").asText(""), llmUsage, telemetry);
                 }
 
-                if (!isRetryableStatus(response.statusCode()) || attempt == MAX_ATTEMPTS) {
-                    throw new IllegalStateException("google_request_failed:" + response.statusCode() + ":" + compactError(root));
+                String error = "model=" + model + ":status=" + response.statusCode() + ":" + compactError(root);
+                failures.add(error);
+                if (!isCapacityFailure(response.statusCode())) {
+                    throw new IllegalStateException("google_request_failed:" + error);
                 }
-
-                long requestedDelay = retryDelayMillis(attempt, root, response.headers().firstValue("Retry-After"));
-                long remainingBudget = MAX_TOTAL_RETRY_WAIT_MILLIS - accumulatedRetryWaitMillis;
-                if (remainingBudget <= 0) {
-                    throw new IllegalStateException("google_request_failed:retry_wait_budget_exhausted:" + compactError(root));
-                }
-                long delay = Math.min(requestedDelay, remainingBudget);
-                Thread.sleep(delay);
-                accumulatedRetryWaitMillis += delay;
             }
-            throw new IllegalStateException("google_request_failed:retry_exhausted");
+            throw new IllegalStateException("google_capacity_exhausted:" + String.join(" | ", failures));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("google_request_interrupted", e);
@@ -107,10 +101,34 @@ public final class GoogleLlmProviderClient implements LlmProviderClient {
         }
     }
 
-    static boolean isRetryableStatus(int statusCode) {
+    private HttpRequest httpRequest(String model, String body) {
+        URI uri = URI.create("https://generativelanguage.googleapis.com/v1beta/models/"
+                + model + ":generateContent?key=" + apiKey);
+        return HttpRequest.newBuilder()
+                .uri(uri)
+                .timeout(INTERACTIVE_TIMEOUT)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+    }
+
+    static List<String> modelCandidates(String requestedModel) {
+        if (requestedModel == null || requestedModel.isBlank()) throw new IllegalArgumentException("Google model must not be blank");
+        Set<String> models = new LinkedHashSet<>();
+        models.add(requestedModel.trim());
+        models.addAll(CAPACITY_FALLBACK_MODELS);
+        return List.copyOf(models);
+    }
+
+    static boolean isCapacityFailure(int statusCode) {
         return statusCode == 429 || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504;
     }
 
+    static boolean isRetryableStatus(int statusCode) {
+        return isCapacityFailure(statusCode);
+    }
+
+    /** Retained for provider-window diagnostics; interactive routing now fails over models before waiting. */
     static long retryDelayMillis(int completedAttempt, JsonNode root, Optional<String> retryAfterHeader) {
         long providerDelay = retryAfterHeader
                 .flatMap(GoogleLlmProviderClient::parseRetryAfterHeaderMillis)
