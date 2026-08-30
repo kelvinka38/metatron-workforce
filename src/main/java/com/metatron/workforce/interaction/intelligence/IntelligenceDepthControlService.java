@@ -5,7 +5,7 @@ import java.util.Objects;
 /** Channel-neutral Human control surface for the approved FAST / ANALYZE / DEEP depth contract. */
 public final class IntelligenceDepthControlService {
     private static final String USAGE =
-            "Depth controls: /fast, /analyze, /deep, /auto, /depth (or /mode).";
+            "Depth controls: ⚡ Fast, 🧠 Analyze, 🔬 Deep, 🤖 Auto, 🎛 Mode (slash commands remain supported).";
 
     private final IntelligenceDepthPreferenceStore store;
     private final IntelligenceDepthSelectionParser parser;
@@ -26,19 +26,21 @@ public final class IntelligenceDepthControlService {
             case SELECT -> {
                 store.set(conversationId, selection.depth());
                 yield new ControlResult(true, IntelligenceDepthContract.selected(selection.depth()),
-                        "Intelligence depth: " + selection.depth() + ". This controls reasoning resources only; it does not create authority.");
+                        signature(IntelligenceDepthContract.selected(selection.depth()))
+                                + "\nMode enabled. This changes reasoning depth/resources only; it does not create authority.");
             }
             case AUTO -> {
                 store.clear(conversationId);
                 yield new ControlResult(true, IntelligenceDepthContract.automatic(),
-                        "Intelligence depth: AUTO. Metatron will infer FAST / ANALYZE / DEEP from each request.");
+                        signature(IntelligenceDepthContract.automatic())
+                                + "\nMetatron will select FAST / ANALYZE / DEEP semantically for each request.");
             }
             case STATUS -> {
                 IntelligenceDepthContract current = store.get(conversationId);
-                yield new ControlResult(true, current, renderStatus(current));
+                yield new ControlResult(true, current, signature(current) + "\n" + renderStatus(current));
             }
             case INVALID -> new ControlResult(true, store.get(conversationId),
-                    "Invalid intelligence-depth control. " + USAGE);
+                    signature(store.get(conversationId)) + "\nInvalid intelligence-depth control. " + USAGE);
             case NONE -> ControlResult.notControl(store.get(conversationId));
         };
     }
@@ -47,10 +49,23 @@ public final class IntelligenceDepthControlService {
         return store.get(conversationId);
     }
 
+    public String responseSignature(String conversationId) {
+        return signature(store.get(conversationId));
+    }
+
+    static String signature(IntelligenceDepthContract contract) {
+        if (!contract.explicitlySelected()) return "🤖 AUTO · METATRON";
+        return switch (contract.selectedDepth()) {
+            case FAST -> "⚡ FAST · METATRON";
+            case ANALYZE -> "🧠 ANALYZE · METATRON";
+            case DEEP -> "🔬 DEEP · METATRON";
+        };
+    }
+
     private static String renderStatus(IntelligenceDepthContract contract) {
         return contract.explicitlySelected()
-                ? "Intelligence depth: " + contract.selectedDepth() + " (Human-selected)."
-                : "Intelligence depth: AUTO (semantic selection per request).";
+                ? "Current depth: " + contract.selectedDepth() + " (Human-selected)."
+                : "Current depth: AUTO (semantic selection per request).";
     }
 
     public record ControlResult(boolean controlHandled, IntelligenceDepthContract contract, String response) {

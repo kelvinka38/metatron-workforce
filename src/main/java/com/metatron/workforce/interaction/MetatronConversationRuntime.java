@@ -59,9 +59,12 @@ public final class MetatronConversationRuntime {
         IntelligenceDepthContract contract = depthControl == null
                 ? IntelligenceDepthContract.automatic()
                 : depthControl.contract(interaction.conversationId());
-        String answer = intelligence.respond(
+        String rawAnswer = intelligence.respond(
                 interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
                 channel, interaction.conversationId(), interaction.organizationContextId(), history, contract);
+        String answer = depthControl == null
+                ? rawAnswer
+                : depthControl.responseSignature(interaction.conversationId()) + "\n\n" + rawAnswer;
         memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
 
         return new MetatronInteractionOrchestrator.InteractionResponse(

@@ -15,6 +15,14 @@ class IntelligenceDepthSelectionParserTest {
         assertEquals(IntelligenceDepthSelectionParser.Action.STATUS, parser.parse("/mode").action());
     }
 
+    @Test void humanReadableProviderLabelsMapToTheSameCanonicalControls() {
+        assertEquals(IntelligenceDepth.FAST, parser.parse("⚡ Fast").depth());
+        assertEquals(IntelligenceDepth.ANALYZE, parser.parse("🧠 Analyze").depth());
+        assertEquals(IntelligenceDepth.DEEP, parser.parse("🔬 Deep").depth());
+        assertEquals(IntelligenceDepthSelectionParser.Action.AUTO, parser.parse("🤖 Auto").action());
+        assertEquals(IntelligenceDepthSelectionParser.Action.STATUS, parser.parse("🎛 Mode").action());
+    }
+
     @Test void malformedDepthControlsRemainTerminalControlInput() {
         assertEquals(IntelligenceDepthSelectionParser.Action.INVALID, parser.parse("/deep now").action());
         assertEquals(IntelligenceDepthSelectionParser.Action.INVALID, parser.parse("/depth wat").action());

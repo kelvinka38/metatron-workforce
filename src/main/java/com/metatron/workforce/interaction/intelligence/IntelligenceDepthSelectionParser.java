@@ -5,22 +5,21 @@ import java.util.Locale;
 /**
  * Explicit channel-neutral Human depth control.
  *
- * Slash commands are interface control syntax, not semantic intent classification. Natural
- * language remains frontier-model interpreted. This parser therefore recognizes only the
- * depth-control namespace and never scans ordinary Human prose for keywords. Invalid syntax
- * inside that namespace is still terminal control input so it cannot leak into semantic/LLM
- * interpretation.
+ * Control labels and slash commands are interface syntax, not semantic intent classification.
+ * Natural language remains frontier-model interpreted. This parser recognizes only the exact
+ * depth-control surface and never scans ordinary Human prose for keywords.
  */
 public final class IntelligenceDepthSelectionParser {
     public Selection parse(String text) {
         if (text == null) return Selection.notControl();
-        String command = text.trim().toLowerCase(Locale.ROOT);
+        String raw = text.trim();
+        String command = raw.toLowerCase(Locale.ROOT);
         return switch (command) {
-            case "/fast" -> Selection.select(IntelligenceDepth.FAST);
-            case "/analyze", "/analyse" -> Selection.select(IntelligenceDepth.ANALYZE);
-            case "/deep" -> Selection.select(IntelligenceDepth.DEEP);
-            case "/auto" -> Selection.automatic();
-            case "/mode", "/depth" -> Selection.status();
+            case "/fast", "⚡ fast" -> Selection.select(IntelligenceDepth.FAST);
+            case "/analyze", "/analyse", "🧠 analyze", "🧠 analyse" -> Selection.select(IntelligenceDepth.ANALYZE);
+            case "/deep", "🔬 deep" -> Selection.select(IntelligenceDepth.DEEP);
+            case "/auto", "🤖 auto" -> Selection.automatic();
+            case "/mode", "/depth", "🎛 mode", "🎛 depth" -> Selection.status();
             default -> isDepthControlNamespace(command) ? Selection.invalid() : Selection.notControl();
         };
     }

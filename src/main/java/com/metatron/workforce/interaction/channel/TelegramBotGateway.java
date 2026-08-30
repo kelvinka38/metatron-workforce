@@ -15,6 +15,12 @@ import java.util.Objects;
 
 /** Outbound Telegram Bot API gateway. */
 public final class TelegramBotGateway implements ChannelGateway {
+    static final String FAST_CONTROL = "⚡ Fast";
+    static final String ANALYZE_CONTROL = "🧠 Analyze";
+    static final String DEEP_CONTROL = "🔬 Deep";
+    static final String AUTO_CONTROL = "🤖 Auto";
+    static final String MODE_CONTROL = "🎛 Mode";
+
     private final String botToken;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -26,16 +32,12 @@ public final class TelegramBotGateway implements ChannelGateway {
     }
 
     @Override
-    public String channel() {
-        return "telegram";
-    }
+    public String channel() { return "telegram"; }
 
     @Override
     public String send(ChannelMessage message) {
         Objects.requireNonNull(message, "message");
-        if (!"telegram".equals(message.channel())) {
-            throw new IllegalArgumentException("telegram_message_required");
-        }
+        if (!"telegram".equals(message.channel())) throw new IllegalArgumentException("telegram_message_required");
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("chat_id", message.senderId());
@@ -49,16 +51,12 @@ public final class TelegramBotGateway implements ChannelGateway {
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() / 100 != 2) {
-                throw new IllegalStateException("telegram_send_failed:http_status=" + response.statusCode());
-            }
-
+            if (response.statusCode() / 100 != 2) throw new IllegalStateException("telegram_send_failed:http_status=" + response.statusCode());
             JsonNode apiResponse = objectMapper.readTree(response.body());
             if (!apiResponse.path("ok").asBoolean(false)) {
                 String description = apiResponse.path("description").asText("unknown_telegram_error");
                 int errorCode = apiResponse.path("error_code").asInt(response.statusCode());
-                throw new IllegalStateException(
-                        "telegram_send_failed:telegram_error=" + errorCode + ":" + description);
+                throw new IllegalStateException("telegram_send_failed:telegram_error=" + errorCode + ":" + description);
             }
             return response.body();
         } catch (InterruptedException e) {
@@ -69,15 +67,12 @@ public final class TelegramBotGateway implements ChannelGateway {
         }
     }
 
-    /**
-     * Telegram renders provider-native controls, but the command strings are the canonical
-     * channel-neutral depth-control surface consumed by IntelligenceDepthControlService.
-     */
+    /** Telegram owns presentation only; canonical depth state remains channel-neutral. */
     static Map<String, Object> depthControlReplyMarkup() {
         return Map.of(
                 "keyboard", List.of(
-                        List.of("/fast", "/analyze", "/deep"),
-                        List.of("/auto", "/mode")),
+                        List.of(FAST_CONTROL, ANALYZE_CONTROL, DEEP_CONTROL),
+                        List.of(AUTO_CONTROL, MODE_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,
                 "input_field_placeholder", "Ask Metatron…");

@@ -57,7 +57,7 @@ final class InformationRequirementAcquisitionServiceTest {
     }
 
     @Test
-    void acquiresFreshExternalEvidenceAndMarksRequirementSatisfied() {
+    void acquiresFreshExternalEvidenceWithRequirementFocusedQuery() {
         AtomicInteger webCalls = new AtomicInteger();
         List<String> queries = new ArrayList<>();
         ToolAdapter web = new ToolAdapter() {
@@ -71,14 +71,14 @@ final class InformationRequirementAcquisitionServiceTest {
         };
         InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
                 new KnowledgeRetrievalService(List.of()), new DefaultToolFabric(List.of(web)));
-        IntelligenceCase intelligenceCase = caseWith(requirement("ir-1", "gateway audit state",
+        IntelligenceCase intelligenceCase = caseWith(requirement("ir-1", "current gold price in Vietnam today",
                 List.of("web/external research")));
 
         var result = service.acquire(intelligenceCase, normalized(true), "human:1");
 
         assertEquals(1, webCalls.get());
-        assertTrue(queries.getFirst().contains("gateway audit state"));
-        assertTrue(queries.getFirst().contains("objective=audit gateway"));
+        assertEquals("current gold price in Vietnam today", queries.getFirst());
+        assertFalse(queries.getFirst().contains("objective="));
         assertTrue(result.externalEvidenceAcquired());
         assertEquals(1, result.satisfiedRequirements());
         assertEquals(InformationRequirementStatus.SATISFIED,
@@ -112,8 +112,8 @@ final class InformationRequirementAcquisitionServiceTest {
         assertEquals(2, webCalls.get());
         assertEquals(2, result.satisfiedRequirements());
         assertEquals(0, result.unresolvedRequirements());
-        assertTrue(queries.stream().anyMatch(query -> query.contains("current gateway state")));
-        assertTrue(queries.stream().anyMatch(query -> query.contains("current deployment state")));
+        assertTrue(queries.contains("current gateway state"));
+        assertTrue(queries.contains("current deployment state"));
         assertTrue(result.intelligenceCase().evidenceReferences().contains("https://example.test/evidence-1"));
         assertTrue(result.intelligenceCase().evidenceReferences().contains("https://example.test/evidence-2"));
         assertTrue(result.groundedContext().contains("requirement_id=ir-gateway"));
@@ -147,10 +147,8 @@ final class InformationRequirementAcquisitionServiceTest {
         assertEquals(1, result.satisfiedRequirements());
         assertEquals(1, result.unresolvedRequirements());
         assertTrue(result.externalEvidenceAcquired());
-        assertEquals(InformationRequirementStatus.UNRESOLVABLE,
-                status(result, "ir-gateway"));
-        assertEquals(InformationRequirementStatus.SATISFIED,
-                status(result, "ir-deploy"));
+        assertEquals(InformationRequirementStatus.UNRESOLVABLE, status(result, "ir-gateway"));
+        assertEquals(InformationRequirementStatus.SATISFIED, status(result, "ir-deploy"));
         assertTrue(result.groundedFallback().contains("deployment=healthy"));
         assertFalse(result.groundedFallback().contains("source unavailable"));
     }
@@ -159,9 +157,7 @@ final class InformationRequirementAcquisitionServiceTest {
                                                        String requirementId) {
         return result.intelligenceCase().informationRequirements().stream()
                 .filter(requirement -> requirement.requirementId().equals(requirementId))
-                .findFirst()
-                .orElseThrow()
-                .status();
+                .findFirst().orElseThrow().status();
     }
 
     private static InformationRequirement requirement(String id, String question, List<String> sources) {
@@ -170,9 +166,7 @@ final class InformationRequirementAcquisitionServiceTest {
                 "low", "interactive", "read access", "material");
     }
 
-    private static IntelligenceCase caseWith(InformationRequirement requirement) {
-        return caseWith(List.of(requirement));
-    }
+    private static IntelligenceCase caseWith(InformationRequirement requirement) { return caseWith(List.of(requirement)); }
 
     private static IntelligenceCase caseWith(List<InformationRequirement> requirements) {
         Instant now = Instant.now();
