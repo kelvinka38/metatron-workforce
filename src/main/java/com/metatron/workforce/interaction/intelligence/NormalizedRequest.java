@@ -5,7 +5,7 @@ import com.metatron.workforce.interaction.llm.LlmProvider;
 import java.util.List;
 import java.util.Objects;
 
-/** Frontier-model-produced semantic normalization of one Human utterance. */
+/** Frontier-model-produced semantic normalization of one Human utterance, optionally enriched by downstream planning. */
 public record NormalizedRequest(
         String objective,
         String target,
@@ -127,6 +127,17 @@ public record NormalizedRequest(
                 requestedOutput, explicitAssumptions, explicitProhibitions, temporalContext,
                 unresolvedSemanticAmbiguity, mode, collaborationMode, analyticalProtocols,
                 deterministicCapability, deterministicComputations, executionWorkPlan, freshExternalDataRequired,
+                explicitlyRequestedProvider, semanticProvider, directResponse);
+    }
+
+    public NormalizedRequest withExecutionWorkPlan(List<ExecutionWorkSpec> plan) {
+        if (mode != IntelligenceMode.EXECUTION) {
+            throw new IllegalStateException("execution plan can only be attached to EXECUTION mode");
+        }
+        return new NormalizedRequest(objective, target, constraints, requestedDepth, requestedOutput,
+                explicitAssumptions, explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity,
+                mode, collaborationMode, analyticalProtocols, deterministicCapability,
+                deterministicComputations, Objects.requireNonNull(plan, "plan"), freshExternalDataRequired,
                 explicitlyRequestedProvider, semanticProvider, directResponse);
     }
 }
