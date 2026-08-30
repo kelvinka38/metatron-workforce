@@ -56,12 +56,13 @@ public final class MetatronIntelligenceResponder {
     private final InformationRequirementAcquisitionService acquisitionService;
     private final ExternalEvidenceResponseGuard externalEvidenceGuard;
     private final DeterministicComputationEngine computationEngine;
+    private final ExecutionObjectiveHandoff executionObjectiveHandoff;
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
                                          String anthropicModel, ObjectMapper objectMapper) {
         this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
-                objectMapper, "", "", defaultCaseStore(objectMapper));
+                objectMapper, "", "", defaultCaseStore(objectMapper), ExecutionObjectiveHandoff.unavailable());
     }
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
@@ -69,7 +70,8 @@ public final class MetatronIntelligenceResponder {
                                          String anthropicModel, ObjectMapper objectMapper,
                                          String gatewayAuditUrl, String gatewayAuditToken) {
         this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
-                objectMapper, gatewayAuditUrl, gatewayAuditToken, defaultCaseStore(objectMapper));
+                objectMapper, gatewayAuditUrl, gatewayAuditToken, defaultCaseStore(objectMapper),
+                ExecutionObjectiveHandoff.unavailable());
     }
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
@@ -77,8 +79,19 @@ public final class MetatronIntelligenceResponder {
                                          String anthropicModel, ObjectMapper objectMapper,
                                          String gatewayAuditUrl, String gatewayAuditToken,
                                          IntelligenceCaseStore caseStore) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
+                objectMapper, gatewayAuditUrl, gatewayAuditToken, caseStore, ExecutionObjectiveHandoff.unavailable());
+    }
+
+    public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
+                                         String provider, String openAiModel, String googleModel,
+                                         String anthropicModel, ObjectMapper objectMapper,
+                                         String gatewayAuditUrl, String gatewayAuditToken,
+                                         IntelligenceCaseStore caseStore,
+                                         ExecutionObjectiveHandoff executionObjectiveHandoff) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         this.caseStore = Objects.requireNonNull(caseStore, "caseStore");
+        this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
         HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
                 .version(HttpClient.Version.HTTP_2).build();
         List<LlmProviderClient> clients = new ArrayList<>();
@@ -112,16 +125,23 @@ public final class MetatronIntelligenceResponder {
 
     public String respond(String humanId, String text, String externalMessageReference, String channel, String conversationContext) {
         return respond(humanId, text, externalMessageReference, channel,
-                "conversation:" + channel + ":human:" + humanId, conversationContext);
+                "conversation:" + channel + ":human:" + humanId, "organization:unspecified", conversationContext);
     }
 
     public String respond(String humanId, String text, String externalMessageReference, String channel,
                           String conversationId, String conversationContext) {
+        return respond(humanId, text, externalMessageReference, channel, conversationId,
+                "organization:unspecified", conversationContext);
+    }
+
+    public String respond(String humanId, String text, String externalMessageReference, String channel,
+                          String conversationId, String organizationContextId, String conversationContext) {
         Objects.requireNonNull(humanId, "humanId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         Objects.requireNonNull(channel, "channel");
         Objects.requireNonNull(conversationId, "conversationId");
+        Objects.requireNonNull(organizationContextId, "organizationContextId");
         long started = System.nanoTime();
         String route = "unknown";
         try {
@@ -135,8 +155,6 @@ public final class MetatronIntelligenceResponder {
             IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
-            // Material semantic ambiguity is Human-only information. Do not spend more model/tool capacity
-            // or guess through it; preserve the Case and wait for the Human's clarification.
             if (normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
                 route = "human-clarification-required";
                 caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
@@ -157,9 +175,30 @@ public final class MetatronIntelligenceResponder {
             }
 
             if (normalized.mode() == IntelligenceMode.EXECUTION) {
-                route = "execution-admission-blocked";
-                caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
-                return "METATRON EXECUTION BLOCKED\nreason=EXECUTION_ADMISSION_REQUIRED\ncase_id=" + intelligenceCase.caseId() + "\nobjective=" + normalized.objective();
+                ExecutionObjectiveHandoff.HandoffReceipt handoff = executionObjectiveHandoff.submit(
+                        humanId, organizationContextId, intelligenceCase.caseId(), conversationId,
+                        externalMessageReference, channel, normalized);
+                if (!handoff.accepted()) {
+                    route = "execution-objective-handoff-blocked";
+                    caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+                    return "METATRON EXECUTION BLOCKED\nreason=" + handoff.reason()
+                            + "\ncase_id=" + intelligenceCase.caseId()
+                            + "\nobjective=" + normalized.objective();
+                }
+                route = "execution-objective-admitted-to-workforce";
+                String answer = "METATRON WORK ACCEPTED"
+                        + "\ncase_id=" + intelligenceCase.caseId()
+                        + "\nobjective_id=" + handoff.objectiveId()
+                        + "\nowner_worker=" + handoff.ownerWorkerId()
+                        + "\nqueue_item=" + handoff.queueItemId()
+                        + "\nobjective_status=" + handoff.objectiveStatus()
+                        + "\nexecution_admission=" + handoff.executionAdmissionState()
+                        + "\nreason=" + handoff.reason();
+                caseStore.save(intelligenceCase.withResult(answer, List.of(
+                        "management-objective:" + handoff.objectiveId(),
+                        "work-queue:" + handoff.queueItemId(),
+                        "observation:" + channel + ":" + externalMessageReference)));
+                return answer;
             }
             if (normalized.mode() == IntelligenceMode.DECISION) {
                 route = "decision-authority-blocked";
@@ -352,11 +391,6 @@ public final class MetatronIntelligenceResponder {
         }
     }
 
-    /**
-     * Requested depth controls resource expenditure, not institutional consequence.
-     * Consequence is derived from the kind of act being performed; Human-facing reasoning
-     * that reaches this method is not upgraded to HIGH merely because DEEP was requested.
-     */
     private static String consequence(NormalizedRequest request) {
         return request.mode() == IntelligenceMode.REASONING ? "MEDIUM" : "LOW";
     }
