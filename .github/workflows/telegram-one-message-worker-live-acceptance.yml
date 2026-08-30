@@ -19,7 +19,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove one Telegram message autonomously completes BIOS audit Work
+      - name: Prove one natural-language Telegram objective autonomously completes Worker execution
         shell: bash
         env:
           TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
@@ -42,7 +42,8 @@ jobs:
           BODY=$(python3 - <<PY
           import json
           uid=int('${TELEGRAM_ALLOWED_USER_ID}')
-          print(json.dumps({"update_id":int('${UPDATE_ID}'),"message":{"message_id":int('${UPDATE_ID}')%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":"Audit BIOS"}}))
+          text='Execute a governed read-only repository audit of kelvinka38/bios and return evidence. Do not mutate anything.'
+          print(json.dumps({"update_id":int('${UPDATE_ID}'),"message":{"message_id":int('${UPDATE_ID}')%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
           PY
           )
 
@@ -58,9 +59,11 @@ jobs:
           TERMINAL=false
           for i in $(seq 1 90); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if printf '%s' "$LOGS" | grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID" \
-              && printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
-              && printf '%s' "$LOGS" | grep -q "METATRON WORK COMPLETED repository=kelvinka38/bios"; then
+            if printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
+              && printf '%s' "$LOGS" | grep -q 'route=execution-objective-admitted-to-workforce' \
+              && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json" \
+              && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
+              && docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json"; then
               TERMINAL=true
               break
             fi
@@ -68,16 +71,29 @@ jobs:
           done
           test "$TERMINAL" = true
 
-          EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:telegram-founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          if printf '%s' "$LOGS" | grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID"; then
+            echo 'LEGACY_TELEGRAM_DISPATCHER_WAS_USED' >&2
+            exit 1
+          fi
+
+          EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
           test -n "$EVIDENCE"
           docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
           docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
           docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
 
+          docker exec "$CID" sh -c "grep -q 'execution_authorization=NONE' /var/lib/metatron-workforce/management-state.json"
+          docker exec "$CID" sh -c "grep -q 'autonomous-step:' /var/lib/metatron-workforce/management-state.json"
           curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
+
           echo 'TELEGRAM_IDENTITY_RESOLUTION=PASS'
-          echo 'ONE_MESSAGE_TO_INSTITUTIONAL_WORK=PASS'
+          echo 'NATURAL_LANGUAGE_OBJECTIVE_INGRESS=PASS'
+          echo 'HEAD_OWNED_AUTONOMOUS_MANAGEMENT=PASS'
+          echo 'SEMANTIC_CAPABILITY_BINDING=PASS'
           echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
+          echo 'LEGACY_COMMAND_ROUTER_BYPASSED=PASS'
+          echo 'HUMAN_REQUEST_NOT_EXECUTION_AUTHORIZATION=PASS'
           echo 'GATEWAY_GOVERNED_GITHUB_EGRESS=PASS'
           echo 'WORK_EVIDENCE_PRESERVED=PASS'
           echo 'TELEGRAM_TERMINAL_RESULT_RETURNED=PASS'
