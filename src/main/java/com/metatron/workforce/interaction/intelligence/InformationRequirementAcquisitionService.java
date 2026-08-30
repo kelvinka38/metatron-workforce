@@ -41,6 +41,7 @@ public final class InformationRequirementAcquisitionService {
 
         List<InformationRequirement> requirements = new ArrayList<>(intelligenceCase.informationRequirements());
         Set<String> caseEvidence = new LinkedHashSet<>(intelligenceCase.evidenceReferences());
+        Set<String> processedThisTurn = new LinkedHashSet<>();
         StringBuilder groundedContext = new StringBuilder();
         StringBuilder groundedExternalEvidence = new StringBuilder();
         boolean externalEvidenceAcquired = false;
@@ -48,10 +49,11 @@ public final class InformationRequirementAcquisitionService {
         int acquisitionBudget = budget(normalized.requestedDepth(), requirements.size());
 
         while (acquisitions < acquisitionBudget) {
-            int next = selectNext(requirements, normalized);
+            int next = selectNext(requirements, normalized, processedThisTurn);
             if (next < 0) break;
 
             InformationRequirement requirement = requirements.get(next);
+            processedThisTurn.add(requirement.requirementId());
             AcquisitionAttempt attempt = acquireOne(requirement, normalized, requester, intelligenceCase.caseId());
             acquisitions++;
 
@@ -68,14 +70,17 @@ public final class InformationRequirementAcquisitionService {
                 continue;
             }
 
+            List<String> retainedEvidence = requiresFreshExternal(normalized, requirement)
+                    ? List.of()
+                    : requirement.evidenceReferences();
             if (attempt.unresolvable()) {
                 requirements.set(next, requirement.withResolution(
                         InformationRequirementStatus.UNRESOLVABLE,
-                        requirement.evidenceReferences()));
+                        retainedEvidence));
             } else {
                 requirements.set(next, requirement.withResolution(
                         InformationRequirementStatus.DEFERRED,
-                        requirement.evidenceReferences()));
+                        retainedEvidence));
             }
         }
 
@@ -108,6 +113,20 @@ public final class InformationRequirementAcquisitionService {
                                           NormalizedRequest normalized,
                                           String requester,
                                           String caseId) {
+        // Fresh/current reality cannot be satisfied by previously admitted institutional material alone.
+        // When semantics say current external data is required, revalidate reality first and fail closed
+        // if that current source cannot be acquired; stale context may remain historical evidence but it
+        // cannot satisfy the present requirement.
+        if (requiresFreshExternal(normalized, requirement)) {
+            ToolResult external = acquireExternal(normalized, requirement, requester, caseId);
+            if (external.success()) {
+                StringBuilder context = new StringBuilder();
+                appendTool(context, requirement, external);
+                return new AcquisitionAttempt(true, false, external.evidenceReferences(), context.toString(), external);
+            }
+            return new AcquisitionAttempt(false, true, List.of(), "", external);
+        }
+
         List<KnowledgeDocument> documents = retrieveKnowledge(normalized, requirement);
         if (!documents.isEmpty()) {
             List<String> refs = new ArrayList<>();
@@ -133,17 +152,21 @@ public final class InformationRequirementAcquisitionService {
     }
 
     private int selectNext(List<InformationRequirement> requirements,
-                           NormalizedRequest normalized) {
+                           NormalizedRequest normalized,
+                           Set<String> processedThisTurn) {
         return java.util.stream.IntStream.range(0, requirements.size())
-                .filter(index -> acquirable(requirements.get(index)))
+                .filter(index -> !processedThisTurn.contains(requirements.get(index).requirementId()))
+                .filter(index -> acquirable(requirements.get(index), normalized))
                 .boxed()
                 .max(Comparator.comparingInt(index -> informationValue(requirements.get(index), normalized)))
                 .orElse(-1);
     }
 
-    private static boolean acquirable(InformationRequirement requirement) {
-        return requirement.status() == InformationRequirementStatus.MISSING
-                || requirement.status() == InformationRequirementStatus.CONFLICTED;
+    private static boolean acquirable(InformationRequirement requirement, NormalizedRequest normalized) {
+        if (requirement.status() == InformationRequirementStatus.MISSING
+                || requirement.status() == InformationRequirementStatus.CONFLICTED) return true;
+        return requirement.status() == InformationRequirementStatus.SATISFIED
+                && requiresFreshExternal(normalized, requirement);
     }
 
     private static int informationValue(InformationRequirement requirement,
@@ -235,6 +258,18 @@ public final class InformationRequirementAcquisitionService {
         } catch (RuntimeException failure) {
             return ToolResult.failure(request, "information_acquisition_failed:" + failure.getClass().getSimpleName());
         }
+    }
+
+    private static boolean requiresFreshExternal(NormalizedRequest normalized, InformationRequirement requirement) {
+        if (!normalized.freshExternalDataRequired()) return false;
+        String freshness = normalized(requirement.freshnessRequirement());
+        return freshness.isBlank()
+                || freshness.contains("current")
+                || freshness.contains("real-time")
+                || freshness.contains("realtime")
+                || freshness.contains("today")
+                || freshness.contains("now")
+                || shouldAcquireExternal(normalized, requirement);
     }
 
     private static boolean shouldAcquireExternal(NormalizedRequest normalized, InformationRequirement requirement) {
