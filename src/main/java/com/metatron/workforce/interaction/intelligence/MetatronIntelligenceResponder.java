@@ -168,23 +168,45 @@ public final class MetatronIntelligenceResponder {
                 return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Depth: /fast, /analyze, /deep, /auto; xem mode bằng /mode. Frontier models xử lý semantics; Metatron xử lý context, evidence, logic, governance và capability phía sau.";
             }
 
+            IntelligenceCase activeCase = caseStore.findActive(conversationId)
+                    .filter(item -> item.status() != IntelligenceCaseStatus.RESOLVED)
+                    .orElse(null);
             NormalizedRequest normalized = IntelligenceDepthApplication.apply(
-                    semanticInterpreter.interpret(text, conversationContext, channel), depthContract);
-            IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
+                    semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
-            if (normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
-                route = "human-clarification-required";
-                caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+            if (!normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
+                route = "frontier-semantic-fast";
                 return normalized.directResponse();
             }
 
             if (normalized.deterministicCapability() == DeterministicCapability.CURRENT_TIME) {
                 route = "deterministic-time-semantic";
-                String answer = executeCurrentTime(humanId, externalMessageReference, channel);
-                caseStore.save(intelligenceCase.withResult(answer, List.of("observation:" + channel + ":" + externalMessageReference)));
-                return answer;
+                return executeCurrentTime(humanId, externalMessageReference, channel);
             }
+
+            List<DeterministicComputationResult> computations = List.of();
+            if (!normalized.deterministicComputations().isEmpty()) {
+                try {
+                    computations = computationEngine.execute(normalized.deterministicComputations());
+                } catch (IllegalArgumentException invalidComputation) {
+                    route = "deterministic-computation-invalid";
+                    return "METATRON DETERMINISTIC COMPUTATION BLOCKED\nreason=" + invalidComputation.getMessage();
+                }
+                if (canReturnDeterministicFast(normalized)) {
+                    route = "deterministic-computation-fast";
+                    return renderDeterministicComputations(computations, false);
+                }
+            }
+
+            IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
+
+            if (normalized.materiallyAmbiguous()) {
+                route = "human-clarification-required";
+                caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+                return normalized.directResponse();
+            }
+
             if (normalized.deterministicCapability() == DeterministicCapability.GATEWAY_AUDIT) {
                 route = "gateway-audit-semantic";
                 String answer = executeGatewayAudit(humanId, text, externalMessageReference, channel);
@@ -230,30 +252,6 @@ public final class MetatronIntelligenceResponder {
                 route = "decision-authority-blocked";
                 caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
                 return "METATRON DECISION BLOCKED\nreason=INSTITUTIONAL_AUTHORITY_REQUIRED\ncase_id=" + intelligenceCase.caseId() + "\nobjective=" + normalized.objective();
-            }
-
-            List<DeterministicComputationResult> computations = List.of();
-            if (!normalized.deterministicComputations().isEmpty()) {
-                try {
-                    computations = computationEngine.execute(normalized.deterministicComputations());
-                } catch (IllegalArgumentException invalidComputation) {
-                    route = "deterministic-computation-invalid";
-                    String answer = "METATRON DETERMINISTIC COMPUTATION BLOCKED\nreason=" + invalidComputation.getMessage();
-                    caseStore.save(intelligenceCase.withResult(answer, List.of()));
-                    return answer;
-                }
-                if (canReturnDeterministicFast(normalized)) {
-                    route = "deterministic-computation-fast";
-                    String answer = renderDeterministicComputations(computations, false);
-                    caseStore.save(intelligenceCase.withResult(answer, List.of()));
-                    return answer;
-                }
-            }
-
-            if (normalized.canReturnFastDirectly()) {
-                route = "frontier-semantic-fast";
-                caseStore.save(intelligenceCase.withResult(normalized.directResponse(), List.of()));
-                return normalized.directResponse();
             }
 
             caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.ACQUISITION));
