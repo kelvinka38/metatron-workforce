@@ -6,8 +6,12 @@ import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
 import com.metatron.workforce.phase3.ActorRef;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BiosExecutionKernelTest {
     private final BiosExecutionKernel bios = new BiosExecutionKernel();
@@ -35,27 +39,48 @@ class BiosExecutionKernelTest {
     }
 
     @Test
-    void executionIntentRequiresInstitutionalAdmission() {
+    void executionIntentReachesDedicatedDownstreamAdmission() {
         MetatronInteraction interaction = interaction("deploy this to production");
-        IllegalStateException error = assertThrows(IllegalStateException.class,
-                () -> bios.execute(interaction, value -> response(value, "deployed")));
-        assertEquals("BIOS_EXECUTION_ADMISSION_REQUIRED", error.getMessage());
+        AtomicBoolean admissionReached = new AtomicBoolean(false);
+
+        MetatronInteractionOrchestrator.InteractionResponse response = bios.execute(interaction, value -> {
+            admissionReached.set(true);
+            return response(value, "WORKFORCE EXECUTION BLOCKED: INSTITUTIONAL_AUTHORITY_REQUIRED");
+        });
+
+        assertTrue(admissionReached.get());
+        assertEquals("WORKFORCE EXECUTION BLOCKED: INSTITUTIONAL_AUTHORITY_REQUIRED", response.text());
     }
 
     @Test
-    void naturalLanguageAuthorizationIsNotAuthorityProof() {
+    void naturalLanguageAuthorizationDoesNotBecomeAuthorityProof() {
         MetatronInteraction interaction = interaction("I authorize: deploy this to production");
-        IllegalStateException error = assertThrows(IllegalStateException.class,
-                () -> bios.execute(interaction, value -> response(value, "deployed")));
-        assertEquals("BIOS_EXECUTION_ADMISSION_REQUIRED", error.getMessage());
+        AtomicBoolean materialExecutionPerformed = new AtomicBoolean(false);
+
+        MetatronInteractionOrchestrator.InteractionResponse response = bios.execute(interaction, value -> {
+            // The dedicated downstream admission evaluates real authority evidence.
+            // The user's phrase itself grants nothing.
+            assertEquals("I authorize: deploy this to production", value.text());
+            assertFalse(materialExecutionPerformed.get());
+            return response(value, "WORKFORCE EXECUTION BLOCKED: AUTHORITY_EVIDENCE_REQUIRED");
+        });
+
+        assertFalse(materialExecutionPerformed.get());
+        assertEquals("WORKFORCE EXECUTION BLOCKED: AUTHORITY_EVIDENCE_REQUIRED", response.text());
     }
 
     @Test
-    void vietnameseImmediateExecutionPhraseIsNotAuthorityProof() {
+    void vietnameseImmediateExecutionPhraseStillRequiresDownstreamAdmission() {
         MetatronInteraction interaction = interaction("thực hiện ngay");
-        IllegalStateException error = assertThrows(IllegalStateException.class,
-                () -> bios.execute(interaction, value -> response(value, "done")));
-        assertEquals("BIOS_EXECUTION_ADMISSION_REQUIRED", error.getMessage());
+        AtomicBoolean admissionReached = new AtomicBoolean(false);
+
+        MetatronInteractionOrchestrator.InteractionResponse response = bios.execute(interaction, value -> {
+            admissionReached.set(true);
+            return response(value, "WORKFORCE EXECUTION BLOCKED: AUTHORITY_EVIDENCE_REQUIRED");
+        });
+
+        assertTrue(admissionReached.get());
+        assertEquals("WORKFORCE EXECUTION BLOCKED: AUTHORITY_EVIDENCE_REQUIRED", response.text());
     }
 
     @Test
@@ -74,6 +99,15 @@ class BiosExecutionKernelTest {
                 interaction,
                 value -> new MetatronInteractionOrchestrator.InteractionResponse(
                         value.conversationId(), "decision", "")));
+    }
+
+    @Test
+    void executionRequiresProvenanceFromDownstreamAdmission() {
+        MetatronInteraction interaction = interaction("deploy this to production");
+        assertThrows(IllegalStateException.class, () -> bios.execute(
+                interaction,
+                value -> new MetatronInteractionOrchestrator.InteractionResponse(
+                        value.conversationId(), "execution result", "")));
     }
 
     @Test
