@@ -15,8 +15,17 @@ class IntelligenceDepthSelectionParserTest {
         assertEquals(IntelligenceDepthSelectionParser.Action.STATUS, parser.parse("/mode").action());
     }
 
-    @Test void proseIsNotClassifiedByKeywords() {
+    @Test void malformedDepthControlsRemainTerminalControlInput() {
+        assertEquals(IntelligenceDepthSelectionParser.Action.INVALID, parser.parse("/deep now").action());
+        assertEquals(IntelligenceDepthSelectionParser.Action.INVALID, parser.parse("/depth wat").action());
+        assertEquals(IntelligenceDepthSelectionParser.Action.INVALID, parser.parse("/auto please").action());
+        assertTrue(parser.parse("/fast\tplease").control());
+    }
+
+    @Test void proseAndUnrelatedSlashCommandsAreNotClassifiedByKeywords() {
         assertFalse(parser.parse("deep audit this").control());
         assertFalse(parser.parse("fast please").control());
+        assertFalse(parser.parse("/start").control());
+        assertFalse(parser.parse("/deeper").control());
     }
 }
