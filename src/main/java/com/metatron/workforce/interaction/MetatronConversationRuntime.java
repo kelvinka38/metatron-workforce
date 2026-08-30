@@ -36,10 +36,11 @@ public final class MetatronConversationRuntime {
         this.maxChars = maxChars;
     }
 
-    public MetatronInteractionOrchestrator.InteractionResponse handle(MetatronInteraction interaction, String channel) {
+    /** Canonical entrypoint: provider identity is transport metadata carried by the normalized interaction. */
+    public MetatronInteractionOrchestrator.InteractionResponse handle(MetatronInteraction interaction) {
         Objects.requireNonNull(interaction, "interaction");
-        Objects.requireNonNull(channel, "channel");
-        if (channel.isBlank()) throw new IllegalArgumentException("channel must not be blank");
+        String channel = interaction.channelProvider();
+        if (channel.isBlank()) throw new IllegalArgumentException("channelProvider must not be blank");
 
         if (depthControl != null) {
             IntelligenceDepthControlService.ControlResult control = depthControl.handle(
@@ -66,5 +67,18 @@ public final class MetatronConversationRuntime {
         return new MetatronInteractionOrchestrator.InteractionResponse(
                 interaction.conversationId(), answer,
                 "interaction:" + interaction.externalMessageReference());
+    }
+
+    /** Compatibility entrypoint for older callers that supplied transport separately. */
+    @Deprecated
+    public MetatronInteractionOrchestrator.InteractionResponse handle(MetatronInteraction interaction, String channel) {
+        Objects.requireNonNull(interaction, "interaction");
+        Objects.requireNonNull(channel, "channel");
+        MetatronInteraction normalized = new MetatronInteraction(
+                interaction.human(), interaction.target(), interaction.organizationContextId(),
+                interaction.conversationId(), channel,
+                interaction.externalActorReference(), interaction.externalConversationReference(),
+                interaction.externalMessageReference(), interaction.text());
+        return handle(normalized);
     }
 }
