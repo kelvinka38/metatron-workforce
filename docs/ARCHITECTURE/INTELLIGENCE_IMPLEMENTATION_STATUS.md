@@ -2,7 +2,7 @@
 
 ## Status
 
-**FOUNDER-APPROVED INTELLIGENCE ARCHITECTURE — DOWNSTREAM WORKFORCE IMPLEMENTATION COMPLETE FOR CURRENT OWNED SCOPE — CURRENT LOCAL CHECKPOINT REQUIRES PUBLICATION / IMMUTABLE-SHA DEPLOYMENT**
+**FOUNDER-APPROVED INTELLIGENCE ARCHITECTURE — DOWNSTREAM WORKFORCE-OWNED IMPLEMENTATION COMPLETE FOR THE CURRENT APPROVED SCOPE**
 
 Canonical semantic authority remains:
 
@@ -16,23 +16,29 @@ Approved downstream baselines:
 - `AGENTS.md`
 - `.github/copilot-instructions.md`
 
-Canonical upstream SOT always wins a conflict. Fresh direct upstream verification is still unavailable in this ChatGPT session because the historical `mcp.metatron.vn` connector is retired and the official GitHub connector is not exposed as an invokable namespace here. This status therefore records verified downstream implementation and explicitly separates externally owned dependencies rather than inventing their semantics.
+Canonical upstream SOT wins any conflict. Fresh direct upstream verification remains unavailable in this ChatGPT session because the historical `mcp.metatron.vn` connector is retired and the official GitHub connector is not exposed as a usable read/write namespace here. This status therefore records verified downstream implementation and keeps externally owned dependencies explicit rather than inventing substitutes.
 
-## Current checkpoint
+## Production / release checkpoint
 
-Last verified production SHA before this local tranche:
-
-```text
-3a55bc6cfa2f7be20f4d1ec1e5c29d47bbe62a7a
-```
-
-Current local implementation commit before this documentation update:
+The latest production release verified before the final shared-store hardening is:
 
 ```text
-594b014  feat(intelligence): complete durable institutional case lifecycle
+87846b3dbb4cf7e7b3018abb503b2ebca06aa733
 ```
 
-The current local branch is ahead of `origin/main` until the normal approved publication path is completed. Do not describe `594b014` as production until GitHub publication, immutable-SHA deployment and canonical production verification succeed.
+That release passed:
+
+```text
+./gradlew test
+./gradlew clean build
+immutable-SHA deployment
+canonical production verification
+Workforce health
+Telegram public-route boundary probe
+Telegram webhook inspection
+```
+
+The final runtime hardening in the current branch makes Spring production use one shared durable `IntelligenceCaseStore` instance for both Human interaction and institutional lifecycle correlation. This avoids competing in-process store instances over the same filesystem state. It must be published and deployed with the current branch head before being described as the production checkpoint.
 
 ## Implemented and verified
 
@@ -47,7 +53,7 @@ Implemented:
 
 Frontier models provide multilingual interpretation, slang/shorthand/typo handling and general semantic normalization. Workforce does not implement a competing general-purpose NLP/translation engine.
 
-Arbitrary natural-language intent has no Java keyword fallback when frontier semantic capacity is absent. The former Gateway natural-language compatibility shortcut has been removed; Gateway capability selection passes through frontier semantic normalization.
+Arbitrary natural-language intent has no Java keyword fallback. Material semantic ambiguity is represented as a Human clarification request rather than guessed through. Ordinary missing evidence is not treated as a reason to ask the Human when Metatron can acquire it through legitimate sources.
 
 ### 2. Durable Intelligence Case lifecycle
 
@@ -67,23 +73,23 @@ Production storage defaults to:
 /var/lib/metatron-workforce/intelligence-cases
 ```
 
-The Case store now treats stable `case_id` as primary identity rather than storing only one mutable file per conversation. Runtime structure is:
+Runtime structure:
 
 ```text
 intelligence-cases/
-├── cases/             # durable Case records keyed by case identity
-└── by-conversation/   # active/latest Case pointer per canonical conversation
+├── cases/
+└── by-conversation/
 ```
 
-Consequences:
+Properties:
 
-- the same active Case resumes across follow-up turns and process/container restart;
-- externally owned institutional workflows can correlate results by stable `case_id` rather than transport conversation id;
-- resolving a Case and starting a new Case in the same conversation no longer destroys the historical Case;
-- legacy conversation-keyed production Case files are lazily migrated without changing Case identity, evidence or conclusion;
-- legacy source files are retained for audit/rollback compatibility.
-
-`IntelligenceCaseLifecycleService` persistently correlates externally produced Authorization, Gateway, Execution, Observation/Outcome and Knowledge results back to the originating Case without taking ownership of those domains.
+- stable `case_id` is primary identity;
+- active Case resumes across turns and container restart;
+- historical resolved Cases remain addressable after a new Case begins in the same conversation;
+- institutional workflows can correlate by stable Case identity rather than transport identity;
+- legacy conversation-keyed Case files migrate lazily without rewriting their semantic contents;
+- Case owns only analysis coordination state and references externally owned institutional state;
+- production Human interaction and lifecycle correlation share the same durable Case-store bean.
 
 ### 3. Information requirements and evidence-first acquisition
 
@@ -111,29 +117,21 @@ Acquisition:
 1. derives requirements from semantically selected analytical protocols;
 2. prioritizes unresolved requirements by relative information value;
 3. checks institutional artifacts/configured Knowledge retrieval before unnecessary frontier reasoning;
-4. retrieves external evidence when the semantic/source contract requires current external reality;
-5. reassesses after each material acquisition;
+4. retrieves external evidence when current external reality is required;
+5. reassesses requirement state after material acquisition;
 6. preserves unresolved state rather than manufacturing completeness.
 
-Depth controls acquisition budget without weakening evidence/authority rules:
+Depth controls resource budget, not epistemic quality:
 
 ```text
 FAST     bounded
 ANALYZE  expanded
-DEEP     full requirement set where available
+DEEP     full available requirement set
 ```
-
-`KnowledgeFabricSourceAdapter` is provider-neutral and does not give Workforce Knowledge-admission ownership.
 
 ### 4. Analytical protocols
 
-Implemented:
-
-- `AnalyticalProtocolType`
-- `AnalyticalProtocol`
-- `AnalyticalProtocolRegistry`
-
-Runtime protocols:
+Implemented protocols:
 
 ```text
 AUDIT
@@ -148,18 +146,11 @@ IMPROVEMENT
 DECISION
 ```
 
-Protocol selection is semantic. Protocols define minimum information requirements, deterministic operations, reasoning operations, falsification checks and output contracts.
+Protocol selection is semantic. Protocols define required information, deterministic operations, reasoning operations, falsification checks and output contracts.
 
 ### 5. Deterministic computation
 
-Implemented:
-
-- `DeterministicComputationOperation`
-- `DeterministicComputationSpec`
-- `DeterministicComputationEngine`
-- `DeterministicComputationResult`
-
-Current operations:
+Implemented operations:
 
 ```text
 SUM
@@ -171,7 +162,7 @@ PERCENT_OF
 PERCENT_CHANGE
 ```
 
-Frontier semantics declares operation/operands; authoritative arithmetic is deterministic `BigDecimal`. Missing/invalid operands and divide-by-zero fail explicitly. Deterministic arithmetic does not upgrade the truth status of its input data.
+Frontier semantics declares operation/operands; authoritative arithmetic is deterministic `BigDecimal`. Missing/invalid operands and divide-by-zero fail explicitly. Arithmetic does not upgrade the truth status of input data.
 
 ### 6. Provider-neutral Intelligence Fabric
 
@@ -183,16 +174,15 @@ Implemented / retained:
 - `RouterBackedIntelligenceEngine`
 - `IntelligenceFabric`
 - `IntelligenceResult`
-- `IntelligenceSynthesizer`
 - `EvidencePreservingIntelligenceSynthesizer`
 - `EvidenceBackedGovernance`
 - `BiosConformanceValidator`
 
 Provider identity remains independent from Worker identity and institutional authority.
 
-### 7. Progressive intelligence depth
+### 7. Progressive intelligence depth and consequence separation
 
-Human-facing runtime contract:
+Human-facing depth:
 
 ```text
 FAST
@@ -200,20 +190,18 @@ ANALYZE
 DEEP
 ```
 
-The Human controls requested intelligence depth. Runtime optimizes resource expenditure inside that contract; depth does not change truth discipline, authority rules or evidence requirements.
+Depth controls reasoning/acquisition/compute resource expenditure. It does **not** automatically elevate institutional consequence or authority requirements. In particular, `DEEP` reasoning is not itself `HIGH` consequence.
+
+`IntelligenceConsequencePolicy` centralizes the non-consequential reasoning mapping so Meeting and Worker intelligence cannot accidentally turn deeper analysis into authority-bearing work.
 
 ### 8. Evidence-first multi-model deliberation
 
 Implemented:
 
-- `MultiModelDeliberationCoordinator`
-
-Flow:
-
 ```text
 independent proposals
 → structured contradiction assessment
-→ evidence acquisition when disagreement is knowable
+→ evidence acquisition where disagreement is knowable
 → one targeted challenge round
 → governed synthesis
 ```
@@ -222,62 +210,41 @@ Unresolved disagreement is preserved. `CONSENSUS != CORRECTNESS` remains enforce
 
 ### 9. Live provider telemetry and adaptive routing
 
-Implemented:
-
-- `LlmUsage`
-- `ProviderTelemetryRegistry`
-- `AdaptiveProviderRoutingPolicy`
-- provider usage/quota metadata collection
-
-Runtime records measured concurrency, success/failure, consecutive failures, latency, token usage, provider quota hints and temporary cooldown. AUTO routing can avoid measured degraded capacity; an explicit Human provider request remains explicit.
+Runtime records measured concurrency, success/failure, consecutive failures, latency, token usage, provider quota hints and temporary cooldown. AUTO routing may avoid degraded capacity while an explicit Human provider request remains explicit.
 
 Cost remains unknown unless real pricing configuration is supplied. Runtime does not fabricate cost.
 
 ### 10. Workplace-owned Meeting intelligence
 
-Implemented:
-
-- `WorkplaceIntelligenceBridge`
-
-Meeting remains Workplace-owned. Intelligence may receive the Meeting context/evidence package and produce deliberation support, but cannot mutate the Meeting, manufacture a decision/action item, or create authority.
+`WorkplaceIntelligenceBridge` consumes Workplace Meeting state by reference. Intelligence may provide deliberation support but cannot mutate the Meeting, manufacture decisions/action items, or create authority.
 
 ### 11. Worker-to-Worker intelligence escalation
 
-Implemented:
-
-- `WorkerIntelligenceEscalationService`
-
-A recognized institutional Worker may request Intelligence and publish the result reference through Workplace-owned communication. Workplace re-evaluates communication authorization. Provider/session identity never becomes Worker identity.
+`WorkerIntelligenceEscalationService` lets an institutional Worker request Intelligence and publish a result reference through Workplace-owned communication. Workplace re-evaluates communication authorization. Provider/session identity never becomes Worker identity.
 
 ### 12. Institutional execution admission
 
-Implemented:
+`IntelligenceExecutionAdmissionService` is fail-closed. Intelligence cannot execute directly. A Workforce execution handoff requires externally produced successful Authorization and Gateway boundary results plus Assignment/work-package/execution identity.
 
-- `IntelligenceExecutionAdmissionService`
-- `ExecutionHandoffRequest` reuse
-- persistent lifecycle correlation through `IntelligenceCaseLifecycleService`
+### 13. Institutional lifecycle correlation
 
-Intelligence cannot execute directly. An execution handoff requires externally produced successful Authorization and Gateway boundary results plus Assignment, work-package and execution identities. Denied/mismatched authority fails closed.
+`IntelligenceCaseLifecycleService` persistently correlates externally owned:
 
-### 13. External institutional reference integration
+```text
+Authorization
+→ Gateway
+→ Execution admission
+→ Execution
+→ Observation / Outcome
+→ Learning
+→ Knowledge admission reference
+```
 
-Implemented:
-
-- `InstitutionalIntelligenceReferenceBridge`
-- `IntelligenceCase.withExternalReferences(...)`
-- `IntelligenceCaseLifecycleService`
-
-Cases can persist references to externally owned Authorization, Gateway, Execution, Observation/Outcome, Work and Knowledge state without copying authoritative state into Intelligence.
+The Case stores references only. Ownership remains in the canonical external domains.
 
 ### 14. Outcome feedback and Workforce learning
 
-Implemented:
-
-- `IntelligenceOutcomeLearningBridge`
-
-Only successful externally produced Observation boundary evidence may create `LearningEvidence` and `Experience`. The Case stores references and returns to `REASSESSMENT`.
-
-Intended chain is preserved:
+`IntelligenceOutcomeLearningBridge` accepts only successful externally produced Observation evidence before creating `LearningEvidence` and `Experience`.
 
 ```text
 EXECUTION
@@ -292,15 +259,11 @@ Execution success is not treated as outcome success.
 
 ### 15. Knowledge-admission integration
 
-Implemented:
-
-- `IntelligenceKnowledgeAdmissionService`
-
-Only a validated Workforce learning candidate can be prepared for the external Knowledge boundary. A Knowledge reference is linked into the Case only after a successful externally owned admission result.
+`IntelligenceKnowledgeAdmissionService` prepares only validated Workforce learning candidates for the external Knowledge boundary. A Knowledge reference enters the Case only after a successful externally owned admission result.
 
 ### 16. Channel-neutral continuity
 
-Conversation memory and Intelligence Case continuity are independent of Telegram transport. Telegram is an interface/transport surface, not the owner of institutional memory, Intelligence, Worker identity or authority.
+Telegram is transport/interface only. Conversation memory, Intelligence Case state, Worker identity, authority and institutional memory are not Telegram-owned.
 
 ## Canonical invariants preserved
 
@@ -321,72 +284,77 @@ WEB EVIDENCE != AUTHORIZATION
 MEETING = WORKPLACE-OWNED
 KNOWLEDGE ADMISSION != INTELLIGENCE
 CASE REFERENCES EXTERNAL STATE; CASE DOES NOT OWN IT
+DEPTH != CONSEQUENCE
 ```
 
-## Verification evidence
+## Verification coverage
 
-Latest local implementation checkpoint before publication:
-
-```text
-./gradlew test   PASS
-./gradlew build  PASS
-```
-
-Coverage includes:
+The current implementation has automated coverage for:
 
 - frontier semantic normalization and no-keyword fallback;
+- Human-only material ambiguity clarification;
+- FAST/ANALYZE/DEEP behavior;
+- depth/consequence separation, including DEEP Meeting and Worker reasoning;
 - durable Case restart continuity;
-- stable Case-ID lookup independent of conversation id;
-- historical Case retention after conversation starts a new Case;
-- lazy migration of the previous production Case storage layout;
-- persistent Authorization → Gateway → execution admission → Execution → Observation/Outcome → Learning → Knowledge reference lifecycle;
-- denied authorization cannot create an execution handoff;
+- stable Case-ID lookup;
+- historical Case retention;
+- legacy Case-storage migration;
+- persistent institutional lifecycle correlation;
+- denied authorization preventing execution handoff;
 - protocol-composed information requirements;
 - information-value acquisition prioritization/reassessment;
 - institutional artifact retrieval;
 - KnowledgeFabric adapter evidence preservation;
 - semantic-driven external evidence acquisition;
 - deterministic computation;
-- multi-model contradiction/evidence challenge flow;
+- multi-model contradiction/evidence challenge;
 - provider telemetry/adaptive routing;
-- Workplace Meeting intelligence boundary;
+- Workplace Meeting boundary;
 - authorized Worker-to-Worker intelligence escalation;
 - external Knowledge admission preparation/linking;
 - removal of legacy Gateway keyword routing.
 
 ## Externally owned dependencies — not Workforce implementation defects
 
-The following cannot legitimately be manufactured inside Workforce merely to make an implementation checklist appear complete.
+These MUST NOT be manufactured inside Workforce merely to make an implementation checklist appear complete.
 
 ### A. Canonical Knowledge provider
 
-`KnowledgeFabricSourceAdapter` is implemented, but no authoritative Knowledge-domain provider/service contract is currently available to this Workforce runtime. Until the owning Knowledge domain supplies one, runtime uses only configured legitimate sources and MUST NOT invent a fake Knowledge authority.
+`KnowledgeFabricSourceAdapter` is ready, but a live authoritative Knowledge-domain provider/service must come from the owning Knowledge domain. Workforce cannot invent one.
 
 ### B. Additional connected institutional systems
 
-The acquisition architecture is pluggable, but only authorized/configured adapters can be queried. A source that has no owning-domain connector cannot be claimed as integrated.
+Acquisition is pluggable, but only authorized/configured adapters can be queried. A system with no owning-domain connector cannot be claimed as integrated.
 
 ### C. Consequential natural-language execution
 
-Natural-language execution remains fail-closed unless canonical Assignment, Authorization and applicable Gateway evidence exist. This is the correct completion state, not missing functionality:
+Natural-language execution remains fail-closed unless canonical Assignment, Authorization and applicable Gateway evidence exist:
 
 ```text
 USER REQUEST != AUTHORIZATION
 DECISION != EXECUTION
 ```
 
-`IntelligenceExecutionAdmissionService` provides the downstream contract once those externally owned records exist.
+This is correct completion behavior, not a missing shortcut.
 
 ### D. Fresh upstream SOT verification
 
-A fresh direct read of `metatron-institution/10_INTELLIGENCE/SOT.md` remains blocked by connector availability in this session. No downstream implementation may promote itself above canonical SOT. When upstream access is restored, exact terminology/ownership must be reconciled and upstream wins any conflict.
+A fresh direct read of `metatron-institution/10_INTELLIGENCE/SOT.md` remains blocked by connector availability in this session. Upstream wins any future conflict or terminology reconciliation.
 
 ## Completion interpretation
 
-Within the currently approved and owned downstream Workforce boundary, Intelligence now has concrete runtime implementations and tests for the architecture elements that Workforce is allowed to own.
+Within the currently approved downstream Workforce-owned boundary, the Intelligence implementation is complete and verified at code/test/build level. Production completion for a branch still requires the normal release chain:
 
-This does **not** mean every external Metatron institutional domain is magically implemented inside Intelligence. Global ecosystem completion additionally requires the externally owned domains/services above to be available and integrated under their own SOT/authority.
+```text
+commit
+→ GitHub publication
+→ immutable-SHA deployment
+→ canonical production verification
+→ health / route verification
+```
 
-The accepted engineering rule remains:
+Global Metatron ecosystem completion is intentionally broader than Intelligence/Workforce completion because authoritative Knowledge, Authorization, Gateway, Execution, Observation and other institutional domains remain independently owned.
+
+Accepted engineering rule:
 
 > SOT and policy define truth, semantics, ownership, authority and hard boundaries. Inside those boundaries, build the strongest useful product rather than a weaker duplicate of frontier models.
