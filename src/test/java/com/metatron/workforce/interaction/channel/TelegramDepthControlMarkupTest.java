@@ -10,12 +10,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TelegramDepthControlMarkupTest {
     @Test
-    void exposesCanonicalDepthCommandsWithoutOwningDepthState() {
+    void exposesHumanReadableDepthControlsWithoutOwningDepthState() {
         Map<String, Object> markup = TelegramBotGateway.depthControlReplyMarkup();
 
         assertEquals(List.of(
-                List.of("/fast", "/analyze", "/deep"),
-                List.of("/auto", "/mode")), markup.get("keyboard"));
+                List.of("⚡ Fast", "🧠 Analyze", "🔬 Deep"),
+                List.of("🤖 Auto", "🎛 Mode")), markup.get("keyboard"));
         assertEquals(true, markup.get("resize_keyboard"));
         assertEquals(true, markup.get("is_persistent"));
         assertTrue(markup.containsKey("input_field_placeholder"));
