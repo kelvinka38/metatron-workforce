@@ -18,7 +18,8 @@ final class FrontierSemanticClarificationTest {
         LlmProviderClient provider = new LlmProviderClient() {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
             @Override public LlmResponse complete(LlmRequest request) {
-                assertTrue(request.systemContext().contains("Do not guess through material ambiguity"));
+                assertTrue(request.systemContext().contains("Do not guess through material"));
+                assertTrue(request.systemContext().contains("case_continuity"));
                 return new LlmResponse(LlmProvider.GOOGLE, "semantic-test", """
                         {
                           "objective":"clarify which project the Human means",
@@ -37,6 +38,7 @@ final class FrontierSemanticClarificationTest {
                           "deterministic_computations":[],
                           "fresh_external_data_required":false,
                           "explicitly_requested_provider":null,
+                          "case_continuity":"NEW",
                           "direct_response":"Mày đang nói Workforce hay Gateway?"
                         }
                         """, "semantic-ref");
@@ -53,6 +55,7 @@ final class FrontierSemanticClarificationTest {
         assertTrue(normalized.canReturnFastDirectly());
         assertEquals("Mày đang nói Workforce hay Gateway?", normalized.directResponse());
         assertEquals(IntelligenceMode.DISCUSSION, normalized.mode());
+        assertEquals(CaseContinuity.NEW, normalized.caseContinuity());
         assertTrue(normalized.analyticalProtocols().isEmpty());
     }
 }
