@@ -68,7 +68,6 @@ public final class InformationRequirementAcquisitionService {
                 continue;
             }
 
-            // Reassessment is explicit: an attempted requirement remains unresolved unless grounded evidence was obtained.
             if (attempt.unresolvable()) {
                 requirements.set(next, requirement.withResolution(
                         InformationRequirementStatus.UNRESOLVABLE,
@@ -80,8 +79,6 @@ public final class InformationRequirementAcquisitionService {
             }
         }
 
-        // Requirements that were previously satisfied stay satisfied. Requirements that were not attempted because
-        // their marginal value fell below the available budget remain MISSING rather than being silently completed.
         int satisfied = 0;
         int unresolved = 0;
         for (InformationRequirement requirement : requirements) {
@@ -149,10 +146,6 @@ public final class InformationRequirementAcquisitionService {
                 || requirement.status() == InformationRequirementStatus.CONFLICTED;
     }
 
-    /**
-     * Relative information-value score. Metadata is produced by protocol planning/semantic normalization;
-     * this method never reinterprets the Human's raw text.
-     */
     private static int informationValue(InformationRequirement requirement,
                                         NormalizedRequest normalized) {
         int score = 0;
@@ -223,9 +216,12 @@ public final class InformationRequirementAcquisitionService {
                                        InformationRequirement requirement,
                                        String requester,
                                        String caseId) {
+        // The requirement is already the frontier/planner-normalized search need. Keep the external
+        // query focused on it instead of appending internal orchestration syntax such as "objective=...",
+        // which degrades search relevance and can turn a current-data lookup into generic results.
         String query = requirement.question().isBlank()
                 ? normalized.objective()
-                : requirement.question() + "\nobjective=" + normalized.objective();
+                : requirement.question().trim();
         ToolRequest request = new ToolRequest(
                 "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
                 requester,
