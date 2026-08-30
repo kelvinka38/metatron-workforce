@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HumanObjectiveIngressServiceTest {
@@ -42,7 +43,7 @@ class HumanObjectiveIngressServiceTest {
                         "UNAVAILABLE:repository.write", List.of(), ExecutionWorkSpec.Consequence.MUTATING)));
 
         assertTrue(receipt.accepted());
-        assertEquals("objective:intelligence-case:case-001", receipt.objectiveId());
+        assertEquals("objective:intelligence-case:case-001:request:telegram:update:1001", receipt.objectiveId());
         assertEquals("worker-head", receipt.ownerWorkerId());
         assertEquals("BLOCKED", receipt.objectiveStatus());
         assertEquals("STAFFING_REQUIRED:UNAVAILABLE:repository.write", receipt.executionAdmissionState());
@@ -52,6 +53,8 @@ class HumanObjectiveIngressServiceTest {
         ManagementObjective objective = management.get(receipt.objectiveId());
         assertEquals("worker-head", objective.ownerWorkerId());
         assertTrue(objective.description().contains("Fix admitted defects"));
+        assertTrue(objective.description().contains("Case: case-001"));
+        assertTrue(objective.description().contains("Conversation: conversation:human:human-primary"));
         assertTrue(objective.description().contains("Ingress: telegram/telegram:update:1001"));
 
         String acceptanceDetail = management.history(receipt.objectiveId()).getFirst().detail();
@@ -63,22 +66,13 @@ class HumanObjectiveIngressServiceTest {
     }
 
     @Test
-    void capabilityBackedWorkExecutesDeliversEvidenceAndRetryIsIdempotent() {
+    void capabilityBackedWorkExecutesDeliversEvidenceAndSameRequestRetryIsIdempotent() {
         ManagementAutonomyService management = new ManagementAutonomyService();
         AtomicInteger executions = new AtomicInteger();
-        AutonomousExecutionCapability fake = new AutonomousExecutionCapability() {
-            @Override public String capabilityRef() { return "test.audit.read"; }
-            @Override public CapabilityResult execute(CapabilityRequest request) {
-                executions.incrementAndGet();
-                return new CapabilityResult(true, "worker-auditor", "assignment-1", "work-1",
-                        List.of("evidence:test-pass"), "PASS");
-            }
-        };
+        AutonomousExecutionCapability fake = successfulCapability(executions);
         HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
                 management, List.of(fake), "worker-head", Clock.systemUTC());
-        NormalizedRequest request = executionRequest("Audit repository", new ExecutionWorkSpec(
-                "step-1", "Audit repository", "kelvinka38/metatron-workforce",
-                "test.audit.read", List.of(), ExecutionWorkSpec.Consequence.READ_ONLY));
+        NormalizedRequest request = auditRequest();
 
         assertEquals(List.of("test.audit.read"), ingress.capabilityCatalog());
         ExecutionObjectiveHandoff.HandoffReceipt first = ingress.submit(
@@ -98,6 +92,49 @@ class HumanObjectiveIngressServiceTest {
         assertEquals(1, management.allObjectives().size());
         assertEquals(List.of("assignment-1"), management.get(first.objectiveId()).assignmentRefs());
         assertTrue(management.get(first.objectiveId()).evidenceRefs().contains("evidence:test-pass"));
+    }
+
+    @Test
+    void newExecutionRequestInSameCaseGetsDistinctObjectiveAndCurrentProviderCorrelation() {
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AtomicInteger executions = new AtomicInteger();
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(successfulCapability(executions)), "worker-head", Clock.systemUTC());
+        NormalizedRequest request = auditRequest();
+
+        ExecutionObjectiveHandoff.HandoffReceipt first = ingress.submit(
+                "human-primary", "org-metatron", "case-shared", "conversation-1",
+                "telegram:update:3001", "telegram", request);
+        ExecutionObjectiveHandoff.HandoffReceipt second = ingress.submit(
+                "human-primary", "org-metatron", "case-shared", "conversation-1",
+                "zalo:message:9002", "zalo", request);
+
+        assertNotEquals(first.objectiveId(), second.objectiveId());
+        assertNotEquals(first.queueItemId(), second.queueItemId());
+        assertEquals(2, executions.get());
+        assertEquals(2, management.allObjectives().size());
+        assertTrue(management.get(first.objectiveId()).description().contains("telegram:update:3001"));
+        assertTrue(management.get(second.objectiveId()).description().contains("zalo:message:9002"));
+        assertTrue(first.objectiveId().contains("telegram:update:3001"));
+        assertTrue(second.objectiveId().contains("zalo:message:9002"));
+        assertTrue(management.history(second.objectiveId()).getFirst().detail().contains("execution_authorization=NONE"));
+    }
+
+    private static AutonomousExecutionCapability successfulCapability(AtomicInteger executions) {
+        return new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.audit.read"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                executions.incrementAndGet();
+                return new CapabilityResult(true, "worker-auditor", "assignment-1", "work-1",
+                        List.of("evidence:test-pass"), "PASS");
+            }
+        };
+    }
+
+    private static NormalizedRequest auditRequest() {
+        return executionRequest("Audit repository", new ExecutionWorkSpec(
+                "step-1", "Audit repository", "kelvinka38/metatron-workforce",
+                "test.audit.read", List.of(), ExecutionWorkSpec.Consequence.READ_ONLY));
     }
 
     private static NormalizedRequest executionRequest(String objective, ExecutionWorkSpec step) {
