@@ -76,6 +76,9 @@ public final class BiosExecutionKernel {
                 interaction.target(),
                 interaction.organizationContextId().trim(),
                 interaction.conversationId().trim(),
+                interaction.channelProvider().trim(),
+                interaction.externalActorReference().trim(),
+                interaction.externalConversationReference().trim(),
                 interaction.externalMessageReference().trim(),
                 text);
     }
