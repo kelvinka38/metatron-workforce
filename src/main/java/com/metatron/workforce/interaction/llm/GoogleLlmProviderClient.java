@@ -17,6 +17,7 @@ import java.util.Objects;
 /** Live Google Gemini transport behind the provider-neutral LLM contract. */
 public final class GoogleLlmProviderClient implements LlmProviderClient {
     private static final Duration INTERACTIVE_TIMEOUT = Duration.ofSeconds(30);
+    private static final int MAX_ATTEMPTS = 3;
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -53,29 +54,50 @@ public final class GoogleLlmProviderClient implements LlmProviderClient {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
-            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            JsonNode root = objectMapper.readTree(response.body());
-            if (response.statusCode() / 100 != 2) {
-                throw new IllegalStateException("google_request_failed:" + response.statusCode() + ":" + compactError(root));
+
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+                JsonNode root = objectMapper.readTree(response.body());
+                if (response.statusCode() / 100 == 2) {
+                    String text = root.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText("");
+                    if (text.isBlank()) throw new IllegalStateException("google_response_invalid");
+                    JsonNode usage = root.path("usageMetadata");
+                    LlmUsage llmUsage = new LlmUsage(
+                            token(usage, "promptTokenCount"),
+                            token(usage, "candidatesTokenCount"),
+                            token(usage, "totalTokenCount"));
+                    Map<String, String> telemetry = new LinkedHashMap<>();
+                    response.headers().firstValue("x-ratelimit-remaining")
+                            .filter(value -> !value.isBlank())
+                            .ifPresent(value -> telemetry.put("remaining_requests", value));
+                    if (attempt > 1) telemetry.put("transport_attempts", Integer.toString(attempt));
+                    return new LlmResponse(provider(), request.model(), text, root.path("responseId").asText(""), llmUsage, telemetry);
+                }
+
+                if (!isRetryableStatus(response.statusCode()) || attempt == MAX_ATTEMPTS) {
+                    throw new IllegalStateException("google_request_failed:" + response.statusCode() + ":" + compactError(root));
+                }
+                Thread.sleep(retryDelayMillis(attempt));
             }
-            String text = root.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText("");
-            if (text.isBlank()) throw new IllegalStateException("google_response_invalid");
-            JsonNode usage = root.path("usageMetadata");
-            LlmUsage llmUsage = new LlmUsage(
-                    token(usage, "promptTokenCount"),
-                    token(usage, "candidatesTokenCount"),
-                    token(usage, "totalTokenCount"));
-            Map<String, String> telemetry = new LinkedHashMap<>();
-            response.headers().firstValue("x-ratelimit-remaining")
-                    .filter(value -> !value.isBlank())
-                    .ifPresent(value -> telemetry.put("remaining_requests", value));
-            return new LlmResponse(provider(), request.model(), text, root.path("responseId").asText(""), llmUsage, telemetry);
+            throw new IllegalStateException("google_request_failed:retry_exhausted");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("google_request_interrupted", e);
         } catch (IOException e) {
             throw new IllegalStateException("google_request_failed", e);
         }
+    }
+
+    static boolean isRetryableStatus(int statusCode) {
+        return statusCode == 429 || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504;
+    }
+
+    static long retryDelayMillis(int completedAttempt) {
+        return switch (completedAttempt) {
+            case 1 -> 300L;
+            case 2 -> 750L;
+            default -> 1500L;
+        };
     }
 
     private static long token(JsonNode usage, String field) {
