@@ -36,7 +36,7 @@ public final class MetatronConversationRuntime {
                 Math.max(4, maxTurns / 4), maxChars);
         String answer = intelligence.respond(
                 interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
-                channel, interaction.conversationId(), history);
+                channel, interaction.conversationId(), interaction.organizationContextId(), history);
         memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
 
         return new MetatronInteractionOrchestrator.InteractionResponse(
