@@ -9,10 +9,10 @@ import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
+import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
 import com.metatron.workforce.phase3.ActorRef;
-import com.metatron.workforce.workers.audit.RepositoryAuditExecutionService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
@@ -25,7 +25,6 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -34,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Telegram transport adapter. It only authenticates, normalizes and delivers messages.
- * Conversation memory and intelligence live in the channel-neutral Metatron runtime.
+ * Conversation memory, Human depth control and institutional execution live in the channel-neutral Metatron runtime.
  */
 @RestController
 @RequestMapping("/telegram")
@@ -51,7 +50,6 @@ public final class TelegramWebhookController {
     private final TelegramBotGateway gateway;
     private final MetatronInteractionOrchestrator orchestrator;
     private final TelegramIdentityResolver identityResolver;
-    private final TelegramInstitutionalWorkDispatcher workDispatcher;
     private final ObjectMapper objectMapper;
     private final TelegramUpdateDeduplicator updateDeduplicator;
     private final ThreadPoolExecutor interactionExecutor;
@@ -70,8 +68,8 @@ public final class TelegramWebhookController {
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
             @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
-            RepositoryAuditExecutionService repositoryAuditExecutionService,
             IntelligenceCaseStore intelligenceCaseStore,
+            IntelligenceDepthControlService intelligenceDepthControlService,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/telegram-conversations}}") String conversationMemoryPath,
             ObjectMapper objectMapper) {
@@ -99,7 +97,6 @@ public final class TelegramWebhookController {
                 new ActorRef("human-primary", ActorRef.ActorType.HUMAN),
                 new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
                 organizationContextId.trim());
-        this.workDispatcher = new TelegramInstitutionalWorkDispatcher(repositoryAuditExecutionService);
 
         MetatronIntelligenceResponder intelligence = new MetatronIntelligenceResponder(
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
@@ -110,6 +107,7 @@ public final class TelegramWebhookController {
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
+                Objects.requireNonNull(intelligenceDepthControlService, "intelligenceDepthControlService"),
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
 
@@ -221,19 +219,9 @@ public final class TelegramWebhookController {
         long processingStarted = System.nanoTime();
         long queueMs = (processingStarted - acceptedAt) / 1_000_000L;
         try {
-            Optional<String> institutional = workDispatcher.dispatch(interaction);
-            String safeAnswer;
-            String provenance;
-            if (institutional.isPresent()) {
-                safeAnswer = institutional.get();
-                provenance = "institutional-work:" + interaction.externalMessageReference();
-                LOG.info("telegram_institutional_work_terminal update_id={} telegram_user={} chat={} result={}",
-                        updateId, telegramUserId, chatId, safeAnswer);
-            } else {
-                MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
-                safeAnswer = validateAnswer(inbound.text(), response.text());
-                provenance = response.provenanceReference();
-            }
+            MetatronInteractionOrchestrator.InteractionResponse response = orchestrator.handle(interaction);
+            String safeAnswer = validateAnswer(inbound.text(), response.text());
+            String provenance = response.provenanceReference();
             long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
             LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} queue_ms={} answer_ms={}",
                     updateId, telegramUserId, chatId, safeAnswer.length(), provenance, queueMs, answerMs);
