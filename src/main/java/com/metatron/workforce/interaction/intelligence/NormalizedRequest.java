@@ -21,12 +21,39 @@ public record NormalizedRequest(
         List<AnalyticalProtocolType> analyticalProtocols,
         DeterministicCapability deterministicCapability,
         List<DeterministicComputationSpec> deterministicComputations,
+        List<ExecutionWorkSpec> executionWorkPlan,
         boolean freshExternalDataRequired,
         LlmProvider explicitlyRequestedProvider,
         LlmProvider semanticProvider,
         String directResponse) {
 
-    /** Backward-compatible constructor for callers with no explicit arithmetic computation plan. */
+    /** Backward-compatible constructor for callers with arithmetic but no execution work plan. */
+    public NormalizedRequest(
+            String objective,
+            String target,
+            List<String> constraints,
+            IntelligenceDepth requestedDepth,
+            String requestedOutput,
+            List<String> explicitAssumptions,
+            List<String> explicitProhibitions,
+            String temporalContext,
+            String unresolvedSemanticAmbiguity,
+            IntelligenceMode mode,
+            CollaborationMode collaborationMode,
+            List<AnalyticalProtocolType> analyticalProtocols,
+            DeterministicCapability deterministicCapability,
+            List<DeterministicComputationSpec> deterministicComputations,
+            boolean freshExternalDataRequired,
+            LlmProvider explicitlyRequestedProvider,
+            LlmProvider semanticProvider,
+            String directResponse) {
+        this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
+                explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
+                analyticalProtocols, deterministicCapability, deterministicComputations, List.of(),
+                freshExternalDataRequired, explicitlyRequestedProvider, semanticProvider, directResponse);
+    }
+
+    /** Backward-compatible constructor for callers with no arithmetic or execution work plan. */
     public NormalizedRequest(
             String objective,
             String target,
@@ -47,7 +74,7 @@ public record NormalizedRequest(
             String directResponse) {
         this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
                 explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
-                analyticalProtocols, deterministicCapability, List.of(), freshExternalDataRequired,
+                analyticalProtocols, deterministicCapability, List.of(), List.of(), freshExternalDataRequired,
                 explicitlyRequestedProvider, semanticProvider, directResponse);
     }
 
@@ -66,6 +93,7 @@ public record NormalizedRequest(
         Objects.requireNonNull(analyticalProtocols, "analyticalProtocols");
         Objects.requireNonNull(deterministicCapability, "deterministicCapability");
         Objects.requireNonNull(deterministicComputations, "deterministicComputations");
+        Objects.requireNonNull(executionWorkPlan, "executionWorkPlan");
         Objects.requireNonNull(semanticProvider, "semanticProvider");
         Objects.requireNonNull(directResponse, "directResponse");
         constraints = List.copyOf(constraints);
@@ -73,7 +101,11 @@ public record NormalizedRequest(
         explicitProhibitions = List.copyOf(explicitProhibitions);
         analyticalProtocols = List.copyOf(analyticalProtocols);
         deterministicComputations = List.copyOf(deterministicComputations);
+        executionWorkPlan = List.copyOf(executionWorkPlan);
         if (objective.isBlank()) throw new IllegalArgumentException("objective must not be blank");
+        if (mode != IntelligenceMode.EXECUTION && !executionWorkPlan.isEmpty()) {
+            throw new IllegalArgumentException("executionWorkPlan is only valid for EXECUTION mode");
+        }
     }
 
     public boolean materiallyAmbiguous() {
@@ -87,16 +119,17 @@ public record NormalizedRequest(
                 && analyticalProtocols.isEmpty()
                 && deterministicCapability == DeterministicCapability.NONE
                 && deterministicComputations.isEmpty()
+                && executionWorkPlan.isEmpty()
                 && !freshExternalDataRequired
                 && !directResponse.isBlank();
     }
 
-    /** Applies a Human-selected depth without changing any other semantic interpretation. */
+    /** Applies a Human-selected depth without changing any other semantic interpretation or work plan. */
     public NormalizedRequest withRequestedDepth(IntelligenceDepth depth) {
         return new NormalizedRequest(objective, target, constraints, Objects.requireNonNull(depth, "depth"),
                 requestedOutput, explicitAssumptions, explicitProhibitions, temporalContext,
                 unresolvedSemanticAmbiguity, mode, collaborationMode, analyticalProtocols,
-                deterministicCapability, deterministicComputations, freshExternalDataRequired,
+                deterministicCapability, deterministicComputations, executionWorkPlan, freshExternalDataRequired,
                 explicitlyRequestedProvider, semanticProvider, directResponse);
     }
 }
