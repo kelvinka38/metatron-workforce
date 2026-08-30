@@ -77,7 +77,7 @@ final class IntelligenceCaseContinuityPolicy {
                 requirement.qualityRequirement(),
                 requirement.acquisitionCostHint(),
                 requirement.latencyHint(),
-                requirement.authorityAccessRequirement(),
+                requirement.authorityRequirement(),
                 requirement.impactIfUnknown());
     }
 
