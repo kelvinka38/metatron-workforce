@@ -88,6 +88,89 @@ final class InformationRequirementAcquisitionServiceTest {
     }
 
     @Test
+    void freshCurrentRequirementIsRevalidatedEvenWhenPreviouslySatisfied() {
+        AtomicInteger webCalls = new AtomicInteger();
+        ToolAdapter web = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) {
+                int call = webCalls.incrementAndGet();
+                return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                        true, "CURRENT EXTERNAL DATA\nrevision=" + call,
+                        List.of("https://example.test/current-" + call));
+            }
+        };
+        InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
+                new KnowledgeRetrievalService(List.of()), new DefaultToolFabric(List.of(web)));
+        InformationRequirement prior = requirement("ir-gold", "current gold price in Vietnam today",
+                List.of("web/external research")).withResolution(
+                InformationRequirementStatus.SATISFIED, List.of("https://example.test/yesterday"));
+        IntelligenceCase intelligenceCase = caseWith(prior);
+
+        var first = service.acquire(intelligenceCase, normalized(true), "human:1");
+        var second = service.acquire(first.intelligenceCase(), normalized(true), "human:1");
+
+        assertEquals(2, webCalls.get(), "fresh requirement must be reacquired on every request turn");
+        assertEquals(List.of("https://example.test/current-2"),
+                second.intelligenceCase().informationRequirements().getFirst().evidenceReferences());
+        assertTrue(second.groundedContext().contains("revision=2"));
+    }
+
+    @Test
+    void freshExternalRealityCannotBeSatisfiedByStaleInstitutionalMaterial() {
+        KnowledgeSource stale = new KnowledgeSource() {
+            @Override public String sourceId() { return "institutional.artifacts"; }
+            @Override public KnowledgeDocument retrieve(KnowledgeQuery query) {
+                return new KnowledgeDocument("old-gold", sourceId(), "gold yesterday", "old_price=1",
+                        List.of("institutional-artifact:gold-yesterday"));
+            }
+        };
+        AtomicInteger webCalls = new AtomicInteger();
+        ToolAdapter web = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) {
+                webCalls.incrementAndGet();
+                return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                        true, "CURRENT EXTERNAL DATA\nprice=2", List.of("https://example.test/gold-now"));
+            }
+        };
+        InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
+                new KnowledgeRetrievalService(List.of(stale)), new DefaultToolFabric(List.of(web)));
+        IntelligenceCase intelligenceCase = caseWith(requirement("ir-gold", "current gold price in Vietnam today",
+                List.of("web/external research")));
+
+        var result = service.acquire(intelligenceCase, normalized(true), "human:1");
+
+        assertEquals(1, webCalls.get());
+        assertTrue(result.externalEvidenceAcquired());
+        assertEquals(List.of("https://example.test/gold-now"),
+                result.intelligenceCase().informationRequirements().getFirst().evidenceReferences());
+        assertFalse(result.groundedContext().contains("old_price=1"));
+        assertTrue(result.groundedContext().contains("price=2"));
+    }
+
+    @Test
+    void freshRevalidationFailureDoesNotLeaveOldEvidenceMarkedSatisfied() {
+        ToolAdapter web = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) { return ToolResult.failure(request, "source unavailable"); }
+        };
+        InformationRequirementAcquisitionService service = new InformationRequirementAcquisitionService(
+                new KnowledgeRetrievalService(List.of()), new DefaultToolFabric(List.of(web)));
+        InformationRequirement prior = requirement("ir-gold", "current gold price in Vietnam today",
+                List.of("web/external research")).withResolution(
+                InformationRequirementStatus.SATISFIED, List.of("https://example.test/stale"));
+
+        var result = service.acquire(caseWith(prior), normalized(true), "human:1");
+
+        assertEquals(0, result.satisfiedRequirements());
+        assertEquals(1, result.unresolvedRequirements());
+        assertEquals(InformationRequirementStatus.UNRESOLVABLE,
+                result.intelligenceCase().informationRequirements().getFirst().status());
+        assertTrue(result.intelligenceCase().informationRequirements().getFirst().evidenceReferences().isEmpty());
+        assertFalse(result.externalEvidenceAcquired());
+    }
+
+    @Test
     void acquiresEachExternalRequirementWithItsOwnQuestionAndEvidence() {
         AtomicInteger webCalls = new AtomicInteger();
         List<String> queries = new ArrayList<>();
