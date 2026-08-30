@@ -25,7 +25,36 @@ public record NormalizedRequest(
         boolean freshExternalDataRequired,
         LlmProvider explicitlyRequestedProvider,
         LlmProvider semanticProvider,
+        CaseContinuity caseContinuity,
         String directResponse) {
+
+    /** Backward-compatible full constructor for callers predating bounded Case continuity. */
+    public NormalizedRequest(
+            String objective,
+            String target,
+            List<String> constraints,
+            IntelligenceDepth requestedDepth,
+            String requestedOutput,
+            List<String> explicitAssumptions,
+            List<String> explicitProhibitions,
+            String temporalContext,
+            String unresolvedSemanticAmbiguity,
+            IntelligenceMode mode,
+            CollaborationMode collaborationMode,
+            List<AnalyticalProtocolType> analyticalProtocols,
+            DeterministicCapability deterministicCapability,
+            List<DeterministicComputationSpec> deterministicComputations,
+            List<ExecutionWorkSpec> executionWorkPlan,
+            boolean freshExternalDataRequired,
+            LlmProvider explicitlyRequestedProvider,
+            LlmProvider semanticProvider,
+            String directResponse) {
+        this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
+                explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
+                analyticalProtocols, deterministicCapability, deterministicComputations, executionWorkPlan,
+                freshExternalDataRequired, explicitlyRequestedProvider, semanticProvider,
+                CaseContinuity.CONTINUE, directResponse);
+    }
 
     public NormalizedRequest(
             String objective,
@@ -49,7 +78,8 @@ public record NormalizedRequest(
         this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
                 explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
                 analyticalProtocols, deterministicCapability, deterministicComputations, List.of(),
-                freshExternalDataRequired, explicitlyRequestedProvider, semanticProvider, directResponse);
+                freshExternalDataRequired, explicitlyRequestedProvider, semanticProvider,
+                CaseContinuity.CONTINUE, directResponse);
     }
 
     public NormalizedRequest(
@@ -73,7 +103,7 @@ public record NormalizedRequest(
         this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
                 explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
                 analyticalProtocols, deterministicCapability, List.of(), List.of(), freshExternalDataRequired,
-                explicitlyRequestedProvider, semanticProvider, directResponse);
+                explicitlyRequestedProvider, semanticProvider, CaseContinuity.CONTINUE, directResponse);
     }
 
     public NormalizedRequest {
@@ -93,6 +123,7 @@ public record NormalizedRequest(
         Objects.requireNonNull(deterministicComputations, "deterministicComputations");
         Objects.requireNonNull(executionWorkPlan, "executionWorkPlan");
         Objects.requireNonNull(semanticProvider, "semanticProvider");
+        Objects.requireNonNull(caseContinuity, "caseContinuity");
         Objects.requireNonNull(directResponse, "directResponse");
         constraints = List.copyOf(constraints);
         explicitAssumptions = List.copyOf(explicitAssumptions);
@@ -127,7 +158,7 @@ public record NormalizedRequest(
                 requestedOutput, explicitAssumptions, explicitProhibitions, temporalContext,
                 unresolvedSemanticAmbiguity, mode, collaborationMode, analyticalProtocols,
                 deterministicCapability, deterministicComputations, executionWorkPlan, freshExternalDataRequired,
-                explicitlyRequestedProvider, semanticProvider, directResponse);
+                explicitlyRequestedProvider, semanticProvider, caseContinuity, directResponse);
     }
 
     public NormalizedRequest withExecutionWorkPlan(List<ExecutionWorkSpec> plan) {
@@ -138,6 +169,6 @@ public record NormalizedRequest(
                 explicitAssumptions, explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity,
                 mode, collaborationMode, analyticalProtocols, deterministicCapability,
                 deterministicComputations, Objects.requireNonNull(plan, "plan"), freshExternalDataRequired,
-                explicitlyRequestedProvider, semanticProvider, directResponse);
+                explicitlyRequestedProvider, semanticProvider, caseContinuity, directResponse);
     }
 }
