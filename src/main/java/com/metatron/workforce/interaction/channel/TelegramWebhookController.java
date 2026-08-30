@@ -7,6 +7,7 @@ import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
 import com.metatron.workforce.interaction.MetatronConversationRuntime;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
+import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
@@ -71,6 +72,7 @@ public final class TelegramWebhookController {
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
             RepositoryAuditExecutionService repositoryAuditExecutionService,
             IntelligenceCaseStore intelligenceCaseStore,
+            ExecutionObjectiveHandoff executionObjectiveHandoff,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/telegram-conversations}}") String conversationMemoryPath,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
@@ -103,7 +105,8 @@ public final class TelegramWebhookController {
                 openAiApiKey, googleApiKey, anthropicApiKey, provider,
                 openAiModel, googleModel, anthropicModel, objectMapper,
                 gatewayAuditUrl, gatewayAuditToken,
-                Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"));
+                Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
+                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"));
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
