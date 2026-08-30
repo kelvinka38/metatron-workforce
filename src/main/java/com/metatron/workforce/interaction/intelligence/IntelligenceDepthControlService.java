@@ -37,7 +37,7 @@ public final class IntelligenceDepthControlService {
                 IntelligenceDepthContract current = store.get(conversationId);
                 yield new ControlResult(true, current, renderStatus(current));
             }
-            case INVALID -> new ControlResult(true, store.get(conversationId()),
+            case INVALID -> new ControlResult(true, store.get(conversationId),
                     "Invalid intelligence-depth control. " + USAGE);
             case NONE -> ControlResult.notControl(store.get(conversationId));
         };
