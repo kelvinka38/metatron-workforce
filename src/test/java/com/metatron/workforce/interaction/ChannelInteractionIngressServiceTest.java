@@ -42,11 +42,21 @@ final class ChannelInteractionIngressServiceTest {
         assertEquals(human, observed.get(1).human());
         assertEquals(canonicalConversation, observed.get(0).conversationId());
         assertEquals(canonicalConversation, observed.get(1).conversationId());
+
         assertEquals("telegram", observed.get(0).channelProvider());
         assertEquals("zalo", observed.get(1).channelProvider());
+        assertEquals("telegram:user:100", observed.get(0).externalActorReference());
+        assertEquals("zalo:user:abc", observed.get(1).externalActorReference());
         assertEquals("telegram:chat:200", observed.get(0).externalConversationReference());
         assertEquals("zalo:conversation:def", observed.get(1).externalConversationReference());
+        assertEquals("telegram:update:300", observed.get(0).externalMessageReference());
+        assertEquals("zalo:message:ghi", observed.get(1).externalMessageReference());
+
+        assertNotEquals(observed.get(0).externalActorReference(), observed.get(0).human().actorId());
+        assertNotEquals(observed.get(1).externalActorReference(), observed.get(1).human().actorId());
         assertNotEquals(observed.get(0).externalConversationReference(), observed.get(0).conversationId());
         assertNotEquals(observed.get(1).externalConversationReference(), observed.get(1).conversationId());
+        assertNotEquals(observed.get(0).externalMessageReference(), observed.get(0).conversationId());
+        assertNotEquals(observed.get(1).externalMessageReference(), observed.get(1).conversationId());
     }
 }
