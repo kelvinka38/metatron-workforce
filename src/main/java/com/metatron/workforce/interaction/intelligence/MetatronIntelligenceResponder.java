@@ -135,6 +135,14 @@ public final class MetatronIntelligenceResponder {
             IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
+            // Material semantic ambiguity is Human-only information. Do not spend more model/tool capacity
+            // or guess through it; preserve the Case and wait for the Human's clarification.
+            if (normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
+                route = "human-clarification-required";
+                caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+                return normalized.directResponse();
+            }
+
             if (normalized.deterministicCapability() == DeterministicCapability.CURRENT_TIME) {
                 route = "deterministic-time-semantic";
                 String answer = executeCurrentTime(humanId, externalMessageReference, channel);
@@ -344,10 +352,13 @@ public final class MetatronIntelligenceResponder {
         }
     }
 
+    /**
+     * Requested depth controls resource expenditure, not institutional consequence.
+     * Consequence is derived from the kind of act being performed; Human-facing reasoning
+     * that reaches this method is not upgraded to HIGH merely because DEEP was requested.
+     */
     private static String consequence(NormalizedRequest request) {
-        if (request.requestedDepth() == IntelligenceDepth.DEEP) return "HIGH";
-        if (request.requestedDepth() == IntelligenceDepth.ANALYZE || request.mode() == IntelligenceMode.REASONING) return "MEDIUM";
-        return "LOW";
+        return request.mode() == IntelligenceMode.REASONING ? "MEDIUM" : "LOW";
     }
 
     private static String latencyBudget(IntelligenceDepth depth) {

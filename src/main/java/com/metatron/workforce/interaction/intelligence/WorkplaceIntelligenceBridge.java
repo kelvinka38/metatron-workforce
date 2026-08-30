@@ -56,7 +56,7 @@ public final class WorkplaceIntelligenceBridge {
                 context,
                 List.copyOf(evidence),
                 "workplace.meeting.deliberation",
-                consequence(depth),
+                IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
                 latencyBudget(depth),
                 costBudget(depth),
                 "",
@@ -91,10 +91,6 @@ public final class WorkplaceIntelligenceBridge {
 
     private static String actorReference(ActorRef actor) {
         return actor.type().name().toLowerCase(java.util.Locale.ROOT) + ":" + actor.actorId();
-    }
-
-    private static String consequence(IntelligenceDepth depth) {
-        return depth == IntelligenceDepth.DEEP ? "HIGH" : "MEDIUM";
     }
 
     private static String latencyBudget(IntelligenceDepth depth) {

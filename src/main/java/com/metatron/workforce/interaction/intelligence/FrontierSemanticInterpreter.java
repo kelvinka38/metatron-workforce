@@ -30,7 +30,7 @@ public final class FrontierSemanticInterpreter {
             explicit_assumptions: array
             explicit_prohibitions: array
             temporal_context: explicit time scope, or empty string
-            unresolved_semantic_ambiguity: only ambiguity that materially changes the request, otherwise empty string
+            unresolved_semantic_ambiguity: empty string when the request is materially clear; otherwise ONE concise clarification question in the Human's language for ambiguity that materially changes what Metatron should do
             mode: DISCUSSION | REASONING | DECISION | EXECUTION
             collaboration_mode: SINGLE | INDEPENDENT_SECOND_OPINION | LEAD_REVIEW | CONSENSUS | ADVERSARIAL_REVIEW
             analytical_protocols: array containing zero or more of AUDIT, COMPARE, ROOT_CAUSE, PERFORMANCE, FORECAST, INVESTMENT, INCIDENT, RISK, IMPROVEMENT, DECISION
@@ -42,6 +42,8 @@ public final class FrontierSemanticInterpreter {
 
             Rules:
             - Interpret meaning; do not emulate a keyword router.
+            - Do not guess through material ambiguity. If a Human choice is necessary to know what objective/scope they actually mean, set unresolved_semantic_ambiguity to the clarification question, requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], fresh_external_data_required=false, and direct_response to the same concise clarification question. This is the only case where clarification should replace further analysis.
+            - Do not ask the Human for information that Metatron can obtain from available evidence/systems; unresolved_semantic_ambiguity is for Human-only semantic choice, not ordinary missing evidence.
             - Select analytical protocols by the analysis the objective actually requires; protocols may compose.
             - FAST is ordinary conversation, explanation, translation, brainstorming and simple help.
             - ANALYZE is evidence-grounded analysis, comparison, investigation or diagnosis.

@@ -66,7 +66,7 @@ public final class WorkerIntelligenceEscalationService {
                 renderConversationContext(conversation, worker),
                 List.copyOf(evidenceReferences),
                 "worker.intelligence.escalation",
-                depth == IntelligenceDepth.DEEP ? "HIGH" : "MEDIUM",
+                IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
                 latencyBudget(depth),
                 costBudget(depth),
                 "",

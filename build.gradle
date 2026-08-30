@@ -28,9 +28,11 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
-    maxHeapSize = '320m'
+    // The canonical production host is resource constrained and builds while services stay online.
+    // Keep the forked test JVM bounded so verification cannot starve the running institutional runtime.
+    maxHeapSize = '192m'
     maxParallelForks = 1
-    jvmArgs '-XX:MaxMetaspaceSize=192m'
+    jvmArgs '-XX:MaxMetaspaceSize=128m'
 }
 
 tasks.withType(JavaCompile).configureEach {
