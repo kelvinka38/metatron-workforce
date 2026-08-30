@@ -38,18 +38,27 @@ public final class AdaptiveProviderRoutingPolicy implements IntelligenceRoutingP
                     .limit(request.maxProviders())
                     .toList();
         }
+        return rankConfiguredProviders(configuredProviders, telemetry).stream()
+                .limit(request.maxProviders())
+                .toList();
+    }
 
+    /**
+     * Shared AUTO provider ordering for every frontier boundary, including semantic normalization
+     * and post-Case execution planning. This keeps provider capacity management out of Worker identity
+     * while allowing all cognition stages to avoid measured degraded capacity.
+     */
+    static List<LlmProvider> rankConfiguredProviders(List<LlmProvider> configuredProviders,
+                                                      ProviderTelemetryRegistry telemetry) {
+        Objects.requireNonNull(configuredProviders, "configuredProviders");
+        Objects.requireNonNull(telemetry, "telemetry");
         Comparator<LlmProvider> ranking = Comparator
                 .comparingInt((LlmProvider provider) -> healthClass(telemetry.snapshot(provider)))
                 .thenComparingInt(provider -> telemetry.snapshot(provider).consecutiveFailures())
                 .thenComparingInt(provider -> telemetry.snapshot(provider).activeRequests())
                 .thenComparingLong(provider -> latencyRank(telemetry.snapshot(provider)))
                 .thenComparingInt(AdaptiveProviderRoutingPolicy::basePriority);
-
-        return configuredProviders.stream()
-                .sorted(ranking)
-                .limit(request.maxProviders())
-                .toList();
+        return configuredProviders.stream().distinct().sorted(ranking).toList();
     }
 
     private static int healthClass(ProviderTelemetryRegistry.Snapshot snapshot) {
