@@ -5,7 +5,10 @@ import com.metatron.workforce.interaction.llm.LlmProvider;
 import java.util.List;
 import java.util.Objects;
 
-/** Frontier-model-produced semantic normalization of one Human utterance. */
+/**
+ * Semantic normalization of one Human utterance.
+ * semanticProvider is null only when the normalization was produced deterministically without an LLM.
+ */
 public record NormalizedRequest(
         String objective,
         String target,
@@ -94,7 +97,6 @@ public record NormalizedRequest(
         Objects.requireNonNull(deterministicCapability, "deterministicCapability");
         Objects.requireNonNull(deterministicComputations, "deterministicComputations");
         Objects.requireNonNull(executionWorkPlan, "executionWorkPlan");
-        Objects.requireNonNull(semanticProvider, "semanticProvider");
         Objects.requireNonNull(directResponse, "directResponse");
         constraints = List.copyOf(constraints);
         explicitAssumptions = List.copyOf(explicitAssumptions);
@@ -122,6 +124,10 @@ public record NormalizedRequest(
                 && executionWorkPlan.isEmpty()
                 && !freshExternalDataRequired
                 && !directResponse.isBlank();
+    }
+
+    public boolean deterministicallyNormalized() {
+        return semanticProvider == null;
     }
 
     /** Applies a Human-selected depth without changing any other semantic interpretation or work plan. */
