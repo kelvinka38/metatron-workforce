@@ -28,21 +28,23 @@ public final class InMemoryIntelligenceCaseStore implements IntelligenceCaseStor
         java.util.Objects.requireNonNull(normalized, "normalized");
 
         Instant now = Instant.now();
-        List<InformationRequirement> requirements = requirementPlanner.plan(normalized);
+        List<InformationRequirement> planned = requirementPlanner.plan(normalized);
         IntelligenceCase existing = findActive(conversationId).orElse(null);
         IntelligenceCase next;
-        if (existing == null || existing.status() == IntelligenceCaseStatus.RESOLVED) {
+        if (IntelligenceCaseContinuityPolicy.startsNewCase(existing, normalized)) {
             next = new IntelligenceCase(
                     "case-" + UUID.randomUUID(), conversationId, requester, normalized.objective(),
                     normalized.requestedDepth(), IntelligenceCaseStatus.INFORMATION_ASSESSMENT,
-                    requirements, List.of(), normalized.explicitAssumptions(), List.of(),
+                    planned, List.of(), normalized.explicitAssumptions(), List.of(),
                     normalized.materiallyAmbiguous() ? List.of(normalized.unresolvedSemanticAmbiguity()) : List.of(),
                     List.of(), List.of(), "", "", List.of(), now, now);
         } else {
+            List<InformationRequirement> requirements = IntelligenceCaseContinuityPolicy.mergeRequirements(
+                    existing, planned, normalized);
             next = new IntelligenceCase(
                     existing.caseId(), existing.conversationId(), existing.requester(), normalized.objective(),
                     normalized.requestedDepth(), IntelligenceCaseStatus.REASSESSMENT,
-                    requirements.isEmpty() ? existing.informationRequirements() : requirements,
+                    requirements,
                     existing.evidenceReferences(),
                     normalized.explicitAssumptions().isEmpty() ? existing.assumptions() : normalized.explicitAssumptions(),
                     existing.hypotheses(),
