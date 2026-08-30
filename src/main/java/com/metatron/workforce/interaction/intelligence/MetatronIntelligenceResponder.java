@@ -125,34 +125,51 @@ public final class MetatronIntelligenceResponder {
 
     public String respond(String humanId, String text, String externalMessageReference, String channel, String conversationContext) {
         return respond(humanId, text, externalMessageReference, channel,
-                "conversation:" + channel + ":human:" + humanId, "organization:unspecified", conversationContext);
+                "conversation:" + channel + ":human:" + humanId, "organization:unspecified", conversationContext,
+                IntelligenceDepthContract.automatic());
     }
 
     public String respond(String humanId, String text, String externalMessageReference, String channel,
                           String conversationId, String conversationContext) {
         return respond(humanId, text, externalMessageReference, channel, conversationId,
-                "organization:unspecified", conversationContext);
+                "organization:unspecified", conversationContext, IntelligenceDepthContract.automatic());
+    }
+
+    public String respond(String humanId, String text, String externalMessageReference, String channel,
+                          String conversationId, String conversationContext, IntelligenceDepthContract depthContract) {
+        return respond(humanId, text, externalMessageReference, channel, conversationId,
+                "organization:unspecified", conversationContext, depthContract);
     }
 
     public String respond(String humanId, String text, String externalMessageReference, String channel,
                           String conversationId, String organizationContextId, String conversationContext) {
+        return respond(humanId, text, externalMessageReference, channel, conversationId,
+                organizationContextId, conversationContext, IntelligenceDepthContract.automatic());
+    }
+
+    public String respond(String humanId, String text, String externalMessageReference, String channel,
+                          String conversationId, String organizationContextId, String conversationContext,
+                          IntelligenceDepthContract depthContract) {
         Objects.requireNonNull(humanId, "humanId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
         Objects.requireNonNull(channel, "channel");
         Objects.requireNonNull(conversationId, "conversationId");
         Objects.requireNonNull(organizationContextId, "organizationContextId");
+        Objects.requireNonNull(depthContract, "depthContract");
         long started = System.nanoTime();
         String route = "unknown";
         try {
             String command = text.trim().toLowerCase(Locale.ROOT);
             if ("/start".equals(command) || "/help".equals(command)) {
                 route = "deterministic-start";
-                return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Frontier models hiểu ngôn ngữ/slang/typo; Metatron xử lý context, evidence, logic, governance và capability phía sau.";
+                return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Depth: /fast, /analyze, /deep, /auto; xem mode bằng /mode. Frontier models xử lý semantics; Metatron xử lý context, evidence, logic, governance và capability phía sau.";
             }
 
-            NormalizedRequest normalized = semanticInterpreter.interpret(
-                    text, conversationContext, channel, executionObjectiveHandoff.capabilityCatalog());
+            NormalizedRequest normalized = IntelligenceDepthApplication.apply(
+                    semanticInterpreter.interpret(
+                            text, conversationContext, channel, executionObjectiveHandoff.capabilityCatalog()),
+                    depthContract);
             IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
@@ -186,14 +203,19 @@ public final class MetatronIntelligenceResponder {
                             + "\ncase_id=" + intelligenceCase.caseId()
                             + "\nobjective=" + normalized.objective();
                 }
-                route = "execution-objective-admitted-to-workforce";
-                String answer = "METATRON WORK ACCEPTED"
+                route = "execution-objective-workforce-terminal";
+                String terminalLabel = "COMPLETED".equals(handoff.executionAdmissionState())
+                        ? "METATRON WORK COMPLETED"
+                        : ("BLOCKED".equals(handoff.objectiveStatus()) || "ESCALATED".equals(handoff.objectiveStatus()))
+                        ? "METATRON WORK BLOCKED"
+                        : "METATRON WORK ACCEPTED";
+                String answer = terminalLabel
                         + "\ncase_id=" + intelligenceCase.caseId()
                         + "\nobjective_id=" + handoff.objectiveId()
                         + "\nowner_worker=" + handoff.ownerWorkerId()
                         + "\nqueue_item=" + handoff.queueItemId()
                         + "\nobjective_status=" + handoff.objectiveStatus()
-                        + "\nexecution_admission=" + handoff.executionAdmissionState()
+                        + "\nexecution_state=" + handoff.executionAdmissionState()
                         + "\nreason=" + handoff.reason();
                 caseStore.save(intelligenceCase.withResult(answer, List.of(
                         "management-objective:" + handoff.objectiveId(),
