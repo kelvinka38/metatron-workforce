@@ -151,7 +151,8 @@ public final class MetatronIntelligenceResponder {
                 return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Frontier models hiểu ngôn ngữ/slang/typo; Metatron xử lý context, evidence, logic, governance và capability phía sau.";
             }
 
-            NormalizedRequest normalized = semanticInterpreter.interpret(text, conversationContext, channel);
+            NormalizedRequest normalized = semanticInterpreter.interpret(
+                    text, conversationContext, channel, executionObjectiveHandoff.capabilityCatalog());
             IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
