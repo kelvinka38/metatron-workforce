@@ -81,14 +81,14 @@ jobs:
             printf '%s' "$LOGS" | grep -q 'route=execution-objective-workforce-terminal' && ROUTE=PASS || ROUTE=FAIL
             docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json" && CORRELATION=PASS || CORRELATION=FAIL
             docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" && CAPABILITY=PASS || CAPABILITY=FAIL
-            docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json" && DELIVERED=PASS || DELIVERED=FAIL
+            docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json" && DELIVERED_GLOBAL=PASS || DELIVERED_GLOBAL=FAIL
             echo "TERMINAL_PREDICATE_SEND=$SEND"
             echo "TERMINAL_PREDICATE_ROUTE=$ROUTE"
             echo "TERMINAL_PREDICATE_CORRELATION=$CORRELATION"
             echo "TERMINAL_PREDICATE_CAPABILITY=$CAPABILITY"
-            echo "TERMINAL_PREDICATE_DELIVERED=$DELIVERED"
-            echo '--- relevant runtime logs ---'
-            printf '%s\n' "$LOGS" | grep -E "update_id=$UPDATE_ID|execution-objective|repository.audit.read|management_delivery|telegram_work_capability|interaction_failed|processing_failed|SecurityException|BLOCKED|ESCALATED" | tail -n 240 || true
+            echo "TERMINAL_PREDICATE_DELIVERED_GLOBAL=$DELIVERED_GLOBAL"
+            echo '--- full runtime tail including exception stack ---'
+            printf '%s\n' "$LOGS" | tail -n 500 || true
             echo '--- management state correlation slice ---'
             docker exec "$CID" sh -c "grep -E 'telegram:update:$UPDATE_ID|repository.audit.read|DELIVERED|BLOCKED|ESCALATED|execution_authorization|autonomous-step:' /var/lib/metatron-workforce/management-state.json | tail -n 240" || true
             exit 1
