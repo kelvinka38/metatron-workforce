@@ -32,13 +32,18 @@ A downstream feature may extend product/runtime capability when it remains insid
 
 Do not weaken a useful feature merely because it is not itself a Universal primitive. Do not promote an application/runtime construct into canonical semantics without the correct upstream governance.
 
-## Mandatory Intelligence documents
+## Mandatory Intelligence entry point
 
-Before changing any Intelligence, conversational, LLM/provider, reasoning, retrieval, Worker-intelligence, meeting-intelligence, memory/context, tool-use, execution-from-intelligence, or learning-from-intelligence behavior, read and follow all three:
+Before changing any Intelligence, conversational, LLM/provider, reasoning, retrieval, Worker-intelligence, meeting-intelligence, memory/context, tool-use, execution-from-intelligence, or learning-from-intelligence behavior:
 
-1. `docs/ARCHITECTURE/METATRON_INTELLIGENCE_ARCHITECTURE_FINAL_PROPOSAL.md`
-2. `docs/ARCHITECTURE/METATRON_INTELLIGENCE_DETAILED_ARCHITECTURE.md`
-3. `docs/ARCHITECTURE/METATRON_INTELLIGENCE_TRACEABILITY_MATRIX.md`
+1. Read `docs/ARCHITECTURE/INTELLIGENCE/README.md` first.
+2. Then read all three Founder-approved baseline documents in that directory, in numbered order:
+   - `docs/ARCHITECTURE/INTELLIGENCE/01_FINAL_ARCHITECTURE_PROPOSAL.md`
+   - `docs/ARCHITECTURE/INTELLIGENCE/02_DETAILED_ARCHITECTURE.md`
+   - `docs/ARCHITECTURE/INTELLIGENCE/03_TRACEABILITY_MATRIX.md`
+3. Check stronger upstream canonical SOT/policy before implementation.
+
+The old top-level `METATRON_INTELLIGENCE_*.md` files are compatibility pointers only. They are not competing architecture baselines.
 
 These documents are subordinate to upstream canonical SOT/policy but are the approved Workforce engineering baseline for Intelligence work.
 
@@ -62,7 +67,9 @@ EXECUTION != OUTCOME
 
 - Human interaction is natural-language-first.
 - Frontier models provide general multilingual understanding, translation, slang/typo resolution, semantic interpretation, and natural-language expression. Do not rebuild a competing general-purpose NLP/translation/slang engine inside Metatron.
-- Use deterministic computation where deterministic computation is sufficient.
+- Raw Human language MUST NOT be routed directly into institutional execution by keyword/regex/continuation heuristics as the principal semantic architecture.
+- Deterministic computation is used where sufficient only after the request has crossed the appropriate semantic/normalized-request boundary when natural-language understanding is required.
+- Provider unavailability is an explicit failure state; it does not authorize bypassing the approved semantic boundary.
 - Intelligence Case is a runtime coordination construct and must not steal authoritative ownership from Worker, Workplace/Meeting, Authorization, Execution, Observation/Outcome, Knowledge, or other canonical domains.
 - Workplace owns meetings. Intelligence may enhance deliberation but does not own the meeting.
 - Workers are persistent institutional actors, never LLM personas or provider sessions.
