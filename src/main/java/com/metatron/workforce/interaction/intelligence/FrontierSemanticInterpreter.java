@@ -14,7 +14,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Function;
 
-/** Frontier-model semantic boundary for multilingual Human input, with deterministic registered-capability admission first. */
+/** Frontier-model semantic boundary for multilingual Human input. */
 public final class FrontierSemanticInterpreter {
     private static final String SYSTEM = """
             You are the semantic interface for Metatron.
@@ -91,10 +91,6 @@ public final class FrontierSemanticInterpreter {
                                        List<String> availableExecutionCapabilities) {
         Objects.requireNonNull(humanText, "humanText");
         Objects.requireNonNull(availableExecutionCapabilities, "availableExecutionCapabilities");
-
-        var deterministicExecution = DeterministicExecutionIntentResolver.resolve(humanText, availableExecutionCapabilities);
-        if (deterministicExecution.isPresent()) return deterministicExecution.get();
-
         if (providers.isEmpty()) throw new IllegalStateException("semantic_provider_required");
         String capabilityCatalog = availableExecutionCapabilities.isEmpty()
                 ? "NONE"
