@@ -1,4 +1,4 @@
-name: Telegram One Message Worker Live Acceptance
+name: Telegram Provider Adapter Live Acceptance
 
 on:
   workflow_run:
@@ -10,16 +10,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-telegram-one-message-worker-live-acceptance
+  group: metatron-telegram-provider-adapter-live-acceptance
   cancel-in-progress: true
 
 jobs:
-  accept-one-message-worker:
+  accept-telegram-provider-adapter:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove one natural-language Telegram objective autonomously completes Worker execution
+      - name: Prove Telegram adapter maps into canonical Conversation and Workforce execution
         shell: bash
         env:
           TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
@@ -47,20 +47,20 @@ jobs:
           PY
           )
 
-          HTTP_STATUS=$(curl -sS -o /tmp/telegram-one-message.json -w '%{http_code}' \
+          HTTP_STATUS=$(curl -sS -o /tmp/telegram-provider-adapter.json -w '%{http_code}' \
             --proto '=https' --tlsv1.2 --max-time 20 \
             -X POST https://gate.metatron.vn/telegram/webhook \
             -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
             -H 'Content-Type: application/json' \
             --data-binary "$BODY")
-          echo "TELEGRAM_ONE_MESSAGE_HTTP_STATUS=$HTTP_STATUS"
+          echo "TELEGRAM_PROVIDER_HTTP_STATUS=$HTTP_STATUS"
           test "$HTTP_STATUS" = 200
 
           TERMINAL=false
           for i in $(seq 1 90); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
             if printf '%s' "$LOGS" | grep -q "telegram_send_success update_id=$UPDATE_ID" \
-              && printf '%s' "$LOGS" | grep -q 'route=execution-objective-admitted-to-workforce' \
+              && printf '%s' "$LOGS" | grep -q 'route=execution-objective-workforce-terminal' \
               && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json" \
               && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
               && docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json"; then
@@ -87,7 +87,9 @@ jobs:
           docker exec "$CID" sh -c "grep -q 'autonomous-step:' /var/lib/metatron-workforce/management-state.json"
           curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
 
-          echo 'TELEGRAM_IDENTITY_RESOLUTION=PASS'
+          echo 'TELEGRAM_PROVIDER_AUTHENTICATION=PASS'
+          echo 'TELEGRAM_EXTERNAL_ID_CORRELATION=PASS'
+          echo 'CANONICAL_CONVERSATION_INGRESS=PASS'
           echo 'NATURAL_LANGUAGE_OBJECTIVE_INGRESS=PASS'
           echo 'HEAD_OWNED_AUTONOMOUS_MANAGEMENT=PASS'
           echo 'SEMANTIC_CAPABILITY_BINDING=PASS'
@@ -96,5 +98,5 @@ jobs:
           echo 'HUMAN_REQUEST_NOT_EXECUTION_AUTHORIZATION=PASS'
           echo 'GATEWAY_GOVERNED_GITHUB_EGRESS=PASS'
           echo 'WORK_EVIDENCE_PRESERVED=PASS'
-          echo 'TELEGRAM_TERMINAL_RESULT_RETURNED=PASS'
-          echo 'TELEGRAM_ONE_MESSAGE_WORKER_ACCEPTANCE=PASS'
+          echo 'TELEGRAM_PROVIDER_TERMINAL_DELIVERY=PASS'
+          echo 'TELEGRAM_PROVIDER_ADAPTER_ACCEPTANCE=PASS'
