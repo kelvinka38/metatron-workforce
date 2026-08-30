@@ -1,8 +1,10 @@
 package com.metatron.workforce.interaction.intelligence;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Runtime coordination record for one bounded intelligence problem.
@@ -87,5 +89,30 @@ public record IntelligenceCase(
                 unknowns, contradictions, reasoningArtifactReferences,
                 conclusion == null ? "" : conclusion, latestRecommendation, externalInstitutionalReferences,
                 createdAt, Instant.now());
+    }
+
+    /**
+     * Links externally owned institutional state/evidence to this Case without copying ownership.
+     * References are de-duplicated and remain opaque to Intelligence.
+     */
+    public IntelligenceCase withExternalReferences(List<String> institutionalRefs,
+                                                   List<String> additionalEvidenceRefs,
+                                                   IntelligenceCaseStatus nextStatus) {
+        Set<String> external = new LinkedHashSet<>(externalInstitutionalReferences);
+        addNonBlank(external, institutionalRefs);
+        Set<String> evidence = new LinkedHashSet<>(evidenceReferences);
+        addNonBlank(evidence, additionalEvidenceRefs);
+        return new IntelligenceCase(caseId, conversationId, requester, objective, requestedDepth,
+                Objects.requireNonNull(nextStatus, "nextStatus"), informationRequirements,
+                List.copyOf(evidence), assumptions, hypotheses, unknowns, contradictions,
+                reasoningArtifactReferences, latestConclusion, latestRecommendation,
+                List.copyOf(external), createdAt, Instant.now());
+    }
+
+    private static void addNonBlank(Set<String> target, List<String> values) {
+        if (values == null) return;
+        for (String value : values) {
+            if (value != null && !value.isBlank()) target.add(value.trim());
+        }
     }
 }

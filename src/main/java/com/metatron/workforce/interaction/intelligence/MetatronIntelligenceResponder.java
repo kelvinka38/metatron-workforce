@@ -131,11 +131,6 @@ public final class MetatronIntelligenceResponder {
                 return "Metatron Workforce online.\n\nGõ yêu cầu tự nhiên. Frontier models hiểu ngôn ngữ/slang/typo; Metatron xử lý context, evidence, logic, governance và capability phía sau.";
             }
 
-            if (isLegacyGatewayAuditCompatibility(text)) {
-                route = "gateway-audit-compatibility";
-                return executeGatewayAudit(humanId, text, externalMessageReference, channel);
-            }
-
             NormalizedRequest normalized = semanticInterpreter.interpret(text, conversationContext, channel);
             IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
@@ -347,12 +342,6 @@ public final class MetatronIntelligenceResponder {
         } catch (RuntimeException failure) {
             return "METATRON GATEWAY AUDIT BLOCKED\nexecution_id=" + executionId + "\nreason=" + failure.getMessage();
         }
-    }
-
-    /** Existing deployed read-only shortcut retained only until capability selection is fully semantic. */
-    private static boolean isLegacyGatewayAuditCompatibility(String text) {
-        String value = text.toLowerCase(Locale.ROOT);
-        return value.contains("audit gateway") || value.contains("audit g4 gateway") || value.contains("audit g4");
     }
 
     private static String consequence(NormalizedRequest request) {
