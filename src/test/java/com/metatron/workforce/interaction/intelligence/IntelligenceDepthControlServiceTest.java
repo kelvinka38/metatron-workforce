@@ -30,6 +30,21 @@ class IntelligenceDepthControlServiceTest {
     }
 
     @Test
+    void invalidDepthControlIsHandledLocallyAndPreservesCurrentSelection() {
+        String conversation = "conversation:human:primary";
+        IntelligenceDepthControlService service = new IntelligenceDepthControlService(
+                new PersistentIntelligenceDepthPreferenceStore(temp));
+        service.handle(conversation, "/deep");
+
+        var invalid = service.handle(conversation, "/depth whatever");
+
+        assertTrue(invalid.controlHandled());
+        assertEquals(IntelligenceDepth.DEEP, invalid.contract().selectedDepth());
+        assertTrue(invalid.response().contains("Invalid intelligence-depth control"));
+        assertTrue(invalid.response().contains("/auto"));
+    }
+
+    @Test
     void ordinaryNaturalLanguageIsNeverKeywordClassifiedAsControl() {
         IntelligenceDepthControlService service = new IntelligenceDepthControlService(
                 new PersistentIntelligenceDepthPreferenceStore(temp));
