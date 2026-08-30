@@ -94,13 +94,16 @@ public final class BiosExecutionKernel {
             throw new IllegalStateException("BIOS_AUTHORITY_CONTEXT_REQUIRED");
         }
 
-        // EXECUTION INTENT != EXECUTION ADMISSION.
-        // A user phrase such as "I authorize" or "thực hiện ngay" can express intent,
-        // but cannot prove institutional authority, scope, policy, assignment, validity,
-        // or revocation state. Material execution must enter the dedicated Workforce
-        // execution-admission path with real authority evidence.
+        // EXECUTION INTENT != EXECUTION AUTHORIZATION.
+        // BIOS admits the interaction semantics, not the material execution itself.
+        // An EXECUTION-classified message must continue to the dedicated Workforce
+        // execution-admission path, where real institutional authority, scope, policy,
+        // assignment, validity and revocation evidence are evaluated. Allowing the
+        // intent to reach that path does not grant authority and must never be treated
+        // as authorization proof derived from the user's words.
         if (mode == IntelligenceMode.EXECUTION) {
-            throw new IllegalStateException("BIOS_EXECUTION_ADMISSION_REQUIRED");
+            LOG.info("bios_execution_intent_requires_downstream_admission request={}",
+                    interaction.externalMessageReference());
         }
     }
 
