@@ -1,5 +1,7 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,9 +44,16 @@ public class LiveManagementConfiguration {
             ManagementAutonomyService management,
             ExecutionPlanProposalService planner,
             List<AutonomousExecutionCapability> capabilities,
-            AutonomyCoordinationService coordination) {
+            AutonomyCoordinationService coordination,
+            WorkforceCoreService core) {
+        Clock clock = Clock.systemUTC();
+        ExecutionAdmissionService admission = new ExecutionAdmissionService();
+        List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
+                .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
+                        capability, core, admission, clock))
+                .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
-                management, planner, capabilities, coordination, Clock.systemUTC());
+                management, planner, governedCapabilities, coordination, clock);
         runner.start();
         return runner;
     }
