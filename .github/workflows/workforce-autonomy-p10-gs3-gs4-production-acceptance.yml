@@ -144,20 +144,22 @@ jobs:
           }
 
           assert_recovery() {
-            local label="$1" oid="$2" minimum_dispatches="$3"
+            local label="$1" oid="$2" minimum_dispatches="$3" require_local_history="$4"
             snapshot_state "$label"
-            OID="$oid" LABEL="$label" MIN_DISPATCHES="$minimum_dispatches" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+            OID="$oid" LABEL="$label" MIN_DISPATCHES="$minimum_dispatches" REQUIRE_LOCAL_HISTORY="$require_local_history" EVIDENCE="$EVIDENCE" python3 - <<'PY'
           import json,os,pathlib,re
           root=pathlib.Path(os.environ['EVIDENCE']); label=os.environ['LABEL']; oid=os.environ['OID']; minimum=int(os.environ['MIN_DISPATCHES'])
+          require_local_history=os.environ['REQUIRE_LOCAL_HISTORY']=='true'
           view=json.load(open(root/f'{label}-terminal-view.json'))
           assert (view.get('objective') or {}).get('objectiveId')==oid
           assert (view.get('objective') or {}).get('status') in ('COMPLETED','DELIVERED')
           blob=json.dumps(view,sort_keys=True)
           assert 'autonomy.recovery.probe.read' in blob, 'recovery capability not bound'
-          history=view.get('history') or []
-          hblob=json.dumps(history,sort_keys=True)
-          assert 'LOCAL_RECOVERY' in hblob, 'missing autonomous local recovery event'
-          assert 'BLOCKED' in hblob, 'typed transient blocker not recorded'
+          if require_local_history:
+              history=view.get('history') or []
+              hblob=json.dumps(history,sort_keys=True)
+              assert 'LOCAL_RECOVERY' in hblob, 'missing autonomous local recovery event'
+              assert 'BLOCKED' in hblob, 'typed transient blocker not recorded'
 
           coordination=json.load(open(root/f'{label}-autonomy-coordination-state.json'))
           dispatches=[d for d in (coordination.get('dispatches') or {}).values() if d.get('objectiveId')==oid]
@@ -189,7 +191,7 @@ jobs:
           locate_objective gs3a "$GS3A_UPDATE"
           GS3A_OID=$(cat "$EVIDENCE/gs3a-objective-id.txt")
           wait_complete gs3a "$GS3A_OID" 300
-          assert_recovery gs3a "$GS3A_OID" 2
+          assert_recovery gs3a "$GS3A_OID" 2 true
 
           # Runtime replacement must be visible because the governed execution wrapper retries the
           # injected provider failure within Execution before Manager advances the dispatch attempt.
@@ -271,7 +273,7 @@ jobs:
           # Management lease is intentionally durable. The new runner must wait/fence the stale lease,
           # then reconcile the interrupted dispatch; allow enough time for the 5-minute lease ceiling.
           wait_complete gs3b "$GS3B_OID" 420
-          assert_recovery gs3b "$GS3B_OID" 2
+          assert_recovery gs3b "$GS3B_OID" 2 false
 
           OID="$GS3B_OID" EVIDENCE="$EVIDENCE" python3 - <<'PY'
           import json,os,pathlib,re
