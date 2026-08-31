@@ -153,21 +153,48 @@ public final class TelegramWebhookController {
                 return ResponseEntity.ok().build();
             }
 
-            // Authentication and identity admission happen before the durable transport acknowledgement.
+            // Authentication and identity admission happen before institutional processing.
             identityResolver.resolve(telegramUserId, parseChatId(chatId));
             adapter.receive(suppliedSecret, chatId, text);
 
             TelegramIngressReceiptStore.Receipt receipt = receiptStore.receive(updateId, telegramUserId, chatId, text);
             receipt = receiptStore.admit(updateId);
-            scheduleReceipt(receipt.updateId());
+
+            // An explicitly-delegated Objective is an admission-priority marker, not a semantic classifier.
+            // Frontier semantics still decides whether the utterance is EXECUTION and the canonical handoff
+            // still creates the Objective. The marker only prevents a material Objective from waiting behind
+            // unrelated long-running interaction work and enforces Objective-before-provider-ACK semantics.
+            if (requiresObjectiveBeforeAck(text)) {
+                processReceipt(receipt.updateId());
+                TelegramIngressReceiptStore.Receipt accepted = receiptStore.find(receipt.updateId());
+                if (accepted == null || accepted.objectiveId() == null || accepted.objectiveId().isBlank()) {
+                    throw new IllegalStateException("telegram_objective_not_accepted_before_ack");
+                }
+                receipt = accepted;
+                LOG.info("telegram_objective_persisted_before_ack update_id={} objective_id={} durable_status={}",
+                        receipt.updateId(), receipt.objectiveId(), receipt.status());
+            } else {
+                scheduleReceipt(receipt.updateId());
+            }
 
             long ackMs = (System.nanoTime() - webhookStarted) / 1_000_000L;
-            LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} durable_status={} queue_depth={} active_threads={}",
-                    updateId, chatId, ackMs, receipt.status(), interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
+            LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} durable_status={} objective_id={} queue_depth={} active_threads={}",
+                    updateId, chatId, ackMs, receipt.status(), receipt.objectiveId(), interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
+            return ResponseEntity.ok().build();
+        } catch (SecurityException denied) {
+            // Authenticated Telegram transport from an unknown principal is institutionally denied, but
+            // provider delivery is consumed. Retrying an identity that can never be admitted is a retry storm,
+            // not fail-closed authorization.
+            LOG.warn("telegram_identity_denied update_id={} chat={} reason={}", updateId, chatId, denied.getMessage());
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException malformed) {
+            // Structurally invalid provider input is non-recoverable. Consume/drop it rather than asking
+            // Telegram to replay malformed bytes indefinitely.
+            LOG.warn("telegram_invalid_delivery_acknowledged update_id={} chat={} reason={}", updateId, chatId, malformed.getMessage());
             return ResponseEntity.ok().build();
         } catch (RuntimeException failure) {
-            // Do not acknowledge an event whose authenticated durable RECEIVED/ADMITTED boundary could not be established.
-            // Telegram can retry non-2xx delivery; provider replay is idempotent by update_id/externalMessageReference.
+            // Recoverable internal failure after authenticated admission must not be falsely acknowledged.
+            // Explicit Objective delegation additionally requires canonical Objective persistence before 2xx.
             LOG.error("telegram_webhook_admission_failed update_id=" + updateId + " chat=" + chatId, failure);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
@@ -215,8 +242,11 @@ public final class TelegramWebhookController {
             MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
             String safeAnswer = validateAnswer(inbound.text(), response.text());
             String objectiveId = objectiveIdFromAnswer(safeAnswer);
+            if (requiresObjectiveBeforeAck(receipt.text()) && objectiveId.isBlank()) {
+                throw new IllegalStateException("explicit_objective_did_not_materialize");
+            }
             if (!objectiveId.isBlank()) {
-                // Human ACCEPTED acknowledgement is not delivered until the canonical Management Objective already exists.
+                // ACCEPTED transport state is recorded only after the canonical Management Objective exists.
                 receiptStore.accepted(updateId, objectiveId);
             }
 
@@ -255,6 +285,13 @@ public final class TelegramWebhookController {
                 scheduleReceipt(updateId);
             }
         }
+    }
+
+    static boolean requiresObjectiveBeforeAck(String text) {
+        String normalized = normalize(text);
+        return normalized.startsWith("take ownership of one objective:")
+                || normalized.startsWith("take ownership of one governed mutation objective ")
+                || normalized.startsWith("take ownership of one governed mutation objective:");
     }
 
     static String validateAnswer(String inbound, String answer) {
