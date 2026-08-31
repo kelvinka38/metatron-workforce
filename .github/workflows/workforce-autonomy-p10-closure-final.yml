@@ -96,6 +96,8 @@ jobs:
           # Replayed provider event after restart must still map to exactly one Objective.
           code=$(curl -sS -o "$E/post-restart-duplicate.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
           test "$code" = 200
+          # BLOCKED is a non-terminal recovery state. Closure still requires terminal completion;
+          # only terminal failure states abort immediately.
           for i in $(seq 1 450); do
             curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OID}" > "$E/terminal.json" || true
             state=$(python3 - "$E/terminal.json" <<'PY'
@@ -104,7 +106,7 @@ jobs:
           except: print('')
           PY
             )
-            case "$state" in COMPLETED|DELIVERED) break;; BLOCKED|ESCALATED|CANCELLED) echo "GS3_BAD_TERMINAL=$state"; exit 2;; esac
+            case "$state" in COMPLETED|DELIVERED) break;; ESCALATED|CANCELLED) echo "GS3_BAD_TERMINAL=$state"; exit 2;; esac
             sleep 2
           done
           test "$state" = COMPLETED -o "$state" = DELIVERED
@@ -144,6 +146,8 @@ jobs:
             [ -n "$OID" ] && break; sleep 2
           done
           test -n "$OID"
+          # BLOCKED may represent bounded capacity/recovery waiting and is not terminal. The final
+          # verdict still requires COMPLETED/DELIVERED and independent Observation PASS.
           for i in $(seq 1 450); do
             curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OID}" > "$E/gs4-terminal.json" || true
             state=$(python3 - "$E/gs4-terminal.json" <<'PY'
@@ -152,7 +156,7 @@ jobs:
           except: print('')
           PY
             )
-            case "$state" in COMPLETED|DELIVERED) break;; BLOCKED|ESCALATED|CANCELLED) echo "GS4_BAD_TERMINAL=$state"; exit 2;; esac
+            case "$state" in COMPLETED|DELIVERED) break;; ESCALATED|CANCELLED) echo "GS4_BAD_TERMINAL=$state"; exit 2;; esac
             sleep 2
           done
           test "$state" = COMPLETED -o "$state" = DELIVERED
