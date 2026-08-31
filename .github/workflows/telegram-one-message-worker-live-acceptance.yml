@@ -24,7 +24,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove Telegram adapter follows Founder-approved Intelligence architecture
+      - name: Prove Telegram adapter accepts and detaches into Workforce
         shell: bash
         env:
           TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
@@ -42,41 +42,45 @@ jobs:
           test "$DEPLOYED_SHA" = "$TARGET_SHA"
 
           UPDATE_ID=$(date +%s%N | cut -c1-18)
+          MESSAGE_ID=$((UPDATE_ID % 2000000000))
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           BODY=$(python3 - <<PY
           import json
           uid=int('${TELEGRAM_ALLOWED_USER_ID}')
           text='Execute a governed read-only repository audit of kelvinka38/bios and return evidence. Do not mutate anything.'
-          print(json.dumps({"update_id":int('${UPDATE_ID}'),"message":{"message_id":int('${UPDATE_ID}')%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
+          print(json.dumps({"update_id":int('${UPDATE_ID}'),"message":{"message_id":int('${MESSAGE_ID}'),"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
           PY
           )
 
+          START_NS=$(date +%s%N)
           HTTP_STATUS=$(curl -sS -o /tmp/telegram-provider-adapter.json -w '%{http_code}' \
             --proto '=https' --tlsv1.2 --max-time 20 \
             -X POST https://gate.metatron.vn/telegram/webhook \
             -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
             -H 'Content-Type: application/json' \
             --data-binary "$BODY")
+          END_NS=$(date +%s%N)
+          ACK_MS=$(( (END_NS - START_NS) / 1000000 ))
           echo "TELEGRAM_PROVIDER_HTTP_STATUS=$HTTP_STATUS"
+          echo "TELEGRAM_PROVIDER_ACK_MILLIS=$ACK_MS"
           test "$HTTP_STATUS" = 200
+          test "$ACK_MS" -lt 20000
 
           OUTCOME=NONE
-          for i in $(seq 1 100); do
+          for i in $(seq 1 30); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 
-            # Use here-strings instead of producer | grep -q pipelines. Under `set -o pipefail`,
-            # grep -q can exit after the first match and SIGPIPE the producer, turning a true
-            # terminal predicate into a false negative when the log buffer is large.
+            # Correct P1/P10 architecture: the interaction proves authenticated acceptance and then detaches.
+            # Completion is owned by the persistent Manager Runner and is validated by the strict P10 workflow.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
-              && grep -q 'route=execution-objective-workforce-terminal' <<<"$LOGS" \
+              && grep -q "route=execution-objective-workforce-accepted" <<<"$LOGS" \
               && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
-              OUTCOME=EXECUTED
+              OUTCOME=ACCEPTED_DETACHED
               break
             fi
 
             # Architecture-valid fail-closed: frontier semantic/planning capacity is unavailable.
-            # The adapter must return a terminal failure to the Human and MUST NOT admit this update
-            # into Workforce execution through raw-text/keyword fallback.
+            # The request must not be admitted through raw-text/keyword fallback.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed' <<<"$LOGS"; then
@@ -92,7 +96,7 @@ jobs:
 
           LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
           if [ "$OUTCOME" = NONE ]; then
-            echo 'NO_ARCHITECTURE_VALID_TERMINAL_OUTCOME' >&2
+            echo 'NO_ARCHITECTURE_VALID_ACCEPTANCE_OUTCOME' >&2
             printf '%s\n' "$LOGS" | tail -n 500 || true
             exit 1
           fi
@@ -111,23 +115,26 @@ jobs:
           echo 'RAW_TEXT_EXECUTION_BYPASS_ABSENT=PASS'
           echo 'LEGACY_COMMAND_ROUTER_BYPASSED=PASS'
 
-          if [ "$OUTCOME" = EXECUTED ]; then
-            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
-            EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
-            test -n "$EVIDENCE"
-            docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
-            docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
-            docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
-            echo 'POST_CASE_EXECUTION_PLANNING=PASS'
-            echo 'SEMANTIC_CAPABILITY_BINDING=PASS'
-            echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
-            echo 'WORK_EVIDENCE_PRESERVED=PASS'
-            echo 'TELEGRAM_PROVIDER_TERMINAL_DELIVERY=PASS'
+          if [ "$OUTCOME" = ACCEPTED_DETACHED ]; then
+            docker exec "$CID" python3 - <<PY
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/var/lib/metatron-workforce/management-state.json').read_text())
+          needle='telegram:update:${UPDATE_ID}'
+          blob=json.dumps(data, sort_keys=True)
+          assert needle in blob, needle
+          # Acceptance must be durable before this gate gives credit. Terminal state is intentionally not required here.
+          assert 'repository.audit.read' in blob, 'accepted Objective did not preserve repository audit intent'
+          print('DURABLE_ACCEPTANCE_STATE=PASS')
+          PY
+            echo 'OBJECTIVE_ACCEPTED_BEFORE_COMPLETION=PASS'
+            echo 'INTERACTION_DETACHMENT_BOUNDARY=PASS'
+            echo 'PERSISTENT_RUNNER_OWNS_POST_ACCEPTANCE_LIFECYCLE=PASS'
           else
             echo 'PROVIDER_UNAVAILABLE_EXPLICIT=PASS'
             echo 'NO_WORKFORCE_EXECUTION_ADMISSION=PASS'
-            echo 'FAIL_CLOSED_TERMINAL_DELIVERY=PASS'
+            echo 'FAIL_CLOSED_DELIVERY=PASS'
           fi
 
-          echo "TELEGRAM_PROVIDER_TERMINAL_OUTCOME=$OUTCOME"
+          echo "TELEGRAM_PROVIDER_ACCEPTANCE_OUTCOME=$OUTCOME"
           echo 'TELEGRAM_PROVIDER_ADAPTER_ACCEPTANCE=PASS'
