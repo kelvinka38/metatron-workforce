@@ -22,6 +22,11 @@ public final class RepositoryAuditAutonomousCapability implements AutonomousExec
     }
 
     @Override public String capabilityRef() { return CAPABILITY; }
+    @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
+    @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
+    @Override public boolean supportsWorker(String workerId) {
+        return RepositoryAuditExecutionService.WORKER_ID.equals(workerId);
+    }
 
     @Override public String capabilityDescription() {
         return CAPABILITY + " — governed read-only GitHub repository audit; target must be owner/repo";
@@ -29,25 +34,39 @@ public final class RepositoryAuditAutonomousCapability implements AutonomousExec
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
+        if (!request.allocated()) {
+            throw new SecurityException("governed allocation required before repository audit effect");
+        }
         if (request.workSpec().consequence() != ExecutionWorkSpec.Consequence.READ_ONLY) {
             throw new SecurityException("repository.audit.read cannot execute MUTATING work");
         }
+        if (!AUTHORIZATION_REFERENCE.equals(request.authorizationReference())) {
+            throw new SecurityException("repository audit authorization mismatch");
+        }
+        if (!RepositoryAuditExecutionService.WORKER_ID.equals(request.allocatedWorkerId())) {
+            throw new SecurityException("repository audit worker mismatch");
+        }
+
         String repository = requireRepositoryTarget(request.workSpec().target());
         RepositoryAuditExecutionService.ExecutionReceipt receipt = repositoryAudit.execute(
                 request.humanId(),
                 AUTHORITY_REFERENCE,
-                AUTHORIZATION_REFERENCE,
+                request.authorizationReference(),
                 request.organizationContextId(),
-                repository);
+                repository,
+                request.assignmentReference());
         boolean success = "COMPLETED".equals(receipt.work().status().name())
                 && "PASS".equals(receipt.workerResult().status());
+        if (!request.assignmentReference().equals(receipt.work().assignmentRef())) {
+            throw new IllegalStateException("institutional work lost governed assignment identity");
+        }
         List<String> evidence = new ArrayList<>(receipt.work().evidenceRefs());
         evidence.add("worker-result:" + receipt.workerResult().worker() + ":" + receipt.workerResult().status());
         evidence.add("work:" + receipt.work().workId());
         return new CapabilityResult(
                 success,
-                receipt.workerResult().worker(),
-                receipt.work().assignmentRef() == null ? "" : receipt.work().assignmentRef(),
+                request.allocatedWorkerId(),
+                request.assignmentReference(),
                 receipt.work().workId(),
                 evidence,
                 success ? "repository audit completed: " + repository
