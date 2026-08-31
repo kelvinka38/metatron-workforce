@@ -205,9 +205,12 @@ jobs:
 
           # ------------------------------------------------------------------
           # GS3-B — hard Workforce JVM/container process termination while a Work dispatch is active.
-          # Inject SIGKILL into PID 1 from inside the container so Docker observes an unexpected
-          # process failure and its configured restart policy supervises recovery. A host-level
-          # `docker kill` is intentionally not used because it is a manual Docker lifecycle action.
+          # Inject SIGKILL from a bounded helper in the host PID namespace. Linux intentionally
+          # protects a PID namespace's init process from SIGKILL sent by a member of that same
+          # namespace, so an in-container `kill -9 1` cannot prove process loss. Do not use
+          # `docker kill`: Docker treats that as a manual lifecycle action and suppresses the
+          # restart policy. The helper receives only CAP_KILL, no network, and targets the exact
+          # host PID resolved from the already-verified production container.
           # Workforce durable reconciliation must recover the Objective; no external resume/replan
           # or Objective state transition is called.
           # ------------------------------------------------------------------
@@ -244,8 +247,13 @@ jobs:
           docker exec "$CID" cat /var/lib/metatron-workforce/management-state.json > "$EVIDENCE/gs3b-pre-management.json"
           docker exec "$CID" cat /var/lib/metatron-workforce/execution-attempts.json > "$EVIDENCE/gs3b-pre-execution-attempts.json"
           docker exec "$CID" sh -c 'find /var/lib/metatron-workforce/runtime-state -type f -maxdepth 2 -print -exec cat {} \; 2>/dev/null' > "$EVIDENCE/gs3b-pre-runtime-state.txt" || true
-          printf 'fault=SIGKILL_PID1\ncontainer=%s\nrestart_policy=%s\n' "$CID" "$RESTART_POLICY" > "$EVIDENCE/gs3b-kill.txt"
-          docker exec "$CID" sh -c 'kill -9 1' >/dev/null 2>&1 || true
+          HOST_PID=$(docker inspect "$CID" --format '{{.State.Pid}}')
+          test "$HOST_PID" -gt 1
+          FAULT_IMAGE='alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
+          printf 'fault=SIGKILL_HOST_PID\ncontainer=%s\nhost_pid=%s\nrestart_policy=%s\n' \
+            "$CID" "$HOST_PID" "$RESTART_POLICY" > "$EVIDENCE/gs3b-kill.txt"
+          docker run --rm --network none --pid host --read-only \
+            --cap-drop ALL --cap-add KILL "$FAULT_IMAGE" kill -9 "$HOST_PID"
 
           for i in $(seq 1 180); do
             CID=$(current_cid)

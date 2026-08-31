@@ -20,7 +20,7 @@ concurrency:
 jobs:
   record-dedicated-slice-handoff:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - name: Record exact-SHA handoff to dedicated production acceptance
         env:

@@ -2,7 +2,9 @@ name: Workforce Autonomy P10 45 Condition Ratification
 
 on:
   workflow_run:
-    workflows: ["Workforce Autonomy P10 GS3 GS4 Production Acceptance"]
+    workflows:
+      - "Workforce Autonomy P10 Production Acceptance"
+      - "Workforce Autonomy P10 GS3 GS4 Production Acceptance"
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -30,12 +32,13 @@ concurrency:
 jobs:
   resolve-evidence:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 50
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
       gs12_run_id: ${{ steps.resolve.outputs.gs12_run_id }}
       gs34_run_id: ${{ steps.resolve.outputs.gs34_run_id }}
+      ready: ${{ steps.resolve.outputs.ready }}
     steps:
       - name: Resolve successful same-SHA Golden Slice runs
         id: resolve
@@ -43,7 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AUTO_TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
-          AUTO_GS34_RUN_ID: ${{ github.event.workflow_run.id }}
           INPUT_TARGET_SHA: ${{ inputs.target_sha }}
           INPUT_GS12_RUN_ID: ${{ inputs.gs12_run_id }}
           INPUT_GS34_RUN_ID: ${{ inputs.gs34_run_id }}
@@ -56,12 +58,12 @@ jobs:
           else
             TARGET_SHA="$AUTO_TARGET_SHA"
             GS12_HINT=''
-            GS34_HINT="$AUTO_GS34_RUN_ID"
+            GS34_HINT=''
           fi
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
 
           python3 - "$TARGET_SHA" "$GS12_HINT" "$GS34_HINT" "$GITHUB_API_URL" "$GITHUB_REPOSITORY" > /tmp/resolved.env <<'PY'
-          import json, os, sys, time, urllib.request
+          import json, os, sys, urllib.request
           target, gs12_hint, gs34_hint, api, repo = sys.argv[1:]
           token=os.environ['GH_TOKEN']
           headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}
@@ -73,22 +75,20 @@ jobs:
               if d.get('head_sha') != target or d.get('conclusion') != 'success' or d.get('name') != workflow_name:
                   raise SystemExit(f'RUN_NOT_VALID id={run_id} name={d.get("name")} sha={d.get("head_sha")} conclusion={d.get("conclusion")}')
               return str(d['id'])
-          def discover(workflow_file, workflow_name, hint, wait_seconds=2700):
+          def discover(workflow_file, workflow_name, hint):
               if hint: return valid_run(hint,workflow_name)
-              deadline=time.time()+wait_seconds
-              while True:
-                  data=get(f'{api}/repos/{repo}/actions/workflows/{workflow_file}/runs?per_page=100')
-                  for r in data.get('workflow_runs',[]):
-                      if r.get('head_sha')==target and r.get('conclusion')=='success' and r.get('name')==workflow_name:
-                          return str(r['id'])
-                  if time.time()>=deadline:
-                      raise SystemExit(f'NO_SUCCESSFUL_SAME_SHA_RUN workflow={workflow_name} sha={target}')
-                  time.sleep(15)
+              data=get(f'{api}/repos/{repo}/actions/workflows/{workflow_file}/runs?per_page=100')
+              for r in data.get('workflow_runs',[]):
+                  if r.get('head_sha')==target and r.get('conclusion')=='success' and r.get('name')==workflow_name:
+                      return str(r['id'])
+              return ''
           gs12=discover('workforce-autonomy-p10-production-acceptance.yml','Workforce Autonomy P10 Production Acceptance',gs12_hint)
           gs34=discover('workforce-autonomy-p10-gs3-gs4-production-acceptance.yml','Workforce Autonomy P10 GS3 GS4 Production Acceptance',gs34_hint)
+          ready=bool(gs12 and gs34)
           print(f'TARGET_SHA={target}')
           print(f'GS12_RUN_ID={gs12}')
           print(f'GS34_RUN_ID={gs34}')
+          print(f'READY={str(ready).lower()}')
           PY
           cat /tmp/resolved.env
           source /tmp/resolved.env
@@ -96,10 +96,12 @@ jobs:
             echo "target_sha=$TARGET_SHA"
             echo "gs12_run_id=$GS12_RUN_ID"
             echo "gs34_run_id=$GS34_RUN_ID"
+            echo "ready=$READY"
           } >> "$GITHUB_OUTPUT"
 
   ratify-production:
     needs: resolve-evidence
+    if: ${{ needs.resolve-evidence.outputs.ready == 'true' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 35
