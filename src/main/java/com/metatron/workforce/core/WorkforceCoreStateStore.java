@@ -14,7 +14,8 @@ public interface WorkforceCoreStateStore {
             Map<String, Map<String, WorkforceCoreService.Capability>> capabilities,
             Map<String, Map<String, WorkforceCoreService.Qualification>> qualifications,
             Map<String, WorkforceCoreService.Availability> availability,
-            Map<String, WorkforceCoreService.Assignment> assignments) {
+            Map<String, WorkforceCoreService.Assignment> assignments,
+            Map<String, WorkforceCoreService.CapacityReservation> capacityReservations) {
         public Snapshot {
             participants = copy(participants);
             workers = copy(workers);
@@ -23,9 +24,24 @@ public interface WorkforceCoreStateStore {
             qualifications = nestedCopy(qualifications);
             availability = copy(availability);
             assignments = copy(assignments);
+            capacityReservations = copy(capacityReservations);
         }
+
+        /** Backward-compatible constructor for snapshots created before capacity reservation. */
+        public Snapshot(
+                Map<String, WorkforceCoreService.Participant> participants,
+                Map<String, WorkforceCoreService.Worker> workers,
+                Map<String, WorkforceCoreService.Participation> participations,
+                Map<String, Map<String, WorkforceCoreService.Capability>> capabilities,
+                Map<String, Map<String, WorkforceCoreService.Qualification>> qualifications,
+                Map<String, WorkforceCoreService.Availability> availability,
+                Map<String, WorkforceCoreService.Assignment> assignments) {
+            this(participants, workers, participations, capabilities, qualifications,
+                    availability, assignments, Map.of());
+        }
+
         public static Snapshot empty() {
-            return new Snapshot(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
+            return new Snapshot(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
         }
         private static <K,V> Map<K,V> copy(Map<K,V> source) {
             return source == null ? Map.of() : Map.copyOf(source);
