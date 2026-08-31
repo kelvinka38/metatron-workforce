@@ -23,10 +23,10 @@ import java.util.Objects;
 /**
  * Founder-approved, tightly bounded Golden Slice 2 mutation capability.
  *
- * <p>The only permitted effect is to replace the stable UNSET sentinel in the dedicated GS2
- * acceptance fixture on an Objective-scoped proposal branch and open a Pull Request. Canonical
- * main stays unchanged until a Human explicitly merges. This makes the production slice repeatable
- * without weakening the repository, authorization, Assignment, dispatch, or Human-merge boundaries.</p>
+ * <p>The only permitted effect is to replace the stable GS2 UNSET sentinel in the canonical
+ * Autonomy Closure gap matrix on an Objective-scoped proposal branch and open a Pull Request.
+ * Canonical main stays unchanged until a Human explicitly merges. This keeps the original allowed
+ * repository/path boundary while making the production slice repeatable.</p>
  */
 @Component
 public final class RepositoryPullRequestAutonomousCapability implements AutonomousExecutionCapability {
@@ -35,7 +35,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
     public static final String AUTHORITY_REFERENCE = "policy:founder-autonomy-gap-matrix-pr:v1";
     public static final String AUTHORIZATION_REFERENCE = "authorization:founder-autonomy-gap-matrix-pr:v1";
     public static final String ALLOWED_REPOSITORY = "kelvinka38/metatron-workforce";
-    public static final String ALLOWED_PATH = "docs/AUTONOMY_CLOSURE/GS2_MUTATION_ACCEPTANCE_FIXTURE.md";
+    public static final String ALLOWED_PATH = "docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md";
     static final String UNSET_SENTINEL = "GS2_AUTONOMOUS_PROBE=UNSET";
     static final String PROBE_PREFIX = "GS2_AUTONOMOUS_PROBE=";
 
@@ -59,7 +59,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
 
     @Override public String capabilityRef() { return CAPABILITY; }
     @Override public String capabilityDescription() {
-        return CAPABILITY + " — bounded repeatable GS2 fixture mutation; opens PR only; never merges";
+        return CAPABILITY + " — bounded repeatable GS2 gap-matrix sentinel mutation; opens PR only; never merges";
     }
     @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
@@ -79,7 +79,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
             String sourceSha = source.path("sha").asText();
             String original = decodeContent(source);
             if (sourceSha.isBlank() || original.isBlank()) {
-                throw new IllegalStateException("GS2 mutation fixture unavailable");
+                throw new IllegalStateException("GS2 mutation source unavailable");
             }
 
             String probe = shortHash(request.idempotencyKey());
@@ -92,7 +92,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
             String branchText = decodeContent(branchFile);
             if (!hasProbe(branchText, probe)) {
                 if (!branchText.contains(UNSET_SENTINEL)) {
-                    throw new IllegalStateException("GS2 proposal branch fixture is outside bounded mutation state");
+                    throw new IllegalStateException("GS2 proposal branch source is outside bounded mutation state");
                 }
                 String body = json.createObjectNode()
                         .put("message", "test(autonomy): record GS2 autonomous mutation probe")
@@ -109,7 +109,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
                         .put("title", "test(autonomy): GS2 governed mutation probe " + probe)
                         .put("head", branch)
                         .put("base", "main")
-                        .put("body", "Golden Slice 2 governed mutation proposal. Workforce changed only the dedicated repeatable acceptance fixture. Human approval is required before merge; this capability exposes no merge operation.")
+                        .put("body", "Golden Slice 2 governed mutation proposal. Workforce changed only the approved Autonomy Closure gap-matrix sentinel. Human approval is required before merge; this capability exposes no merge operation.")
                         .toString();
                 pr = sendJson("POST", "/repos/" + ALLOWED_REPOSITORY + "/pulls", body, 201);
             }
@@ -165,7 +165,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
         int first = original.indexOf(UNSET_SENTINEL);
         int last = original.lastIndexOf(UNSET_SENTINEL);
         if (first < 0 || first != last) {
-            throw new IllegalStateException("canonical GS2 fixture must contain exactly one UNSET sentinel");
+            throw new IllegalStateException("canonical GS2 source must contain exactly one UNSET sentinel");
         }
         return original.substring(0, first) + PROBE_PREFIX + normalizedProbe
                 + original.substring(first + UNSET_SENTINEL.length());
