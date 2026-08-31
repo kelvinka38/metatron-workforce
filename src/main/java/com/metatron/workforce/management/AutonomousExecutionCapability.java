@@ -10,27 +10,17 @@ import java.util.Objects;
  *
  * Production composition places a governed allocation/admission boundary in front of every
  * capability. The delegate receives the Worker, Assignment and Authorization selected before the
- * effect is allowed to run. Legacy four-argument requests remain available for deterministic unit
- * tests and are intentionally allocation-empty until they cross that boundary.
+ * effect is allowed to run. Dispatch identity is carried separately so Execution can own durable
+ * attempts, leases and fencing without making Management the execution truth.
  */
 public interface AutonomousExecutionCapability {
     String capabilityRef();
 
     default String capabilityDescription() { return capabilityRef(); }
-
-    /** Canonical authority reference used when this capability is assigned. */
     default String authorityReference() { return ""; }
-
-    /** Canonical authorization reference admitted before this capability may execute. */
     default String authorizationReference() { return ""; }
-
-    /** Minimum attested capability level required for allocation. */
     default double minimumCapabilityLevel() { return 1.0; }
-
-    /** Finite Workforce capacity reserved for one dispatch. */
     default double requiredCapacity() { return 1.0; }
-
-    /** Optional runtime affinity. Generic capabilities accept any eligible Worker. */
     default boolean supportsWorker(String workerId) { return true; }
 
     CapabilityResult execute(CapabilityRequest request);
@@ -42,36 +32,61 @@ public interface AutonomousExecutionCapability {
             ExecutionWorkSpec workSpec,
             String allocatedWorkerId,
             String assignmentReference,
-            String authorizationReference) {
+            String authorizationReference,
+            String dispatchReference,
+            int dispatchAttempt) {
         public CapabilityRequest {
             Objects.requireNonNull(humanId, "humanId");
             Objects.requireNonNull(organizationContextId, "organizationContextId");
             Objects.requireNonNull(objectiveId, "objectiveId");
             Objects.requireNonNull(workSpec, "workSpec");
-            allocatedWorkerId = allocatedWorkerId == null ? "" : allocatedWorkerId.trim();
-            assignmentReference = assignmentReference == null ? "" : assignmentReference.trim();
-            authorizationReference = authorizationReference == null ? "" : authorizationReference.trim();
+            allocatedWorkerId = clean(allocatedWorkerId);
+            assignmentReference = clean(assignmentReference);
+            authorizationReference = clean(authorizationReference);
+            dispatchReference = clean(dispatchReference);
+            if (dispatchAttempt < 0) throw new IllegalArgumentException("dispatchAttempt must not be negative");
         }
 
-        /** Compatibility request; production delegates receive an allocated request. */
+        /** Compatibility request; production delegates receive allocation and dispatch bindings. */
         public CapabilityRequest(String humanId, String organizationContextId, String objectiveId,
                                  ExecutionWorkSpec workSpec) {
-            this(humanId, organizationContextId, objectiveId, workSpec, "", "", "");
+            this(humanId, organizationContextId, objectiveId, workSpec, "", "", "", "", 0);
+        }
+
+        /** Compatibility constructor for callers that only bind allocation. */
+        public CapabilityRequest(String humanId, String organizationContextId, String objectiveId,
+                                 ExecutionWorkSpec workSpec, String allocatedWorkerId,
+                                 String assignmentReference, String authorizationReference) {
+            this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
+                    assignmentReference, authorizationReference, "", 0);
         }
 
         public CapabilityRequest withAllocation(String workerId, String assignmentRef, String authorizationRef) {
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
-                    workerId, assignmentRef, authorizationRef);
+                    workerId, assignmentRef, authorizationRef, dispatchReference, dispatchAttempt);
+        }
+
+        public CapabilityRequest withDispatch(String dispatchRef, int attempt) {
+            if (dispatchRef == null || dispatchRef.isBlank()) throw new IllegalArgumentException("dispatchRef required");
+            if (attempt < 1) throw new IllegalArgumentException("dispatch attempt must be positive");
+            return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
+                    allocatedWorkerId, assignmentReference, authorizationReference, dispatchRef, attempt);
         }
 
         public boolean allocated() {
             return !allocatedWorkerId.isBlank() && !assignmentReference.isBlank() && !authorizationReference.isBlank();
         }
 
+        public boolean dispatchBound() {
+            return !dispatchReference.isBlank() && dispatchAttempt > 0;
+        }
+
         /** Stable effect key adapters must use to make at-least-once dispatch safe. */
         public String idempotencyKey() {
             return objectiveId + ":work-step:" + workSpec.stepId();
         }
+
+        private static String clean(String value) { return value == null ? "" : value.trim(); }
     }
 
     record CapabilityResult(
