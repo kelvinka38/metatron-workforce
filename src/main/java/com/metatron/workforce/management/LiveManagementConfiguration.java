@@ -167,7 +167,7 @@ public class LiveManagementConfiguration {
                         capability, safety, clock))
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
-                management, planner, governedCapabilities, coordination, observationClosure, clock);
+                management, planner, governedCapabilities, coordination, observationClosure, safety, clock);
         runner.start();
         return runner;
     }
