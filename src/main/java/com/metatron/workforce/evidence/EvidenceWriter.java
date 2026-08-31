@@ -1,6 +1,7 @@
 package com.metatron.workforce.evidence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.metatron.workforce.workers.WorkerResult;
 
 import java.io.IOException;
@@ -12,7 +13,9 @@ import java.util.Map;
 /** Writes canonical runtime evidence as syntactically valid JSON. */
 public class EvidenceWriter {
 
-    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private final Path root;
 
     public EvidenceWriter() {
