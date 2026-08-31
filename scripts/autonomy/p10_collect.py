@@ -131,7 +131,6 @@ def validate_gs34(root: Path, target_sha: str) -> dict[str, list[str]]:
             fail(f"{label} does not have independent Observation PASS")
         refs[label].append(f"artifact:gs34/{obs_path.name}")
 
-    # GS3-A: autonomous recovery and Execution success after a failure/replacement.
     gs3a = load_json(root, "gs3a-terminal-view.json")
     hblob = json.dumps(gs3a.get("history") or [], sort_keys=True)
     if "LOCAL_RECOVERY" not in hblob or "BLOCKED" not in hblob:
@@ -147,7 +146,6 @@ def validate_gs34(root: Path, target_sha: str) -> dict[str, list[str]]:
         fail("GS3-A missing runtime replacement evidence")
     refs["gs3a"].append(f"artifact:gs34/{aexec_path.name}")
 
-    # GS3-B: real PID1 loss, Docker supervised restart, stale lease fencing, abandoned/fenced + success.
     restart_path = one(root, "gs3b-restart.txt")
     restart = parse_kv(restart_path)
     if int(restart.get("restart_count_after", "0")) <= int(restart.get("restart_count_before", "0")):
@@ -170,7 +168,6 @@ def validate_gs34(root: Path, target_sha: str) -> dict[str, list[str]]:
         fail(f"GS3-B missing management lease fencing: {lease_versions}")
     refs["gs3b"] += [f"artifact:gs34/{restart_path.name}", f"artifact:gs34/{bexec_path.name}"]
 
-    # GS3-C: Observation retries, while execution effect is not repeated.
     cobs_path = one(root, "gs3c-observation-state.json")
     cobs = json.loads(cobs_path.read_text(encoding="utf-8"))
     gs3c = load_json(root, "gs3c-terminal-view.json")
@@ -181,7 +178,6 @@ def validate_gs34(root: Path, target_sha: str) -> dict[str, list[str]]:
         fail(f"GS3-C missing bounded Observation retry: {counts}")
     refs["gs3c"].append(f"artifact:gs34/{cobs_path.name}")
 
-    # GS4: four-way fan-out, bounded parallel scheduling, dependency-gated join, completed graph.
     gs4 = load_json(root, "gs4-terminal-view.json")
     plan = (gs4.get("autonomousWork") or {}).get("plannedWork") or []
     audits = [s for s in plan if s.get("requiredCapability") == "repository.audit.read"]
@@ -259,6 +255,7 @@ def build_manifest(target_sha: str, deployed_sha: str, gs12: Path, gs34: Path, t
         14: gs4 + coord, 15: gs4 + coord, 16: gs4 + coord, 17: controls + coord,
         18: coord + safety + northstar, 19: staffing, 20: gs4 + staffing,
         21: staffing + northstar, 22: safety + northstar, 23: staffing + northstar,
+        24: staffing,
         25: gs3b + recovery + northstar, 26: gs1 + staffing + northstar,
         27: gs3a + gs3b + recovery, 28: gs3b + recovery, 29: gs3b + northstar,
         30: gs3b + recovery, 31: gs1 + coord + safety, 32: gs3a + gs3b + gs3c + recovery,
@@ -271,13 +268,6 @@ def build_manifest(target_sha: str, deployed_sha: str, gs12: Path, gs34: Path, t
 
     rows = []
     for condition_id in range(1, 46):
-        if condition_id == 24:
-            rows.append({
-                "id": 24, "status": "NOT_APPLICABLE", "sha": target_sha, "evidence_refs": [],
-                "applicability_reason": "AI Worker formation was not exercised by the four canonical closure Golden Slices; the normative condition is explicitly conditional ('when tested').",
-                "contradictions": [],
-            })
-            continue
         refs = list(dict.fromkeys(evidence.get(condition_id, [])))
         if not refs:
             fail(f"condition {condition_id} has no collector evidence mapping")
@@ -298,6 +288,7 @@ def build_manifest(target_sha: str, deployed_sha: str, gs12: Path, gs34: Path, t
         "collector": {
             "mode": "exact-sha-live-slices-plus-executable-institutional-invariants",
             "required_tests": sorted(REQUIRED_TESTS),
+            "waived_conditions": [],
         },
     }
 
@@ -305,7 +296,7 @@ def build_manifest(target_sha: str, deployed_sha: str, gs12: Path, gs34: Path, t
 def self_test() -> int:
     assert len(REQUIRED_TESTS) >= 15
     condition_ids = set(range(1, 46))
-    assert 24 in condition_ids and len(condition_ids) == 45
+    assert len(condition_ids) == 45
     print("P10_COLLECTOR_SELF_TEST=PASS")
     return 0
 
