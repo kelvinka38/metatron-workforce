@@ -80,7 +80,18 @@ public class LiveManagementController {
 
     @GetMapping("/objectives/{objectiveId}")
     public ObjectiveView objective(@PathVariable String objectiveId) {
-        return new ObjectiveView(management.get(objectiveId), management.history(objectiveId));
+        return view(management.get(objectiveId));
+    }
+
+    @GetMapping("/objectives")
+    public List<ObjectiveView> objectives() {
+        return management.allObjectives().stream().map(this::view).toList();
+    }
+
+    private ObjectiveView view(ManagementObjective objective) {
+        return new ObjectiveView(objective,
+                management.findAutonomousWork(objective.objectiveId()).orElse(null),
+                management.history(objective.objectiveId()));
     }
 
     private static void requireActor(String actor, String expected) {
@@ -104,5 +115,6 @@ public class LiveManagementController {
     public record RecoveryCommand(String recoveryPlan) {}
     public record DeliveryCommand(List<String> evidenceReferences) {}
     public record StaffingAssessment(StaffingNeed staffingNeed) {}
-    public record ObjectiveView(ManagementObjective objective, List<ManagementAutonomyService.ManagementEvent> history) {}
+    public record ObjectiveView(ManagementObjective objective, AutonomousObjectiveWork autonomousWork,
+                                List<ManagementAutonomyService.ManagementEvent> history) {}
 }

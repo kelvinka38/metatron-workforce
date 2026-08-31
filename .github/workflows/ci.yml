@@ -18,6 +18,7 @@ env:
 jobs:
   test:
     runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7

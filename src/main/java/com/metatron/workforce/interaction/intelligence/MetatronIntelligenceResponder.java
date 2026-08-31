@@ -48,7 +48,6 @@ public final class MetatronIntelligenceResponder {
 
     private final IntelligenceFabric fabric;
     private final FrontierSemanticInterpreter semanticInterpreter;
-    private final ExecutionWorkPlanner executionWorkPlanner;
     private final IntelligenceCaseStore caseStore;
     private final String configuredProvider;
     private final int configuredProviderCount;
@@ -105,7 +104,6 @@ public final class MetatronIntelligenceResponder {
         Function<LlmProvider, String> modelSelector = modelSelector(openAiModel, googleModel, anthropicModel);
         LlmProviderRouter router = new LlmProviderRouter(clients);
         this.semanticInterpreter = new FrontierSemanticInterpreter(router, modelSelector, configuredProviders, objectMapper);
-        this.executionWorkPlanner = new ExecutionWorkPlanner(router, modelSelector, configuredProviders, objectMapper);
         this.toolFabric = new DefaultToolFabric(List.of(new CurrentTimeToolAdapter(), new WebSearchToolAdapter()));
         RouterBackedIntelligenceEngine intelligenceEngine = new RouterBackedIntelligenceEngine(router, modelSelector);
         MultiModelDeliberationCoordinator deliberationCoordinator = new MultiModelDeliberationCoordinator(
@@ -215,9 +213,6 @@ public final class MetatronIntelligenceResponder {
             }
 
             if (normalized.mode() == IntelligenceMode.EXECUTION) {
-                List<ExecutionWorkSpec> executionPlan = executionWorkPlanner.plan(
-                        intelligenceCase.caseId(), normalized, executionObjectiveHandoff.capabilityCatalog());
-                normalized = normalized.withExecutionWorkPlan(executionPlan);
                 ExecutionObjectiveHandoff.HandoffReceipt handoff = executionObjectiveHandoff.submit(
                         humanId, organizationContextId, intelligenceCase.caseId(), conversationId,
                         externalMessageReference, channel, normalized);
@@ -228,7 +223,7 @@ public final class MetatronIntelligenceResponder {
                             + "\ncase_id=" + intelligenceCase.caseId()
                             + "\nobjective=" + normalized.objective();
                 }
-                route = "execution-objective-workforce-terminal";
+                route = "execution-objective-workforce-accepted";
                 String terminalLabel = "COMPLETED".equals(handoff.executionAdmissionState())
                         ? "METATRON WORK COMPLETED"
                         : ("BLOCKED".equals(handoff.objectiveStatus()) || "ESCALATED".equals(handoff.objectiveStatus()))

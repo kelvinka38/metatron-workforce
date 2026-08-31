@@ -27,9 +27,10 @@ class HumanObjectiveIngressServiceTest {
     @Test
     void missingCapabilityBecomesStaffingBlockerWithoutMintingExecutionAuthorization() {
         ManagementAutonomyService management = new ManagementAutonomyService();
+        Clock clock = Clock.fixed(Instant.parse("2026-08-30T03:00:00Z"), ZoneOffset.UTC);
+        AutonomousManagementRunner runner = runner(management, List.of(), clock);
         HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
-                management, List.of(), "worker-head",
-                Clock.fixed(Instant.parse("2026-08-30T03:00:00Z"), ZoneOffset.UTC));
+                management, List.of(), runner, "worker-head", clock);
 
         ExecutionObjectiveHandoff.HandoffReceipt receipt = ingress.submit(
                 "human-primary",
@@ -45,12 +46,15 @@ class HumanObjectiveIngressServiceTest {
         assertTrue(receipt.accepted());
         assertEquals("objective:intelligence-case:case-001:request:telegram:update:1001", receipt.objectiveId());
         assertEquals("worker-head", receipt.ownerWorkerId());
-        assertEquals("BLOCKED", receipt.objectiveStatus());
-        assertEquals("STAFFING_REQUIRED:UNAVAILABLE:repository.write", receipt.executionAdmissionState());
-        assertEquals("REQUIRED_CAPABILITY_UNAVAILABLE", receipt.reason());
+        assertEquals("ACCEPTED", receipt.objectiveStatus());
+        assertEquals("ACCEPTED", receipt.executionAdmissionState());
+        assertEquals("OBJECTIVE_ACCEPTED_FOR_AUTONOMOUS_MANAGEMENT", receipt.reason());
         assertFalse(receipt.queueItemId().isBlank());
 
+        runner.runOnce();
+
         ManagementObjective objective = management.get(receipt.objectiveId());
+        assertEquals(ManagementObjective.Status.BLOCKED, objective.status());
         assertEquals("worker-head", objective.ownerWorkerId());
         assertTrue(objective.description().contains("Fix admitted defects"));
         assertTrue(objective.description().contains("Case: case-001"));
@@ -70,23 +74,28 @@ class HumanObjectiveIngressServiceTest {
         ManagementAutonomyService management = new ManagementAutonomyService();
         AtomicInteger executions = new AtomicInteger();
         AutonomousExecutionCapability fake = successfulCapability(executions);
+        AutonomousManagementRunner runner = runner(management, List.of(fake), Clock.systemUTC());
         HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
-                management, List.of(fake), "worker-head", Clock.systemUTC());
+                management, List.of(fake), runner, "worker-head", Clock.systemUTC());
         NormalizedRequest request = auditRequest();
 
         assertEquals(List.of("test.audit.read"), ingress.capabilityCatalog());
         ExecutionObjectiveHandoff.HandoffReceipt first = ingress.submit(
                 "human-primary", "org-metatron", "case-retry", "conversation-1",
                 "telegram:update:2001", "telegram", request);
+        assertEquals("ACCEPTED", first.objectiveStatus());
+        assertEquals("ACCEPTED", first.executionAdmissionState());
+        assertEquals(0, executions.get());
+
+        runner.runOnce();
         ExecutionObjectiveHandoff.HandoffReceipt second = ingress.submit(
                 "human-primary", "org-metatron", "case-retry", "conversation-1",
                 "telegram:update:2001", "telegram", request);
 
-        assertEquals("DELIVERED", first.objectiveStatus());
-        assertEquals("COMPLETED", first.executionAdmissionState());
-        assertEquals("WORK_COMPLETED_BY_WORKFORCE", first.reason());
         assertEquals(first.objectiveId(), second.objectiveId());
         assertEquals(first.queueItemId(), second.queueItemId());
+        assertEquals("COMPLETED", second.objectiveStatus());
+        assertEquals("COMPLETED", second.executionAdmissionState());
         assertEquals("WORK_ALREADY_COMPLETED_BY_WORKFORCE", second.reason());
         assertEquals(1, executions.get());
         assertEquals(1, management.allObjectives().size());
@@ -98,8 +107,10 @@ class HumanObjectiveIngressServiceTest {
     void newExecutionRequestInSameCaseGetsDistinctObjectiveAndCurrentProviderCorrelation() {
         ManagementAutonomyService management = new ManagementAutonomyService();
         AtomicInteger executions = new AtomicInteger();
+        AutonomousExecutionCapability capability = successfulCapability(executions);
+        AutonomousManagementRunner runner = runner(management, List.of(capability), Clock.systemUTC());
         HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
-                management, List.of(successfulCapability(executions)), "worker-head", Clock.systemUTC());
+                management, List.of(capability), runner, "worker-head", Clock.systemUTC());
         NormalizedRequest request = auditRequest();
 
         ExecutionObjectiveHandoff.HandoffReceipt first = ingress.submit(
@@ -109,6 +120,8 @@ class HumanObjectiveIngressServiceTest {
                 "human-primary", "org-metatron", "case-shared", "conversation-1",
                 "zalo:message:9002", "zalo", request);
 
+        assertEquals(0, executions.get());
+        runner.runOnce();
         assertNotEquals(first.objectiveId(), second.objectiveId());
         assertNotEquals(first.queueItemId(), second.queueItemId());
         assertEquals(2, executions.get());
@@ -118,6 +131,13 @@ class HumanObjectiveIngressServiceTest {
         assertTrue(first.objectiveId().contains("telegram:update:3001"));
         assertTrue(second.objectiveId().contains("zalo:message:9002"));
         assertTrue(management.history(second.objectiveId()).getFirst().detail().contains("execution_authorization=NONE"));
+    }
+
+    private static AutonomousManagementRunner runner(ManagementAutonomyService management,
+                                                     List<AutonomousExecutionCapability> capabilities,
+                                                     Clock clock) {
+        return new AutonomousManagementRunner(management,
+                (caseId, request, available) -> request.executionWorkPlan(), capabilities, clock);
     }
 
     private static AutonomousExecutionCapability successfulCapability(AtomicInteger executions) {

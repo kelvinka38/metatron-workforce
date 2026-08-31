@@ -14,7 +14,7 @@ import java.util.Objects;
 import java.util.function.Function;
 
 /** Post-semantic, post-Case institutional execution work planner. */
-public final class ExecutionWorkPlanner {
+public final class ExecutionWorkPlanner implements ExecutionPlanProposalService {
     private static final String SYSTEM = """
             You are Metatron's institutional execution work planner.
             You receive an already normalized Human request and an already-created Intelligence Case reference.
@@ -61,8 +61,9 @@ public final class ExecutionWorkPlanner {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
     }
 
-    public List<ExecutionWorkSpec> plan(String caseId, NormalizedRequest normalized,
-                                        List<String> availableExecutionCapabilities) {
+    @Override
+    public List<ExecutionWorkSpec> propose(String caseId, NormalizedRequest normalized,
+                                           List<String> availableExecutionCapabilities) {
         Objects.requireNonNull(caseId, "caseId");
         Objects.requireNonNull(normalized, "normalized");
         Objects.requireNonNull(availableExecutionCapabilities, "availableExecutionCapabilities");
@@ -90,6 +91,12 @@ public final class ExecutionWorkPlanner {
         IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
         throw all;
+    }
+
+    /** Compatibility alias for existing callers and tests. */
+    public List<ExecutionWorkSpec> plan(String caseId, NormalizedRequest normalized,
+                                        List<String> availableExecutionCapabilities) {
+        return propose(caseId, normalized, availableExecutionCapabilities);
     }
 
     private List<LlmProvider> providersFor(NormalizedRequest normalized) {
