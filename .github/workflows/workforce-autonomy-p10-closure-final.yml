@@ -33,6 +33,8 @@ jobs:
           BASE=/opt/metatron/metatron-workforce
           test -r "$BASE/.env"
           set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
@@ -40,13 +42,15 @@ jobs:
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
           echo "CID=$CID" >> "$GITHUB_ENV"
           echo "BASE=$BASE" >> "$GITHUB_ENV"
-          echo "TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_WEBHOOK_SECRET" >> "$GITHUB_ENV"
-          echo "TELEGRAM_ALLOWED_USER_ID=$TELEGRAM_ALLOWED_USER_ID" >> "$GITHUB_ENV"
 
       - name: GS3 real runtime restart recovery
         shell: bash
         run: |
           set -euo pipefail
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
           E=/tmp/p10-final-${GITHUB_RUN_ID}; mkdir -p "$E"
           UPDATE=$(date +%s%N | cut -c1-18)
           TEXT='Take ownership of one Objective: perform a governed read-only institutional audit of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios. Independently plan, execute, join, verify through Observation, recover autonomously from routine transient execution failure, and deliver one evidence-backed completion. Do not mutate anything.'
@@ -116,6 +120,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
           E=/tmp/p10-final-${GITHUB_RUN_ID}; mkdir -p "$E"
           UPDATE=$(($(date +%s%N | cut -c1-18)+17))
           TEXT='Take ownership of one Objective: perform independent governed read-only audits of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios concurrently where dependencies allow; staff the work from required capabilities, schedule independent branches in parallel, join results, analyze contradictions, verify through Observation, and deliver one evidence-backed completion. Do not mutate anything.'
