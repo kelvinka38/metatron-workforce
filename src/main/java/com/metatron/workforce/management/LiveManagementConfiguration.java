@@ -8,7 +8,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 
-/** Production composition for persistent Workforce management state. */
+/** Production composition for persistent Workforce management and scheduler/transport state. */
 @Configuration
 public class LiveManagementConfiguration {
     @Bean
@@ -24,13 +24,27 @@ public class LiveManagementConfiguration {
         return new ManagementAutonomyService(store);
     }
 
+    @Bean
+    AutonomyCoordinationStateStore autonomyCoordinationStateStore() {
+        String configured = System.getenv().getOrDefault(
+                "METATRON_AUTONOMY_COORDINATION_STATE_PATH",
+                "/var/lib/metatron-workforce/autonomy-coordination-state.json");
+        return new FileAutonomyCoordinationStateStore(Path.of(configured));
+    }
+
+    @Bean
+    AutonomyCoordinationService autonomyCoordinationService(AutonomyCoordinationStateStore store) {
+        return new AutonomyCoordinationService(store);
+    }
+
     @Bean(destroyMethod = "close")
     AutonomousManagementRunner autonomousManagementRunner(
             ManagementAutonomyService management,
             ExecutionPlanProposalService planner,
-            List<AutonomousExecutionCapability> capabilities) {
+            List<AutonomousExecutionCapability> capabilities,
+            AutonomyCoordinationService coordination) {
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
-                management, planner, capabilities, Clock.systemUTC());
+                management, planner, capabilities, coordination, Clock.systemUTC());
         runner.start();
         return runner;
     }
