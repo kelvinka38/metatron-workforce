@@ -54,6 +54,12 @@ The following claims remain valid within their tested scope:
 
 None of these alone proves a general autonomous Workforce.
 
+## Golden Slice 2 repeatable mutation sentinel
+
+The line below is a production acceptance fixture inside the already-approved GS2 mutation scope. Canonical `main` MUST retain `UNSET`. The governed `repository.pr.propose` capability may replace it only on its Objective-scoped `autonomy/gs2-*` proposal branch, open a Pull Request for Human review, and MUST NOT merge that Pull Request or mutate another path.
+
+GS2_AUTONOMOUS_PROBE=UNSET
+
 ## Current maturity
 
 The repository contains evidence spanning L1-L3 for general flows and higher bounded evidence for selected slices. No single general material Objective has yet passed all L10 production gates. Report the system as `PARTIAL / BOUNDED AUTONOMY`, not `COMPLETE`.
