@@ -96,6 +96,6 @@ final class ExecutionWorkPlannerCrossRepositoryAuditJoinTest {
                 true,
                 null,
                 LlmProvider.GOOGLE,
-                "NEW");
+                "");
     }
 }
