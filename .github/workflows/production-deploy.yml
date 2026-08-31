@@ -14,6 +14,7 @@ on:
       - '.github/workflows/production-deploy.yml'
       - '.github/workflows/gateway-final-live-acceptance.yml'
       - '.github/workflows/telegram-one-message-worker-live-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
   workflow_dispatch:
 
 permissions:
