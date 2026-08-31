@@ -178,7 +178,7 @@ public final class ObservationClosureService {
         return attemptsByRequirement.getOrDefault(requirementId, 0);
     }
 
-    public synchronized Map<String, Integer> attempts(String objectiveId) {
+    public synchronized Map<String, Integer> attemptsForObjective(String objectiveId) {
         Map<String, Integer> result = new LinkedHashMap<>();
         for (ObservationRequirement requirement : requirements(objectiveId)) {
             result.put(requirement.requirementId(), attempts(requirement.requirementId()));
