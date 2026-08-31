@@ -37,6 +37,8 @@ jobs:
               if b"\r\n" in data or b"\r" in data:
                   raise SystemExit(f"CRLF_NOT_ALLOWED: {name}")
           PY
+      - name: Verify strict P10 ratifier contract
+        run: python3 scripts/autonomy/p10_ratify.py --self-test
       - name: Make Gradle executable
         run: chmod +x gradlew
       - name: Test and build
