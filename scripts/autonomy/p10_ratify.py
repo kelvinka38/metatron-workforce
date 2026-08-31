@@ -2,8 +2,8 @@
 """Strict Workforce Autonomy P10 production-evidence ratifier.
 
 This program does not create evidence. It consumes an independently assembled exact-SHA evidence
-manifest and refuses ACCEPTED_L10 unless every required Golden Slice and production condition is
-accounted for with attributable evidence and no contradiction.
+manifest and refuses ACCEPTED_L10 unless all four Golden Slices and all 45 production conditions
+are evidence-backed PASS with no unresolved contradiction.
 """
 
 from __future__ import annotations
@@ -63,10 +63,6 @@ CONDITIONS = {
     44: "Dead-letter/stuck Objective detection and reconciliation are operational.",
     45: "Full Objective history is attributable and reconstructable.",
 }
-
-# Condition 24 is explicitly conditional in the normative sentence ("when tested"). No other
-# production condition may be waived by this ratifier.
-CONDITIONALLY_APPLICABLE = {24}
 
 
 def _fail(errors: list[str], message: str) -> None:
@@ -140,17 +136,12 @@ def ratify(manifest: dict) -> dict:
         if live_contradictions:
             _fail(errors, f"condition {condition_id} has unresolved contradiction")
 
-        if status == "PASS":
-            if not isinstance(refs, list) or not any(str(ref).strip() for ref in refs):
-                _fail(errors, f"condition {condition_id} PASS has no evidence_refs")
-            if row.get("sha") != target_sha:
-                _fail(errors, f"condition {condition_id} PASS is not bound to target_sha")
-        elif status == "NOT_APPLICABLE" and condition_id in CONDITIONALLY_APPLICABLE:
-            reason = str(row.get("applicability_reason", "")).strip()
-            if not reason:
-                _fail(errors, f"condition {condition_id} NOT_APPLICABLE requires applicability_reason")
-        else:
-            _fail(errors, f"condition {condition_id} is not proven: {status or 'UNPROVEN'}")
+        if status != "PASS":
+            _fail(errors, f"condition {condition_id} is not PASS: {status or 'UNPROVEN'}")
+        if not isinstance(refs, list) or not any(str(ref).strip() for ref in refs):
+            _fail(errors, f"condition {condition_id} PASS has no evidence_refs")
+        if row.get("sha") != target_sha:
+            _fail(errors, f"condition {condition_id} PASS is not bound to target_sha")
 
         normalized_rows.append({
             "id": condition_id,
@@ -159,7 +150,6 @@ def ratify(manifest: dict) -> dict:
             "sha": row.get("sha", ""),
             "evidence_refs": refs if isinstance(refs, list) else [],
             "contradictions": live_contradictions,
-            "applicability_reason": row.get("applicability_reason", ""),
         })
 
     unresolved = manifest.get("unresolved_critical_contradictions", [])
@@ -170,7 +160,8 @@ def ratify(manifest: dict) -> dict:
     if unresolved:
         _fail(errors, "manifest contains unresolved critical contradictions")
 
-    accepted = not errors
+    passed_conditions = sum(1 for row in normalized_rows if row.get("status") == "PASS")
+    accepted = not errors and passed_conditions == 45
     return {
         "scope": "METATRON_WORKFORCE_INSTITUTIONAL_AUTONOMY",
         "target_sha": target_sha,
@@ -181,6 +172,7 @@ def ratify(manifest: dict) -> dict:
             and slices.get(str(i), slices.get(i)).get("status") == "PASS"
         ),
         "conditions_accounted": len(rows),
+        "conditions_passed": passed_conditions,
         "conditions": normalized_rows,
         "unresolved_critical_contradictions": unresolved,
         "verdict": "ACCEPTED_L10" if accepted else "NOT_ACCEPTED_L10",
@@ -198,18 +190,18 @@ def self_test() -> int:
             for i in range(1, 5)
         },
         "conditions": [
-            ({"id": i, "status": "NOT_APPLICABLE", "sha": sha, "evidence_refs": [],
-              "applicability_reason": "AI Worker formation was not exercised by this closure run",
-              "contradictions": []}
-             if i == 24 else
-             {"id": i, "status": "PASS", "sha": sha, "evidence_refs": [f"evidence:c{i}"],
-              "contradictions": []})
+            {"id": i, "status": "PASS", "sha": sha, "evidence_refs": [f"evidence:c{i}"],
+             "contradictions": []}
             for i in range(1, 46)
         ],
         "unresolved_critical_contradictions": [],
     }
     result = ratify(good)
     assert result["verdict"] == "ACCEPTED_L10", result
+    assert result["conditions_passed"] == 45
+    broken = json.loads(json.dumps(good))
+    broken["conditions"][23]["status"] = "NOT_APPLICABLE"  # condition 24 may not be waived for L10
+    assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
     broken = json.loads(json.dumps(good))
     broken["conditions"][33]["evidence_refs"] = []  # condition 34
     assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
