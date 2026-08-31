@@ -18,7 +18,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String SYSTEM = """
             You are Metatron's institutional execution work planner.
             You receive an already normalized Human request and an already-created Intelligence Case reference.
-            Do NOT reinterpret raw Human language. Do NOT manufacture authority, authorization, assignment, execution evidence or completion.
+            Do NOT reinterpret raw Human language. Do NOT manufacture authority, authorization, assignment, execution evidence, Observation or completion.
 
             For an EXECUTION request, return ONLY one JSON object:
             {
@@ -29,19 +29,24 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                   "target": "...",
                   "required_capability": "...",
                   "depends_on": [],
-                  "consequence": "READ_ONLY|MUTATING"
+                  "consequence": "READ_ONLY|MUTATING",
+                  "acceptance_criteria": ["criterion stated as an observable condition"],
+                  "evidence_requirements": ["evidence needed to independently verify that criterion"]
                 }
               ]
             }
 
             Rules:
             - Decompose only the normalized objective actually requested.
+            - Every material Work step MUST state at least one observable acceptance criterion and at least one evidence requirement.
+            - Acceptance criteria describe the desired observable outcome; they are not execution claims.
+            - Evidence requirements describe what an independent Observation must inspect or obtain; never fabricate evidence refs.
             - Use exact refs from AVAILABLE EXECUTION CAPABILITIES when a capability can perform the step.
             - If no capability can perform a step, use UNAVAILABLE:<short-semantic-capability-need>.
             - A READ_ONLY capability cannot satisfy MUTATING work.
             - Preserve explicit prohibitions and constraints.
             - Normalize an unambiguous GitHub repository target to owner/repo when needed.
-            - Work planning is not authority, authorization, assignment, execution or evidence.
+            - Work planning is not authority, authorization, assignment, execution, Observation or evidence.
             - Dependencies may only refer to earlier steps.
             """;
 
@@ -93,7 +98,6 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         throw all;
     }
 
-    /** Compatibility alias for existing callers and tests. */
     public List<ExecutionWorkSpec> plan(String caseId, NormalizedRequest normalized,
                                         List<String> availableExecutionCapabilities) {
         return propose(caseId, normalized, availableExecutionCapabilities);
@@ -101,9 +105,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
 
     private List<LlmProvider> providersFor(NormalizedRequest normalized) {
         LlmProvider explicit = normalized.explicitlyRequestedProvider();
-        if (explicit != null) {
-            return providers.contains(explicit) ? List.of(explicit) : List.of();
-        }
+        if (explicit != null) return providers.contains(explicit) ? List.of(explicit) : List.of();
         return AdaptiveProviderRoutingPolicy.rankConfiguredProviders(providers, router.telemetry());
     }
 
@@ -132,9 +134,11 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 String capability = optionalText(item, "required_capability");
                 List<String> dependsOn = textArray(item, "depends_on");
                 String consequence = optionalText(item, "consequence");
+                List<String> criteria = textArray(item, "acceptance_criteria");
+                List<String> evidenceRequirements = textArray(item, "evidence_requirements");
                 if (stepId.isBlank() || objective.isBlank() || capability.isBlank() || consequence.isBlank()) return;
                 values.add(new ExecutionWorkSpec(stepId, objective, target, capability, dependsOn,
-                        enumValue(ExecutionWorkSpec.Consequence.class, consequence)));
+                        enumValue(ExecutionWorkSpec.Consequence.class, consequence), criteria, evidenceRequirements));
             });
             validate(values);
             return List.copyOf(values);
@@ -149,10 +153,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         List<String> seen = new ArrayList<>();
         for (ExecutionWorkSpec step : plan) {
             if (seen.contains(step.stepId())) throw new IllegalStateException("duplicate execution step id: " + step.stepId());
+            if (!step.verifiable()) throw new IllegalStateException("execution step lacks criterion-level verification requirements: " + step.stepId());
             for (String dependency : step.dependsOn()) {
-                if (!seen.contains(dependency)) {
-                    throw new IllegalStateException("execution step dependency must reference an earlier step: " + dependency);
-                }
+                if (!seen.contains(dependency)) throw new IllegalStateException("execution step dependency must reference an earlier step: " + dependency);
             }
             seen.add(step.stepId());
         }
