@@ -54,7 +54,9 @@ public final class FrontierSemanticInterpreter {
             - ANALYZE is evidence-grounded analysis, comparison, investigation or diagnosis.
             - DEEP is for explicitly requested deep/forensic/persistent investigation or clearly requested maximum depth.
             - DECISION means the Human asks Metatron itself to make/approve an institutional decision.
-            - EXECUTION means the Human asks to perform a consequential side effect such as deploy, modify, send, create, delete or execute institutional work.
+            - EXECUTION means the Human delegates responsibility to perform consequential side effects or durable institutional work that must continue beyond the current answer. This includes deploy, modify, send, create, delete, operational investigation, evidence acquisition, repository/system audit, multi-step verification, and delivery of an institutional work product.
+            - A delegated read-only institutional audit is EXECUTION when Metatron is asked to take ownership, independently obtain evidence, plan/coordinate work, verify criteria, and deliver the resulting work product. Do not downgrade such work to REASONING merely because its governed effects are read-only.
+            - REASONING means analyze or answer within the interaction without accepting durable institutional ownership. Evidence-grounded reasoning may use AUDIT/COMPARE/etc. protocols, but it is not a substitute for EXECUTION when the Human has delegated an Objective to Workforce.
             - Asking for advice about what to do is not automatically DECISION; DECISION protocol may still be used for decision support.
             - deterministic_capability=CURRENT_TIME when the Human asks for current local date/time/day-of-week.
             - deterministic_capability=GATEWAY_AUDIT when the Human asks for current Gateway read-only capability inspection handled deterministically rather than as institutional work.
