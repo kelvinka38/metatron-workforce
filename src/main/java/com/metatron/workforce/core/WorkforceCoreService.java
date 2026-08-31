@@ -10,6 +10,7 @@ public class WorkforceCoreService {
     public enum WorkerStatus { ACTIVE, SUSPENDED, RETIRED }
     public enum ParticipationStatus { ACTIVE, SUSPENDED, ENDED }
     public enum AssignmentStatus { PLANNED, ACTIVE, BLOCKED, COMPLETED, CANCELLED }
+    public enum ReservationStatus { ACTIVE, RELEASED }
 
     public record Participant(String participantId, ParticipantType type, String provenanceRef, Instant recognizedAt) {}
     public record Worker(String workerId, String participantId, WorkerStatus status, Instant admittedAt) {}
@@ -21,6 +22,9 @@ public class WorkforceCoreService {
     public record Assignment(String assignmentId, String objectiveRef, String workerId, String participationId,
                              String authorityRef, String authorizationRef, String description,
                              AssignmentStatus status, Instant createdAt) {}
+    public record CapacityReservation(String reservationId, String assignmentId, String objectiveRef,
+                                      String workerId, double capacity, ReservationStatus status,
+                                      Instant createdAt, Instant releasedAt) {}
 
     private final Map<String, Participant> participants = new ConcurrentHashMap<>();
     private final Map<String, Worker> workers = new ConcurrentHashMap<>();
@@ -29,6 +33,7 @@ public class WorkforceCoreService {
     private final Map<String, Map<String, Qualification>> qualifications = new ConcurrentHashMap<>();
     private final Map<String, Availability> availability = new ConcurrentHashMap<>();
     private final Map<String, Assignment> assignments = new ConcurrentHashMap<>();
+    private final Map<String, CapacityReservation> capacityReservations = new ConcurrentHashMap<>();
     private final WorkforceCoreStateStore stateStore;
 
     public WorkforceCoreService() { this(new InMemoryWorkforceCoreStateStore()); }
@@ -43,6 +48,7 @@ public class WorkforceCoreService {
         s.qualifications().forEach((k,v) -> qualifications.put(k, new ConcurrentHashMap<>(v)));
         availability.putAll(s.availability());
         assignments.putAll(s.assignments());
+        capacityReservations.putAll(s.capacityReservations());
     }
 
     public synchronized Participant recognizeParticipant(String id, ParticipantType type, String provenanceRef) {
@@ -66,6 +72,8 @@ public class WorkforceCoreService {
         Worker old = worker(workerId); Objects.requireNonNull(status);
         if (old.status() == WorkerStatus.RETIRED && status != WorkerStatus.RETIRED)
             throw new IllegalStateException("retired worker cannot be reactivated");
+        if (status != WorkerStatus.ACTIVE && reservedCapacity(workerId) > 0)
+            throw new IllegalStateException("worker with active capacity reservations cannot be suspended or retired");
         Worker next = new Worker(old.workerId(), old.participantId(), status, old.admittedAt());
         workers.put(workerId, next);
         if (status != WorkerStatus.ACTIVE) availability.remove(workerId);
@@ -81,6 +89,8 @@ public class WorkforceCoreService {
 
     public synchronized Participation setParticipationStatus(String id, ParticipationStatus status) {
         Participation old = requireParticipation(id); Objects.requireNonNull(status);
+        if (status != ParticipationStatus.ACTIVE && reservedCapacity(old.workerId()) > 0)
+            throw new IllegalStateException("participation cannot be suspended while worker has active reservations");
         Participation next = new Participation(old.participationId(), old.workerId(), old.organizationRef(), old.positionRef(),
                 old.roleRef(), status, old.startedAt());
         participations.put(id, next); persist(); return next;
@@ -101,7 +111,55 @@ public class WorkforceCoreService {
 
     public synchronized Availability setAvailability(String workerId, boolean isAvailable, double capacity) {
         activeWorker(workerId); if (!Double.isFinite(capacity) || capacity < 0) throw new IllegalArgumentException("capacity must be finite and non-negative");
+        double reserved = reservedCapacity(workerId);
+        if ((!isAvailable && reserved > 0) || capacity + 1e-9 < reserved)
+            throw new IllegalStateException("availability cannot invalidate active capacity reservations");
         Availability a = new Availability(workerId, isAvailable, capacity, Instant.now()); availability.put(workerId, a); persist(); return a;
+    }
+
+    /**
+     * Durable finite-capacity reservation. Reservation identity is idempotent; conflicting replay fails closed.
+     */
+    public synchronized CapacityReservation reserveCapacity(String reservationId, String assignmentId,
+            String objectiveRef, String workerId, double capacity) {
+        require(reservationId, "reservationId"); require(assignmentId, "assignmentId");
+        require(objectiveRef, "objectiveRef"); activeWorker(workerId);
+        if (!Double.isFinite(capacity) || capacity <= 0) throw new IllegalArgumentException("capacity must be finite and positive");
+        CapacityReservation existing = capacityReservations.get(reservationId);
+        if (existing != null) {
+            if (!existing.assignmentId().equals(assignmentId) || !existing.objectiveRef().equals(objectiveRef)
+                    || !existing.workerId().equals(workerId) || Double.compare(existing.capacity(), capacity) != 0)
+                throw new IllegalStateException("capacity reservation idempotency conflict");
+            return existing;
+        }
+        Availability a = availability.get(workerId);
+        if (a == null || !a.available()) throw new IllegalStateException("worker availability required before reservation");
+        if (remainingCapacity(workerId) + 1e-9 < capacity) throw new IllegalStateException("insufficient worker capacity");
+        CapacityReservation created = new CapacityReservation(reservationId, assignmentId, objectiveRef,
+                workerId, capacity, ReservationStatus.ACTIVE, Instant.now(), null);
+        capacityReservations.put(reservationId, created); persist(); return created;
+    }
+
+    public synchronized CapacityReservation releaseCapacity(String reservationId) {
+        CapacityReservation old = requireReservation(reservationId);
+        if (old.status() == ReservationStatus.RELEASED) return old;
+        CapacityReservation next = new CapacityReservation(old.reservationId(), old.assignmentId(), old.objectiveRef(),
+                old.workerId(), old.capacity(), ReservationStatus.RELEASED, old.createdAt(), Instant.now());
+        capacityReservations.put(reservationId, next); persist(); return next;
+    }
+
+    public synchronized Assignment assignReserved(String reservationId, String participationId,
+            String authorityRef, String authorizationRef, String description) {
+        CapacityReservation reservation = requireReservation(reservationId);
+        if (reservation.status() != ReservationStatus.ACTIVE) throw new IllegalStateException("active capacity reservation required");
+        Assignment existing = assignments.get(reservation.assignmentId());
+        if (existing != null) {
+            if (!existing.objectiveRef().equals(reservation.objectiveRef()) || !existing.workerId().equals(reservation.workerId()))
+                throw new IllegalStateException("assignment idempotency conflict");
+            return existing;
+        }
+        return assign(reservation.assignmentId(), reservation.objectiveRef(), reservation.workerId(), participationId,
+                authorityRef, authorizationRef, description);
     }
 
     public synchronized Assignment assign(String assignmentId, String objectiveRef, String workerId, String participationId,
@@ -114,7 +172,8 @@ public class WorkforceCoreService {
         if (a != null && (!a.available() || a.capacity() <= 0)) throw new IllegalStateException("worker has no available capacity");
         Assignment assignment = new Assignment(assignmentId, objectiveRef, workerId, participationId, authorityRef,
                 authorizationRef, description, AssignmentStatus.ACTIVE, Instant.now());
-        if (assignments.putIfAbsent(assignmentId, assignment) != null) throw new IllegalStateException("assignment already exists");
+        Assignment prior = assignments.putIfAbsent(assignmentId, assignment);
+        if (prior != null) throw new IllegalStateException("assignment already exists");
         persist(); return assignment;
     }
 
@@ -124,7 +183,36 @@ public class WorkforceCoreService {
             throw new IllegalStateException("terminal assignment cannot transition");
         Assignment next = new Assignment(old.assignmentId(), old.objectiveRef(), old.workerId(), old.participationId(),
                 old.authorityRef(), old.authorizationRef(), old.description(), status, old.createdAt());
-        assignments.put(assignmentId, next); persist(); return next;
+        assignments.put(assignmentId, next);
+        if (status == AssignmentStatus.COMPLETED || status == AssignmentStatus.CANCELLED) {
+            capacityReservations.values().stream()
+                    .filter(r -> r.assignmentId().equals(assignmentId) && r.status() == ReservationStatus.ACTIVE)
+                    .map(CapacityReservation::reservationId).toList().forEach(this::releaseCapacity);
+        }
+        persist(); return next;
+    }
+
+    public synchronized double remainingCapacity(String workerId) {
+        Availability a = availability.get(workerId);
+        if (a == null || !a.available()) return 0.0;
+        return Math.max(0.0, a.capacity() - reservedCapacity(workerId));
+    }
+
+    public synchronized List<Worker> eligibleWorkers(String capabilityRef, double minimumLevel,
+                                                      double requiredCapacity, Instant at) {
+        require(capabilityRef, "capabilityRef"); Objects.requireNonNull(at, "at");
+        if (!Double.isFinite(minimumLevel) || minimumLevel < 0) throw new IllegalArgumentException("minimumLevel invalid");
+        if (!Double.isFinite(requiredCapacity) || requiredCapacity <= 0) throw new IllegalArgumentException("requiredCapacity invalid");
+        return workers.values().stream()
+                .filter(w -> w.status() == WorkerStatus.ACTIVE)
+                .filter(w -> capabilities.getOrDefault(w.workerId(), Map.of()).get(capabilityRef) != null)
+                .filter(w -> capabilities.get(w.workerId()).get(capabilityRef).level() >= minimumLevel)
+                .filter(w -> participations.values().stream().anyMatch(p -> p.workerId().equals(w.workerId())
+                        && p.status() == ParticipationStatus.ACTIVE))
+                .filter(w -> remainingCapacity(w.workerId()) + 1e-9 >= requiredCapacity)
+                .sorted(Comparator.comparingDouble((Worker w) -> remainingCapacity(w.workerId())).reversed()
+                        .thenComparing(Worker::workerId))
+                .toList();
     }
 
     public Worker worker(String id) { return Optional.ofNullable(workers.get(id)).orElseThrow(() -> new NoSuchElementException("worker not found")); }
@@ -132,15 +220,22 @@ public class WorkforceCoreService {
     public List<Worker> allWorkers() { return workers.values().stream().sorted(Comparator.comparing(Worker::admittedAt)).toList(); }
     public List<Participation> allParticipations() { return participations.values().stream().sorted(Comparator.comparing(Participation::startedAt)).toList(); }
     public List<Assignment> allAssignments() { return assignments.values().stream().sorted(Comparator.comparing(Assignment::createdAt)).toList(); }
+    public List<CapacityReservation> allCapacityReservations() { return capacityReservations.values().stream().sorted(Comparator.comparing(CapacityReservation::createdAt)).toList(); }
     public List<Participation> participations(String workerId) { return participations.values().stream().filter(p -> p.workerId().equals(workerId)).toList(); }
     public List<Assignment> assignments(String workerId) { return assignments.values().stream().filter(a -> a.workerId().equals(workerId)).toList(); }
     public List<Capability> capabilities(String workerId) { return List.copyOf(capabilities.getOrDefault(workerId, Map.of()).values()); }
     public List<Qualification> qualifications(String workerId) { return List.copyOf(qualifications.getOrDefault(workerId, Map.of()).values()); }
     public Optional<Availability> availability(String workerId) { return Optional.ofNullable(availability.get(workerId)); }
 
+    private double reservedCapacity(String workerId) {
+        return capacityReservations.values().stream()
+                .filter(r -> r.workerId().equals(workerId) && r.status() == ReservationStatus.ACTIVE)
+                .mapToDouble(CapacityReservation::capacity).sum();
+    }
     private Worker activeWorker(String id) { Worker w = worker(id); if (w.status() != WorkerStatus.ACTIVE) throw new IllegalStateException("worker not active"); return w; }
     private Participation requireParticipation(String id) { return Optional.ofNullable(participations.get(id)).orElseThrow(() -> new NoSuchElementException("participation not found")); }
     private Assignment requireAssignment(String id) { return Optional.ofNullable(assignments.get(id)).orElseThrow(() -> new NoSuchElementException("assignment not found")); }
-    private void persist() { stateStore.save(new WorkforceCoreStateStore.Snapshot(participants, workers, participations, capabilities, qualifications, availability, assignments)); }
+    private CapacityReservation requireReservation(String id) { return Optional.ofNullable(capacityReservations.get(id)).orElseThrow(() -> new NoSuchElementException("capacity reservation not found")); }
+    private void persist() { stateStore.save(new WorkforceCoreStateStore.Snapshot(participants, workers, participations, capabilities, qualifications, availability, assignments, capacityReservations)); }
     private static void require(String value, String name) { if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " required"); }
 }
