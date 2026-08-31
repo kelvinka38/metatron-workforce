@@ -15,20 +15,27 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Telegram transport adapter. It authenticates Telegram, maps external identifiers to canonical
- * Metatron interaction context, submits to the shared channel-neutral ingress, and delivers the
- * resulting response. It owns no Conversation, intelligence, depth, Workforce or execution state.
+ * Metatron interaction context, durably records provider RECEIVED/ADMITTED state, submits to the
+ * shared channel-neutral ingress, and delivers the resulting response. It owns transport receipt
+ * continuity only; canonical Conversation, intelligence, Workforce Objective and execution state
+ * remain downstream institutional concerns.
  */
 @RestController
 @RequestMapping("/telegram")
@@ -37,6 +44,8 @@ public final class TelegramWebhookController {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(TelegramWebhookController.class);
     private static final int INTERACTION_THREADS = 4;
     private static final int INTERACTION_QUEUE = 64;
+    private static final int MAX_PROCESSING_ATTEMPTS = 3;
+    private static final Pattern OBJECTIVE_ID = Pattern.compile("(?m)^objective_id=([^\\s]+)$");
 
     private final String secret;
     private final TelegramWebhookAdapter adapter;
@@ -44,20 +53,23 @@ public final class TelegramWebhookController {
     private final ChannelInteractionIngressService interactionIngress;
     private final TelegramIdentityResolver identityResolver;
     private final ObjectMapper objectMapper;
-    private final TelegramUpdateDeduplicator updateDeduplicator;
     private final ThreadPoolExecutor interactionExecutor;
+    private final TelegramIngressReceiptStore receiptStore;
+    private final Set<Long> scheduledUpdates = ConcurrentHashMap.newKeySet();
 
     public TelegramWebhookController(
             @Value("${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}") String secret,
             @Value("${telegram.bot-token:${TELEGRAM_BOT_TOKEN:}}") String botToken,
             @Value("${TELEGRAM_ALLOWED_USER_ID:}") String allowedTelegramUserId,
             @Value("${METATRON_ORGANIZATION_ID:}") String organizationContextId,
+            @Value("${METATRON_TELEGRAM_INGRESS_PATH:/var/lib/metatron-workforce/telegram-ingress-state.json}") String ingressPath,
             ChannelInteractionIngressService interactionIngress,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
         if (allowedTelegramUserId == null || allowedTelegramUserId.isBlank()) throw new IllegalStateException("TELEGRAM_ALLOWED_USER_ID_MISSING");
         if (organizationContextId == null || organizationContextId.isBlank()) throw new IllegalStateException("METATRON_ORGANIZATION_ID_MISSING");
+        if (ingressPath == null || ingressPath.isBlank()) throw new IllegalStateException("METATRON_TELEGRAM_INGRESS_PATH_MISSING");
 
         long configuredTelegramUserId;
         try {
@@ -80,12 +92,13 @@ public final class TelegramWebhookController {
                 organizationContextId.trim());
         this.interactionIngress = Objects.requireNonNull(interactionIngress, "interactionIngress");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
-        this.updateDeduplicator = new TelegramUpdateDeduplicator();
         this.interactionExecutor = new ThreadPoolExecutor(
                 INTERACTION_THREADS, INTERACTION_THREADS, 30L, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(INTERACTION_QUEUE), namedDaemonThreads("telegram-interaction-"),
                 new ThreadPoolExecutor.CallerRunsPolicy());
         this.interactionExecutor.allowCoreThreadTimeOut(false);
+        this.receiptStore = new TelegramIngressReceiptStore(Path.of(ingressPath.trim()), objectMapper);
+        recoverPendingReceipts();
     }
 
     @GetMapping("/health")
@@ -97,7 +110,9 @@ public final class TelegramWebhookController {
                 "webhook", "ready",
                 "interaction_threads", INTERACTION_THREADS,
                 "interaction_queue_capacity", INTERACTION_QUEUE,
-                "interaction_queue_depth", interactionExecutor.getQueue().size()));
+                "interaction_queue_depth", interactionExecutor.getQueue().size(),
+                "durable_failed", receiptStore.count(TelegramIngressReceiptStore.Status.FAILED),
+                "durable_dead_letter", receiptStore.count(TelegramIngressReceiptStore.Status.DEAD_LETTER)));
     }
 
     @PostMapping("/webhook")
@@ -138,77 +153,106 @@ public final class TelegramWebhookController {
                 return ResponseEntity.ok().build();
             }
 
-            TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
-            ChannelMessage inbound = adapter.receive(suppliedSecret, chatId, text);
+            // Authentication and identity admission happen before the durable transport acknowledgement.
+            identityResolver.resolve(telegramUserId, parseChatId(chatId));
+            adapter.receive(suppliedSecret, chatId, text);
 
-            if (!updateDeduplicator.accept(updateId)) {
-                LOG.info("telegram_duplicate_update_ignored update_id={} telegram_user={} chat={}", updateId, telegramUserId, chatId);
-                return ResponseEntity.ok().build();
-            }
+            TelegramIngressReceiptStore.Receipt receipt = receiptStore.receive(updateId, telegramUserId, chatId, text);
+            receipt = receiptStore.admit(updateId);
+            scheduleReceipt(receipt.updateId());
 
-            LOG.info("telegram_received update_id={} telegram_user={} chat={} text_length={}", updateId, telegramUserId, chatId, text.length());
+            long ackMs = (System.nanoTime() - webhookStarted) / 1_000_000L;
+            LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} durable_status={} queue_depth={} active_threads={}",
+                    updateId, chatId, ackMs, receipt.status(), interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
+            return ResponseEntity.ok().build();
+        } catch (RuntimeException failure) {
+            // Do not acknowledge an event whose authenticated durable RECEIVED/ADMITTED boundary could not be established.
+            // Telegram can retry non-2xx delivery; provider replay is idempotent by update_id/externalMessageReference.
+            LOG.error("telegram_webhook_admission_failed update_id=" + updateId + " chat=" + chatId, failure);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+        }
+    }
 
+    private void recoverPendingReceipts() {
+        for (TelegramIngressReceiptStore.Receipt receipt : receiptStore.recoverable(MAX_PROCESSING_ATTEMPTS)) {
+            LOG.warn("telegram_ingress_recovery update_id={} status={} attempts={} objective_id={}",
+                    receipt.updateId(), receipt.status(), receipt.attempts(), receipt.objectiveId());
+            scheduleReceipt(receipt.updateId());
+        }
+    }
+
+    private void scheduleReceipt(long updateId) {
+        TelegramIngressReceiptStore.Receipt current = receiptStore.find(updateId);
+        if (current == null || current.terminal()) return;
+        if (!scheduledUpdates.add(updateId)) return;
+        try {
+            interactionExecutor.execute(() -> processReceipt(updateId));
+        } catch (RuntimeException failure) {
+            scheduledUpdates.remove(updateId);
+            throw failure;
+        }
+    }
+
+    private void processReceipt(long updateId) {
+        boolean retry = false;
+        try {
+            TelegramIngressReceiptStore.Receipt receipt = receiptStore.claim(updateId, MAX_PROCESSING_ATTEMPTS);
+            if (receipt.terminal()) return;
+
+            TelegramIdentityResolver.Resolution identity = identityResolver.resolve(
+                    receipt.telegramUserId(), parseChatId(receipt.chatId()));
+            ChannelMessage inbound = adapter.receive(secret, receipt.chatId(), receipt.text());
             MetatronInteraction interaction = new MetatronInteraction(
                     identity.human(), identity.target(), identity.organizationContextId(),
                     "conversation:human:" + identity.human().actorId(),
                     "telegram",
-                    "telegram:user:" + telegramUserId,
-                    "telegram:chat:" + chatId,
-                    "telegram:update:" + updateId,
+                    "telegram:user:" + receipt.telegramUserId(),
+                    "telegram:chat:" + receipt.chatId(),
+                    receipt.externalMessageReference(),
                     inbound.text());
 
-            final long acceptedUpdateId = updateId;
-            final String acceptedChatId = chatId;
-            final long acceptedTelegramUserId = telegramUserId;
-            final ChannelMessage acceptedInbound = inbound;
-            final long acceptedAt = System.nanoTime();
-            interactionExecutor.execute(() -> processInteraction(
-                    acceptedUpdateId, acceptedTelegramUserId, acceptedChatId, acceptedInbound, interaction, acceptedAt));
-
-            long ackMs = (System.nanoTime() - webhookStarted) / 1_000_000L;
-            LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} queue_depth={} active_threads={}",
-                    updateId, chatId, ackMs, interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
-            return ResponseEntity.ok().build();
-        } catch (RuntimeException failure) {
-            LOG.error("telegram_webhook_processing_failed update_id=" + updateId + " chat=" + chatId, failure);
-            if (!chatId.isBlank()) {
-                try {
-                    gateway.send(new ChannelMessage("telegram", chatId,
-                            "Metatron nhận được message nhưng gặp lỗi xử lý. Webhook đã được acknowledge và lỗi đã được ghi nhận."));
-                } catch (RuntimeException sendFailure) {
-                    LOG.error("telegram_processing_failure_notification_failed update_id={}", updateId, sendFailure);
-                }
-            }
-            return ResponseEntity.ok().build();
-        }
-    }
-
-    private void processInteraction(long updateId, long telegramUserId, String chatId,
-                                    ChannelMessage inbound, MetatronInteraction interaction, long acceptedAt) {
-        long processingStarted = System.nanoTime();
-        long queueMs = (processingStarted - acceptedAt) / 1_000_000L;
-        try {
+            long processingStarted = System.nanoTime();
             MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
             String safeAnswer = validateAnswer(inbound.text(), response.text());
-            String provenance = response.provenanceReference();
+            String objectiveId = objectiveIdFromAnswer(safeAnswer);
+            if (!objectiveId.isBlank()) {
+                // Human ACCEPTED acknowledgement is not delivered until the canonical Management Objective already exists.
+                receiptStore.accepted(updateId, objectiveId);
+            }
+
             long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
-            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} queue_ms={} answer_ms={}",
-                    updateId, telegramUserId, chatId, safeAnswer.length(), provenance, queueMs, answerMs);
-            long sendStarted = System.nanoTime();
+            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} attempt={} answer_ms={} objective_id={}",
+                    updateId, receipt.telegramUserId(), receipt.chatId(), safeAnswer.length(), response.provenanceReference(),
+                    receipt.attempts(), answerMs, objectiveId);
             String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
-            long sendMs = (System.nanoTime() - sendStarted) / 1_000_000L;
-            long totalMs = (System.nanoTime() - acceptedAt) / 1_000_000L;
-            LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={} queue_ms={} answer_ms={} send_ms={} total_ms={}",
-                    updateId, telegramUserId, chatId, delivery.length(), queueMs, answerMs, sendMs, totalMs);
+            receiptStore.delivered(updateId);
+            LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={} objective_id={}",
+                    updateId, receipt.telegramUserId(), receipt.chatId(), delivery.length(), objectiveId);
         } catch (RuntimeException failure) {
             LOG.error("telegram_interaction_failed update_id=" + updateId, failure);
-            try {
-                String delivery = gateway.send(new ChannelMessage(
-                        "telegram", inbound.senderId(),
-                        "Metatron could not complete this interaction. The failure has been recorded for recovery."));
-                LOG.info("telegram_failure_notification_sent update_id={} response_bytes={}", updateId, delivery.length());
-            } catch (RuntimeException sendFailure) {
-                LOG.error("telegram_failure_notification_failed update_id={}", updateId, sendFailure);
+            TelegramIngressReceiptStore.Receipt failed = receiptStore.failed(
+                    updateId, failure, MAX_PROCESSING_ATTEMPTS);
+            retry = failed.status() == TelegramIngressReceiptStore.Status.FAILED;
+            if (!retry) {
+                LOG.error("telegram_interaction_dead_letter update_id={} attempts={} objective_id={}",
+                        updateId, failed.attempts(), failed.objectiveId());
+                try {
+                    gateway.send(new ChannelMessage("telegram", failed.chatId(),
+                            "Metatron could not complete this interaction after bounded recovery. The durable failure is retained for reconciliation."));
+                } catch (RuntimeException sendFailure) {
+                    LOG.error("telegram_dead_letter_notification_failed update_id={}", updateId, sendFailure);
+                }
+            }
+        } finally {
+            scheduledUpdates.remove(updateId);
+            if (retry) {
+                try {
+                    Thread.sleep(250L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                scheduleReceipt(updateId);
             }
         }
     }
@@ -224,6 +268,12 @@ public final class TelegramWebhookController {
             throw new IllegalStateException("telegram_legacy_workforce_echo");
         }
         return answer.trim();
+    }
+
+    static String objectiveIdFromAnswer(String answer) {
+        if (answer == null || answer.isBlank()) return "";
+        Matcher matcher = OBJECTIVE_ID.matcher(answer);
+        return matcher.find() ? matcher.group(1).trim() : "";
     }
 
     private static ThreadFactory namedDaemonThreads(String prefix) {
