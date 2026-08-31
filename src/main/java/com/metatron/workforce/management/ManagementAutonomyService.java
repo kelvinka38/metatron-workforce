@@ -331,6 +331,99 @@ public final class ManagementAutonomyService {
         return updated;
     }
 
+    /** Durable pause; no new Manager progression is runnable until explicit resume. */
+    public synchronized ManagementObjective pauseObjective(
+            String objectiveId, String actorWorkerId, String reason, Instant at) {
+        ManagementObjective current = activeObjective(objectiveId);
+        requireOwnerOrManagerActor(current, actorWorkerId);
+        requireText(reason, "reason");
+        AutonomousObjectiveWork work = objectiveWork.get(objectiveId);
+        if (work != null && !work.terminal()) {
+            objectiveWork.put(objectiveId, copyWork(work, work.plannedWork(), work.completedStepIds(),
+                    work.evidenceReferences(), AutonomousObjectiveWork.Status.BLOCKED, "paused:" + reason, at));
+        }
+        ManagementObjective updated = copy(current, ManagementObjective.Status.PAUSED,
+                current.assignmentRefs(), current.evidenceRefs(), at);
+        objectives.put(objectiveId, updated);
+        appendUnpersisted(objectiveId, actorWorkerId, ManagementEvent.Type.PAUSED, reason, at);
+        addOutboxUnpersisted("ObjectivePaused", objectiveId, objectiveId, objectiveId,
+                "objective=" + objectiveId + ";reason=" + reason, at);
+        persist();
+        return updated;
+    }
+
+    public synchronized ManagementObjective resumeObjective(
+            String objectiveId, String actorWorkerId, String reason, Instant at) {
+        ManagementObjective current = getRequired(objectiveId);
+        requireOwnerOrManagerActor(current, actorWorkerId);
+        if (current.terminal()) throw new IllegalStateException("objective is terminal: " + objectiveId);
+        if (current.status() != ManagementObjective.Status.PAUSED
+                && current.status() != ManagementObjective.Status.BLOCKED
+                && current.status() != ManagementObjective.Status.ESCALATED) {
+            throw new IllegalStateException("objective is not resumable: " + objectiveId);
+        }
+        requireText(reason, "reason");
+        AutonomousObjectiveWork work = objectiveWork.get(objectiveId);
+        ManagementObjective.Status next = ManagementObjective.Status.ACTIVE;
+        if (work != null) {
+            AutonomousObjectiveWork.Status workStatus = work.plannedWork().isEmpty()
+                    ? AutonomousObjectiveWork.Status.PENDING_PLANNING : AutonomousObjectiveWork.Status.READY;
+            objectiveWork.put(objectiveId, copyWork(work, work.plannedWork(), work.completedStepIds(),
+                    work.evidenceReferences(), workStatus, "", at));
+            next = work.plannedWork().isEmpty() ? ManagementObjective.Status.ACCEPTED : ManagementObjective.Status.READY;
+        }
+        ManagementObjective updated = copy(current, next, current.assignmentRefs(), current.evidenceRefs(), at);
+        objectives.put(objectiveId, updated);
+        appendUnpersisted(objectiveId, actorWorkerId, ManagementEvent.Type.RESUMED, reason, at);
+        addOutboxUnpersisted("ObjectiveResumed", objectiveId, objectiveId, objectiveId,
+                "objective=" + objectiveId + ";reason=" + reason, at);
+        persist();
+        return updated;
+    }
+
+    /** Terminal cancellation of Workforce responsibility within the supplied external authority. */
+    public synchronized ManagementObjective cancelObjective(
+            String objectiveId, String actorWorkerId, String reason, Instant at) {
+        ManagementObjective current = activeObjective(objectiveId);
+        requireOwnerOrManagerActor(current, actorWorkerId);
+        requireText(reason, "reason");
+        AutonomousObjectiveWork work = objectiveWork.get(objectiveId);
+        if (work != null && !work.terminal()) {
+            objectiveWork.put(objectiveId, copyWork(work, work.plannedWork(), work.completedStepIds(),
+                    work.evidenceReferences(), AutonomousObjectiveWork.Status.CANCELLED, reason, at));
+        }
+        ManagementObjective updated = copy(current, ManagementObjective.Status.CANCELLED,
+                current.assignmentRefs(), current.evidenceRefs(), at);
+        objectives.put(objectiveId, updated);
+        appendUnpersisted(objectiveId, actorWorkerId, ManagementEvent.Type.CANCELLED, reason, at);
+        addOutboxUnpersisted("ObjectiveCancelled", objectiveId, objectiveId, objectiveId,
+                "objective=" + objectiveId + ";reason=" + reason, at);
+        persist();
+        return updated;
+    }
+
+    /**
+     * Starts a new planning cycle while preserving the old durable Work Graph in Coordination history.
+     * Active Work projection is cleared so the Runner must obtain and persist a fresh plan.
+     */
+    public synchronized ManagementObjective requestReplan(
+            String objectiveId, String actorWorkerId, String reason, Instant at) {
+        ManagementObjective current = activeObjective(objectiveId);
+        requireOwnerOrManagerActor(current, actorWorkerId);
+        requireText(reason, "reason");
+        AutonomousObjectiveWork work = workRequired(objectiveId);
+        objectiveWork.put(objectiveId, copyWork(work, List.of(), List.of(), List.of(),
+                AutonomousObjectiveWork.Status.PENDING_PLANNING, "replan:" + reason, at));
+        ManagementObjective updated = copy(current, ManagementObjective.Status.REPLANNING,
+                current.assignmentRefs(), current.evidenceRefs(), at);
+        objectives.put(objectiveId, updated);
+        appendUnpersisted(objectiveId, actorWorkerId, ManagementEvent.Type.REPLAN_REQUESTED, reason, at);
+        addOutboxUnpersisted("ObjectiveReplanRequested", objectiveId, objectiveId, objectiveId,
+                "objective=" + objectiveId + ";reason=" + reason, at);
+        persist();
+        return updated;
+    }
+
     public synchronized ManagementObjective recoverLocally(
             String objectiveId, String actorWorkerId, String recoveryPlan, Instant at) {
         ManagementObjective current = getRequired(objectiveId);
@@ -628,6 +721,10 @@ public final class ManagementAutonomyService {
             EXECUTION_STARTED,
             WORK_STEP_COMPLETED,
             BLOCKED,
+            PAUSED,
+            RESUMED,
+            CANCELLED,
+            REPLAN_REQUESTED,
             LOCAL_RECOVERY,
             ESCALATED,
             COMPLETED,
