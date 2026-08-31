@@ -3,6 +3,7 @@ package com.metatron.workforce.observation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.management.RepositoryPullRequestAutonomousCapability;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -16,7 +17,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -35,6 +35,8 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
     private final String apiBase;
     private final String token;
 
+    /** Explicitly select the production constructor because a package-private test constructor also exists. */
+    @Autowired
     public GitHubRepositoryObservationVerifier(ObjectMapper json) {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build(), json,
                 "https://api.github.com", env("GITHUB_TOKEN"));
@@ -146,8 +148,8 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
                 pass ? "controlled defect repaired in open unmerged PR; Founder merge boundary preserved"
                         : "PR mutation does not satisfy bounded Golden Slice 2 constraints",
                 "authoritative-github-api-read", at, at, evidence,
-                pass ? 0.99 : 0.99,
-                pass ? ObservationReport.Quality.HIGH : ObservationReport.Quality.HIGH,
+                0.99,
+                ObservationReport.Quality.HIGH,
                 pass ? "" : "open=" + open + ",unmerged=" + unmerged + ",base=" + base
                         + ",head=" + head + ",allowedFile=" + onlyAllowedFile + ",repaired=" + repaired
                         + ",noMergeClaim=" + noMergeClaim,
