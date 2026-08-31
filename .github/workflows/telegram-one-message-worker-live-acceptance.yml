@@ -70,8 +70,8 @@ jobs:
           for i in $(seq 1 30); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 
-            # Correct P1/P10 architecture: the interaction proves authenticated acceptance and then detaches.
-            # Completion is owned by the persistent Manager Runner and is validated by the strict P10 workflow.
+            # Correct P1/P10 architecture: interaction proves authenticated acceptance and then detaches.
+            # Completion belongs to the persistent Manager Runner and the strict P10 acceptance workflow.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q "route=execution-objective-workforce-accepted" <<<"$LOGS" \
               && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
@@ -80,7 +80,6 @@ jobs:
             fi
 
             # Architecture-valid fail-closed: frontier semantic/planning capacity is unavailable.
-            # The request must not be admitted through raw-text/keyword fallback.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed' <<<"$LOGS"; then
@@ -116,17 +115,9 @@ jobs:
           echo 'LEGACY_COMMAND_ROUTER_BYPASSED=PASS'
 
           if [ "$OUTCOME" = ACCEPTED_DETACHED ]; then
-            docker exec "$CID" python3 - <<PY
-          import json
-          from pathlib import Path
-          data=json.loads(Path('/var/lib/metatron-workforce/management-state.json').read_text())
-          needle='telegram:update:${UPDATE_ID}'
-          blob=json.dumps(data, sort_keys=True)
-          assert needle in blob, needle
-          # Acceptance must be durable before this gate gives credit. Terminal state is intentionally not required here.
-          assert 'repository.audit.read' in blob, 'accepted Objective did not preserve repository audit intent'
-          print('DURABLE_ACCEPTANCE_STATE=PASS')
-          PY
+            docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"
+            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
+            echo 'DURABLE_ACCEPTANCE_STATE=PASS'
             echo 'OBJECTIVE_ACCEPTED_BEFORE_COMPLETION=PASS'
             echo 'INTERACTION_DETACHMENT_BOUNDARY=PASS'
             echo 'PERSISTENT_RUNNER_OWNS_POST_ACCEPTANCE_LIFECYCLE=PASS'
