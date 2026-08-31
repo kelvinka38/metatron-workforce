@@ -16,7 +16,7 @@ concurrency:
 jobs:
   dispatch-strict-closure:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
       - name: Dispatch strict closure against exact deployed SHA
         env:

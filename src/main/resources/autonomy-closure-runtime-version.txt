@@ -1,2 +1,2 @@
-workforce-autonomy-closure-runtime=2026-08-31-p10-after-deploy
+workforce-autonomy-closure-runtime=2026-08-31-p10-after-deploy-runner-fix
 purpose=force exact-sha production deployment for autonomy closure evidence
