@@ -21,8 +21,8 @@ final class ExecutionWorkPlannerCompositeCapabilityTest {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
 
             @Override public LlmResponse complete(LlmRequest request) {
-                assertTrue(request.systemPrompt().contains("repository.pr.propose"));
-                assertTrue(request.systemPrompt().contains("do NOT invent a separate `repository.content.write` step"));
+                assertTrue(request.systemContext().contains("repository.pr.propose"));
+                assertTrue(request.systemContext().contains("do NOT invent a separate `repository.content.write` step"));
                 return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
                         {"execution_work_plan":[
                           {
