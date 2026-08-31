@@ -19,9 +19,11 @@ import org.springframework.context.annotation.Configuration;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 
-/** Production composition for persistent management, execution/runtime and independent Observation closure. */
+/** Production composition for persistent management, governed resources, execution/runtime and Observation closure. */
 @Configuration
 public class LiveManagementConfiguration {
     @Bean
@@ -48,6 +50,30 @@ public class LiveManagementConfiguration {
     @Bean
     AutonomyCoordinationService autonomyCoordinationService(AutonomyCoordinationStateStore store) {
         return new AutonomyCoordinationService(store);
+    }
+
+    @Bean
+    AutonomySafetyStateStore autonomySafetyStateStore() {
+        String configured = System.getenv().getOrDefault(
+                "METATRON_AUTONOMY_SAFETY_STATE_PATH",
+                "/var/lib/metatron-workforce/autonomy-safety-state.json");
+        return new FileAutonomySafetyStateStore(Path.of(configured));
+    }
+
+    @Bean
+    AutonomySafetyService autonomySafetyService(AutonomySafetyStateStore store) {
+        Clock clock = Clock.systemUTC();
+        double maxCostUnits = positiveDouble("METATRON_AUTONOMY_MAX_COST_UNITS",
+                AutonomySafetyService.DEFAULT_MAX_COST_UNITS);
+        int maxAttempts = positiveInt("METATRON_AUTONOMY_MAX_DISPATCH_ATTEMPTS",
+                AutonomySafetyService.DEFAULT_MAX_DISPATCH_ATTEMPTS);
+        long maxDurationSeconds = positiveLong("METATRON_AUTONOMY_MAX_DURATION_SECONDS",
+                AutonomySafetyService.DEFAULT_MAX_DURATION.toSeconds());
+        AutonomySafetyState.RiskLevel maxRisk = AutonomySafetyState.RiskLevel.valueOf(
+                System.getenv().getOrDefault("METATRON_AUTONOMY_MAX_RISK",
+                        AutonomySafetyService.DEFAULT_MAX_RISK.name()).trim().toUpperCase(Locale.ROOT));
+        return new AutonomySafetyService(store, clock, maxCostUnits, maxAttempts,
+                Duration.ofSeconds(maxDurationSeconds), maxRisk);
     }
 
     @Bean
@@ -113,6 +139,7 @@ public class LiveManagementConfiguration {
             List<AutonomousExecutionCapability> capabilities,
             AutonomyCoordinationService coordination,
             ObservationClosureService observationClosure,
+            AutonomySafetyService safety,
             WorkforceCoreService core,
             AutonomousStaffingService staffing,
             ExecutionAdmissionService admission,
@@ -122,10 +149,30 @@ public class LiveManagementConfiguration {
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
                 .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
                         capability, core, admission, clock, staffing, attempts, runtimeCapacity))
+                .map(capability -> (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
+                        capability, safety, clock))
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
                 management, planner, governedCapabilities, coordination, observationClosure, clock);
         runner.start();
         return runner;
+    }
+
+    private static double positiveDouble(String name, double fallback) {
+        double value = Double.parseDouble(System.getenv().getOrDefault(name, Double.toString(fallback)));
+        if (!Double.isFinite(value) || value <= 0) throw new IllegalStateException(name + " must be finite and positive");
+        return value;
+    }
+
+    private static int positiveInt(String name, int fallback) {
+        int value = Integer.parseInt(System.getenv().getOrDefault(name, Integer.toString(fallback)));
+        if (value < 1) throw new IllegalStateException(name + " must be positive");
+        return value;
+    }
+
+    private static long positiveLong(String name, long fallback) {
+        long value = Long.parseLong(System.getenv().getOrDefault(name, Long.toString(fallback)));
+        if (value < 1) throw new IllegalStateException(name + " must be positive");
+        return value;
     }
 }
