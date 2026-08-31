@@ -127,6 +127,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         String authorityRef = requireReference(delegate.authorityReference(), "authority-reference-missing");
         String authorizationRef = requireReference(delegate.authorizationReference(), "authorization-reference-missing");
 
+        reconcileTerminalExecutionCapacity();
         WorkforceCoreService.Worker worker = awaitEligibleWorker();
         WorkforceCoreService.Participation participation = core.participations(worker.workerId()).stream()
                 .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
@@ -289,6 +290,40 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         if (runtime == null) return;
         try { runtimeCapacity.release(workerId, runtime.runtimeId()); }
         catch (RuntimeException ignored) { /* recovery/reconciliation owns any remaining runtime state */ }
+    }
+
+    /**
+     * Restart reconciliation must happen before capability admission because stale Core reservations
+     * otherwise make every qualified Worker look capacity-exhausted and prevent Execution from ever
+     * reaching its own lease reconciler. Capacity is released only when the owning Execution lifecycle
+     * is terminal; a live lease remains authoritative and therefore retains its reservation fail-closed.
+     */
+    private void reconcileTerminalExecutionCapacity() {
+        if (executionAttempts == null) return;
+        executionAttempts.reconcileExpired(clock.instant());
+        List<ExecutionAttempt> attempts = executionAttempts.all();
+        for (WorkforceCoreService.Assignment assignment : core.allAssignments()) {
+            if (assignment.status() == WorkforceCoreService.AssignmentStatus.COMPLETED
+                    || assignment.status() == WorkforceCoreService.AssignmentStatus.CANCELLED) continue;
+            List<ExecutionAttempt> owned = attempts.stream()
+                    .filter(attempt -> attempt.assignmentRef().equals(assignment.assignmentId()))
+                    .toList();
+            if (owned.isEmpty() || owned.stream().anyMatch(attempt -> !attempt.terminal())) continue;
+
+            ExecutionAttempt authoritative = owned.stream()
+                    .max(Comparator.comparingLong(ExecutionAttempt::fencingToken)
+                            .thenComparing(ExecutionAttempt::updatedAt))
+                    .orElseThrow();
+            WorkforceCoreService.AssignmentStatus terminalStatus =
+                    authoritative.status() == ExecutionAttempt.Status.SUCCEEDED
+                            ? WorkforceCoreService.AssignmentStatus.COMPLETED
+                            : WorkforceCoreService.AssignmentStatus.CANCELLED;
+            core.transitionAssignment(assignment.assignmentId(), terminalStatus);
+            staffingEvidence.get().add("capacity-reconciled:assignment=" + assignment.assignmentId()
+                    + ":execution-attempt=" + authoritative.attemptId()
+                    + ":execution-status=" + authoritative.status()
+                    + ":assignment-status=" + terminalStatus);
+        }
     }
 
     private WorkforceCoreService.Worker awaitEligibleWorker() {
