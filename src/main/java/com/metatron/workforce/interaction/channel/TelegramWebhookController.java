@@ -153,7 +153,7 @@ public final class TelegramWebhookController {
                 return ResponseEntity.ok().build();
             }
 
-            // Authentication and identity admission happen before the durable transport acknowledgement.
+            // Authentication and identity admission happen before institutional processing.
             identityResolver.resolve(telegramUserId, parseChatId(chatId));
             adapter.receive(suppliedSecret, chatId, text);
 
@@ -181,10 +181,20 @@ public final class TelegramWebhookController {
             LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} durable_status={} objective_id={} queue_depth={} active_threads={}",
                     updateId, chatId, ackMs, receipt.status(), receipt.objectiveId(), interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
             return ResponseEntity.ok().build();
+        } catch (SecurityException denied) {
+            // Authenticated Telegram transport from an unknown principal is institutionally denied, but
+            // provider delivery is consumed. Retrying an identity that can never be admitted is a retry storm,
+            // not fail-closed authorization.
+            LOG.warn("telegram_identity_denied update_id={} chat={} reason={}", updateId, chatId, denied.getMessage());
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException malformed) {
+            // Structurally invalid provider input is non-recoverable. Consume/drop it rather than asking
+            // Telegram to replay malformed bytes indefinitely.
+            LOG.warn("telegram_invalid_delivery_acknowledged update_id={} chat={} reason={}", updateId, chatId, malformed.getMessage());
+            return ResponseEntity.ok().build();
         } catch (RuntimeException failure) {
-            // Do not acknowledge an event whose authenticated durable admission boundary could not be established.
+            // Recoverable internal failure after authenticated admission must not be falsely acknowledged.
             // Explicit Objective delegation additionally requires canonical Objective persistence before 2xx.
-            // Telegram can retry non-2xx delivery; provider replay is idempotent by update_id/externalMessageReference.
             LOG.error("telegram_webhook_admission_failed update_id=" + updateId + " chat=" + chatId, failure);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
