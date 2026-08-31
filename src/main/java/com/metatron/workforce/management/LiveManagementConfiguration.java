@@ -6,6 +6,10 @@ import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.ExecutionAttemptStore;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
+import com.metatron.workforce.observation.FileObservationStateStore;
+import com.metatron.workforce.observation.ObservationClosureService;
+import com.metatron.workforce.observation.ObservationStateStore;
+import com.metatron.workforce.observation.ObservationVerifier;
 import com.metatron.workforce.runtime.FileRuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimePersistenceStore;
@@ -17,7 +21,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 
-/** Production composition for persistent Workforce management, Execution attempts and runtime capacity. */
+/** Production composition for persistent management, execution/runtime and independent Observation closure. */
 @Configuration
 public class LiveManagementConfiguration {
     @Bean
@@ -44,6 +48,20 @@ public class LiveManagementConfiguration {
     @Bean
     AutonomyCoordinationService autonomyCoordinationService(AutonomyCoordinationStateStore store) {
         return new AutonomyCoordinationService(store);
+    }
+
+    @Bean
+    ObservationStateStore observationStateStore() {
+        String configured = System.getenv().getOrDefault(
+                "METATRON_OBSERVATION_STATE_PATH",
+                "/var/lib/metatron-workforce/observation-state.json");
+        return new FileObservationStateStore(Path.of(configured));
+    }
+
+    @Bean
+    ObservationClosureService observationClosureService(ObservationStateStore store,
+                                                         List<ObservationVerifier> verifiers) {
+        return new ObservationClosureService(store, verifiers);
     }
 
     @Bean
@@ -94,6 +112,7 @@ public class LiveManagementConfiguration {
             ExecutionPlanProposalService planner,
             List<AutonomousExecutionCapability> capabilities,
             AutonomyCoordinationService coordination,
+            ObservationClosureService observationClosure,
             WorkforceCoreService core,
             AutonomousStaffingService staffing,
             ExecutionAdmissionService admission,
@@ -105,7 +124,7 @@ public class LiveManagementConfiguration {
                         capability, core, admission, clock, staffing, attempts, runtimeCapacity))
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
-                management, planner, governedCapabilities, coordination, clock);
+                management, planner, governedCapabilities, coordination, observationClosure, clock);
         runner.start();
         return runner;
     }
