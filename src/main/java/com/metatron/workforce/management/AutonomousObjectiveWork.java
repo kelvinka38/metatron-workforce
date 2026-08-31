@@ -50,6 +50,8 @@ public record AutonomousObjectiveWork(
         PLANNING,
         READY,
         EXECUTING,
+        PENDING_VERIFICATION,
+        VERIFYING,
         BLOCKED,
         COMPLETED,
         CANCELLED
