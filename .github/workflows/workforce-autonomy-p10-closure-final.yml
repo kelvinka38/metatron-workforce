@@ -1,9 +1,6 @@
 name: Workforce Autonomy P10 Closure Final
 
 on:
-  workflow_run:
-    workflows: ["Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -20,11 +17,10 @@ concurrency:
 
 jobs:
   gs3-gs4-production:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 45
     env:
-      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.event.workflow_run.head_sha }}
+      TARGET_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Verify exact production identity
         shell: bash
@@ -61,7 +57,6 @@ jobs:
           PY
           code=$(curl -sS -o "$E/response.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
           test "$code" = 200
-          # Exact duplicate provider delivery: must be idempotent.
           code=$(curl -sS -o "$E/duplicate.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
           test "$code" = 200
           OID=''
@@ -85,7 +80,6 @@ jobs:
           done
           test -n "$OID"
           echo "$OID" > "$E/gs3-objective-id.txt"
-          # Real process/runtime termination after durable acceptance. No fake dispatcher or in-memory harness.
           sleep 3
           docker restart "$CID" > "$E/restarted-container.txt"
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
@@ -94,11 +88,8 @@ jobs:
             sleep 2
           done
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
-          # Replayed provider event after restart must still map to exactly one Objective.
           code=$(curl -sS -o "$E/post-restart-duplicate.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
           test "$code" = 200
-          # BLOCKED is a non-terminal recovery state. Closure still requires terminal completion;
-          # only terminal failure states abort immediately.
           for i in $(seq 1 450); do
             curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OID}" > "$E/terminal.json" || true
             state=$(python3 - "$E/terminal.json" <<'PY'
@@ -151,8 +142,6 @@ jobs:
             [ -n "$OID" ] && break; sleep 2
           done
           test -n "$OID"
-          # BLOCKED may represent bounded capacity/recovery waiting and is not terminal. The final
-          # verdict still requires COMPLETED/DELIVERED and independent Observation PASS.
           for i in $(seq 1 450); do
             curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OID}" > "$E/gs4-terminal.json" || true
             state=$(python3 - "$E/gs4-terminal.json" <<'PY'
