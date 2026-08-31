@@ -18,6 +18,8 @@ import java.util.function.Function;
 /** Post-semantic, post-Case institutional execution work planner. */
 public final class ExecutionWorkPlanner implements ExecutionPlanProposalService {
     private static final String REPOSITORY_PR_PROPOSE = "repository.pr.propose";
+    private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
+    private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
 
     private static final String SYSTEM = """
             You are Metatron's institutional execution work planner.
@@ -48,6 +50,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             - Use exact refs from AVAILABLE EXECUTION CAPABILITIES when a capability can perform the step.
             - Prefer one available bounded/composite capability over inventing lower-level effects that are not independently available.
             - `repository.pr.propose` is the bounded governed mutation capability for the approved Autonomy Closure repair: it performs the approved file repair on a branch and opens the pull request. It never merges. When that capability satisfies a repair-and-open-PR objective, do NOT invent a separate `repository.content.write` step.
+            - `cross-repository-audit-analysis` is an evidence-bound join capability, not a repository reader. For a multi-repository audit, create one `repository.audit.read` step per repository and make the analysis step depend on every audit step. Never use `cross-repository-audit-analysis` as a standalone first step.
             - If no capability can perform a step, use UNAVAILABLE:<short-semantic-capability-need>.
             - A READ_ONLY capability cannot satisfy MUTATING work.
             - Preserve explicit prohibitions and constraints.
@@ -94,6 +97,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 LlmResponse response = router.complete(new LlmRequest(provider, modelSelector.apply(provider), SYSTEM, input));
                 List<ExecutionWorkSpec> plan = parse(response);
                 plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
+                plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
                 validate(plan);
                 if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
                 return plan;
@@ -232,6 +236,67 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                     step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
         }
         return List.copyOf(reconciled);
+    }
+
+    /**
+     * A cross-repository analysis capability is a Work Graph join. If a frontier planner collapses
+     * an explicitly multi-repository read-only audit into one standalone join node, materialize the
+     * prerequisite repository.audit.read fan-out from the normalized target. This is intentionally
+     * narrow: it only handles a single READ_ONLY join-only proposal, requires both governed
+     * capabilities to be available, and derives every repository from the already-normalized target.
+     */
+    private static List<ExecutionWorkSpec> reconcileCrossRepositoryAuditJoin(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities,
+            List<ExecutionWorkSpec> plan) {
+        if (!availableExecutionCapabilities.contains(REPOSITORY_AUDIT_READ)
+                || !availableExecutionCapabilities.contains(CROSS_REPOSITORY_AUDIT_ANALYSIS)
+                || plan.size() != 1) return plan;
+
+        ExecutionWorkSpec analysis = plan.getFirst();
+        if (!CROSS_REPOSITORY_AUDIT_ANALYSIS.equals(analysis.requiredCapability())
+                || analysis.consequence() != ExecutionWorkSpec.Consequence.READ_ONLY
+                || !analysis.dependsOn().isEmpty()) return plan;
+
+        List<String> repositories = requestedRepositoryTargets(normalized.target());
+        if (repositories.size() < 2) return plan;
+
+        List<ExecutionWorkSpec> reconciled = new ArrayList<>();
+        List<String> dependencies = new ArrayList<>();
+        for (int i = 0; i < repositories.size(); i++) {
+            String repository = repositories.get(i);
+            String stepId = analysis.stepId() + "-audit-" + (i + 1);
+            dependencies.add(stepId);
+            reconciled.add(new ExecutionWorkSpec(
+                    stepId,
+                    "Perform governed read-only repository audit for " + repository,
+                    repository,
+                    REPOSITORY_AUDIT_READ,
+                    List.of(),
+                    ExecutionWorkSpec.Consequence.READ_ONLY,
+                    List.of("governed read-only repository audit completes for " + repository),
+                    List.of("durable repository.audit.read execution evidence for " + repository)));
+        }
+        reconciled.add(new ExecutionWorkSpec(
+                analysis.stepId(),
+                analysis.objective(),
+                analysis.target(),
+                CROSS_REPOSITORY_AUDIT_ANALYSIS,
+                List.copyOf(dependencies),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                analysis.acceptanceCriteria(),
+                analysis.evidenceRequirements()));
+        return List.copyOf(reconciled);
+    }
+
+    private static List<String> requestedRepositoryTargets(String target) {
+        if (target == null || target.isBlank()) return List.of();
+        LinkedHashSet<String> repositories = new LinkedHashSet<>();
+        for (String raw : target.split(",")) {
+            String repository = normalizeTarget(raw);
+            if (repository.matches("[a-z0-9_.-]+/[a-z0-9_.-]+")) repositories.add(repository);
+        }
+        return List.copyOf(repositories);
     }
 
     private static boolean requestsRepositoryPullRequest(NormalizedRequest normalized) {
