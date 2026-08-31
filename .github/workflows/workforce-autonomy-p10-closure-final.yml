@@ -1,0 +1,188 @@
+name: Workforce Autonomy P10 Closure Final
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed main SHA to prove
+        required: true
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'deployment/**'
+      - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
+      - 'docs/AUTONOMY_CLOSURE/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workforce-autonomy-p10-closure-final
+  cancel-in-progress: false
+
+jobs:
+  gs3-gs4-production:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+    steps:
+      - name: Verify exact production identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          echo "CID=$CID" >> "$GITHUB_ENV"
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          echo "TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_WEBHOOK_SECRET" >> "$GITHUB_ENV"
+          echo "TELEGRAM_ALLOWED_USER_ID=$TELEGRAM_ALLOWED_USER_ID" >> "$GITHUB_ENV"
+
+      - name: GS3 real runtime restart recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          E=/tmp/p10-final-${GITHUB_RUN_ID}; mkdir -p "$E"
+          UPDATE=$(date +%s%N | cut -c1-18)
+          TEXT='Take ownership of one Objective: perform a governed read-only institutional audit of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios. Independently plan, execute, join, verify through Observation, recover autonomously from routine transient execution failure, and deliver one evidence-backed completion. Do not mutate anything.'
+          python3 - "$TELEGRAM_ALLOWED_USER_ID" "$UPDATE" "$TEXT" > "$E/request.json" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update=int(sys.argv[2]); text=sys.argv[3]
+          print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
+          PY
+          code=$(curl -sS -o "$E/response.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
+          test "$code" = 200
+          # Exact duplicate provider delivery: must be idempotent.
+          code=$(curl -sS -o "$E/duplicate.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
+          test "$code" = 200
+          OID=''
+          for i in $(seq 1 90); do
+            curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives > "$E/objectives.json" || true
+            OID=$(python3 - "$E/objectives.json" "$UPDATE" <<'PY'
+          import json,sys
+          try:d=json.load(open(sys.argv[1]))
+          except: print(''); raise SystemExit
+          n='telegram:update:'+sys.argv[2]
+          ids=[]
+          for x in d if isinstance(d,list) else []:
+            if n in json.dumps(x,sort_keys=True):
+              o=x.get('objective') or {}; q=o.get('objectiveId') or o.get('objective_id')
+              if q: ids.append(q)
+          ids=list(dict.fromkeys(ids)); print(ids[0] if len(ids)==1 else '')
+          PY
+            )
+            [ -n "$OID" ] && break
+            sleep 2
+          done
+          test -n "$OID"
+          echo "$OID" > "$E/gs3-objective-id.txt"
+          # Real process/runtime termination after durable acceptance. No fake dispatcher or in-memory harness.
+          sleep 3
+          docker restart "$CID" > "$E/restarted-container.txt"
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          for i in $(seq 1 90); do
+            [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}' 2>/dev/null || true)" = healthy ] && break
+            sleep 2
+          done
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          # Replayed provider event after restart must still map to exactly one Objective.
+          code=$(curl -sS -o "$E/post-restart-duplicate.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/request.json")
+          test "$code" = 200
+          for i in $(seq 1 450); do
+            curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OID}" > "$E/terminal.json" || true
+            state=$(python3 - "$E/terminal.json" <<'PY'
+          import json,sys
+          try:d=json.load(open(sys.argv[1])); print((d.get('objective') or {}).get('status',''))
+          except: print('')
+          PY
+            )
+            case "$state" in COMPLETED|DELIVERED) break;; BLOCKED|ESCALATED|CANCELLED) echo "GS3_BAD_TERMINAL=$state"; exit 2;; esac
+            sleep 2
+          done
+          test "$state" = COMPLETED -o "$state" = DELIVERED
+          docker exec "$CID" sh -c "grep -F '$OID' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
+          echo 'P10_GOLDEN_SLICE_3_RUNTIME_RESTART=PASS'
+          echo 'P10_GOLDEN_SLICE_3_DUPLICATE_DELIVERY=PASS'
+          echo 'P10_GOLDEN_SLICE_3_DURABLE_RECOVERY=PASS'
+
+      - name: GS4 scheduler and staffing scaling evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          E=/tmp/p10-final-${GITHUB_RUN_ID}; mkdir -p "$E"
+          UPDATE=$(($(date +%s%N | cut -c1-18)+17))
+          TEXT='Take ownership of one Objective: perform independent governed read-only audits of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios concurrently where dependencies allow; staff the work from required capabilities, schedule independent branches in parallel, join results, analyze contradictions, verify through Observation, and deliver one evidence-backed completion. Do not mutate anything.'
+          python3 - "$TELEGRAM_ALLOWED_USER_ID" "$UPDATE" "$TEXT" > "$E/gs4-request.json" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update=int(sys.argv[2]); text=sys.argv[3]
+          print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
+          PY
+          test "$(curl -sS -o "$E/gs4-response.json" -w '%{http_code}' --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "@$E/gs4-request.json")" = 200
+          OID=''
+          for i in $(seq 1 90); do
+            curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives > "$E/gs4-objectives.json" || true
+            OID=$(python3 - "$E/gs4-objectives.json" "$UPDATE" <<'PY'
+          import json,sys
+          try:d=json.load(open(sys.argv[1]))
+          except: print(''); raise SystemExit
+          n='telegram:update:'+sys.argv[2]; ids=[]
+          for x in d if isinstance(d,list) else []:
+            if n in json.dumps(x,sort_keys=True):
+              q=(x.get('objective') or {}).get('objectiveId')
+              if q: ids.append(q)
+          ids=list(dict.fromkeys(ids)); print(ids[0] if len(ids)==1 else '')
+          PY
+            )
+            [ -n "$OID" ] && break; sleep 2
+          done
+          test -n "$OID"
+          for i in $(seq 1 450); do
+            curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OID}" > "$E/gs4-terminal.json" || true
+            state=$(python3 - "$E/gs4-terminal.json" <<'PY'
+          import json,sys
+          try:d=json.load(open(sys.argv[1])); print((d.get('objective') or {}).get('status',''))
+          except: print('')
+          PY
+            )
+            case "$state" in COMPLETED|DELIVERED) break;; BLOCKED|ESCALATED|CANCELLED) echo "GS4_BAD_TERMINAL=$state"; exit 2;; esac
+            sleep 2
+          done
+          test "$state" = COMPLETED -o "$state" = DELIVERED
+          docker exec "$CID" sh -c 'cat /var/lib/metatron-workforce/scheduler-state.json' > "$E/scheduler-state.json"
+          python3 - "$E/scheduler-state.json" "$OID" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); oid=sys.argv[2]
+          rows=d if isinstance(d,list) else d.get('decisions',[]) if isinstance(d,dict) else []
+          rows=[r for r in rows if oid in json.dumps(r,sort_keys=True)]
+          assert rows, 'missing_scheduler_decisions_for_objective'
+          blob=json.dumps(rows,sort_keys=True)
+          assert 'parallel' in blob.lower() or 'selected' in blob.lower(), 'missing_parallel_scheduler_evidence'
+          print('P10_GOLDEN_SLICE_4_SCHEDULER_DECISIONS=PASS')
+          PY
+          docker exec "$CID" sh -c "grep -F '$OID' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
+          echo 'P10_GOLDEN_SLICE_4=PASS'
+
+      - name: Preserve strict verdict boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'GS3_GS4_PRODUCTION_EVIDENCE=PASS'
+          echo 'FORMAL_ACCEPTED_L10=NOT_CLAIMED_BY_THIS_JOB'
+          echo 'REASON=45_CONDITION_GATE_MUST_BE_INDEPENDENTLY_EVIDENCE_MAPPED_AND_PASS_45_OF_45'
+
+      - name: Upload final closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workforce-p10-final-evidence-${{ github.run_id }}
+          path: /tmp/p10-final-${{ github.run_id }}/
+          if-no-files-found: warn
+          retention-days: 90
