@@ -26,6 +26,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * Restartable Workforce management loop. The runner owns operational progression after durable
  * Objective acceptance. Execution completion is never Objective completion when an Observation
  * boundary is configured: every required criterion must be independently observed first.
+ * Resource/control safety is evaluated before a durable dispatch may become active.
  */
 public final class AutonomousManagementRunner implements AutoCloseable {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AutonomousManagementRunner.class);
@@ -38,6 +39,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final Map<String, AutonomousExecutionCapability> capabilities;
     private final AutonomyCoordinationService coordination;
     private final ObservationClosureService observationClosure;
+    private final AutonomySafetyService safety;
     private final Clock clock;
     private final String runnerId;
     private final Duration leaseDuration;
@@ -51,7 +53,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                       ExecutionPlanProposalService planner,
                                       List<AutonomousExecutionCapability> executionCapabilities,
                                       Clock clock) {
-        this(management, planner, executionCapabilities, new AutonomyCoordinationService(), null, clock,
+        this(management, planner, executionCapabilities, new AutonomyCoordinationService(), null, null, clock,
                 "management-runner:" + UUID.randomUUID(), DEFAULT_LEASE, DEFAULT_POLL, DEFAULT_PARALLELISM);
     }
 
@@ -60,7 +62,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                       List<AutonomousExecutionCapability> executionCapabilities,
                                       AutonomyCoordinationService coordination,
                                       Clock clock) {
-        this(management, planner, executionCapabilities, coordination, null, clock,
+        this(management, planner, executionCapabilities, coordination, null, null, clock,
                 "management-runner:" + UUID.randomUUID(), DEFAULT_LEASE, DEFAULT_POLL, DEFAULT_PARALLELISM);
     }
 
@@ -71,7 +73,20 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                       ObservationClosureService observationClosure,
                                       Clock clock) {
         this(management, planner, executionCapabilities, coordination,
-                Objects.requireNonNull(observationClosure, "observationClosure"), clock,
+                Objects.requireNonNull(observationClosure, "observationClosure"), null, clock,
+                "management-runner:" + UUID.randomUUID(), DEFAULT_LEASE, DEFAULT_POLL, DEFAULT_PARALLELISM);
+    }
+
+    public AutonomousManagementRunner(ManagementAutonomyService management,
+                                      ExecutionPlanProposalService planner,
+                                      List<AutonomousExecutionCapability> executionCapabilities,
+                                      AutonomyCoordinationService coordination,
+                                      ObservationClosureService observationClosure,
+                                      AutonomySafetyService safety,
+                                      Clock clock) {
+        this(management, planner, executionCapabilities, coordination,
+                Objects.requireNonNull(observationClosure, "observationClosure"),
+                Objects.requireNonNull(safety, "safety"), clock,
                 "management-runner:" + UUID.randomUUID(), DEFAULT_LEASE, DEFAULT_POLL, DEFAULT_PARALLELISM);
     }
 
@@ -80,7 +95,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                List<AutonomousExecutionCapability> executionCapabilities,
                                Clock clock, String runnerId, Duration leaseDuration,
                                Duration pollInterval) {
-        this(management, planner, executionCapabilities, new AutonomyCoordinationService(), null, clock,
+        this(management, planner, executionCapabilities, new AutonomyCoordinationService(), null, null, clock,
                 runnerId, leaseDuration, pollInterval, DEFAULT_PARALLELISM);
     }
 
@@ -90,7 +105,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                AutonomyCoordinationService coordination,
                                Clock clock, String runnerId, Duration leaseDuration,
                                Duration pollInterval, int parallelism) {
-        this(management, planner, executionCapabilities, coordination, null, clock,
+        this(management, planner, executionCapabilities, coordination, null, null, clock,
                 runnerId, leaseDuration, pollInterval, parallelism);
     }
 
@@ -101,10 +116,23 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                ObservationClosureService observationClosure,
                                Clock clock, String runnerId, Duration leaseDuration,
                                Duration pollInterval, int parallelism) {
+        this(management, planner, executionCapabilities, coordination, observationClosure, null, clock,
+                runnerId, leaseDuration, pollInterval, parallelism);
+    }
+
+    AutonomousManagementRunner(ManagementAutonomyService management,
+                               ExecutionPlanProposalService planner,
+                               List<AutonomousExecutionCapability> executionCapabilities,
+                               AutonomyCoordinationService coordination,
+                               ObservationClosureService observationClosure,
+                               AutonomySafetyService safety,
+                               Clock clock, String runnerId, Duration leaseDuration,
+                               Duration pollInterval, int parallelism) {
         this.management = Objects.requireNonNull(management, "management");
         this.planner = Objects.requireNonNull(planner, "planner");
         this.coordination = Objects.requireNonNull(coordination, "coordination");
         this.observationClosure = observationClosure;
+        this.safety = safety;
         Objects.requireNonNull(executionCapabilities, "executionCapabilities");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.runnerId = requireText(runnerId, "runnerId");
@@ -214,8 +242,9 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                             NodeExecutionOutcome.missing(node.spec().stepId(), node.spec().requiredCapability())));
                 } else {
                     AutonomousObjectiveWork dispatchContext = work;
+                    int plannedAttempt = node.attempt() + 1;
                     futures.add(workExecutor.submit(() -> executeNode(
-                            objectiveId, graphVersion, dispatchContext, node.spec(), capability)));
+                            objectiveId, graphVersion, plannedAttempt, dispatchContext, node.spec(), capability)));
                 }
             }
 
@@ -231,8 +260,10 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     continue;
                 }
                 if (!outcome.success()) {
-                    management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
-                            "worker-execution-failure:" + outcome.stepId() + ":" + outcome.failure(), clock.instant());
+                    String reason = outcome.failure().startsWith("autonomy-safety-gate:")
+                            ? outcome.failure()
+                            : "worker-execution-failure:" + outcome.stepId() + ":" + outcome.failure();
+                    management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), reason, clock.instant());
                     stop = true;
                     continue;
                 }
@@ -279,9 +310,25 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         return work;
     }
 
-    private NodeExecutionOutcome executeNode(String objectiveId, int graphVersion, AutonomousObjectiveWork work,
-                                             ExecutionWorkSpec step, AutonomousExecutionCapability capability) {
+    private NodeExecutionOutcome executeNode(String objectiveId, int graphVersion, int plannedAttempt,
+                                             AutonomousObjectiveWork work, ExecutionWorkSpec step,
+                                             AutonomousExecutionCapability capability) {
+        String expectedDispatchId = objectiveId + ":graph:" + graphVersion + ":step:"
+                + step.stepId() + ":attempt:" + plannedAttempt;
+        try {
+            if (safety != null) {
+                safety.reserveDispatch(objectiveId, expectedDispatchId, plannedAttempt,
+                        requireAuthority(capability.authorityReference()), step.consequence(),
+                        Math.max(0.000001d, capability.requiredCapacity()), clock.instant());
+            }
+        } catch (AutonomySafetyService.SafetyGateException denied) {
+            return NodeExecutionOutcome.failed(step.stepId(), denied.getMessage());
+        }
+
         DurableDispatch dispatch = coordination.beginDispatch(objectiveId, graphVersion, step.stepId(), clock.instant());
+        if (dispatch.attempt() != plannedAttempt || !dispatch.dispatchId().equals(expectedDispatchId)) {
+            throw new IllegalStateException("dispatch identity changed after safety reservation");
+        }
         try {
             AutonomousExecutionCapability.CapabilityResult result = capability.execute(
                     new AutonomousExecutionCapability.CapabilityRequest(
@@ -342,6 +389,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 : "runtime-failure";
         String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
         return type + ":" + detail;
+    }
+
+    private static String requireAuthority(String value) {
+        if (value == null || value.isBlank()) throw new SecurityException("authority-reference-missing");
+        return value.trim();
     }
 
     @Override public void close() {
