@@ -13,12 +13,17 @@ import java.util.Objects;
 /**
  * Workforce-facing coordinator for the independent Observation boundary.
  * It creates criterion requests and consumes reports; it never converts execution success into truth.
+ * Verification recovery is bounded and durable: transient provider/evidence insufficiency may be retried,
+ * while exhausted verification remains explicitly INCONCLUSIVE rather than looping forever.
  */
 public final class ObservationClosureService {
     public enum Verdict { PENDING, PASSED, FAILED, INCONCLUSIVE }
 
+    public static final int MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS = 3;
+
     private final Map<String, ObservationRequirement> requirements = new LinkedHashMap<>();
     private final Map<String, ObservationReport> reportsByRequirement = new LinkedHashMap<>();
+    private final Map<String, Integer> attemptsByRequirement = new LinkedHashMap<>();
     private final ObservationStateStore store;
     private final List<ObservationVerifier> verifiers;
 
@@ -32,6 +37,7 @@ public final class ObservationClosureService {
         ObservationStateStore.Snapshot snapshot = store.load();
         requirements.putAll(snapshot.requirements());
         reportsByRequirement.putAll(snapshot.reportsByRequirement());
+        attemptsByRequirement.putAll(snapshot.attemptsByRequirement());
     }
 
     public synchronized List<ObservationRequirement> ensureRequirements(
@@ -55,26 +61,45 @@ public final class ObservationClosureService {
                         requirementId, objectiveId, step.stepId(), criterionId,
                         step.target(), step.acceptanceCriteria().get(index), step.evidenceRequirements(), at);
                 requirements.put(requirementId, requirement);
+                attemptsByRequirement.putIfAbsent(requirementId, 0);
             }
         }
         persist();
         return requirements(objectiveId);
     }
 
-    /** Invokes only explicitly configured Observation adapters. No adapter means fail-closed pending verification. */
+    /**
+     * Invokes only explicitly configured Observation adapters. No adapter means fail-closed verification.
+     * A missing, INCONCLUSIVE or INSUFFICIENT report may be re-observed until the durable attempt ceiling.
+     */
     public synchronized List<ObservationReport> observeAvailable(
             String objectiveId, List<String> executionEvidenceReferences, Instant at) {
         Objects.requireNonNull(executionEvidenceReferences, "executionEvidenceReferences");
         Objects.requireNonNull(at, "at");
+        boolean changed = false;
         for (ObservationRequirement requirement : requirements(objectiveId)) {
-            if (reportsByRequirement.containsKey(requirement.requirementId())) continue;
+            ObservationReport current = reportsByRequirement.get(requirement.requirementId());
+            if (authoritativeTerminal(current)) continue;
+
+            int attempts = attemptsByRequirement.getOrDefault(requirement.requirementId(), 0);
+            if (attempts >= MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS) continue;
+            attemptsByRequirement.put(requirement.requirementId(), attempts + 1);
+            changed = true;
+
             for (ObservationVerifier verifier : verifiers) {
                 if (!verifier.supports(requirement)) continue;
-                verifier.observe(requirement, List.copyOf(executionEvidenceReferences), at)
-                        .ifPresent(this::recordReport);
-                if (reportsByRequirement.containsKey(requirement.requirementId())) break;
+                try {
+                    verifier.observe(requirement, List.copyOf(executionEvidenceReferences), at)
+                            .ifPresent(this::recordReport);
+                } catch (RuntimeException transientVerifierFailure) {
+                    // The attempt is durably counted. Another verifier or a later management pass may recover.
+                    continue;
+                }
+                ObservationReport observed = reportsByRequirement.get(requirement.requirementId());
+                if (authoritativeTerminal(observed) || observed != null) break;
             }
         }
+        if (changed) persist();
         return reports(objectiveId);
     }
 
@@ -100,16 +125,27 @@ public final class ObservationClosureService {
     public synchronized Verdict verdict(String objectiveId) {
         List<ObservationRequirement> expected = requirements(objectiveId);
         if (expected.isEmpty()) return Verdict.PENDING;
-        List<ObservationReport> reports = reports(objectiveId);
-        if (reports.size() != expected.size()) return Verdict.PENDING;
-        if (reports.stream().anyMatch(r -> r.criterionResult() == ObservationReport.CriterionResult.FAIL)) {
-            return Verdict.FAILED;
+
+        boolean retryablePending = false;
+        for (ObservationRequirement requirement : expected) {
+            ObservationReport report = reportsByRequirement.get(requirement.requirementId());
+            int attempts = attemptsByRequirement.getOrDefault(requirement.requirementId(), 0);
+            if (report == null) {
+                if (attempts >= MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS) return Verdict.INCONCLUSIVE;
+                retryablePending = true;
+                continue;
+            }
+            if (report.criterionResult() == ObservationReport.CriterionResult.FAIL) return Verdict.FAILED;
+            if (report.criterionResult() == ObservationReport.CriterionResult.INCONCLUSIVE
+                    || report.quality() == ObservationReport.Quality.INSUFFICIENT) {
+                if (attempts >= MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS) return Verdict.INCONCLUSIVE;
+                retryablePending = true;
+            }
         }
-        if (reports.stream().anyMatch(r -> r.criterionResult() == ObservationReport.CriterionResult.INCONCLUSIVE
-                || r.quality() == ObservationReport.Quality.INSUFFICIENT)) {
-            return Verdict.INCONCLUSIVE;
-        }
-        return reports.stream().allMatch(r -> r.criterionResult() == ObservationReport.CriterionResult.PASS)
+        if (retryablePending) return Verdict.PENDING;
+        return expected.stream()
+                .map(r -> reportsByRequirement.get(r.requirementId()))
+                .allMatch(r -> r != null && r.criterionResult() == ObservationReport.CriterionResult.PASS)
                 ? Verdict.PASSED : Verdict.PENDING;
     }
 
@@ -137,8 +173,28 @@ public final class ObservationClosureService {
                 .sorted(Comparator.comparing(ObservationReport::requirementId)).toList();
     }
 
+    public synchronized int attempts(String requirementId) {
+        require(requirementId, "requirementId");
+        return attemptsByRequirement.getOrDefault(requirementId, 0);
+    }
+
+    public synchronized Map<String, Integer> attempts(String objectiveId) {
+        Map<String, Integer> result = new LinkedHashMap<>();
+        for (ObservationRequirement requirement : requirements(objectiveId)) {
+            result.put(requirement.requirementId(), attempts(requirement.requirementId()));
+        }
+        return Map.copyOf(result);
+    }
+
+    private static boolean authoritativeTerminal(ObservationReport report) {
+        if (report == null) return false;
+        if (report.criterionResult() == ObservationReport.CriterionResult.FAIL) return true;
+        return report.criterionResult() == ObservationReport.CriterionResult.PASS
+                && report.quality() != ObservationReport.Quality.INSUFFICIENT;
+    }
+
     private void persist() {
-        store.save(new ObservationStateStore.Snapshot(requirements, reportsByRequirement));
+        store.save(new ObservationStateStore.Snapshot(requirements, reportsByRequirement, attemptsByRequirement));
     }
 
     private static void require(String value, String field) {
