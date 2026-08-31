@@ -1,19 +1,15 @@
 name: Workforce Autonomy P10 Closure Final
 
 on:
+  workflow_run:
+    workflows: ["Production Deploy"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
         description: Exact deployed main SHA to prove
         required: true
         type: string
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'deployment/**'
-      - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
-      - 'docs/AUTONOMY_CLOSURE/**'
 
 permissions:
   contents: read
@@ -24,10 +20,11 @@ concurrency:
 
 jobs:
   gs3-gs4-production:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 45
     env:
-      TARGET_SHA: ${{ inputs.target_sha || github.sha }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.event.workflow_run.head_sha }}
     steps:
       - name: Verify exact production identity
         shell: bash
