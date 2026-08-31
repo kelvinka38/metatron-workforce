@@ -14,6 +14,7 @@ import com.metatron.workforce.runtime.FileRuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeRegistry;
+import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -130,6 +131,19 @@ public class LiveManagementConfiguration {
     AutonomousStaffingService autonomousStaffingService(WorkforceCoreService core,
                                                          List<AutonomousStaffingPolicy> policies) {
         return new AutonomousStaffingService(core, policies);
+    }
+
+    @Bean
+    AutonomyEvidencePackageService autonomyEvidencePackageService(
+            ManagementAutonomyService management,
+            AutonomyCoordinationService coordination,
+            AutonomySafetyService safety,
+            ObservationClosureService observation,
+            WorkforceCoreService core,
+            ExecutionAttemptService attempts,
+            WorkplaceContinuityService workplace) {
+        return new AutonomyEvidencePackageService(management, coordination, safety, observation,
+                core, attempts, workplace);
     }
 
     @Bean(destroyMethod = "close")
