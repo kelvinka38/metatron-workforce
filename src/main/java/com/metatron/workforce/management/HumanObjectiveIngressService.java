@@ -7,6 +7,7 @@ import com.metatron.workforce.phase3.AuthorizationContext;
 import com.metatron.workforce.phase3.AuthorizationPolicy;
 import com.metatron.workforce.phase3.WorkQueueItem;
 import com.metatron.workforce.phase3.WorkQueueService;
+import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -22,7 +23,9 @@ import java.util.Objects;
  * General Human execution-intent ingress into Workforce autonomous management.
  *
  * The ingress atomically accepts and persists a Head-owned Objective, acknowledges it, and detaches.
- * Planning, staffing checks and execution are owned by the persistent management runner.
+ * Planning, staffing checks and execution are owned by the persistent management runner. The accepted
+ * Objective is also bound to the existing canonical Workplace Conversation reference; Workforce does
+ * not create or redefine Conversation/Meeting/Decision objects here.
  */
 @Service
 public final class HumanObjectiveIngressService implements ExecutionObjectiveHandoff {
@@ -31,6 +34,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
     private final WorkQueueService workQueue;
     private final List<String> capabilityCatalog;
     private final AutonomousManagementRunner runner;
+    private final WorkplaceContinuityService workplaceContinuity;
     private final Clock clock;
 
     @Autowired
@@ -38,8 +42,9 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
             ManagementAutonomyService management,
             List<AutonomousExecutionCapability> executionCapabilities,
             AutonomousManagementRunner runner,
+            WorkplaceContinuityService workplaceContinuity,
             @Value("${workforce.management.head-worker-id:${METATRON_HEAD_WORKER_ID:metatron-workforce}}") String headWorkerId) {
-        this(management, executionCapabilities, runner, headWorkerId, Clock.systemUTC());
+        this(management, executionCapabilities, runner, workplaceContinuity, headWorkerId, Clock.systemUTC());
     }
 
     HumanObjectiveIngressService(ManagementAutonomyService management, String headWorkerId, Clock clock) {
@@ -53,15 +58,24 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                 new AutonomousManagementRunner(management,
                         (caseId, request, available) -> request.executionWorkPlan(),
                         executionCapabilities, clock),
-                headWorkerId, clock);
+                null, headWorkerId, clock);
     }
 
     HumanObjectiveIngressService(ManagementAutonomyService management,
                                  List<AutonomousExecutionCapability> executionCapabilities,
                                  AutonomousManagementRunner runner,
                                  String headWorkerId, Clock clock) {
+        this(management, executionCapabilities, runner, null, headWorkerId, clock);
+    }
+
+    HumanObjectiveIngressService(ManagementAutonomyService management,
+                                 List<AutonomousExecutionCapability> executionCapabilities,
+                                 AutonomousManagementRunner runner,
+                                 WorkplaceContinuityService workplaceContinuity,
+                                 String headWorkerId, Clock clock) {
         this.management = Objects.requireNonNull(management, "management");
         this.runner = Objects.requireNonNull(runner, "runner");
+        this.workplaceContinuity = workplaceContinuity;
         this.headWorkerId = requireText(headWorkerId, "headWorkerId");
         this.clock = Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(executionCapabilities, "executionCapabilities");
@@ -101,19 +115,13 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
         final String admittedHumanId = requireText(humanId, "humanId");
         final String admittedOrganizationContextId = requireText(organizationContextId, "organizationContextId");
         final String admittedCaseId = requireText(caseId, "caseId");
-        requireText(conversationId, "conversationId");
+        final String admittedConversationId = requireText(conversationId, "conversationId");
         final String admittedExternalMessageReference = requireText(externalMessageReference, "externalMessageReference");
         final String admittedChannel = requireText(channel, "channel");
         Objects.requireNonNull(request, "request");
 
-        /*
-         * A Case coordinates one bounded intelligence problem and may reference many institutional Objectives.
-         * Therefore Objective identity is request-scoped, not Case-scoped. The provider-neutral external message
-         * reference supplies stable request-instance correlation/idempotency only; it is never Authority evidence.
-         * Re-delivery of the same provider request remains idempotent, while a new Human execution request in the
-         * same Case receives its own Objective/queue/execution lifecycle.
-         */
         String objectiveId = objectiveId(admittedCaseId, admittedExternalMessageReference);
+        String requestAdmissionReference = "workplace-request-admission:" + admittedHumanId + ":" + headWorkerId;
         Instant now = clock.instant();
         ManagementObjective objective;
         try {
@@ -123,15 +131,22 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                     objectiveId,
                     headWorkerId,
                     admittedOrganizationContextId,
-                    renderObjective(request, admittedCaseId, conversationId, admittedChannel, admittedExternalMessageReference),
+                    renderObjective(request, admittedCaseId, admittedConversationId,
+                            admittedChannel, admittedExternalMessageReference),
                     "human:" + admittedHumanId,
-                    "workplace-request-admission:" + admittedHumanId + ":" + headWorkerId,
+                    requestAdmissionReference,
                     admittedCaseId,
-                    conversationId,
+                    admittedConversationId,
                     admittedExternalMessageReference,
                     admittedChannel,
                     request,
                     now);
+        }
+
+        if (workplaceContinuity != null) {
+            workplaceContinuity.bindAcceptedObjective(
+                    objective.objectiveId(), admittedHumanId, admittedConversationId,
+                    admittedChannel, admittedExternalMessageReference, requestAdmissionReference, now);
         }
 
         WorkQueueItem queue = ensureQueue(objectiveId, admittedHumanId, admittedOrganizationContextId);
