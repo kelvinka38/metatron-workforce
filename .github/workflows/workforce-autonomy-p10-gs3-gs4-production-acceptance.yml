@@ -204,9 +204,12 @@ jobs:
           PY
 
           # ------------------------------------------------------------------
-          # GS3-B — hard Workforce JVM/container termination while a Work dispatch is active.
-          # The workflow injects only SIGKILL. Docker restart + Workforce durable reconciliation
-          # must recover the Objective; no resume/replan/state transition is called externally.
+          # GS3-B — hard Workforce JVM/container process termination while a Work dispatch is active.
+          # Inject SIGKILL into PID 1 from inside the container so Docker observes an unexpected
+          # process failure and its configured restart policy supervises recovery. A host-level
+          # `docker kill` is intentionally not used because it is a manual Docker lifecycle action.
+          # Workforce durable reconciliation must recover the Objective; no external resume/replan
+          # or Objective state transition is called.
           # ------------------------------------------------------------------
           GS3B_UPDATE=$((GS3A_UPDATE+1))
           GS3B_TARGET="p10-recovery://restart-window/${GITHUB_RUN_ID}-${GS3B_UPDATE}"
@@ -233,10 +236,16 @@ jobs:
 
           CID=$(current_cid); test -n "$CID"
           RESTARTS_BEFORE=$(docker inspect "$CID" --format '{{.RestartCount}}')
+          RESTART_POLICY=$(docker inspect "$CID" --format '{{.HostConfig.RestartPolicy.Name}}')
+          case "$RESTART_POLICY" in
+            always|unless-stopped|on-failure) ;;
+            *) echo "GS3B_NO_RESTART_POLICY=$RESTART_POLICY" >&2; exit 1 ;;
+          esac
           docker exec "$CID" cat /var/lib/metatron-workforce/management-state.json > "$EVIDENCE/gs3b-pre-management.json"
           docker exec "$CID" cat /var/lib/metatron-workforce/execution-attempts.json > "$EVIDENCE/gs3b-pre-execution-attempts.json"
           docker exec "$CID" sh -c 'find /var/lib/metatron-workforce/runtime-state -type f -maxdepth 2 -print -exec cat {} \; 2>/dev/null' > "$EVIDENCE/gs3b-pre-runtime-state.txt" || true
-          docker kill --signal KILL "$CID" > "$EVIDENCE/gs3b-kill.txt"
+          printf 'fault=SIGKILL_PID1\ncontainer=%s\nrestart_policy=%s\n' "$CID" "$RESTART_POLICY" > "$EVIDENCE/gs3b-kill.txt"
+          docker exec "$CID" sh -c 'kill -9 1' >/dev/null 2>&1 || true
 
           for i in $(seq 1 180); do
             CID=$(current_cid)
