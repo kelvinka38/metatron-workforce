@@ -18,7 +18,7 @@ import java.util.function.Supplier;
 /** Institutional execution bridge for read-only repository audits. */
 @Service
 public final class RepositoryAuditExecutionService {
-    static final String WORKER_ID = "WORKER-REPOSITORY-AUDITOR";
+    public static final String WORKER_ID = "WORKER-REPOSITORY-AUDITOR";
 
     private final WorkService work;
     private final WorkerRuntime runtime;
@@ -42,6 +42,15 @@ public final class RepositoryAuditExecutionService {
 
     public ExecutionReceipt execute(String actor, String authorityReference, String authorizationReference,
                                     String organizationContextId, String repository) {
+        return execute(actor, authorityReference, authorizationReference, organizationContextId, repository, null);
+    }
+
+    /**
+     * Execute using an Assignment reference already created by the canonical Workforce allocation
+     * boundary. Legacy callers may omit it and retain the historic locally generated reference.
+     */
+    public ExecutionReceipt execute(String actor, String authorityReference, String authorizationReference,
+                                    String organizationContextId, String repository, String governedAssignmentReference) {
         require(actor, "actor");
         require(authorityReference, "authorityReference");
         require(authorizationReference, "authorizationReference");
@@ -52,7 +61,9 @@ public final class RepositoryAuditExecutionService {
         String executionId = UUID.randomUUID().toString();
         String objectiveRef = "objective:repository-audit:" + executionId;
         String workId = "work:repository-audit:" + executionId;
-        String assignmentRef = "assignment:repository-audit:" + executionId;
+        String assignmentRef = governedAssignmentReference == null || governedAssignmentReference.isBlank()
+                ? "assignment:repository-audit:" + executionId
+                : governedAssignmentReference.trim();
         String objective = "Audit repository " + repository.trim();
 
         work.originate(workId, objectiveRef, organizationContextId.trim(), WORKER_ID, objective, startedAt);
