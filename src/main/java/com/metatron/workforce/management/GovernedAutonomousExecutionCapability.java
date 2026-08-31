@@ -9,6 +9,7 @@ import com.metatron.workforce.execution.ExecutionState;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -74,6 +75,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         String key = stableKey(request);
         String reservationId = "capacity-reservation:" + key;
         String assignmentId = "assignment:" + key;
+        String executionId = "execution:" + key;
         boolean assignmentCreated = false;
         try {
             core.reserveCapacity(reservationId, assignmentId, request.objectiveId(), worker.workerId(),
@@ -87,7 +89,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
             assignmentCreated = true;
 
             ExecutionState admitted = admission.admit(new ExecutionRequest(
-                    "execution:" + key,
+                    executionId,
                     new Assignment(coreAssignment.assignmentId(), coreAssignment.workerId()),
                     new Authorization(coreAssignment.authorizationRef(), coreAssignment.workerId()),
                     clock.instant()));
@@ -103,7 +105,17 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
             core.transitionAssignment(coreAssignment.assignmentId(),
                     result.success() ? WorkforceCoreService.AssignmentStatus.COMPLETED
                             : WorkforceCoreService.AssignmentStatus.CANCELLED);
-            return result;
+
+            List<String> evidence = new ArrayList<>(result.evidenceReferences());
+            evidence.add("allocation:worker=" + coreAssignment.workerId()
+                    + ":assignment=" + coreAssignment.assignmentId()
+                    + ":reservation=" + reservationId
+                    + ":capacity=" + delegate.requiredCapacity());
+            evidence.add("execution-admission:execution=" + executionId
+                    + ":authorization=" + coreAssignment.authorizationRef()
+                    + ":state=" + admitted);
+            return new CapabilityResult(result.success(), result.workerId(), result.assignmentReference(),
+                    result.workReference(), evidence, result.summary());
         } catch (RuntimeException failure) {
             if (assignmentCreated) {
                 cancelIfActive(assignmentId);
