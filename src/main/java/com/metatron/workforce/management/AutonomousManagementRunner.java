@@ -248,7 +248,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         try {
             AutonomousExecutionCapability.CapabilityResult result = capability.execute(
                     new AutonomousExecutionCapability.CapabilityRequest(
-                            work.humanId(), work.organizationContextId(), objectiveId, step));
+                            work.humanId(), work.organizationContextId(), objectiveId, step)
+                            .withDispatch(dispatch.dispatchId(), dispatch.attempt()));
             if (!result.success()) {
                 coordination.failDispatch(dispatch.dispatchId(), result.summary(), clock.instant());
                 return NodeExecutionOutcome.failed(step.stepId(), result.summary());
