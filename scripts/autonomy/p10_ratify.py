@@ -200,10 +200,10 @@ def self_test() -> int:
     assert result["verdict"] == "ACCEPTED_L10", result
     assert result["conditions_passed"] == 45
     broken = json.loads(json.dumps(good))
-    broken["conditions"][23]["status"] = "NOT_APPLICABLE"  # condition 24 may not be waived for L10
+    broken["conditions"][23]["status"] = "NOT_APPLICABLE"
     assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
     broken = json.loads(json.dumps(good))
-    broken["conditions"][33]["evidence_refs"] = []  # condition 34
+    broken["conditions"][33]["evidence_refs"] = []
     assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
     broken = json.loads(json.dumps(good))
     broken["deployed_sha"] = "b" * 40
