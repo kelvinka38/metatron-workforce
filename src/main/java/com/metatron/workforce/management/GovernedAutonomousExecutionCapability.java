@@ -64,7 +64,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         String authorityRef = requireReference(delegate.authorityReference(), "authority-reference-missing");
         String authorizationRef = requireReference(delegate.authorizationReference(), "authorization-reference-missing");
 
-        WorkforceCoreService.Worker worker = awaitEligibleWorker(request);
+        WorkforceCoreService.Worker worker = awaitEligibleWorker();
         WorkforceCoreService.Participation participation = core.participations(worker.workerId()).stream()
                 .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
                 .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
@@ -83,7 +83,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     participation.participationId(),
                     authorityRef,
                     authorizationRef,
-                    request.workSpec().description());
+                    request.workSpec().objective());
             assignmentCreated = true;
 
             ExecutionState admitted = admission.admit(new ExecutionRequest(
@@ -114,7 +114,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
     }
 
-    private WorkforceCoreService.Worker awaitEligibleWorker(CapabilityRequest request) {
+    private WorkforceCoreService.Worker awaitEligibleWorker() {
         long deadline = System.nanoTime() + capacityWait.toNanos();
         while (true) {
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
@@ -175,7 +175,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
 
     private String stableKey(CapabilityRequest request) {
         int fingerprint = Objects.hash(request.workSpec().requiredCapability(), request.workSpec().target(),
-                request.workSpec().consequence(), request.workSpec().description());
+                request.workSpec().consequence(), request.workSpec().objective());
         return request.idempotencyKey() + ":" + Integer.toUnsignedString(fingerprint, 16);
     }
 
