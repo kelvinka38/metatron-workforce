@@ -12,7 +12,7 @@ import java.util.stream.Collectors;
 
 /**
  * Workforce Management staffing orchestrator. It coordinates approved formation but writes all
- * institutional identity, participation, capability and capacity state through Workforce Core.
+ * institutional identity, participation, capability, qualification and capacity state through Workforce Core.
  */
 public final class AutonomousStaffingService {
     public enum GapReason {
@@ -53,6 +53,46 @@ public final class AutonomousStaffingService {
     }
 
     /**
+     * Authoritative eligibility projection used by both scheduling and execution allocation.
+     * When a capability has an approved formation policy, its qualification is mandatory and must
+     * still be valid at the decision instant. Capability, participation, qualification and finite
+     * remaining capacity therefore all affect real Worker eligibility.
+     */
+    public synchronized List<WorkforceCoreService.Worker> eligibleWorkers(
+            AutonomousExecutionCapability capability, Instant at) {
+        Objects.requireNonNull(capability, "capability");
+        Objects.requireNonNull(at, "at");
+        AutonomousStaffingPolicy policy = policies.get(capability.capabilityRef());
+        String requiredQualification = policy == null ? "" : policy.formationSpec().qualificationRef();
+        return core.eligibleWorkers(capability.capabilityRef(), capability.minimumCapabilityLevel(),
+                        capability.requiredCapacity(), at).stream()
+                .filter(w -> capability.supportsWorker(w.workerId()))
+                .filter(w -> requiredQualification.isBlank() || hasValidQualification(
+                        w.workerId(), requiredQualification, at))
+                .sorted(Comparator.comparingDouble((WorkforceCoreService.Worker w) -> core.remainingCapacity(w.workerId()))
+                        .reversed().thenComparing(WorkforceCoreService.Worker::workerId))
+                .toList();
+    }
+
+    /** True when institutional identity/capability/participation/qualification exist, ignoring current capacity. */
+    public synchronized boolean hasQualifiedParticipant(AutonomousExecutionCapability capability, Instant at) {
+        Objects.requireNonNull(capability, "capability");
+        Objects.requireNonNull(at, "at");
+        AutonomousStaffingPolicy policy = policies.get(capability.capabilityRef());
+        String requiredQualification = policy == null ? "" : policy.formationSpec().qualificationRef();
+        return core.allWorkers().stream()
+                .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
+                .filter(w -> capability.supportsWorker(w.workerId()))
+                .filter(w -> core.capabilities(w.workerId()).stream().anyMatch(c ->
+                        c.capabilityRef().equals(capability.capabilityRef())
+                                && c.level() >= capability.minimumCapabilityLevel()))
+                .filter(w -> core.participations(w.workerId()).stream()
+                        .anyMatch(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE))
+                .anyMatch(w -> requiredQualification.isBlank()
+                        || hasValidQualification(w.workerId(), requiredQualification, at));
+    }
+
+    /**
      * Resolve a real allocation gap. This method is synchronized because formation is an
      * institutional transition, not parallel runtime scaling.
      */
@@ -60,10 +100,7 @@ public final class AutonomousStaffingService {
         Objects.requireNonNull(capability, "capability");
         Objects.requireNonNull(at, "at");
 
-        var eligible = core.eligibleWorkers(capability.capabilityRef(), capability.minimumCapabilityLevel(),
-                        capability.requiredCapacity(), at).stream()
-                .filter(w -> capability.supportsWorker(w.workerId()))
-                .toList();
+        var eligible = eligibleWorkers(capability, at);
         if (!eligible.isEmpty()) {
             return new StaffingOutcome(GapReason.STAFFED, eligible.getFirst().workerId(),
                     List.of("staffing:reused-worker=" + eligible.getFirst().workerId()));
@@ -100,11 +137,7 @@ public final class AutonomousStaffingService {
         core.attestQualification(spec.workerId(), spec.qualificationRef(), spec.qualificationEvidenceRef(), null);
         core.setAvailability(spec.workerId(), true, spec.capacity());
 
-        var nowEligible = core.eligibleWorkers(capability.capabilityRef(), capability.minimumCapabilityLevel(),
-                        capability.requiredCapacity(), at).stream()
-                .filter(w -> capability.supportsWorker(w.workerId()))
-                .sorted(Comparator.comparing(WorkforceCoreService.Worker::workerId))
-                .toList();
+        var nowEligible = eligibleWorkers(capability, at);
         if (nowEligible.isEmpty()) {
             throw new StaffingGapException(GapReason.POLICY_IDENTITY_CONFLICT, capability.capabilityRef());
         }
@@ -120,6 +153,12 @@ public final class AutonomousStaffingService {
                 "runtime-profile:" + spec.runtimeProfileRef(),
                 "cost-limit:" + spec.costLimitRef(),
                 "lifecycle:" + spec.lifecycleRef()));
+    }
+
+    private boolean hasValidQualification(String workerId, String qualificationRef, Instant at) {
+        return core.qualifications(workerId).stream().anyMatch(q ->
+                q.qualificationRef().equals(qualificationRef)
+                        && (q.validUntil() == null || !at.isAfter(q.validUntil())));
     }
 
     private void validateExistingIdentity(AutonomousStaffingPolicy.FormationSpec spec, String capabilityRef) {
