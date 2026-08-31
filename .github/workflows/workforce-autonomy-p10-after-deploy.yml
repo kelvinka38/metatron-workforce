@@ -1,0 +1,37 @@
+name: Workforce Autonomy P10 After Deploy
+
+on:
+  workflow_run:
+    workflows: ["Production Deploy"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: workforce-autonomy-p10-after-deploy
+  cancel-in-progress: false
+
+jobs:
+  dispatch-strict-closure:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch strict closure against exact deployed SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TARGET_SHA"
+          curl --fail-with-body -sS \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/actions/workflows/workforce-autonomy-p10-closure-final.yml/dispatches" \
+            -d "{\"ref\":\"main\",\"inputs\":{\"target_sha\":\"${TARGET_SHA}\"}}"
+          echo "STRICT_P10_CLOSURE_DISPATCHED_FOR_SHA=$TARGET_SHA"
