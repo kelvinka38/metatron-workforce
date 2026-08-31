@@ -1,12 +1,14 @@
 package com.metatron.workforce.management;
 
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 
 import java.util.List;
 import java.util.Map;
+import java.time.Clock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -20,6 +22,14 @@ class HumanObjectiveIngressSpringWiringTest {
             context.registerBean(ManagementAutonomyService.class);
             context.registerBean("testAutonomousCapability", AutonomousExecutionCapability.class,
                     HumanObjectiveIngressSpringWiringTest::testCapability);
+            context.registerBean(ExecutionPlanProposalService.class,
+                    () -> (caseId, request, available) -> request.executionWorkPlan());
+            context.registerBean(AutonomousManagementRunner.class, () ->
+                    new AutonomousManagementRunner(
+                            context.getBean(ManagementAutonomyService.class),
+                            context.getBean(ExecutionPlanProposalService.class),
+                            List.of(context.getBean("testAutonomousCapability", AutonomousExecutionCapability.class)),
+                            Clock.systemUTC()));
             context.register(HumanObjectiveIngressService.class);
             context.refresh();
 

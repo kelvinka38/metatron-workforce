@@ -34,6 +34,15 @@ public record ManagementObjective(
     }
 
     public enum Status {
+        ACCEPTED,
+        PLANNING,
+        READY,
+        EXECUTING,
+        VERIFYING,
+        COMPLETED,
+        RECOVERING,
+        REPLANNING,
+        PAUSED,
         ACTIVE,
         BLOCKED,
         ESCALATED,
@@ -44,7 +53,8 @@ public record ManagementObjective(
     }
 
     public boolean terminal() {
-        return status == Status.DELIVERED
+        return status == Status.COMPLETED
+                || status == Status.DELIVERED
                 || status == Status.CANCELLED
                 || status == Status.SUPERSEDED
                 || status == Status.TRANSFERRED;

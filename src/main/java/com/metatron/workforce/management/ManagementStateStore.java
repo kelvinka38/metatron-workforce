@@ -11,14 +11,28 @@ public interface ManagementStateStore {
 
     record Snapshot(
             Map<String, ManagementObjective> objectives,
-            Map<String, List<ManagementAutonomyService.ManagementEvent>> events) {
+            Map<String, List<ManagementAutonomyService.ManagementEvent>> events,
+            Map<String, AutonomousObjectiveWork> objectiveWork,
+            Map<String, ManagementLease> leases,
+            List<ManagementOutboxMessage> outbox) {
         public Snapshot {
             objectives = Map.copyOf(objectives == null ? Map.of() : new LinkedHashMap<>(objectives));
             Map<String, List<ManagementAutonomyService.ManagementEvent>> copied = new LinkedHashMap<>();
             if (events != null) events.forEach((key, value) -> copied.put(key, List.copyOf(value)));
             events = Map.copyOf(copied);
+            objectiveWork = Map.copyOf(objectiveWork == null ? Map.of() : new LinkedHashMap<>(objectiveWork));
+            leases = Map.copyOf(leases == null ? Map.of() : new LinkedHashMap<>(leases));
+            outbox = List.copyOf(outbox == null ? List.of() : outbox);
         }
 
-        public static Snapshot empty() { return new Snapshot(Map.of(), Map.of()); }
+        /** Backward-compatible constructor for callers predating autonomy-closure state. */
+        public Snapshot(Map<String, ManagementObjective> objectives,
+                        Map<String, List<ManagementAutonomyService.ManagementEvent>> events) {
+            this(objectives, events, Map.of(), Map.of(), List.of());
+        }
+
+        public static Snapshot empty() {
+            return new Snapshot(Map.of(), Map.of(), Map.of(), Map.of(), List.of());
+        }
     }
 }

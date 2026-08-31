@@ -27,6 +27,11 @@ public interface AutonomousExecutionCapability {
             Objects.requireNonNull(objectiveId, "objectiveId");
             Objects.requireNonNull(workSpec, "workSpec");
         }
+
+        /** Stable effect key adapters must use to make at-least-once dispatch safe. */
+        public String idempotencyKey() {
+            return objectiveId + ":work-step:" + workSpec.stepId();
+        }
     }
 
     record CapabilityResult(
