@@ -1,0 +1,244 @@
+name: Workforce Autonomy P10 Production Acceptance
+
+on:
+  workflow_run:
+    workflows: ["Production Deploy"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed SHA to validate; defaults to dispatched ref SHA
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metatron-workforce-autonomy-p10-production-acceptance
+  cancel-in-progress: false
+
+jobs:
+  golden-slices-1-and-2:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - name: Run strict autonomous production slices
+        shell: bash
+        env:
+          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          EVIDENCE=/tmp/workforce-p10-${GITHUB_RUN_ID}
+          mkdir -p "$EVIDENCE"
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          printf 'target_sha=%s\ndeployed_sha=%s\ncontainer=%s\n' "$TARGET_SHA" "$DEPLOYED_SHA" "$CID" > "$EVIDENCE/deployment.txt"
+
+          submit_objective() {
+            local label="$1"
+            local text="$2"
+            local update_id="$3"
+            local body="$EVIDENCE/${label}-request.json"
+            local response="$EVIDENCE/${label}-response.json"
+            local duplicate_response="$EVIDENCE/${label}-duplicate-response.json"
+            python3 - "$TELEGRAM_ALLOWED_USER_ID" "$update_id" "$text" > "$body" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update=int(sys.argv[2]); text=sys.argv[3]
+          print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
+          PY
+            local start_ns end_ns status elapsed_ms
+            start_ns=$(date +%s%N)
+            status=$(curl -sS -o "$response" -w '%{http_code}' --proto '=https' --tlsv1.2 --max-time 20 \
+              -X POST https://gate.metatron.vn/telegram/webhook \
+              -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+              -H 'Content-Type: application/json' --data-binary "@$body")
+            end_ns=$(date +%s%N)
+            elapsed_ms=$(( (end_ns-start_ns)/1000000 ))
+            echo "${label}_ACK_HTTP=$status"
+            echo "${label}_ACK_MILLIS=$elapsed_ms"
+            test "$status" = 200
+            # Acceptance must detach quickly; execution is not allowed to hold the interaction open.
+            test "$elapsed_ms" -lt 5000
+
+            # Replay the exact provider event. This is a duplicate-delivery probe, not a second Objective.
+            status=$(curl -sS -o "$duplicate_response" -w '%{http_code}' --proto '=https' --tlsv1.2 --max-time 20 \
+              -X POST https://gate.metatron.vn/telegram/webhook \
+              -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+              -H 'Content-Type: application/json' --data-binary "@$body")
+            test "$status" = 200
+            printf 'update_id=%s\nack_millis=%s\nduplicate_http=%s\n' "$update_id" "$elapsed_ms" "$status" > "$EVIDENCE/${label}-ingress.txt"
+          }
+
+          locate_objective() {
+            local label="$1" update_id="$2"
+            local out="$EVIDENCE/${label}-objectives.json"
+            for i in $(seq 1 150); do
+              curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives > "$out" || true
+              if python3 - "$out" "$update_id" > "$EVIDENCE/${label}-objective-id.txt" <<'PY'
+          import json,sys
+          path,update=sys.argv[1],sys.argv[2]
+          try: data=json.load(open(path))
+          except Exception: raise SystemExit(1)
+          needle=f"telegram:update:{update}"
+          found=[]
+          for item in data if isinstance(data,list) else []:
+              if needle in json.dumps(item,sort_keys=True):
+                  objective=item.get('objective',{}) if isinstance(item,dict) else {}
+                  oid=objective.get('objectiveId') or objective.get('objective_id')
+                  if oid: found.append(oid)
+          found=list(dict.fromkeys(found))
+          if len(found)!=1: raise SystemExit(1)
+          print(found[0])
+          PY
+              then return 0; fi
+              sleep 2
+            done
+            echo "OBJECTIVE_NOT_FOUND label=$label update=$update_id" >&2
+            return 1
+          }
+
+          wait_terminal() {
+            local label="$1" oid="$2"
+            local view="$EVIDENCE/${label}-terminal-view.json"
+            for i in $(seq 1 450); do
+              curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${oid}" > "$view" || true
+              state=$(python3 - "$view" <<'PY'
+          import json,sys
+          try: d=json.load(open(sys.argv[1])); print((d.get('objective') or {}).get('status',''))
+          except Exception: print('')
+          PY
+              )
+              case "$state" in
+                COMPLETED|DELIVERED) echo "${label}_TERMINAL_STATUS=$state"; return 0 ;;
+                BLOCKED|ESCALATED|CANCELLED) echo "${label}_BAD_TERMINAL_STATUS=$state" >&2; return 2 ;;
+              esac
+              sleep 2
+            done
+            echo "${label}_TERMINAL_TIMEOUT" >&2
+            return 1
+          }
+
+          snapshot_state() {
+            local label="$1"
+            docker exec "$CID" sh -c 'for f in /var/lib/metatron-workforce/*.json; do [ -f "$f" ] && { echo "===== $f ====="; cat "$f"; echo; }; done' > "$EVIDENCE/${label}-durable-state.txt"
+            docker exec "$CID" sh -c 'find /var/lib/metatron-workforce/runtime-evidence -type f -maxdepth 2 -print 2>/dev/null | sort' > "$EVIDENCE/${label}-runtime-files.txt" || true
+          }
+
+          assert_gs1() {
+            local oid="$1"
+            snapshot_state gs1
+            OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+          import json,os,re,sys
+          oid=os.environ['OID']; root=os.environ['EVIDENCE']
+          view=json.load(open(root+'/gs1-terminal-view.json'))
+          o=view.get('objective') or {}; work=view.get('autonomousWork') or {}; hist=view.get('history') or []
+          assert o.get('objectiveId')==oid, (o.get('objectiveId'),oid)
+          assert o.get('status') in ('COMPLETED','DELIVERED'), o.get('status')
+          assert o.get('ownerWorkerId'), 'missing_owner'
+          blob=json.dumps(view,sort_keys=True)
+          for repo in ['kelvinka38/universal','kelvinka38/metatron-institution','kelvinka38/metatron-workforce','kelvinka38/bios']:
+              assert repo in blob, f'missing_planned_repository:{repo}'
+          assert 'repository.audit.read' in blob, 'missing_repository_audit_capability'
+          assert len(hist)>=4, 'management_history_too_small'
+          print('GS1_OBJECTIVE_TERMINAL=PASS')
+          print('GS1_FOUR_REPOSITORIES_PLANNED=PASS')
+          print('GS1_AUTONOMOUS_CAPABILITY_BINDING=PASS')
+          PY
+            # Runtime evidence must independently show all four repository effects.
+            for repo in kelvinka38/universal kelvinka38/metatron-institution kelvinka38/metatron-workforce kelvinka38/bios; do
+              docker exec "$CID" sh -c "grep -R -l -F 'repository=$repo' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | head -1" | grep -q .
+            done
+            # Observation state must contain this Objective and a PASS criterion result.
+            docker exec "$CID" sh -c "grep -F '$oid' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
+            echo 'GS1_RUNTIME_EFFECT_EVIDENCE=PASS'
+            echo 'GS1_INDEPENDENT_OBSERVATION_PRESENT=PASS'
+          }
+
+          assert_gs2() {
+            local oid="$1"
+            snapshot_state gs2
+            OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+          import json,os
+          oid=os.environ['OID']; root=os.environ['EVIDENCE']
+          view=json.load(open(root+'/gs2-terminal-view.json'))
+          o=view.get('objective') or {}; blob=json.dumps(view,sort_keys=True)
+          assert o.get('objectiveId')==oid
+          assert o.get('status') in ('COMPLETED','DELIVERED'), o.get('status')
+          assert 'repository.pr.propose' in blob, 'planner_did_not_select_pr_capability'
+          print('GS2_OBJECTIVE_TERMINAL=PASS')
+          print('GS2_MUTATION_CAPABILITY_BINDING=PASS')
+          PY
+            PR_URL=$(docker exec "$CID" sh -c "grep -Rho 'github-pr:https://github.com/kelvinka38/metatron-workforce/pull/[0-9]*' /var/lib/metatron-workforce 2>/dev/null | tail -1 | sed 's/^github-pr://'" || true)
+            test -n "$PR_URL"
+            PR_NUMBER=${PR_URL##*/}
+            curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/kelvinka38/metatron-workforce/pulls/$PR_NUMBER" > "$EVIDENCE/gs2-pr.json"
+            curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/kelvinka38/metatron-workforce/pulls/$PR_NUMBER/files?per_page=100" > "$EVIDENCE/gs2-pr-files.json"
+            python3 - "$EVIDENCE/gs2-pr.json" "$EVIDENCE/gs2-pr-files.json" <<'PY'
+          import json,sys
+          pr=json.load(open(sys.argv[1])); files=json.load(open(sys.argv[2]))
+          assert pr.get('state')=='open', pr.get('state')
+          assert pr.get('merged') is False and pr.get('merged_at') is None, 'PR_MUST_REMAIN_UNMERGED'
+          assert (pr.get('base') or {}).get('ref')=='main'
+          assert ((pr.get('head') or {}).get('ref') or '').startswith('autonomy/gs2-')
+          assert [f.get('filename') for f in files]==['docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md'], files
+          print('GS2_PR_OPEN=PASS')
+          print('GS2_PR_UNMERGED_FOUNDER_BOUNDARY=PASS')
+          print('GS2_CHANGE_SCOPE=PASS')
+          PY
+            docker exec "$CID" sh -c "grep -F '$oid' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
+            echo "GS2_PR_URL=$PR_URL"
+            echo 'GS2_INDEPENDENT_OBSERVATION_PRESENT=PASS'
+          }
+
+          # Golden Slice 1 — one Objective, four independent read-only repository audits.
+          GS1_UPDATE=$(date +%s%N | cut -c1-18)
+          GS1_TEXT='Take ownership of one Objective: perform a governed read-only institutional audit of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios. Independently plan the work, audit all four repositories in parallel where dependencies allow, join the results, analyze contradictions, verify every acceptance criterion through Observation, and deliver one evidence-backed completion. Do not mutate anything.'
+          submit_objective gs1 "$GS1_TEXT" "$GS1_UPDATE"
+          locate_objective gs1 "$GS1_UPDATE"
+          GS1_OID=$(cat "$EVIDENCE/gs1-objective-id.txt")
+          echo "GS1_OBJECTIVE_ID=$GS1_OID"
+          wait_terminal gs1 "$GS1_OID"
+          assert_gs1 "$GS1_OID"
+
+          # Golden Slice 2 — governed defect repair and PR creation; merge is forbidden.
+          GS2_UPDATE=$((GS1_UPDATE+1))
+          GS2_TEXT='Take ownership of one governed mutation Objective in kelvinka38/metatron-workforce: repair the stale Workforce Autonomy Closure implementation baseline in docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md, verify the change, and open a pull request for Founder approval. Do not merge it.'
+          submit_objective gs2 "$GS2_TEXT" "$GS2_UPDATE"
+          locate_objective gs2 "$GS2_UPDATE"
+          GS2_OID=$(cat "$EVIDENCE/gs2-objective-id.txt")
+          echo "GS2_OBJECTIVE_ID=$GS2_OID"
+          wait_terminal gs2 "$GS2_OID"
+          assert_gs2 "$GS2_OID"
+
+          # Copy final logs and durable state without mutating institutional state.
+          docker logs --since 45m "$CID" > "$EVIDENCE/workforce.log" 2>&1 || true
+          tar -C "$EVIDENCE" -czf "/tmp/workforce-p10-${GITHUB_RUN_ID}.tgz" .
+          echo 'P10_GOLDEN_SLICE_1=PASS'
+          echo 'P10_GOLDEN_SLICE_2=PASS'
+          echo 'P10_GS2_FOUNDER_MERGE_BOUNDARY=PRESERVED'
+          echo 'P10_L10_VERDICT=NOT_YET_CLAIMED_GS3_GS4_AND_45_GATE_REMAIN'
+
+      - name: Upload P10 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workforce-p10-production-evidence-${{ github.run_id }}
+          path: |
+            /tmp/workforce-p10-${{ github.run_id }}/
+            /tmp/workforce-p10-${{ github.run_id }}.tgz
+          if-no-files-found: warn
+          retention-days: 90
