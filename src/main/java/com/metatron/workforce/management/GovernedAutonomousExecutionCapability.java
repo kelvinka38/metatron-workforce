@@ -134,7 +134,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("staffing-gap:no-active-participation:" + worker.workerId()));
 
-        String key = stableKey(request);
+        String key = allocationKey(request);
         String reservationId = "capacity-reservation:" + key;
         String assignmentId = "assignment:" + key;
         String executionId = "execution:" + key;
@@ -344,6 +344,13 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         core.allCapacityReservations().stream().filter(r -> r.reservationId().equals(reservationId)).findFirst()
                 .filter(r -> r.status() == WorkforceCoreService.ReservationStatus.ACTIVE)
                 .ifPresent(r -> core.releaseCapacity(reservationId));
+    }
+
+    private String allocationKey(CapabilityRequest request) {
+        String key = stableKey(request);
+        if (!request.dispatchBound()) return key;
+        int dispatchFingerprint = Objects.hash(request.dispatchReference(), request.dispatchAttempt());
+        return key + ":dispatch=" + Integer.toUnsignedString(dispatchFingerprint, 16);
     }
 
     private String stableKey(CapabilityRequest request) {
