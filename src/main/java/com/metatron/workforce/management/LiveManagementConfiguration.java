@@ -39,18 +39,25 @@ public class LiveManagementConfiguration {
         return new AutonomyCoordinationService(store);
     }
 
+    @Bean
+    AutonomousStaffingService autonomousStaffingService(WorkforceCoreService core,
+                                                         List<AutonomousStaffingPolicy> policies) {
+        return new AutonomousStaffingService(core, policies);
+    }
+
     @Bean(destroyMethod = "close")
     AutonomousManagementRunner autonomousManagementRunner(
             ManagementAutonomyService management,
             ExecutionPlanProposalService planner,
             List<AutonomousExecutionCapability> capabilities,
             AutonomyCoordinationService coordination,
-            WorkforceCoreService core) {
+            WorkforceCoreService core,
+            AutonomousStaffingService staffing) {
         Clock clock = Clock.systemUTC();
         ExecutionAdmissionService admission = new ExecutionAdmissionService();
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
                 .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
-                        capability, core, admission, clock))
+                        capability, core, admission, clock, staffing))
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
                 management, planner, governedCapabilities, coordination, clock);
