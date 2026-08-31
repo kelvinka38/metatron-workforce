@@ -78,6 +78,25 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
+    AutonomySchedulingStateStore autonomySchedulingStateStore() {
+        String configured = System.getenv().getOrDefault(
+                "METATRON_AUTONOMY_SCHEDULING_STATE_PATH",
+                "/var/lib/metatron-workforce/autonomy-scheduling-state.json");
+        return new FileAutonomySchedulingStateStore(Path.of(configured));
+    }
+
+    @Bean
+    AutonomySchedulingService autonomySchedulingService(WorkforceCoreService core,
+                                                         AutonomySafetyService safety,
+                                                         AutonomySchedulingStateStore store) {
+        int parallelism = positiveInt("METATRON_AUTONOMY_MAX_PARALLELISM", 4);
+        if (parallelism > 4) {
+            throw new IllegalStateException("METATRON_AUTONOMY_MAX_PARALLELISM must be between 1 and 4 for this runner");
+        }
+        return new AutonomySchedulingService(core, safety, store, parallelism);
+    }
+
+    @Bean
     ObservationStateStore observationStateStore() {
         String configured = System.getenv().getOrDefault(
                 "METATRON_OBSERVATION_STATE_PATH",
@@ -154,6 +173,7 @@ public class LiveManagementConfiguration {
             AutonomyCoordinationService coordination,
             ObservationClosureService observationClosure,
             AutonomySafetyService safety,
+            AutonomySchedulingService scheduling,
             WorkforceCoreService core,
             AutonomousStaffingService staffing,
             ExecutionAdmissionService admission,
@@ -168,6 +188,7 @@ public class LiveManagementConfiguration {
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
                 management, planner, governedCapabilities, coordination, observationClosure, safety, clock);
+        runner.configureScheduling(scheduling);
         runner.start();
         return runner;
     }

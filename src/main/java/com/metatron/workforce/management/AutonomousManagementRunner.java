@@ -9,9 +9,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -48,6 +50,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final ExecutorService workExecutor;
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
+    private volatile AutonomySchedulingService scheduling;
 
     public AutonomousManagementRunner(ManagementAutonomyService management,
                                       ExecutionPlanProposalService planner,
@@ -159,6 +162,13 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         });
     }
 
+    /** Configure the production scheduler before start; compatibility tests may omit it. */
+    public AutonomousManagementRunner configureScheduling(AutonomySchedulingService scheduling) {
+        if (started.get()) throw new IllegalStateException("scheduling must be configured before runner start");
+        this.scheduling = Objects.requireNonNull(scheduling, "scheduling");
+        return this;
+    }
+
     public void start() {
         if (started.compareAndSet(false, true)) {
             executor.scheduleWithFixedDelay(this::runSafely, 0,
@@ -233,8 +243,33 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 return;
             }
 
+            String schedulingDecisionId = "";
+            AutonomySchedulingService activeScheduling = scheduling;
+            if (activeScheduling != null) {
+                AutonomySchedulingDecision decision = activeScheduling.decide(
+                        objectiveId, graph.graphVersion(), ready, capabilities, clock.instant());
+                schedulingDecisionId = decision.decisionId();
+                Set<String> selected = new LinkedHashSet<>(decision.selectedStepIds());
+                ready = ready.stream().filter(node -> selected.contains(node.spec().stepId())).toList();
+                if (ready.isEmpty()) {
+                    String reasons = decision.deferredReasons().entrySet().stream()
+                            .sorted(Map.Entry.comparingByKey())
+                            .map(entry -> entry.getKey() + "=" + entry.getValue())
+                            .reduce((left, right) -> left + "," + right).orElse("no-admissible-work");
+                    boolean temporaryCapacityOnly = !decision.deferredReasons().isEmpty()
+                            && decision.deferredReasons().values().stream()
+                            .allMatch("finite-capacity-unavailable"::equals);
+                    if (!temporaryCapacityOnly) {
+                        management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
+                                "scheduler-admission-blocked:" + reasons, clock.instant());
+                    }
+                    return;
+                }
+            }
+
             List<Future<NodeExecutionOutcome>> futures = new ArrayList<>();
             int graphVersion = graph.graphVersion();
+            String schedulerRef = schedulingDecisionId;
             for (DurableWorkGraph.Node node : ready) {
                 AutonomousExecutionCapability capability = capabilities.get(node.spec().requiredCapability());
                 if (capability == null) {
@@ -244,7 +279,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     AutonomousObjectiveWork dispatchContext = work;
                     int plannedAttempt = node.attempt() + 1;
                     futures.add(workExecutor.submit(() -> executeNode(
-                            objectiveId, graphVersion, plannedAttempt, dispatchContext, node.spec(), capability)));
+                            objectiveId, graphVersion, plannedAttempt, dispatchContext, node.spec(), capability,
+                            schedulerRef)));
                 }
             }
 
@@ -312,7 +348,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     private NodeExecutionOutcome executeNode(String objectiveId, int graphVersion, int plannedAttempt,
                                              AutonomousObjectiveWork work, ExecutionWorkSpec step,
-                                             AutonomousExecutionCapability capability) {
+                                             AutonomousExecutionCapability capability, String schedulerDecisionId) {
         String expectedDispatchId = objectiveId + ":graph:" + graphVersion + ":step:"
                 + step.stepId() + ":attempt:" + plannedAttempt;
         try {
@@ -345,6 +381,9 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     + ":worker=" + result.workerId()
                     + ":dispatch=" + dispatch.dispatchId()
                     + ":idempotency=" + dispatch.idempotencyKey());
+            if (schedulerDecisionId != null && !schedulerDecisionId.isBlank()) {
+                evidence.add("scheduler-decision:" + schedulerDecisionId);
+            }
             coordination.completeDispatch(dispatch.dispatchId(), evidence, clock.instant());
             return NodeExecutionOutcome.succeeded(step.stepId(), result.assignmentReference(), evidence);
         } catch (RuntimeException failure) {
