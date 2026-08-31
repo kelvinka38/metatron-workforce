@@ -3,6 +3,7 @@ package com.metatron.workforce.management;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -40,6 +41,8 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
     private final String apiBase;
     private final String token;
 
+    /** Explicitly mark the production constructor because the package-private test constructor is intentional. */
+    @Autowired
     public RepositoryPullRequestAutonomousCapability(ObjectMapper json) {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build(), json,
                 "https://api.github.com", env("GITHUB_TOKEN"));
