@@ -41,6 +41,38 @@ final class ExecutionWorkPlannerTest {
         assertEquals(1, plan.size());
         assertEquals("repository.audit.read", plan.getFirst().requiredCapability());
         assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, plan.getFirst().consequence());
+        assertEquals(List.of("repository audit is complete and evidence-backed"), plan.getFirst().acceptanceCriteria());
+        assertEquals(List.of("repository contents and cited audit evidence"), plan.getFirst().evidenceRequirements());
+        assertTrue(plan.getFirst().verifiable());
+    }
+
+    @Test
+    void plannerRejectsExecutionPlanWithoutCriterionLevelVerificationRequirements() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
+                        {"execution_work_plan":[{
+                          "step_id":"audit-repo",
+                          "objective":"audit repository",
+                          "target":"kelvinka38/bios",
+                          "required_capability":"repository.audit.read",
+                          "depends_on":[],
+                          "consequence":"READ_ONLY"
+                        }]}
+                        """, "planner-ref");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> planner.plan("case-123", normalizedExecution(null), List.of("repository.audit.read")));
+
+        assertTrue(failure.getMessage().contains("all execution planning providers failed"));
+        assertTrue(List.of(failure.getSuppressed()).stream()
+                .anyMatch(suppressed -> suppressed.getMessage().contains("criterion-level verification requirements")));
     }
 
     @Test
@@ -130,7 +162,9 @@ final class ExecutionWorkPlannerTest {
                   "target":"kelvinka38/bios",
                   "required_capability":"repository.audit.read",
                   "depends_on":[],
-                  "consequence":"READ_ONLY"
+                  "consequence":"READ_ONLY",
+                  "acceptance_criteria":["repository audit is complete and evidence-backed"],
+                  "evidence_requirements":["repository contents and cited audit evidence"]
                 }]}
                 """, "planner-ref");
     }
