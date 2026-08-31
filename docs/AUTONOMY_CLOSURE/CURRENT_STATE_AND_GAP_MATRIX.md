@@ -1,7 +1,7 @@
 # WORKFORCE AUTONOMY CLOSURE — CURRENT STATE AND GAP MATRIX
 
 **Status:** AUDITED IMPLEMENTATION BASELINE  
-**Baseline:** `metatron-workforce/main` at or after `954b5647c114a8321e8beffc122c82784ac065dd`  
+**Baseline:** `metatron-workforce/main` at `7a680b41286214837ad86d5a9c59dbbc3f207b29` (P1–P9/L9 implementation deployed; P10 acceptance pending)  
 **Production evidence baseline:** bounded slices through `9020efe23f4aebca5205917668261f1bdf642373`  
 **General autonomy verdict:** PARTIAL / NOT YET ACCEPTED
 
@@ -12,35 +12,33 @@ This matrix distinguishes implemented primitives, bounded acceptance and missing
 | Area | Current evidence | Autonomy-closure status |
 |---|---|---|
 | Participant/Worker/Participation | Persistent Core APIs and live lifecycle tests | Implemented substrate |
-| Capability/Qualification/Availability/Assignment | Persistent Core state and APIs | Implemented substrate; allocation loop incomplete |
-| Objective state | `ManagementAutonomyService` plus durable store boundary | Persistent primitive; general acceptance path incomplete |
-| Conversational acceptance | `HumanObjectiveIngressService.submit()` is synchronous | Does not meet accept-persist-detach contract |
-| Accountable ownership | Owner references and bounded tests exist | Needs transactional acceptance and fencing proof |
-| Management Runner | Caller/test drives transitions | Missing persistent self-driving runner |
-| Work Graph | Execution specs can express steps/dependencies | Missing durable versioned DAG and general ready-set scheduler |
-| Parallel scheduling | Test executors and async primitives exist | No production Workforce scheduler/fan-out/join proof |
+| Capability/Qualification/Availability/Assignment | Persistent Core state, governed allocation and admission evidence | Implemented through governed allocation; P10 production proof pending |
+| Objective state | Durable acceptance, owner and outbox path plus persistent Management state | Implemented; P10 production proof pending |
+| Conversational acceptance | Durable accept-persist-detach ingress with fast Objective acknowledgement | Implemented; real-provider P10 proof pending |
+| Accountable ownership | Transactional owner persistence plus Runner lease/fencing | Implemented; adversarial P10 proof pending |
+| Management Runner | Persistent autonomous runner with wake/reconcile, lease and fencing | Implemented; adversarial P10 proof pending |
+| Work Graph | Durable versioned DAG, ready-set scheduler, joins and stale-version fencing | Implemented; elastic P10 proof pending |
+| Parallel scheduling | Ready-set scheduler with bounded concurrent dispatch and join semantics | Implemented; Golden Slice 4 proof pending |
 | Durable queue | Some domain state is durable | Interaction/Workplace queues include in-memory implementations; closure missing |
-| Staffing | `StaffingService` represents requests/proposals/resolution/escalation | No autonomous source/admit/form/allocate loop |
-| AI Worker formation | Core admission primitives exist | No governed dynamic formation path proved |
+| Staffing | Governed autonomous staffing/formation policy integrated with allocation | Implemented for bounded capabilities; P10 staffing proof pending |
+| AI Worker formation | Governed Participant/Worker/Participation formation with capability, qualification and availability | Implemented for bounded capability formation; production scope remains evidence-bound |
 | Execution capability | Repository audit is a real bounded capability | General capability execution incomplete |
-| Remote runtime | `RemoteRuntimeExecutor.executeAsync()` exists | Primitive not wired into Objective scheduler path |
-| Runtime recovery | Identity/state recovery tests exist | No unfinished Objective/Work lease recovery proof |
-| Authorization | Separation and fail-closed tests exist | Must be integrated into durable dispatch and revocation fencing |
-| Observation closure | Capability-produced evidence can close bounded work | No independent general Observation criterion loop |
+| Remote runtime | Execution attempts/runtime capacity bound into autonomous dispatch path | Implemented; failure-injection P10 proof pending |
+| Runtime recovery | Durable execution attempts, runtime recovery and stale-attempt fencing | Implemented; Golden Slice 3 proof pending |
+| Authorization | Fail-closed admission, durable dispatch binding and authority revocation fencing | Implemented; P10 production proof pending |
+| Observation closure | Durable criterion-level Observation boundary and completion gate | Implemented machinery; live authoritative verifiers and P10 evidence required |
 | Intelligence | Provider-neutral reasoning, memory, research and modes exist | Current conversation path reasons before Workforce ownership; boundary must invert |
 | Telegram | Production one-message repository-audit slice passes | In-memory 4-thread/64-item executor is not durable autonomy |
 | ChatGPT | This repository has no live ChatGPT-to-Workforce adapter proof | Not integrated |
-| Workplace/Meeting Room | Canonical product/design and implementation primitives exist | Full persistence and operational Objective integration incomplete |
+| Workplace/Meeting Room | Durable cross-channel Objective continuity, progress and delivery records | Integrated for Autonomy Closure scope; P10 cross-channel proof pending |
 | BIOS | BIOS service is deployed; Workforce has local BIOS kernel/contract | Live BIOS service not proved in the Objective path |
 | Knowledge/Learning | Learning/admission primitives exist | No general verified closure-to-Knowledge loop proved |
-| Economy | Budget/cost concepts and tests exist | No L9 production enforcement/observability proof |
+| Economy | Durable per-Objective cost, attempts, deadline and risk safety ledger | L9 controls implemented/deployed; formal P10 evidence pending |
 | Production acceptance | Deployment, live APIs and bounded vertical slices pass | L10 gate has not passed |
 
 ## Root causes of slow/timeout interaction
 
-The current conversational path couples interaction lifetime to Intelligence and execution work. Telegram acknowledges the webhook through a bounded in-memory executor, but processing is still tied to process-local capacity. Objective submission is synchronized and execution steps are iterated sequentially. This architecture explains why a large task can remain slow or time out instead of becoming an independently managed Objective.
-
-Production telemetry must quantify each latency contributor; the structural coupling itself is already established.
+The prior synchronous/process-local interaction coupling has been superseded by durable accept-persist-detach ingress and a persistent Management Runner. Remaining closure risk is no longer the existence of these primitives; it is production proof that a material Objective traverses them end-to-end without external orchestration. P10 Golden Slices and the 45-condition gate remain authoritative.
 
 ## Existing evidence retained
 
