@@ -41,8 +41,13 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Actor") String actor,
             @RequestHeader("X-Metatron-Authority") String authorityReference) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
-        var state = safety.pause(objectiveId, authorityReference, Instant.now());
-        blockIfActive(objectiveId, "control-paused:actor=" + actor + ":authority=" + authorityReference);
+        Instant now = Instant.now();
+        var state = safety.pause(objectiveId, authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (!objective.terminal() && objective.status() != ManagementObjective.Status.PAUSED) {
+            management.pauseObjective(objectiveId, objective.ownerWorkerId(),
+                    "control-paused:actor=" + actor + ":authority=" + authorityReference, now);
+        }
         return new ControlView(management.get(objectiveId), state);
     }
 
@@ -51,8 +56,15 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Actor") String actor,
             @RequestHeader("X-Metatron-Authority") String authorityReference) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
-        var state = safety.resume(objectiveId, authorityReference, Instant.now());
-        recoverIfBlocked(objectiveId, "control-resume:actor=" + actor + ":authority=" + authorityReference);
+        Instant now = Instant.now();
+        var state = safety.resume(objectiveId, authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (objective.status() == ManagementObjective.Status.PAUSED
+                || objective.status() == ManagementObjective.Status.BLOCKED
+                || objective.status() == ManagementObjective.Status.ESCALATED) {
+            management.resumeObjective(objectiveId, objective.ownerWorkerId(),
+                    "control-resume:actor=" + actor + ":authority=" + authorityReference, now);
+        }
         runner.wake();
         return new ControlView(management.get(objectiveId), state);
     }
@@ -62,8 +74,13 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Actor") String actor,
             @RequestHeader("X-Metatron-Authority") String authorityReference) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
-        var state = safety.cancel(objectiveId, authorityReference, Instant.now());
-        blockIfActive(objectiveId, "control-cancelled:actor=" + actor + ":authority=" + authorityReference);
+        Instant now = Instant.now();
+        var state = safety.cancel(objectiveId, authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (!objective.terminal()) {
+            management.cancelObjective(objectiveId, objective.ownerWorkerId(),
+                    "control-cancelled:actor=" + actor + ":authority=" + authorityReference, now);
+        }
         return new ControlView(management.get(objectiveId), state);
     }
 
@@ -72,8 +89,13 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Actor") String actor,
             @RequestHeader("X-Metatron-Authority") String authorityReference) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
-        var state = safety.revokeAuthority(objectiveId, authorityReference, Instant.now());
-        blockIfActive(objectiveId, "authority-revoked:actor=" + actor + ":authority=" + authorityReference);
+        Instant now = Instant.now();
+        var state = safety.revokeAuthority(objectiveId, authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (!objective.terminal() && objective.status() != ManagementObjective.Status.BLOCKED) {
+            management.markBlocked(objectiveId, objective.ownerWorkerId(),
+                    "authority-revoked:actor=" + actor + ":authority=" + authorityReference, now);
+        }
         return new ControlView(management.get(objectiveId), state);
     }
 
@@ -82,8 +104,14 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Actor") String actor,
             @RequestHeader("X-Metatron-Authority") String authorityReference) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
-        var state = safety.restoreAuthority(objectiveId, authorityReference, Instant.now());
-        recoverIfBlocked(objectiveId, "authority-restored:actor=" + actor + ":authority=" + authorityReference);
+        Instant now = Instant.now();
+        var state = safety.restoreAuthority(objectiveId, authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (objective.status() == ManagementObjective.Status.BLOCKED
+                || objective.status() == ManagementObjective.Status.ESCALATED) {
+            management.resumeObjective(objectiveId, objective.ownerWorkerId(),
+                    "authority-restored:actor=" + actor + ":authority=" + authorityReference, now);
+        }
         runner.wake();
         return new ControlView(management.get(objectiveId), state);
     }
@@ -94,9 +122,16 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Authority") String authorityReference,
             @RequestBody AmendmentCommand command) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
-        var state = safety.amend(objectiveId, command.amendmentReference(), command.detail(),
-                authorityReference, Instant.now());
-        blockIfActive(objectiveId, "amendment-replan-required:" + command.amendmentReference());
+        Instant now = Instant.now();
+        safety.amend(objectiveId, command.amendmentReference(),
+                "actor=" + actor + ";" + command.detail(), authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (!objective.terminal()) {
+            management.requestReplan(objectiveId, objective.ownerWorkerId(),
+                    "amendment=" + command.amendmentReference() + ";detail=" + command.detail(), now);
+        }
+        var state = safety.resume(objectiveId, authorityReference, now);
+        runner.wake();
         return new ControlView(management.get(objectiveId), state);
     }
 
@@ -106,26 +141,20 @@ public final class AutonomyControlController {
             @RequestHeader("X-Metatron-Authority") String authorityReference,
             @RequestBody ResourceEnvelopeCommand command) {
         requireControlActor(objectiveId, actor); requireAuthority(authorityReference);
+        Instant now = Instant.now();
         var state = safety.configureEnvelope(objectiveId, command.maxCostUnits(),
                 command.maxDispatchAttempts(), command.deadline(), command.maxRisk(),
-                authorityReference, Instant.now());
+                authorityReference, now);
+        ManagementObjective objective = management.get(objectiveId);
+        if (objective.status() == ManagementObjective.Status.BLOCKED) {
+            AutonomousObjectiveWork work = management.findAutonomousWork(objectiveId).orElse(null);
+            if (work != null && work.blocker().contains("autonomy-safety-gate:")) {
+                management.resumeObjective(objectiveId, objective.ownerWorkerId(),
+                        "resource-envelope-updated:actor=" + actor + ":authority=" + authorityReference, now);
+                runner.wake();
+            }
+        }
         return new ControlView(management.get(objectiveId), state);
-    }
-
-    private void blockIfActive(String objectiveId, String reason) {
-        ManagementObjective objective = management.get(objectiveId);
-        if (!objective.terminal() && objective.status() != ManagementObjective.Status.BLOCKED
-                && objective.status() != ManagementObjective.Status.ESCALATED) {
-            management.markBlocked(objectiveId, objective.ownerWorkerId(), reason, Instant.now());
-        }
-    }
-
-    private void recoverIfBlocked(String objectiveId, String reason) {
-        ManagementObjective objective = management.get(objectiveId);
-        if (objective.status() == ManagementObjective.Status.BLOCKED
-                || objective.status() == ManagementObjective.Status.ESCALATED) {
-            management.recoverLocally(objectiveId, objective.ownerWorkerId(), reason, Instant.now());
-        }
     }
 
     private void requireControlActor(String objectiveId, String actor) {
