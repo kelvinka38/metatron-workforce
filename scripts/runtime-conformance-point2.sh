@@ -40,9 +40,7 @@ wait_terminal() {
     LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
     if grep -q "telegram_webhook_ack update_id=$update_id" <<<"$LOGS" \
       && grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" \
-      && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then
-      return 0
-    fi
+      && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then return 0; fi
     sleep 2
   done
   echo "TERMINAL_TIMEOUT update_id=$update_id" >&2
@@ -70,10 +68,9 @@ assert matching, "SEMANTIC_REQUIREMENT_LOST_SUBJECT"
 assert any(str(r.get("status"))=="SATISFIED" for r in matching), "SEMANTIC_REQUIREMENT_NOT_SATISFIED"
 refs=[str(x) for r in matching for x in (r.get("evidenceReferences") or [])]
 assert any(x.startswith(("http://","https://")) for x in refs), "NO_EXTERNAL_EVIDENCE"
-answer=str(case.get("latestConclusion") or "").strip()
-assert answer, "EMPTY_ANSWER"
+answer=str(case.get("latestConclusion") or "").strip(); assert answer, "EMPTY_ANSWER"
 low=answer.lower()
-refusals=("i cannot provide","i can’t provide","i can\'t provide","unable to provide","insufficient information","not enough information","does not provide","cannot determine","không thể cung cấp","không đủ thông tin","chưa đủ thông tin","không thể xác định")
+refusals=("i cannot provide","i can’t provide","unable to provide","insufficient information","not enough information","does not provide","cannot determine","không thể cung cấp","không đủ thông tin","chưa đủ thông tin","không thể xác định")
 assert not any(x in low for x in refusals), "CURRENT_ANSWER_IS_REFUSAL_OR_INSUFFICIENT"
 assert re.search(subject,answer,re.I), "ANSWER_LOST_SUBJECT"
 if numeric: assert re.search(r"\d",answer), "ANSWER_MISSING_CURRENT_VALUE"
@@ -83,23 +80,15 @@ print("CURRENT_EVIDENCE_REFS",refs[:5])
 }
 
 BASE_ID=$(date +%s%N | cut -c1-14)
-CASUAL="${BASE_ID}41"
-VERSION="${BASE_ID}42"
-LEADER="${BASE_ID}43"
-
+CASUAL="${BASE_ID}41"; VERSION="${BASE_ID}42"; LEADER="${BASE_ID}43"
 SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 send_update "$CASUAL" 'Chào Metatron, hôm nay nói chuyện bình thường thôi.'
 wait_terminal "$SINCE" "$CASUAL"
 LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 ! grep -Eq "execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL|telegram_answer_ready update_id=$CASUAL.*objective_id=[^[:space:]]+" <<<"$LOGS"
 
-# Unseen, domain-independent current-info tasks. No gold/FX/weather implementation vocabulary.
-assert_current_answer "$VERSION" \
-  'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' \
-  'Python|stable|version|phiên bản' 1
-assert_current_answer "$LEADER" \
-  'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' \
-  'Indonesia|Tổng thống|President' 0
+assert_current_answer "$VERSION" 'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' 'Python|stable|version|phiên bản' 1
+assert_current_answer "$LEADER" 'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' 'Indonesia|Tổng thống|President' 0
 
 echo 'POINT2_LOCAL_LIVE_RUNTIME=PASS'
 echo 'POINT2_CASUAL_NOT_OBJECTIVE=PASS'
