@@ -21,8 +21,8 @@ final class FrontierSemanticDelegatedExecutionContractTest {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
 
             @Override public LlmResponse complete(LlmRequest request) {
-                assertTrue(request.systemContext().contains("delegated read-only institutional audit is EXECUTION"));
-                assertTrue(request.systemContext().contains("Do not downgrade such work to REASONING"));
+                assertTrue(request.systemContext().contains("delegated read-only institutional audit is DURABLE_WORK/EXECUTION"));
+                assertTrue(request.systemContext().contains("Do not downgrade such work to ANSWER/REASONING"));
                 assertTrue(request.systemContext().contains("without accepting durable institutional ownership"));
                 assertTrue(request.userInput().contains("kelvinka38/universal"));
                 return new LlmResponse(LlmProvider.GOOGLE, "semantic-test", """
@@ -36,6 +36,8 @@ final class FrontierSemanticDelegatedExecutionContractTest {
                           "explicit_prohibitions":["mutation"],
                           "temporal_context":"",
                           "unresolved_semantic_ambiguity":"",
+                          "interaction_outcome":"DURABLE_WORK",
+                          "evidence_scope":"CURRENT_EXTERNAL",
                           "mode":"EXECUTION",
                           "collaboration_mode":"SINGLE",
                           "analytical_protocols":["AUDIT"],
@@ -61,6 +63,7 @@ final class FrontierSemanticDelegatedExecutionContractTest {
 
         assertEquals(IntelligenceMode.EXECUTION, normalized.mode());
         assertEquals(IntelligenceDepth.DEEP, normalized.requestedDepth());
+        assertTrue(normalized.freshExternalDataRequired());
         assertTrue(normalized.analyticalProtocols().contains(AnalyticalProtocolType.AUDIT));
     }
 }
