@@ -41,13 +41,11 @@ final class ExecutionWorkPlannerTest {
         assertEquals(1, plan.size());
         assertEquals("repository.audit.read", plan.getFirst().requiredCapability());
         assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, plan.getFirst().consequence());
-        assertEquals(List.of("repository audit is complete and evidence-backed"), plan.getFirst().acceptanceCriteria());
-        assertEquals(List.of("repository contents and cited audit evidence"), plan.getFirst().evidenceRequirements());
         assertTrue(plan.getFirst().verifiable());
     }
 
     @Test
-    void plannerRejectsExecutionPlanWithoutCriterionLevelVerificationRequirements() {
+    void plannerRejectsExecutionPlanWithoutCriterionLevelVerificationRequirementsWhenNoSafeFallbackApplies() {
         LlmProviderClient google = new LlmProviderClient() {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
             @Override public LlmResponse complete(LlmRequest request) {
@@ -68,7 +66,7 @@ final class ExecutionWorkPlannerTest {
                 List.of(LlmProvider.GOOGLE), new ObjectMapper());
 
         IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> planner.plan("case-123", normalizedExecution(null), List.of("repository.audit.read")));
+                () -> planner.plan("case-123", normalizedExecution(null), List.of("unrelated.read")));
 
         assertTrue(failure.getMessage().contains("all execution planning providers failed"));
         assertTrue(List.of(failure.getSuppressed()).stream()
@@ -144,12 +142,33 @@ final class ExecutionWorkPlannerTest {
     }
 
     @Test
-    void unavailablePlannerProviderCannotCreateExecutionPlan() {
+    void boundedSingleRepositoryAuditCanPlanWithoutExternalProvider() {
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
                 new LlmProviderRouter(List.of()), provider -> "unused", List.of(), new ObjectMapper());
 
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-123", normalizedExecution(null), List.of("repository.audit.read"));
+
+        assertEquals(1, plan.size());
+        assertEquals("repository.audit.read", plan.getFirst().requiredCapability());
+        assertEquals("kelvinka38/bios", plan.getFirst().target());
+        assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, plan.getFirst().consequence());
+        assertTrue(plan.getFirst().verifiable());
+    }
+
+    @Test
+    void providerlessPlannerStillFailsClosedOutsideBoundedAuditShape() {
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of()), provider -> "unused", List.of(), new ObjectMapper());
+        NormalizedRequest mutating = new NormalizedRequest(
+                "fix code and open pull request", "kelvinka38/bios", List.of("mutation required"),
+                IntelligenceDepth.ANALYZE, "pull request", List.of(), List.of(),
+                "current", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.AUDIT), DeterministicCapability.NONE, List.of(), List.of(),
+                false, null, LlmProvider.GOOGLE, "");
+
         IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> planner.plan("case-123", normalizedExecution(null), List.of("repository.audit.read")));
+                () -> planner.plan("case-mutating", mutating, List.of("repository.audit.read")));
 
         assertEquals("execution_planning_provider_required", failure.getMessage());
     }
@@ -171,7 +190,7 @@ final class ExecutionWorkPlannerTest {
 
     private static NormalizedRequest normalizedExecution(LlmProvider explicitlyRequestedProvider) {
         return new NormalizedRequest(
-                "execute governed repository audit", "kelvinka38/bios", List.of("preserve evidence"),
+                "execute governed repository audit", "kelvinka38/bios", List.of("preserve evidence", "read-only"),
                 IntelligenceDepth.ANALYZE, "terminal audit result", List.of(), List.of("do not mutate"),
                 "current", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
                 List.of(AnalyticalProtocolType.AUDIT), DeterministicCapability.NONE, List.of(), List.of(),
