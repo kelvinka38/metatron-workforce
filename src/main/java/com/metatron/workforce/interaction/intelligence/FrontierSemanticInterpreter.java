@@ -7,6 +7,7 @@ import com.metatron.workforce.interaction.llm.LlmProviderRouter;
 import com.metatron.workforce.interaction.llm.LlmRequest;
 import com.metatron.workforce.interaction.llm.LlmResponse;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -74,6 +75,15 @@ public final class FrontierSemanticInterpreter {
             - Never manufacture FACT, EVIDENCE, AUTHORITY, AUTHORIZATION, WORKER IDENTITY, EXECUTION EVIDENCE or INSTITUTIONAL KNOWLEDGE.
             """;
 
+    private static final List<String> STRONG_FRESHNESS_PHRASES = List.of(
+            " currently ", " latest ", " today ", " right now ", " at the moment ",
+            " up-to-date ", " up to date ", " newest ", " as of now ", " fresh data ",
+            " current data ", " latest data ", " current source ", " latest source ",
+            " hien tai ", " hom nay ", " bay gio ", " ngay luc nay ", " luc nay ",
+            " moi nhat ", " du lieu moi ", " du lieu hien tai ", " nguon hien tai ",
+            " nguon moi nhat ", " cap nhat moi ", " cap nhat hien tai "
+    );
+
     private final LlmProviderRouter router;
     private final Function<LlmProvider, String> modelSelector;
     private final List<LlmProvider> providers;
@@ -110,7 +120,7 @@ public final class FrontierSemanticInterpreter {
         for (LlmProvider provider : orderedProviders) {
             try {
                 LlmResponse response = router.complete(new LlmRequest(provider, modelSelector.apply(provider), SYSTEM, input));
-                return parse(response, activeCase != null);
+                return parse(response, activeCase != null, humanText);
             } catch (RuntimeException failure) {
                 failures.add(new IllegalStateException("semantic provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
@@ -127,7 +137,7 @@ public final class FrontierSemanticInterpreter {
         return interpret(humanText, conversationContext, channel, (IntelligenceCase) null);
     }
 
-    private NormalizedRequest parse(LlmResponse response, boolean activeCasePresent) {
+    private NormalizedRequest parse(LlmResponse response, boolean activeCasePresent, String humanText) {
         try {
             JsonNode root = mapper.readTree(unwrapJson(response.text()));
             String objective = requiredText(root, "objective");
@@ -144,8 +154,17 @@ public final class FrontierSemanticInterpreter {
             boolean proposedFresh = root.path("fresh_external_data_required").asBoolean(false);
             InteractionOutcome outcome = interactionOutcome(root, proposedMode);
             EvidenceScope evidenceScope = evidenceScope(root, proposedFresh);
+            boolean explicitFreshness = explicitlyRequestsFreshness(humanText, temporalContext);
+            if (outcome == InteractionOutcome.ANSWER && explicitFreshness) {
+                evidenceScope = EvidenceScope.CURRENT_EXTERNAL;
+            }
             IntelligenceMode mode = canonicalMode(outcome, proposedMode);
-            boolean fresh = evidenceScope == EvidenceScope.CURRENT_EXTERNAL;
+            boolean fresh = evidenceScope == EvidenceScope.CURRENT_EXTERNAL
+                    || (outcome == InteractionOutcome.DURABLE_WORK && explicitFreshness);
+            if (outcome == InteractionOutcome.ANSWER && fresh
+                    && (mode == IntelligenceMode.CASUAL || mode == IntelligenceMode.DISCUSSION)) {
+                mode = IntelligenceMode.REASONING;
+            }
             CollaborationMode collaboration = enumValue(CollaborationMode.class, requiredText(root, "collaboration_mode"));
             List<AnalyticalProtocolType> protocols = enumArray(root, "analytical_protocols", AnalyticalProtocolType.class);
             DeterministicCapability deterministicCapability = enumValue(DeterministicCapability.class, requiredText(root, "deterministic_capability"));
@@ -165,6 +184,28 @@ public final class FrontierSemanticInterpreter {
         } catch (Exception failure) {
             throw new IllegalStateException("invalid semantic normalization from " + response.provider(), failure);
         }
+    }
+
+    private static boolean explicitlyRequestsFreshness(String humanText, String temporalContext) {
+        String human = folded(humanText);
+        String temporal = folded(temporalContext);
+        if (temporal.equals("current") || temporal.equals("currently") || temporal.equals("latest")
+                || temporal.equals("today") || temporal.equals("now") || temporal.equals("present")
+                || temporal.equals("hien tai") || temporal.equals("hom nay") || temporal.equals("bay gio")
+                || temporal.equals("ngay luc nay") || temporal.equals("moi nhat")) return true;
+        String padded = " " + human.replaceAll("\\s+", " ").trim() + " ";
+        for (String phrase : STRONG_FRESHNESS_PHRASES) {
+            if (padded.contains(phrase)) return true;
+        }
+        return false;
+    }
+
+    private static String folded(String value) {
+        if (value == null || value.isBlank()) return "";
+        return Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT)
+                .trim();
     }
 
     private static InteractionOutcome interactionOutcome(JsonNode root, IntelligenceMode proposedMode) {
