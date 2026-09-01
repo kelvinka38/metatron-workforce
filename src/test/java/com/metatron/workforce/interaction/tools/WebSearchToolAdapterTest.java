@@ -40,7 +40,7 @@ class WebSearchToolAdapterTest {
 
         ToolResult result = adapter.execute(new ToolRequest(
                 "web-1", "telegram:human", WebSearchToolAdapter.CAPABILITY,
-                "internet:web-search", "search", "example query", java.util.List.of("read-only")));
+                "internet:web-search", "search", "example result", java.util.List.of("read-only")));
 
         assertTrue(result.success(), result.output());
         assertEquals("https://example.com/a", result.evidenceReferences().getFirst());
