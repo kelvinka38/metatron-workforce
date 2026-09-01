@@ -2,7 +2,7 @@ name: Intelligence Product Live Acceptance
 
 on:
   workflow_run:
-    workflows: ["Telegram Provider Adapter Live Acceptance"]
+    workflows: ["Telegram Provider Adapter Live Acceptance", "Highway Production Deploy"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -72,10 +72,56 @@ jobs:
             return 1
           }
 
+          assert_case_answer() {
+            local case_file="$1"
+            local subject_pattern="$2"
+            local require_numeric="$3"
+            docker exec "$CID" cat "$case_file" | python3 -c '
+          import json,re,sys
+          subject=sys.argv[1]
+          require_numeric=sys.argv[2] == "1"
+          case=json.load(sys.stdin)
+          requirements=case.get("informationRequirements") or []
+          if not requirements:
+              raise SystemExit("NO_INFORMATION_REQUIREMENTS")
+          if not any(re.search(subject, str(r.get("question", "")), re.I) for r in requirements):
+              raise SystemExit("FRESH_REQUIREMENT_LOST_SEMANTIC_SUBJECT")
+          if any(str(r.get("question", "")).strip().lower() == "current external evidence" for r in requirements):
+              raise SystemExit("GENERIC_CURRENT_EXTERNAL_EVIDENCE_QUERY_FORBIDDEN")
+          satisfied=[r for r in requirements if str(r.get("status", "")) == "SATISFIED"]
+          if not satisfied:
+              raise SystemExit("NO_SATISFIED_FRESH_REQUIREMENT")
+          refs=[]
+          for r in satisfied:
+              refs.extend(r.get("evidenceReferences") or [])
+          if not any(str(x).startswith(("http://", "https://")) for x in refs):
+              raise SystemExit("NO_EXTERNAL_EVIDENCE_URL")
+          answer=str(case.get("latestConclusion") or "").strip()
+          if not answer:
+              raise SystemExit("EMPTY_LATEST_CONCLUSION")
+          low=answer.lower()
+          refusal_terms=[
+              "không thể cung cấp trực tiếp con số", "không thể cung cấp con số",
+              "không duy trì nguồn cấp dữ liệu", "không có dữ liệu thời gian thực",
+              "không thể truy cập web", "không có quyền truy cập web",
+              "cannot provide the current value", "cannot access the web",
+              "do not have real-time data", "don t have real-time data"
+          ]
+          if any(term in low for term in refusal_terms):
+              raise SystemExit("FRESH_ANSWER_REFUSAL_AFTER_EVIDENCE")
+          if not re.search(subject, answer, re.I):
+              raise SystemExit("ANSWER_LOST_REQUESTED_SUBJECT")
+          if require_numeric and not re.search(r"\d", answer):
+              raise SystemExit("ANSWER_MISSING_REQUESTED_CURRENT_VALUE")
+          print("ANSWER_COMPLETENESS_PASS")
+          ' "$subject_pattern" "$require_numeric"
+          }
+
           assert_fresh_information_lookup() {
             local update_id="$1"
             local text="$2"
             local subject_pattern="$3"
+            local require_numeric="$4"
             local since
             since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
             send_update "$update_id" "$text"
@@ -96,7 +142,7 @@ jobs:
             local case_proof=0
             while IFS= read -r case_file; do
               [ -n "$case_file" ] || continue
-              if docker exec "$CID" sh -c "grep -Eqi '$subject_pattern' '$case_file' && grep -q 'SATISFIED' '$case_file' && grep -Eq 'https?://' '$case_file'"; then
+              if assert_case_answer "$case_file" "$subject_pattern" "$require_numeric"; then
                 case_proof=1
                 echo "GROUNDED_CASE_FILE=$case_file"
                 break
@@ -111,6 +157,7 @@ jobs:
           GOLD_UPDATE="${BASE_ID}03"
           FX_UPDATE="${BASE_ID}04"
           WEATHER_UPDATE="${BASE_ID}05"
+          GOLD_RECHECK_UPDATE="${BASE_ID}07"
           AUTO_UPDATE="${BASE_ID}06"
 
           SINCE_DEEP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -123,13 +170,16 @@ jobs:
 
           assert_fresh_information_lookup "$GOLD_UPDATE" \
             'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' \
-            'vàng|gold'
+            'vàng|gold' 1
           assert_fresh_information_lookup "$FX_UPDATE" \
             'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' \
-            'USD|VND|tỷ giá|exchange'
+            'USD|VND|tỷ giá|exchange' 1
           assert_fresh_information_lookup "$WEATHER_UPDATE" \
             'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' \
-            'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh'
+            'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' 1
+          assert_fresh_information_lookup "$GOLD_RECHECK_UPDATE" \
+            'Kiểm tra lại giá vàng Việt Nam ngay lúc này. Hãy lấy dữ liệu hiện tại mới và nêu nguồn.' \
+            'vàng|gold' 1
 
           SINCE_AUTO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           send_update "$AUTO_UPDATE" '🤖 Auto'
@@ -142,9 +192,12 @@ jobs:
           echo 'DEPTH_STATUS_VISIBILITY=PASS'
           echo 'FRESH_REALITY_SEMANTIC_ROUTE=PASS'
           echo 'FRESH_EXTERNAL_EVIDENCE_ACQUIRED=PASS'
+          echo 'REQUIREMENT_SEMANTIC_SUBJECT_PRESERVED=PASS'
           echo 'REQUIREMENT_EVIDENCE_PRESERVED=PASS'
           echo 'FRESH_INFORMATION_NOT_OBJECTIVE=PASS'
           echo 'FRESH_INFORMATION_MULTI_DOMAIN=PASS'
+          echo 'FRESH_INFORMATION_ANSWER_COMPLETENESS=PASS'
+          echo 'FRESH_INFORMATION_REVALIDATION=PASS'
           echo 'FRESH_REALITY_TERMINAL_DELIVERY=PASS'
           echo 'DEPTH_PREFERENCE_RESTORED_AUTO=PASS'
           echo 'INTELLIGENCE_PRODUCT_LIVE_ACCEPTANCE=PASS'
