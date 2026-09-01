@@ -7,6 +7,7 @@ import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
 import com.metatron.workforce.interaction.ChannelInteractionIngressService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
+import com.metatron.workforce.management.WorkCardRenderer;
 import com.metatron.workforce.phase3.ActorRef;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -52,6 +53,7 @@ public final class TelegramWebhookController {
     private final TelegramBotGateway gateway;
     private final ChannelInteractionIngressService interactionIngress;
     private final TelegramIdentityResolver identityResolver;
+    private final WorkCardRenderer workCardRenderer;
     private final ObjectMapper objectMapper;
     private final ThreadPoolExecutor interactionExecutor;
     private final TelegramIngressReceiptStore receiptStore;
@@ -64,6 +66,7 @@ public final class TelegramWebhookController {
             @Value("${METATRON_ORGANIZATION_ID:}") String organizationContextId,
             @Value("${METATRON_TELEGRAM_INGRESS_PATH:/var/lib/metatron-workforce/telegram-ingress-state.json}") String ingressPath,
             ChannelInteractionIngressService interactionIngress,
+            WorkCardRenderer workCardRenderer,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
@@ -91,6 +94,7 @@ public final class TelegramWebhookController {
                 new ActorRef("metatron-workforce", ActorRef.ActorType.WORKER),
                 organizationContextId.trim());
         this.interactionIngress = Objects.requireNonNull(interactionIngress, "interactionIngress");
+        this.workCardRenderer = Objects.requireNonNull(workCardRenderer, "workCardRenderer");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.interactionExecutor = new ThreadPoolExecutor(
                 INTERACTION_THREADS, INTERACTION_THREADS, 30L, TimeUnit.SECONDS,
@@ -153,17 +157,21 @@ public final class TelegramWebhookController {
                 return ResponseEntity.ok().build();
             }
 
-            // Authentication and identity admission happen before institutional processing.
-            identityResolver.resolve(telegramUserId, parseChatId(chatId));
-            adapter.receive(suppliedSecret, chatId, text);
+            // Authentication and identity admission happen before any monitoring or institutional processing.
+            TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
 
+            // Monitoring is a read-only projection of canonical management state; it does not create new Work.
+            if (TelegramBotGateway.MONITOR_CONTROL.equals(text.trim()) || "/monitor".equalsIgnoreCase(text.trim())) {
+                gateway.send(new ChannelMessage("telegram", chatId,
+                        workCardRenderer.latestForHuman(identity.human().actorId())));
+                LOG.info("telegram_monitor_snapshot update_id={} human={} chat={}", updateId, identity.human().actorId(), chatId);
+                return ResponseEntity.ok().build();
+            }
+
+            adapter.receive(suppliedSecret, chatId, text);
             TelegramIngressReceiptStore.Receipt receipt = receiptStore.receive(updateId, telegramUserId, chatId, text);
             receipt = receiptStore.admit(updateId);
 
-            // An explicitly-delegated Objective is an admission-priority marker, not a semantic classifier.
-            // Frontier semantics still decides whether the utterance is EXECUTION and the canonical handoff
-            // still creates the Objective. The marker only prevents a material Objective from waiting behind
-            // unrelated long-running interaction work and enforces Objective-before-provider-ACK semantics.
             if (requiresObjectiveBeforeAck(text)) {
                 processReceipt(receipt.updateId());
                 TelegramIngressReceiptStore.Receipt accepted = receiptStore.find(receipt.updateId());
@@ -182,19 +190,12 @@ public final class TelegramWebhookController {
                     updateId, chatId, ackMs, receipt.status(), receipt.objectiveId(), interactionExecutor.getQueue().size(), interactionExecutor.getActiveCount());
             return ResponseEntity.ok().build();
         } catch (SecurityException denied) {
-            // Authenticated Telegram transport from an unknown principal is institutionally denied, but
-            // provider delivery is consumed. Retrying an identity that can never be admitted is a retry storm,
-            // not fail-closed authorization.
             LOG.warn("telegram_identity_denied update_id={} chat={} reason={}", updateId, chatId, denied.getMessage());
             return ResponseEntity.ok().build();
         } catch (IllegalArgumentException malformed) {
-            // Structurally invalid provider input is non-recoverable. Consume/drop it rather than asking
-            // Telegram to replay malformed bytes indefinitely.
             LOG.warn("telegram_invalid_delivery_acknowledged update_id={} chat={} reason={}", updateId, chatId, malformed.getMessage());
             return ResponseEntity.ok().build();
         } catch (RuntimeException failure) {
-            // Recoverable internal failure after authenticated admission must not be falsely acknowledged.
-            // Explicit Objective delegation additionally requires canonical Objective persistence before 2xx.
             LOG.error("telegram_webhook_admission_failed update_id=" + updateId + " chat=" + chatId, failure);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
@@ -245,16 +246,16 @@ public final class TelegramWebhookController {
             if (requiresObjectiveBeforeAck(receipt.text()) && objectiveId.isBlank()) {
                 throw new IllegalStateException("explicit_objective_did_not_materialize");
             }
-            if (!objectiveId.isBlank()) {
-                // ACCEPTED transport state is recorded only after the canonical Management Objective exists.
-                receiptStore.accepted(updateId, objectiveId);
-            }
+            if (!objectiveId.isBlank()) receiptStore.accepted(updateId, objectiveId);
 
             long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
             LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} attempt={} answer_ms={} objective_id={}",
                     updateId, receipt.telegramUserId(), receipt.chatId(), safeAnswer.length(), response.provenanceReference(),
                     receipt.attempts(), answerMs, objectiveId);
-            String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
+
+            // Human-facing Objective acceptance is a Work Card, not a debug dump of internal ids.
+            String outbound = objectiveId.isBlank() ? safeAnswer : workCardRenderer.render(objectiveId);
+            String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), outbound));
             receiptStore.delivered(updateId);
             LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={} objective_id={}",
                     updateId, receipt.telegramUserId(), receipt.chatId(), delivery.length(), objectiveId);
