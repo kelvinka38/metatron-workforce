@@ -22,30 +22,55 @@ jobs:
     timeout-minutes: 30
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      POINT2_LANE_REVISION: retry-bounded-evidence-v3
+      HIGHWAY_REVISION: scheduler-consolidated-v3
     steps:
       - uses: actions/checkout@v7
-      - name: Run concurrent isolated production acceptance highway
+      - name: Run consolidated concurrent production acceptance highway
         shell: bash
         run: |
           set -euo pipefail
-          echo "POINT2_LANE_REVISION=$POINT2_LANE_REVISION"
-          chmod +x scripts/production-acceptance-highway.sh scripts/highway-intelligence-lane.sh
-          mkdir -p "/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
+          echo "HIGHWAY_REVISION=$HIGHWAY_REVISION"
+          chmod +x \
+            scripts/production-acceptance-highway.sh \
+            scripts/highway-intelligence-lane.sh \
+            scripts/runtime-conformance-point2.sh
 
-          (set +e; scripts/production-acceptance-highway.sh > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.log" 2>&1; echo $? > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.rc") & CORE_PID=$!
-          (set +e; scripts/highway-intelligence-lane.sh > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.log" 2>&1; echo $? > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.rc") & INTEL_PID=$!
+          ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
+          mkdir -p "$ROOT"
+
+          run_lane() {
+            local name="$1" script="$2"
+            (
+              set +e
+              "$script" > "$ROOT/${name}.log" 2>&1
+              echo $? > "$ROOT/${name}.rc"
+            ) &
+            echo $!
+          }
+
+          CORE_PID=$(run_lane highway-core scripts/production-acceptance-highway.sh)
+          INTEL_PID=$(run_lane intelligence-product scripts/highway-intelligence-lane.sh)
+          POINT2_PID=$(run_lane point2-root-routing scripts/runtime-conformance-point2.sh)
 
           echo "HIGHWAY_CORE_PID=$CORE_PID"
-          echo "HIGHWAY_POINT2_INTELLIGENCE_PID=$INTEL_PID"
+          echo "HIGHWAY_INTELLIGENCE_PID=$INTEL_PID"
+          echo "HIGHWAY_POINT2_ROOT_PID=$POINT2_PID"
+
           wait "$CORE_PID" || true
           wait "$INTEL_PID" || true
+          wait "$POINT2_PID" || true
 
-          cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.log" || true
-          cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.log" || true
-          test "$(cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.rc")" = 0
-          test "$(cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.rc")" = 0
-          echo 'HIGHWAY_POINT2_INTELLIGENCE_CONCURRENT=PASS'
+          for lane in highway-core intelligence-product point2-root-routing; do
+            echo "===== ${lane} ====="
+            cat "$ROOT/${lane}.log" || true
+            test -f "$ROOT/${lane}.rc"
+            test "$(cat "$ROOT/${lane}.rc")" = 0
+          done
+
+          echo 'HIGHWAY_SCHEDULER_SINGLE_ORCHESTRATOR=PASS'
+          echo 'HIGHWAY_SAFE_LANES_CONCURRENT=PASS'
+          echo 'HIGHWAY_INTELLIGENCE_PRODUCT=PASS'
+          echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
           echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2=PASS'
       - name: Upload highway evidence
         if: always()
