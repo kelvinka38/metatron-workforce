@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /** Compact conversation projection of durable Objective/Work state. */
@@ -18,13 +19,17 @@ public final class WorkCardRenderer {
         this.management = management;
     }
 
-    public String latestForHuman(String humanId) {
+    public Optional<String> latestObjectiveIdForHuman(String humanId) {
         String normalized = normalizeHuman(humanId);
         return management.allObjectives().stream()
                 .filter(o -> management.findAutonomousWork(o.objectiveId())
                         .map(w -> w.humanId().equals(normalized)).orElse(false))
                 .max(Comparator.comparing(ManagementObjective::updatedAt))
-                .map(this::render)
+                .map(ManagementObjective::objectiveId);
+    }
+
+    public String latestForHuman(String humanId) {
+        return latestObjectiveIdForHuman(humanId).map(this::render)
                 .orElse("📊 METATRON WORK\n\nNo autonomous Objective is currently visible for this Human.");
     }
 
