@@ -53,11 +53,19 @@ u=int(sys.argv[1]); uid=int(sys.argv[3]); print(json.dumps({'update_id':u,'messa
 PY
 }
 send_local_update() {
-  local port="$1" update="$2" text="$3" output="$4" body status
+  local port="$1" update="$2" text="$3" output="$4" body status attempt
   body=$(telegram_body "$update" "$text")
-  status=$(curl -sS -o "$output" -w '%{http_code}' --max-time 20 -X POST "http://127.0.0.1:$port/telegram/webhook" \
-    -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "$body")
-  test "$status" = 200
+  for attempt in 1 2 3 4 5; do
+    status=$(curl -sS -o "$output" -w '%{http_code}' --connect-timeout 2 --max-time 20 \
+      -X POST "http://127.0.0.1:$port/telegram/webhook" \
+      -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+      -H 'Content-Type: application/json' --data-binary "$body" || true)
+    echo "ISOLATED_INGRESS_ATTEMPT port=$port update_id=$update attempt=$attempt status=$status"
+    [ "$status" = 200 ] && return 0
+    sleep "$attempt"
+  done
+  echo "ISOLATED_INGRESS_FAILED port=$port update_id=$update" >&2
+  return 1
 }
 wait_health() { local port="$1"; for _ in $(seq 1 60); do curl -fsS --max-time 2 "http://127.0.0.1:$port/actuator/health" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"' && return 0; sleep 2; done; return 1; }
 start_lane() {
@@ -144,9 +152,6 @@ crash_lane() {
   cid=$(start_lane "$project" "$lane" "$port")
   text="Take ownership of one Objective: perform a governed single-repository read-only audit of $repo using the available repository audit capability, verify it through Observation, and deliver the resulting evidence. Do not mutate anything and do not perform cross-repository analysis."
 
-  # Shared external planning capacity is a bounded resource. Serialize only planning admission;
-  # after a durable plan exists, release the lock before crash/execution. Both isolated JVMs then
-  # remain simultaneously active and independently recover the already-planned Objectives.
   exec 9>"$OUT/execution-planning.lock"; flock 9
   echo "${lane}_PLANNING_ADMISSION=ACQUIRED"
   send_local_update "$port" "$update" "$text" "$OUT/${lane}-ingress.json"
