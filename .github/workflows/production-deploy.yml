@@ -16,6 +16,7 @@ on:
       - '.github/workflows/telegram-one-message-worker-live-acceptance.yml'
       - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
       - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
       - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
   workflow_dispatch:
 
