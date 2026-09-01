@@ -23,6 +23,7 @@ import java.util.Set;
  */
 public final class InformationRequirementAcquisitionService {
     private static final int MAX_CONTEXT_CHARS = 24_000;
+    private static final String LEGACY_GENERIC_CURRENT_QUERY = "current external evidence";
 
     private final KnowledgeRetrievalService knowledge;
     private final DefaultToolFabric tools;
@@ -239,12 +240,21 @@ public final class InformationRequirementAcquisitionService {
                                        InformationRequirement requirement,
                                        String requester,
                                        String caseId) {
-        // The requirement is already the frontier/planner-normalized search need. Keep the external
-        // query focused on it instead of appending internal orchestration syntax such as "objective=...",
-        // which degrades search relevance and can turn a current-data lookup into generic results.
-        String query = requirement.question().isBlank()
-                ? normalized.objective()
-                : requirement.question().trim();
+        // New requirements carry the frontier-normalized subject directly. Persisted Cases created before
+        // that invariant may still contain the legacy generic label; repair those at the execution boundary
+        // so a revalidated current turn searches for the Human's semantic objective rather than the words
+        // "current external evidence".
+        String requirementQuestion = requirement.question().trim();
+        String query = requirementQuestion.isBlank()
+                || requirementQuestion.equalsIgnoreCase(LEGACY_GENERIC_CURRENT_QUERY)
+                ? normalized.objective().trim()
+                : requirementQuestion;
+        if (query.isBlank()) {
+            return ToolResult.failure(new ToolRequest(
+                    "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
+                    requester, WebSearchToolAdapter.CAPABILITY, "internet:web-search", "search", "", List.of()),
+                    "fresh_semantic_query_missing");
+        }
         ToolRequest request = new ToolRequest(
                 "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
                 requester,
