@@ -37,7 +37,7 @@ jobs:
           grep -q 'Reports to' <<<"$DASH"
           grep -q 'Staffing' <<<"$DASH"
           API_FILE=$(mktemp)
-          trap 'rm -f "$API_FILE" "$HEALTH_FILE"' EXIT
+          trap 'rm -f "$API_FILE"' EXIT
           curl -fsS -H 'X-Metatron-Actor: human-primary' \
             http://127.0.0.1:8080/workforce/monitor/api/objectives > "$API_FILE"
           python3 - "$API_FILE" <<'PY'
