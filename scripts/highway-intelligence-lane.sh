@@ -37,11 +37,12 @@ send_update() {
 }
 
 wait_answer() {
-  local since="$1" update="$2"
+  local since="$1" update="$2" log="$OUT/intelligence-${update}-runtime.log"
   for i in $(seq 1 120); do
-    docker logs --since "$since" "$CID" > "$OUT/intelligence-${update}-runtime.log" 2>&1 || true
-    if grep -q "telegram_send_success update_id=$update" "$OUT/intelligence-${update}-runtime.log" \
-      && grep -Eq "telegram_answer_ready update_id=$update.*route=intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*" "$OUT/intelligence-${update}-runtime.log"; then
+    docker logs --since "$since" "$CID" > "$log" 2>&1 || true
+    if grep -q "telegram_send_success update_id=$update" "$log" \
+      && grep -q "telegram_answer_ready update_id=$update" "$log" \
+      && grep -Eq 'metatron_intelligence_latency channel=telegram route=intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*' "$log"; then
       return 0
     fi
     sleep 2
@@ -62,14 +63,14 @@ case_file_for_update() {
 }
 
 fresh_case() {
-  local update="$1" text="$2" pattern="$3" result_file="$4" since case_file
+  local update="$1" text="$2" pattern="$3" result_file="$4" since case_file log
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   send_update "$update" "$text"
   wait_answer "$since" "$update"
-  docker logs --since "$since" "$CID" > "$OUT/intelligence-${update}-runtime.log" 2>&1 || true
-  ! grep -q "telegram_interaction_failed update_id=$update" "$OUT/intelligence-${update}-runtime.log"
-  ! grep -q "telegram_failure_notification_sent update_id=$update" "$OUT/intelligence-${update}-runtime.log"
-  ! grep -Eq "telegram_answer_ready update_id=$update.*route=execution-objective-|execution-objective-workforce-accepted.*$update|METATRON WORK ACCEPTED.*$update" "$OUT/intelligence-${update}-runtime.log"
+  log="$OUT/intelligence-${update}-runtime.log"
+  ! grep -q "telegram_interaction_failed update_id=$update" "$log"
+  ! grep -q "telegram_failure_notification_sent update_id=$update" "$log"
+  ! grep -Eq "execution-objective-workforce-accepted.*$update|METATRON WORK ACCEPTED.*$update|telegram_answer_ready update_id=$update.*objective_id=[^[:space:]]+" "$log"
   case_file=$(case_file_for_update "$update" "$pattern")
   test -n "$case_file"
   printf '%s\n' "$case_file" > "$result_file"
@@ -82,10 +83,11 @@ FX="${BASE_ID}12"
 WEATHER="${BASE_ID}13"
 GOLD_2="${BASE_ID}14"
 
-fresh_case "$GOLD_1" 'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' 'vàng|gold' "$OUT/gold-1.case" & A=$!
-fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx.case" & B=$!
-fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather.case" & C=$!
-wait "$A"; wait "$B"; wait "$C"
+# Point 2 is itself a highway lane running concurrently with the core lanes.
+# Keep its domain probes sequential internally to avoid turning product acceptance into a host saturation test.
+fresh_case "$GOLD_1" 'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' 'vàng|gold' "$OUT/gold-1.case"
+fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx.case"
+fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather.case"
 
 # Same-topic second turn must materialize a new current-evidence case rather than silently reuse the first turn.
 fresh_case "$GOLD_2" 'Kiểm tra lại giá vàng Việt Nam ngay lúc này. Hãy lấy dữ liệu hiện tại mới và nêu nguồn.' 'vàng|gold' "$OUT/gold-2.case"
