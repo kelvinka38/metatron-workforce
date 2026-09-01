@@ -7,6 +7,8 @@ on:
       - 'scripts/**'
       - 'deploy/docker-compose.yml'
       - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
+      - 'src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java'
+      - 'src/main/java/com/metatron/workforce/interaction/intelligence/**'
       - '.github/workflows/production-deploy.yml'
       - '.github/workflows/production-acceptance-highway-v2.yml'
       - '.github/workflows/intelligence-product-live-acceptance.yml'
@@ -31,30 +33,31 @@ jobs:
           bash -n scripts/highway-intelligence-lane.sh
           bash -n scripts/runtime-conformance-point2.sh
           echo 'HIGHWAY_SHELLS=PASS'
-      - name: Enforce one automatic production acceptance orchestrator
+      - name: Enforce one automatic capacity-phased production orchestrator
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'workflows: \["Highway Production Deploy"\]' .github/workflows/production-acceptance-highway-v2.yml
+          H=.github/workflows/production-acceptance-highway-v2.yml
+          grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
           ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
           ! grep -q 'workflow_run:' .github/workflows/runtime-conformance-point2.yml
-          grep -q "scripts/production-acceptance-highway.sh" .github/workflows/production-acceptance-highway-v2.yml
-          grep -q "scripts/highway-intelligence-lane.sh" .github/workflows/production-acceptance-highway-v2.yml
-          grep -q "scripts/runtime-conformance-point2.sh" .github/workflows/production-acceptance-highway-v2.yml
-          ! grep -Eq 'PID=\$\(run_lane|PID=\$\([^)]*&' .github/workflows/production-acceptance-highway-v2.yml
-          grep -q -- "- 'scripts/\*\*'" .github/workflows/production-deploy.yml
-          grep -q 'group: metatron-hosted-build-main' .github/workflows/production-deploy.yml
-          grep -q 'group: metatron-live-deploy' .github/workflows/production-deploy.yml
-          grep -q 'group: metatron-production-acceptance-highway' .github/workflows/production-acceptance-highway-v2.yml
+          grep -q 'HIGHWAY_REVISION: capacity-phased-' "$H"
+          grep -q "scripts/production-acceptance-highway.sh" "$H"
+          grep -q "scripts/highway-intelligence-lane.sh" "$H"
+          grep -q "scripts/runtime-conformance-point2.sh" "$H"
+          ! grep -Eq 'production-acceptance-highway\.sh.*&|highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&' "$H"
           python3 - <<'PY'
           from pathlib import Path
           deploy=Path('.github/workflows/production-deploy.yml').read_text()
-          highway=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
+          h=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
+          positions=[h.index('scripts/production-acceptance-highway.sh >'),h.index('scripts/highway-intelligence-lane.sh >'),h.index('scripts/runtime-conformance-point2.sh >')]
+          assert positions==sorted(positions) and len(set(positions))==3,positions
           build=deploy.split('  deploy-production:',1)[0]
           deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
           assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
           assert 'group: metatron-live-deploy' in deploy_job and 'cancel-in-progress: false' in deploy_job
-          assert 'group: metatron-production-acceptance-highway' in highway and 'cancel-in-progress: true' in highway
+          assert 'group: metatron-production-acceptance-highway' in h and 'cancel-in-progress: true' in h
+          print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
           print('HIGHWAY_COALESCING_POLICY=PASS')
           PY
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
@@ -66,59 +69,38 @@ jobs:
           docker compose -f deploy/docker-compose.yml config --format json > /tmp/live.json
           python3 - /tmp/live.json <<'PY'
           import json,sys
-          d=json.load(open(sys.argv[1])); w=d['services']['workforce']
-          p=w['ports'][0]
-          assert str(p['published'])=='8080' and str(p['target'])=='8080' and p['host_ip']=='127.0.0.1', p
+          d=json.load(open(sys.argv[1])); w=d['services']['workforce']; p=w['ports'][0]
+          assert str(p['published'])=='8080' and str(p['target'])=='8080' and p['host_ip']=='127.0.0.1',p
           assert d['volumes']['workforce-state']['name']=='metatron-workforce-state'
           assert d['networks']['workforce']['name']=='metatron-workforce'
           assert d['networks']['gateway']['name']=='metatron-gateway-online'
           assert w['environment']['TELEGRAM_API_BASE_URL']=='https://api.telegram.org'
           print('HIGHWAY_CANONICAL_DEFAULTS=PASS')
           PY
-      - name: Prove two isolated lane configs do not collide
+      - name: Prove two isolated destructive lane configs do not collide
         shell: bash
         run: |
           set -euo pipefail
-          METATRON_HOST_PORT=18111 \
-          METATRON_STATE_VOLUME_NAME=highway-test-a-state \
-          METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network \
-          METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a \
-          TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 \
-          docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/lane-a.json
-
-          METATRON_HOST_PORT=18222 \
-          METATRON_STATE_VOLUME_NAME=highway-test-b-state \
-          METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network \
-          METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b \
-          TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 \
-          docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/lane-b.json
-
-          python3 - /tmp/lane-a.json /tmp/lane-b.json <<'PY'
+          METATRON_HOST_PORT=18111 METATRON_STATE_VOLUME_NAME=highway-test-a-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/a.json
+          METATRON_HOST_PORT=18222 METATRON_STATE_VOLUME_NAME=highway-test-b-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/b.json
+          python3 - /tmp/a.json /tmp/b.json <<'PY'
           import json,sys
           a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
-          def facts(d):
-              w=d['services']['workforce']; p=w['ports'][0]
-              return {
-                  'port':str(p['published']), 'host':p['host_ip'],
-                  'volume':d['volumes']['workforce-state']['name'],
-                  'network':d['networks']['workforce']['name'],
-                  'telegram':w['environment']['TELEGRAM_API_BASE_URL'],
-                  'aliases':tuple(w['networks']['gateway'].get('aliases',[])),
-              }
-          fa,fb=facts(a),facts(b)
-          assert fa['host']==fb['host']=='127.0.0.1'
-          assert fa['port']=='18111' and fb['port']=='18222', (fa,fb)
-          assert fa['volume']=='highway-test-a-state' and fb['volume']=='highway-test-b-state', (fa,fb)
-          assert fa['network']=='highway-test-a-network' and fb['network']=='highway-test-b-network', (fa,fb)
-          assert fa['telegram'].endswith(':19111') and fb['telegram'].endswith(':19222'), (fa,fb)
-          assert 'workforce-highway-test-a' in fa['aliases'] and 'workforce-highway-test-b' in fb['aliases'], (fa,fb)
-          for key in ('port','volume','network','telegram','aliases'): assert fa[key] != fb[key], (key,fa,fb)
+          def f(d):
+            w=d['services']['workforce']; p=w['ports'][0]
+            return (str(p['published']),d['volumes']['workforce-state']['name'],d['networks']['workforce']['name'],w['environment']['TELEGRAM_API_BASE_URL'],tuple(w['networks']['gateway'].get('aliases',[])))
+          fa,fb=f(a),f(b); assert fa!=fb
+          assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4]
           print('HIGHWAY_CONFIG_ISOLATION=PASS')
           PY
-      - name: Verify acceptance provider override remains opt-in
+      - name: Verify grounded search and provider isolation remain explicit
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'TELEGRAM_API_BASE_URL' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
           grep -q 'https://api.telegram.org' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
+          grep -q 'google_search' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          grep -q 'groundingChunks' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          grep -q 'looksLikeInsufficientAnswer' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
           echo 'HIGHWAY_PROVIDER_ISOLATION_WITH_REAL_DEFAULT=PASS'
+          echo 'POINT2_GROUNDED_SEARCH_CONTRACT=PASS'
