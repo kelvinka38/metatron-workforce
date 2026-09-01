@@ -11,8 +11,10 @@ on:
       - 'gradlew'
       - 'Dockerfile'
       - 'deploy/**'
+      - 'scripts/production-acceptance-highway.sh'
       - '.github/workflows/production-deploy.yml'
-      - '.github/workflows/production-acceptance-highway.yml'
+      - '.github/workflows/production-acceptance-highway-v2.yml'
+      - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
 permissions:
