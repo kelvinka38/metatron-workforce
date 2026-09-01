@@ -58,7 +58,7 @@ None of these alone proves a general autonomous Workforce.
 
 The line below is a production acceptance fixture inside the already-approved GS2 mutation scope. Canonical `main` MUST retain `UNSET`. The governed `repository.pr.propose` capability may replace it only on its Objective-scoped `autonomy/gs2-*` proposal branch, open a Pull Request for Human review, and MUST NOT merge that Pull Request or mutate another path.
 
-GS2_AUTONOMOUS_PROBE=UNSET
+GS2_AUTONOMOUS_PROBE=b65db663f853c7db
 
 ## Current maturity
 
