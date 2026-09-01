@@ -6,11 +6,10 @@ BASE=/opt/metatron/metatron-workforce
 COMPOSE="${GITHUB_WORKSPACE:?}/deploy/docker-compose.yml"
 OUT="/tmp/metatron-production-highway-${GITHUB_RUN_ID:?}"
 mkdir -p "$OUT"
-test -r "$BASE/.env"; test -f "$COMPOSE"
+test -r "$BASE/.env"; test -f "$COMPOSE"; command -v flock >/dev/null
 set -a; source "$BASE/.env"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"; test -n "${TELEGRAM_ALLOWED_USER_ID:-}"; test -n "${METATRON_ORGANIZATION_ID:-}"
 test -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}"
-command -v flock >/dev/null
 
 LIVE_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1); test -n "$LIVE_CID"
 LIVE_SHA=$(docker inspect "$LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
@@ -56,7 +55,8 @@ PY
 send_local_update() {
   local port="$1" update="$2" text="$3" output="$4" body status
   body=$(telegram_body "$update" "$text")
-  status=$(curl -sS -o "$output" -w '%{http_code}' --max-time 20 -X POST "http://127.0.0.1:$port/telegram/webhook" -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "$body")
+  status=$(curl -sS -o "$output" -w '%{http_code}' --max-time 20 -X POST "http://127.0.0.1:$port/telegram/webhook" \
+    -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "$body")
   test "$status" = 200
 }
 wait_health() { local port="$1"; for _ in $(seq 1 60); do curl -fsS --max-time 2 "http://127.0.0.1:$port/actuator/health" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"' && return 0; sleep 2; done; return 1; }
@@ -83,7 +83,7 @@ for row in data if isinstance(data,list) else []:
     if needle in json.dumps(row,sort_keys=True):
         o=row.get('objective') or {}; oid=o.get('objectiveId') or o.get('objective_id')
         if oid: found.append(oid)
-found=list(dict.fromkeys(found));
+found=list(dict.fromkeys(found))
 if len(found)!=1: raise SystemExit(1)
 print(found[0])
 PY
@@ -99,7 +99,8 @@ wait_planned() {
     result=$(python3 - "$payload" <<'PY'
 import json,sys
 try:
-    d=json.loads(sys.argv[1]); o=d.get('objective') or {}; state=o.get('status',''); planned=o.get('plannedWork') or []
+    d=json.loads(sys.argv[1]); o=d.get('objective') or {}; w=d.get('autonomousWork') or {}
+    state=o.get('status',''); planned=w.get('plannedWork') or []
 except Exception:
     print('WAIT'); raise SystemExit
 if state in ('BLOCKED','ESCALATED','CANCELLED'):
@@ -111,7 +112,7 @@ else:
 PY
     )
     case "$result" in
-      PLANNED) echo "OBJECTIVE_PLAN_DURABLE=PASS"; return 0;;
+      PLANNED) echo 'OBJECTIVE_PLAN_DURABLE=PASS'; return 0;;
       FAILED:*) echo "OBJECTIVE_PLAN_STATE=$result"; echo "$payload"; return 2;;
     esac
     sleep 1
@@ -141,21 +142,17 @@ crash_lane() {
   set -euo pipefail
   echo "${lane}=START repository=$repo"
   cid=$(start_lane "$project" "$lane" "$port")
-  text="Take ownership of one Objective: perform a governed read-only institutional audit of $repo, verify it through Observation, and deliver evidence. Do not mutate anything."
+  text="Take ownership of one Objective: perform a governed single-repository read-only audit of $repo using the available repository audit capability, verify it through Observation, and deliver the resulting evidence. Do not mutate anything and do not perform cross-repository analysis."
 
-  # The production host has a bounded shared external-provider budget. Serialize only the
-  # Intelligence planning admission for these synthetic destructive lanes, then release the
-  # lock before crash/execution so the actual Objective runtimes remain concurrently active.
-  # This prevents the acceptance harness itself from manufacturing simultaneous provider bursts,
-  # while still proving two isolated JVMs can recover and execute overlapping Objectives.
-  exec 9>"$OUT/execution-planning.lock"
-  flock 9
+  # Shared external planning capacity is a bounded resource. Serialize only planning admission;
+  # after a durable plan exists, release the lock before crash/execution. Both isolated JVMs then
+  # remain simultaneously active and independently recover the already-planned Objectives.
+  exec 9>"$OUT/execution-planning.lock"; flock 9
   echo "${lane}_PLANNING_ADMISSION=ACQUIRED"
   send_local_update "$port" "$update" "$text" "$OUT/${lane}-ingress.json"
   oid=$(find_objective "$port" "$update"); test -n "$oid"; echo "${lane}_OBJECTIVE_ID=$oid"
   wait_planned "$port" "$oid"
-  flock -u 9
-  echo "${lane}_PLANNING_ADMISSION=RELEASED"
+  flock -u 9; echo "${lane}_PLANNING_ADMISSION=RELEASED"
 
   restarts_before=$(docker inspect "$cid" --format '{{.RestartCount}}'); host_pid=$(docker inspect "$cid" --format '{{.State.Pid}}'); test "$host_pid" -gt 1
   docker run --rm --pid=host --network=none alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc sh -c "kill -9 $host_pid"
