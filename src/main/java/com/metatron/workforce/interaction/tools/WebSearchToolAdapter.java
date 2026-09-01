@@ -25,29 +25,29 @@ import java.util.regex.Pattern;
 /**
  * Read-only Internet capability used by interactive Workforce paths.
  *
- * <p>Current-information acquisition prefers a search-grounded frontier query when an authorized
- * Gemini credential is available. This is deliberately semantic and domain-neutral: a technically
- * successful search is not useful evidence unless the search provider can answer the actual
- * requirement and attribute the answer to external sources. RSS search remains a bounded fallback,
- * not the truth criterion. External content is evidence only and never creates institutional authority.</p>
+ * <p>When a current-information requirement can be bound unambiguously to a structured public
+ * source, the adapter acquires that source before spending frontier/search capacity. Otherwise it
+ * falls back to search-grounded frontier retrieval and then bounded RSS search. A technically
+ * successful fetch is not useful evidence unless it answers the actual requirement and attributes
+ * the answer to external sources. External content is evidence only and never creates authority.</p>
  */
 public final class WebSearchToolAdapter implements ToolAdapter {
     public static final String CAPABILITY = "web.search";
 
     private static final String BING_ENDPOINT = "https://www.bing.com/search?format=rss&q=";
     private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
-    private static final List<String> GROUNDED_MODELS = List.of(
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash");
+    private static final List<String> GROUNDED_MODELS = List.of("gemini-3.1-flash-lite", "gemini-2.5-flash");
     private static final String COINGECKO_BTC = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,vnd&include_last_updated_at=true";
     private static final String COINBASE_BTC = "https://api.coinbase.com/v2/prices/BTC-USD/spot";
+    private static final String FRANKFURTER_RATE = "https://api.frankfurter.dev/v2/rate/%s/%s";
+    private static final String OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json";
+    private static final String OPEN_METEO_CURRENT = "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto";
     private static final int SEARCH_RESULT_LIMIT = 5;
     private static final int FETCH_RESULT_LIMIT = 3;
     private static final int MAX_EXCERPT_CHARS = 5000;
+    private static final Set<String> KNOWN_CURRENCIES = Set.of(
+            "USD", "VND", "EUR", "GBP", "JPY", "CNY", "KRW", "SGD", "THB", "AUD", "CAD",
+            "CHF", "HKD", "NZD", "INR", "IDR", "MYR", "PHP", "TWD", "AED", "SAR");
     private static final Set<String> QUERY_STOP_WORDS = Set.of(
             "the", "and", "for", "with", "from", "this", "that", "what", "how", "much", "about",
             "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
@@ -61,6 +61,10 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private static final Pattern COINGECKO_VND = Pattern.compile("\\\"vnd\\\"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)");
     private static final Pattern COINGECKO_UPDATED = Pattern.compile("\\\"last_updated_at\\\"\\s*:\\s*([0-9]+)");
     private static final Pattern COINBASE_AMOUNT = Pattern.compile("\\\"amount\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+    private static final Pattern EXPLICIT_CURRENCY_PAIR = Pattern.compile(
+            "(?i)\\b([a-z]{3})\\b\\s*(?:/|->|to|vs\\.?|versus)\\s*\\b([a-z]{3})\\b");
+    private static final Pattern WEATHER_LOCATION = Pattern.compile(
+            "(?iu)(?:weather|thời\\s*tiết).*?(?:\\bin\\b|\\bfor\\b|ở|tại)\\s+([^?.,;]+)");
 
     private final HttpClient client;
     private final Duration timeout;
@@ -92,13 +96,25 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         String query = request.input() == null ? "" : request.input().trim();
         if (query.isBlank()) return ToolResult.failure(request, "web_search_query_empty");
 
-        ToolResult grounded = searchGrounded(request, query);
-        if (grounded.success()) return grounded;
-
         if (isBitcoinPriceQuery(query)) {
             ToolResult market = fetchBitcoinPrice(request, query);
             if (market.success()) return market;
         }
+
+        CurrencyPair pair = currencyPair(query);
+        if (pair != null && isExchangeRateQuery(query)) {
+            ToolResult rate = fetchExchangeRate(request, query, pair);
+            if (rate.success()) return rate;
+        }
+
+        String weatherLocation = weatherLocation(query);
+        if (!weatherLocation.isBlank()) {
+            ToolResult weather = fetchCurrentWeather(request, query, weatherLocation);
+            if (weather.success()) return weather;
+        }
+
+        ToolResult grounded = searchGrounded(request, query);
+        if (grounded.success()) return grounded;
         return searchWeb(request, query);
     }
 
@@ -256,6 +272,84 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         } catch (Exception e) { return ToolResult.failure(request, "coinbase_failed:" + e.getClass().getSimpleName()); }
     }
 
+    private ToolResult fetchExchangeRate(ToolRequest request, String query, CurrencyPair pair) {
+        String sourceUrl = FRANKFURTER_RATE.formatted(pair.base(), pair.quote());
+        try {
+            HttpResponse<String> response = get(sourceUrl);
+            if (!ok(response)) return ToolResult.failure(request, "exchange_rate_http_status:" + response.statusCode());
+            JsonNode root = mapper.readTree(response.body());
+            JsonNode rateNode = root.path("rate");
+            if (!rateNode.isNumber()) return ToolResult.failure(request, "exchange_rate_missing");
+            String rate = rateNode.asText();
+            String date = root.path("date").asText("");
+            String output = "CURRENT EXTERNAL EXCHANGE RATE\nquery=" + query
+                    + "\nbase=" + pair.base()
+                    + "\nquote=" + pair.quote()
+                    + "\nexchange_rate=" + rate + " " + pair.quote() + " per " + pair.base()
+                    + (date.isBlank() ? "" : "\nsource_date=" + date)
+                    + "\nsource=Frankfurter"
+                    + "\nsource_url=" + sourceUrl
+                    + "\nretrieved_at=" + Instant.now();
+            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                    true, output, List.of(sourceUrl));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "exchange_rate_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "exchange_rate_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private ToolResult fetchCurrentWeather(ToolRequest request, String query, String location) {
+        String geocodeUrl = OPEN_METEO_GEOCODE.formatted(URLEncoder.encode(location, StandardCharsets.UTF_8));
+        try {
+            HttpResponse<String> geocodeResponse = get(geocodeUrl);
+            if (!ok(geocodeResponse)) return ToolResult.failure(request, "weather_geocode_http_status:" + geocodeResponse.statusCode());
+            JsonNode place = mapper.readTree(geocodeResponse.body()).path("results").path(0);
+            if (!place.path("latitude").isNumber() || !place.path("longitude").isNumber()) {
+                return ToolResult.failure(request, "weather_location_not_found");
+            }
+            double latitude = place.path("latitude").asDouble();
+            double longitude = place.path("longitude").asDouble();
+            String forecastUrl = OPEN_METEO_CURRENT.formatted(
+                    Double.toString(latitude), Double.toString(longitude));
+            HttpResponse<String> forecastResponse = get(forecastUrl);
+            if (!ok(forecastResponse)) return ToolResult.failure(request, "weather_http_status:" + forecastResponse.statusCode());
+            JsonNode root = mapper.readTree(forecastResponse.body());
+            JsonNode current = root.path("current");
+            if (!current.path("temperature_2m").isNumber()) return ToolResult.failure(request, "weather_current_missing");
+            JsonNode units = root.path("current_units");
+            String resolved = place.path("name").asText(location);
+            String admin1 = place.path("admin1").asText("");
+            String country = place.path("country").asText("");
+            if (!admin1.isBlank() && !resolved.equalsIgnoreCase(admin1)) resolved += ", " + admin1;
+            if (!country.isBlank()) resolved += ", " + country;
+            int code = current.path("weather_code").asInt(-1);
+            String output = "CURRENT EXTERNAL WEATHER\nquery=" + query
+                    + "\nlocation=" + resolved
+                    + "\nlatitude=" + latitude
+                    + "\nlongitude=" + longitude
+                    + "\ntemperature_2m=" + current.path("temperature_2m").asText() + " " + units.path("temperature_2m").asText("°C")
+                    + "\napparent_temperature=" + current.path("apparent_temperature").asText() + " " + units.path("apparent_temperature").asText("°C")
+                    + "\nrelative_humidity_2m=" + current.path("relative_humidity_2m").asText() + " " + units.path("relative_humidity_2m").asText("%")
+                    + "\nweather_code=" + code
+                    + "\nweather_condition=" + weatherCondition(code)
+                    + "\nwind_speed_10m=" + current.path("wind_speed_10m").asText() + " " + units.path("wind_speed_10m").asText("")
+                    + "\nobserved_at=" + current.path("time").asText("")
+                    + "\nsource=Open-Meteo"
+                    + "\nsource_url=" + forecastUrl
+                    + "\ngeocoding_source_url=" + geocodeUrl
+                    + "\nretrieved_at=" + Instant.now();
+            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                    true, output, List.of(forecastUrl, geocodeUrl));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "weather_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "weather_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
     private ToolResult searchWeb(ToolRequest request, String query) {
         try {
             URI uri = URI.create(endpoint + URLEncoder.encode(query, StandardCharsets.UTF_8));
@@ -316,12 +410,67 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private static boolean ok(HttpResponse<?> response) { return response.statusCode() >= 200 && response.statusCode() < 300; }
 
     private static boolean isBitcoinPriceQuery(String query) {
-        String value = query.toLowerCase(Locale.ROOT);
+        String value = fold(query);
         boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*");
-        boolean priceIntent = value.contains("giá") || value.contains("gia ") || value.contains("price") || value.contains("bao nhiêu")
-                || value.contains("bao nhieu") || value.contains("hôm nay") || value.contains("hom nay") || value.contains("hiện tại")
-                || value.contains("hien tai") || value.contains("ngay lúc") || value.contains("ngay luc") || value.contains("now") || value.contains("current");
+        boolean priceIntent = value.contains("gia") || value.contains("price") || value.contains("bao nhieu")
+                || value.contains("hom nay") || value.contains("hien tai") || value.contains("ngay luc")
+                || value.contains("now") || value.contains("current");
         return bitcoin && priceIntent;
+    }
+
+    private static boolean isExchangeRateQuery(String query) {
+        String value = fold(query);
+        return value.contains("ty gia") || value.contains("exchange rate") || value.contains("forex")
+                || value.contains("rate") || EXPLICIT_CURRENCY_PAIR.matcher(query).find();
+    }
+
+    private static CurrencyPair currencyPair(String query) {
+        Matcher explicit = EXPLICIT_CURRENCY_PAIR.matcher(query);
+        if (explicit.find()) {
+            String base = explicit.group(1).toUpperCase(Locale.ROOT);
+            String quote = explicit.group(2).toUpperCase(Locale.ROOT);
+            if (KNOWN_CURRENCIES.contains(base) && KNOWN_CURRENCIES.contains(quote) && !base.equals(quote)) {
+                return new CurrencyPair(base, quote);
+            }
+        }
+        LinkedHashSet<String> codes = new LinkedHashSet<>();
+        for (String token : query.toUpperCase(Locale.ROOT).split("[^A-Z]+")) {
+            if (KNOWN_CURRENCIES.contains(token)) codes.add(token);
+        }
+        if (codes.size() < 2) return null;
+        var iterator = codes.iterator();
+        return new CurrencyPair(iterator.next(), iterator.next());
+    }
+
+    private static String weatherLocation(String query) {
+        String folded = fold(query);
+        if (!(folded.contains("weather") || folded.contains("thoi tiet"))) return "";
+        Matcher matcher = WEATHER_LOCATION.matcher(query);
+        if (matcher.find()) {
+            String location = matcher.group(1).trim()
+                    .replaceAll("(?iu)\\s+(?:right\\s+now|today|currently|now|thế\\s+nào|hôm\\s+nay|hiện\\s+tại|là\\s+gì).*$", "")
+                    .trim();
+            if (!location.isBlank()) return location;
+        }
+        if (folded.contains("ho chi minh")) return "Ho Chi Minh City";
+        return "";
+    }
+
+    private static String weatherCondition(int code) {
+        return switch (code) {
+            case 0 -> "clear sky";
+            case 1 -> "mainly clear";
+            case 2 -> "partly cloudy";
+            case 3 -> "overcast";
+            case 45, 48 -> "fog";
+            case 51, 53, 55, 56, 57 -> "drizzle";
+            case 61, 63, 65, 66, 67 -> "rain";
+            case 71, 73, 75, 77 -> "snow";
+            case 80, 81, 82 -> "rain showers";
+            case 85, 86 -> "snow showers";
+            case 95, 96, 99 -> "thunderstorm";
+            default -> "unknown weather code";
+        };
     }
 
     private static String first(Pattern pattern, String value) { Matcher matcher = pattern.matcher(value == null ? "" : value); return matcher.find() ? matcher.group(1) : ""; }
@@ -343,5 +492,6 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         return value.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
                 .replace("&#39;", "'").replace("&nbsp;", " ").replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
     }
+    private record CurrencyPair(String base, String quote) {}
     private record Result(String title, String url, String description) {}
 }
