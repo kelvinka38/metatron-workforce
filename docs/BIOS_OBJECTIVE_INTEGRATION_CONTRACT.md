@@ -1,6 +1,6 @@
 # METATRON WORKFORCE — BIOS OBJECTIVE INTEGRATION CONTRACT
 
-**Status:** APPROVED INTEGRATION BOUNDARY  
+**Status:** LIVE END-TO-END TECHNICALLY ACCEPTED  
 **Consumer:** BIOS Product #1  
 **Authority:** Workforce canonical management SOT + BIOS SOT v2.0  
 **Founder Approval:** 2026-08-31
@@ -9,15 +9,24 @@
 
 ## CURRENT IMPLEMENTATION CLAIM BOUNDARY
 
-This approved contract defines the target boundary; contract approval is not live end-to-end acceptance. Current production evidence proves BIOS independently and proves bounded Workforce paths, but does not yet prove the live BIOS service -> durable Workforce Objective -> verified Outcome path. Report that path as `CONTRACT APPROVED / LIVE END-TO-END NOT YET ACCEPTED` until the Autonomy Closure production gate passes.
+The approved BIOS → Workforce Objective boundary is now implemented and production-proven for BIOS Product #1 v2.0 P5.
+
+Accepted production dependency:
+
+- Workforce SHA: `c7d19e67797b1f97ba118433bc749bb80defe9d0`
+- BIOS SHA: `fcb29f61b204392b50d4b507332ce5f2c0e989c5`
+- Product v2 ratification run: `33467056010`
+- final verdict: `ACCEPTED`
+
+This proves the specified technical integration. It does not imply market validation or guarantee that every arbitrary future Objective has every capability/authority/resource required for successful completion.
 
 ---
 
 # 1. PURPOSE
 
-This document records how BIOS Product #1 consumes Workforce without redefining Workforce semantics.
+BIOS Product #1 consumes Workforce without redefining Workforce semantics.
 
-BIOS produces or references durable Objective context from an accepted Program. Workforce remains authoritative for management ownership, organization, staffing, assignment, coordination, review, recovery, replanning, reassignment, and escalation of work.
+BIOS produces a durable Objective Contract from an accepted Program. Workforce remains authoritative for management ownership, organization, staffing, assignment, coordination, review, recovery, replanning, reassignment, escalation, and terminal evidence-backed work state.
 
 ---
 
@@ -27,25 +36,29 @@ BIOS produces or references durable Objective context from an accepted Program. 
 BIOS CASE
 → BIOS PROGRAM
 → OBJECTIVE CONTRACT
+→ POST /workforce/bios/objectives
 → WORKFORCE MANAGEMENT
 → AUTHORIZATION
 → EXECUTION
 → OBSERVATION / EVIDENCE
-→ BIOS OUTCOME / STATE UPDATE
+→ BIOS OBJECTIVE STATUS SYNC
+→ BIOS OUTCOME / LEARNING / STATE UPDATE
 ```
+
+The internal production ingress is implemented by `BiosObjectiveIngressController`.
 
 ---
 
 # 3. BIOS PROVIDES
 
-Where applicable, BIOS should provide/reference:
+Where applicable, BIOS provides/references:
 
 ```text
 objective_id
 case_id
 program_id
 desired_outcome
-scope
+target / scope
 constraints
 priority
 deadline
@@ -98,13 +111,15 @@ INTELLIGENCE PROVIDER ≠ WORKER BY DEFAULT
 EXECUTION SUCCESS ≠ OBJECTIVE SUCCESS
 ```
 
-Objective lifetime must not depend on the originating chat/model call.
+Objective lifetime does not depend on the originating chat/model call.
+
+Objective-id reuse fails closed when it belongs to another durable institutional context.
 
 ---
 
 # 6. MINIMUM SUFFICIENT WORKFORCE
 
-Staffing must be driven by required capability/capacity and the Objective's Quality/Time/Cost/Risk constraints.
+Staffing is driven by required capability/capacity and the Objective's Quality/Time/Cost/Risk constraints.
 
 Arbitrary Worker count or agent count is not an acceptance criterion.
 
@@ -112,25 +127,27 @@ Arbitrary Worker count or agent count is not an acceptance criterion.
 
 # 7. HUMAN ESCALATION
 
-Workforce should not require routine Human micromanagement for work that is within delegated authority.
+Workforce does not require routine Human micromanagement for work within delegated authority.
 
-Escalate when authority, risk, resource, ambiguity, policy, or required Human judgment makes escalation legitimate.
+Escalation remains legitimate when authority, risk, resource, ambiguity, policy, or required Human judgment requires it.
 
-Routine recoverable failure should be handled through the canonical Workforce recovery loop where authorized.
+Routine recoverable failure uses the canonical Workforce recovery loop where authorized.
 
 ---
 
 # 8. COMPLETION
 
-Workforce reports execution/work state through authoritative contracts. Objective completion must be closed against required acceptance criteria and Observation/evidence.
+Workforce exposes authoritative Objective state and evidence through the management contract.
 
-BIOS consumes the resulting Outcome to update Case State and Learning.
+BIOS synchronizes terminal Objective state, persists Outcome and Learning records, and creates the next evidence-linked State version.
+
+The BIOS Trust Surface exposes material Objective state without requiring the user to read backend logs.
 
 ---
 
 # 9. TECHNICAL ACCEPTANCE
 
-The BIOS↔Workforce integration is technically acceptable when a durable BIOS Objective can:
+The BIOS↔Workforce integration is technically accepted because production evidence proves a durable BIOS Objective can:
 
 1. be admitted to Workforce;
 2. obtain valid management ownership;
@@ -139,10 +156,10 @@ The BIOS↔Workforce integration is technically acceptable when a durable BIOS O
 5. preserve authorization boundaries;
 6. execute through the authoritative Execution boundary;
 7. survive ordinary chat/session/runtime replacement;
-8. recover from bounded routine failure where required by the test case;
+8. rely on the accepted Workforce bounded-recovery contract where applicable;
 9. produce observable evidence/Outcome;
 10. return sufficient Outcome context for BIOS State/Learning update.
 
 Real external customer adoption is not required for this technical integration acceptance.
 
-**APPROVED — 2026-08-31**
+**LIVE END-TO-END ACCEPTED — 2026-09-01**
