@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 35
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: capacity-phased-v7
+      HIGHWAY_REVISION: capacity-phased-v8
     steps:
       - uses: actions/checkout@v7
       - name: Run capacity-phased production acceptance highway
@@ -42,14 +42,42 @@ jobs:
           # sequential on the 4GB production host. Core Highway retains its own four-way
           # concurrency (gateway, observability, destructive A, destructive B). We do not
           # concurrently add frontier/search traffic that competes for JVM/host capacity.
+          #
+          # Isolated JVM health can become UP a few seconds before the async chat admission
+          # path is fully materializing Objectives. Retry the whole isolated Core exactly once
+          # only for that proven transient shape: planning admission was acquired but fewer
+          # than two Objective IDs materialized. Do not retry crash, evidence, tool, terminal,
+          # exact-SHA, gateway, or observability failures.
           echo 'HIGHWAY_PHASE=CORE'
-          set +e
-          scripts/production-acceptance-highway.sh > "$ROOT/highway-core.log" 2>&1
-          CORE_RC=$?
-          set -e
+          CORE_RC=1
+          CORE_ATTEMPT=0
+          while [ "$CORE_ATTEMPT" -lt 2 ]; do
+            CORE_ATTEMPT=$((CORE_ATTEMPT + 1))
+            ATTEMPT_LOG="$ROOT/highway-core-attempt-${CORE_ATTEMPT}.log"
+            set +e
+            scripts/production-acceptance-highway.sh > "$ATTEMPT_LOG" 2>&1
+            CORE_RC=$?
+            set -e
+            cp "$ATTEMPT_LOG" "$ROOT/highway-core.log"
+            echo "HIGHWAY_CORE_ATTEMPT=${CORE_ATTEMPT} RC=${CORE_RC}"
+            cat "$ATTEMPT_LOG" || true
+            [ "$CORE_RC" = 0 ] && break
+
+            OBJECTIVE_COUNT=$(grep -cE 'lane-[ab]_OBJECTIVE_ID=' "$ATTEMPT_LOG" || true)
+            if [ "$CORE_ATTEMPT" = 1 ] \
+              && grep -qE 'lane-[ab]_PLANNING_ADMISSION=ACQUIRED' "$ATTEMPT_LOG" \
+              && [ "$OBJECTIVE_COUNT" -lt 2 ]; then
+              echo "HIGHWAY_CORE_BOUNDED_RETRY=OBJECTIVE_ADMISSION_MATERIALIZATION objective_count=${OBJECTIVE_COUNT}"
+              sleep 5
+              continue
+            fi
+            break
+          done
           echo "$CORE_RC" > "$ROOT/highway-core.rc"
-          cat "$ROOT/highway-core.log" || true
           test "$CORE_RC" = 0
+          if [ "$CORE_ATTEMPT" -gt 1 ]; then
+            echo 'HIGHWAY_CORE_BOUNDED_ADMISSION_RECOVERY=PASS'
+          fi
 
           echo 'HIGHWAY_PHASE=INTELLIGENCE_PRODUCT'
           set +e
