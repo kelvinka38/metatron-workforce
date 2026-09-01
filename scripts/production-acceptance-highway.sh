@@ -145,7 +145,7 @@ PY
   return 1
 }
 crash_lane() {
-  local project="$1" lane="$2" port="$3" repo="$4" update="$5" cid oid text evidence restarts_before
+  local project="$1" lane="$2" port="$3" repo="$4" update="$5" cid oid text evidence restarts_before host_pid state restarts
   set -euo pipefail
   echo "${lane}=START"
   cid=$(start_lane "$project" "$lane" "$port")
@@ -153,9 +153,13 @@ crash_lane() {
   send_local_update "$port" "$update" "$text" "$OUT/${lane}-ingress.json"
   oid=$(find_objective "$port" "$update"); test -n "$oid"; echo "${lane}_OBJECTIVE_ID=$oid"
   restarts_before=$(docker inspect "$cid" --format '{{.RestartCount}}')
-  # Kill PID 1 from inside the container so Docker observes an unplanned process crash.
-  # `docker kill` is a manual stop and intentionally suppresses restart-policy recovery.
-  docker exec "$cid" sh -c 'kill -9 1' >/dev/null 2>&1 || true
+  host_pid=$(docker inspect "$cid" --format '{{.State.Pid}}')
+  test "$host_pid" -gt 1
+  # Inject an actual JVM crash from an ancestor PID namespace. This is deliberately not
+  # `docker kill`, because manual Docker stops suppress restart-policy recovery.
+  docker run --rm --pid=host --network=none \
+    alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc \
+    sh -c "kill -9 $host_pid"
   for i in $(seq 1 60); do
     state=$(docker inspect "$cid" --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)
     restarts=$(docker inspect "$cid" --format '{{.RestartCount}}' 2>/dev/null || echo 0)
