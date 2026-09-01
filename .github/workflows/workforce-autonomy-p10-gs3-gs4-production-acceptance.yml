@@ -165,9 +165,19 @@ jobs:
           dispatches=[d for d in (coordination.get('dispatches') or {}).values() if d.get('objectiveId')==oid]
           assert len(dispatches)>=minimum, (len(dispatches),minimum)
           attempts=sorted((int(d.get('attempt',0)),d.get('status',''),d.get('stepId',''),d.get('idempotencyKey','')) for d in dispatches)
-          assert any(status=='FAILED' for _,status,_,_ in attempts), attempts
-          assert any(status=='SUCCEEDED' for _,status,_,_ in attempts), attempts
-          assert len({key for *_,key in attempts if key})==1, 'logical dispatch idempotency key changed across retry'
+          by_step={}
+          for attempt,status,step_id,key in attempts:
+              assert step_id, attempts
+              by_step.setdefault(step_id,[]).append((attempt,status,key))
+          recovering_steps=[
+              step_id for step_id,rows in by_step.items()
+              if any(status=='FAILED' for _,status,_ in rows)
+              and any(status=='SUCCEEDED' for _,status,_ in rows)
+          ]
+          assert recovering_steps, attempts
+          for step_id,rows in by_step.items():
+              keys={key for _,_,key in rows if key}
+              assert len(keys)==1, f'logical dispatch idempotency key changed across retry: step={step_id} keys={sorted(keys)}'
 
           execution=json.load(open(root/f'{label}-execution-attempts.json'))
           execution_attempts=[a for a in execution.values() if a.get('objectiveId')==oid]
