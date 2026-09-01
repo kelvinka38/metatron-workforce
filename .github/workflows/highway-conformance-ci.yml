@@ -42,7 +42,7 @@ jobs:
           grep -q "scripts/highway-intelligence-lane.sh" .github/workflows/production-acceptance-highway-v2.yml
           grep -q "scripts/runtime-conformance-point2.sh" .github/workflows/production-acceptance-highway-v2.yml
           ! grep -Eq 'PID=\$\(run_lane|PID=\$\([^)]*&' .github/workflows/production-acceptance-highway-v2.yml
-          grep -q "- 'scripts/\*\*'" .github/workflows/production-deploy.yml
+          grep -q -- "- 'scripts/\*\*'" .github/workflows/production-deploy.yml
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Validate canonical production defaults
