@@ -143,7 +143,7 @@ public record NormalizedRequest(
 
     public boolean canReturnFastDirectly() {
         return requestedDepth == IntelligenceDepth.FAST
-                && mode == IntelligenceMode.DISCUSSION
+                && (mode == IntelligenceMode.CASUAL || mode == IntelligenceMode.DISCUSSION)
                 && collaborationMode == CollaborationMode.SINGLE
                 && analyticalProtocols.isEmpty()
                 && deterministicCapability == DeterministicCapability.NONE
