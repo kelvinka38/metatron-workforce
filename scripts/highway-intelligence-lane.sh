@@ -27,13 +27,25 @@ PY
 }
 
 send_update() {
-  local update="$1" text="$2" body status
+  local update="$1" text="$2" body status attempt output attempts_log
   body=$(telegram_body "$update" "$text")
-  status=$(curl -sS -o "$OUT/intelligence-${update}-ingress.json" -w '%{http_code}' \
-    --proto '=https' --tlsv1.2 --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook \
-    -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
-    -H 'Content-Type: application/json' --data-binary "$body")
-  test "$status" = 200
+  output="$OUT/intelligence-${update}-ingress.json"
+  attempts_log="$OUT/intelligence-${update}-ingress-attempts.log"
+  : > "$attempts_log"
+  for attempt in 1 2 3 4 5; do
+    status=$(curl -sS -o "$output" -w '%{http_code}' \
+      --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 25 \
+      --retry 1 --retry-delay 1 --retry-connrefused \
+      -X POST https://gate.metatron.vn/telegram/webhook \
+      -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+      -H 'Content-Type: application/json' --data-binary "$body" 2>>"$attempts_log") || status=000
+    printf 'attempt=%s status=%s\n' "$attempt" "$status" >> "$attempts_log"
+    if [ "$status" = 200 ]; then return 0; fi
+    sleep "$attempt"
+  done
+  echo "INTELLIGENCE_INGRESS_FAILED update_id=$update" >&2
+  cat "$attempts_log" >&2
+  return 1
 }
 
 wait_answer() {
@@ -63,7 +75,7 @@ case_file_for_update() {
 }
 
 fresh_case() {
-  local update="$1" text="$2" pattern="$3" result_file="$4" since case_file log
+  local update="$1" text="$2" pattern="$3" result_prefix="$4" since case_file log
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   send_update "$update" "$text"
   wait_answer "$since" "$update"
@@ -73,7 +85,9 @@ fresh_case() {
   ! grep -Eq "execution-objective-workforce-accepted.*$update|METATRON WORK ACCEPTED.*$update|telegram_answer_ready update_id=$update.*objective_id=[^[:space:]]+" "$log"
   case_file=$(case_file_for_update "$update" "$pattern")
   test -n "$case_file"
-  printf '%s\n' "$case_file" > "$result_file"
+  printf '%s\n' "$case_file" > "${result_prefix}.case"
+  docker exec "$CID" cat "$case_file" > "${result_prefix}.json"
+  test -s "${result_prefix}.json"
   echo "FRESH_CASE_PASS update_id=$update case_file=$case_file"
 }
 
@@ -83,17 +97,19 @@ FX="${BASE_ID}12"
 WEATHER="${BASE_ID}13"
 GOLD_2="${BASE_ID}14"
 
-# Point 2 is itself a highway lane running concurrently with the core lanes.
-# Keep its domain probes sequential internally to avoid turning product acceptance into a host saturation test.
-fresh_case "$GOLD_1" 'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' 'vàng|gold' "$OUT/gold-1.case"
-fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx.case"
-fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather.case"
+# Point 2 is itself concurrent with the core Highway. Its probes stay sequential internally so
+# this acceptance measures product behavior rather than accidental host saturation.
+fresh_case "$GOLD_1" 'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' 'vàng|gold' "$OUT/gold-1"
+fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx"
+fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather"
 
-# Same-topic second turn must materialize a new current-evidence case rather than silently reuse the first turn.
-fresh_case "$GOLD_2" 'Kiểm tra lại giá vàng Việt Nam ngay lúc này. Hãy lấy dữ liệu hiện tại mới và nêu nguồn.' 'vàng|gold' "$OUT/gold-2.case"
+# Same-topic second turn must create a distinct current-evidence case. Preserve both full case
+# records in the artifact so reacquisition can be independently inspected instead of inferred.
+fresh_case "$GOLD_2" 'Kiểm tra lại giá vàng Việt Nam ngay lúc này. Hãy lấy dữ liệu hiện tại mới và nêu nguồn.' 'vàng|gold' "$OUT/gold-2"
 GOLD_CASE_1=$(cat "$OUT/gold-1.case")
 GOLD_CASE_2=$(cat "$OUT/gold-2.case")
 test "$GOLD_CASE_1" != "$GOLD_CASE_2"
+! cmp -s "$OUT/gold-1.json" "$OUT/gold-2.json"
 
 curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
 echo 'INTELLIGENCE_GOLD_FRESH=PASS'
