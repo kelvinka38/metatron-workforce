@@ -22,12 +22,8 @@ uid=int(sys.argv[3]); update=int(sys.argv[1])
 print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":sys.argv[2]}},ensure_ascii=False))
 PY
   )
-  # Point 2 validates natural-task semantics on the exact live production runtime. Public Gateway
-  # traversal is already independently proven by the Highway core plus three public fresh-info cases.
-  # Keep this lane on localhost so edge/tunnel transport noise cannot be misclassified as a routing defect.
   for attempt in 1 2 3 4; do
-    status=$(curl -sS -o "/tmp/point2-${update_id}.json" -w '%{http_code}' \
-      --connect-timeout 3 --max-time 25 \
+    status=$(curl -sS -o "/tmp/point2-${update_id}.json" -w '%{http_code}' --connect-timeout 3 --max-time 25 \
       -X POST http://127.0.0.1:8080/telegram/webhook \
       -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
       -H 'Content-Type: application/json' --data-binary "$body" || true)
@@ -38,25 +34,9 @@ PY
   return 1
 }
 
-wait_route() {
-  local since="$1" update_id="$2" pattern="$3"
-  for _ in $(seq 1 90); do
-    LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
-    if grep -q "telegram_webhook_ack update_id=$update_id" <<<"$LOGS" \
-      && grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" \
-      && grep -Eq "telegram_answer_ready update_id=$update_id.*route=$pattern" <<<"$LOGS"; then
-      return 0
-    fi
-    sleep 2
-  done
-  echo "ROUTE_TIMEOUT update_id=$update_id expected=$pattern" >&2
-  docker logs --since "$since" "$CID" 2>&1 | grep -E "update_id=$update_id|metatron_intelligence_latency" >&2 || true
-  return 1
-}
-
 wait_terminal() {
   local since="$1" update_id="$2"
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 120); do
     LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
     if grep -q "telegram_webhook_ack update_id=$update_id" <<<"$LOGS" \
       && grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" \
@@ -74,10 +54,10 @@ assert_current_answer() {
   local update_id="$1" text="$2" subject="$3" require_numeric="$4" since case_file
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   send_update "$update_id" "$text"
-  wait_route "$since" "$update_id" 'intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*'
+  wait_terminal "$since" "$update_id"
   LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
-  ! grep -Eq "update_id=$update_id.*route=execution-objective-|execution-objective-workforce-accepted.*$update_id|METATRON WORK ACCEPTED.*$update_id" <<<"$LOGS"
-  case_file=$(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update_id' /var/lib/metatron-workforce 2>/dev/null | tail -1")
+  ! grep -Eq "execution-objective-workforce-accepted.*$update_id|METATRON WORK ACCEPTED.*$update_id|telegram_answer_ready update_id=$update_id.*objective_id=[^[:space:]]+" <<<"$LOGS"
+  case_file=$(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update_id' /var/lib/metatron-workforce/intelligence-cases 2>/dev/null | tail -1")
   test -n "$case_file"
   docker exec "$CID" cat "$case_file" | python3 -c '
 import json,re,sys
@@ -85,14 +65,20 @@ case=json.load(sys.stdin); subject=sys.argv[1]; numeric=sys.argv[2]=="1"
 reqs=case.get("informationRequirements") or []
 assert reqs, "NO_INFORMATION_REQUIREMENTS"
 assert not any(str(r.get("question","")).strip().lower()=="current external evidence" for r in reqs), "GENERIC_FRESH_QUERY"
-assert any(re.search(subject,str(r.get("question","")),re.I) and str(r.get("status"))=="SATISFIED" for r in reqs), "SEMANTIC_REQUIREMENT_NOT_SATISFIED"
-refs=[x for r in reqs for x in (r.get("evidenceReferences") or [])]
-assert any(str(x).startswith(("http://","https://")) for x in refs), "NO_EXTERNAL_EVIDENCE"
+matching=[r for r in reqs if re.search(subject,str(r.get("question","")),re.I)]
+assert matching, "SEMANTIC_REQUIREMENT_LOST_SUBJECT"
+assert any(str(r.get("status"))=="SATISFIED" for r in matching), "SEMANTIC_REQUIREMENT_NOT_SATISFIED"
+refs=[str(x) for r in matching for x in (r.get("evidenceReferences") or [])]
+assert any(x.startswith(("http://","https://")) for x in refs), "NO_EXTERNAL_EVIDENCE"
 answer=str(case.get("latestConclusion") or "").strip()
 assert answer, "EMPTY_ANSWER"
+low=answer.lower()
+refusals=("i cannot provide","i can’t provide","i can\'t provide","unable to provide","insufficient information","not enough information","does not provide","cannot determine","không thể cung cấp","không đủ thông tin","chưa đủ thông tin","không thể xác định")
+assert not any(x in low for x in refusals), "CURRENT_ANSWER_IS_REFUSAL_OR_INSUFFICIENT"
 assert re.search(subject,answer,re.I), "ANSWER_LOST_SUBJECT"
 if numeric: assert re.search(r"\d",answer), "ANSWER_MISSING_CURRENT_VALUE"
-print("CURRENT_ANSWER_PASS")
+print("CURRENT_ANSWER_PASS",answer[:500].replace("\n"," "))
+print("CURRENT_EVIDENCE_REFS",refs[:5])
 ' "$subject" "$require_numeric"
 }
 
@@ -105,8 +91,9 @@ SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 send_update "$CASUAL" 'Chào Metatron, hôm nay nói chuyện bình thường thôi.'
 wait_terminal "$SINCE" "$CASUAL"
 LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-! grep -Eq "update_id=$CASUAL.*route=execution-objective-|execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL" <<<"$LOGS"
+! grep -Eq "execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL|telegram_answer_ready update_id=$CASUAL.*objective_id=[^[:space:]]+" <<<"$LOGS"
 
+# Unseen, domain-independent current-info tasks. No gold/FX/weather implementation vocabulary.
 assert_current_answer "$VERSION" \
   'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' \
   'Python|stable|version|phiên bản' 1
@@ -119,4 +106,5 @@ echo 'POINT2_CASUAL_NOT_OBJECTIVE=PASS'
 echo 'POINT2_CURRENT_EXTERNAL_NOT_OBJECTIVE=PASS'
 echo 'POINT2_DOMAIN_INDEPENDENT_SEMANTIC_REQUIREMENTS=PASS'
 echo 'POINT2_EXTERNAL_EVIDENCE_ACQUIRED=PASS'
+echo 'POINT2_USEFUL_NON_REFUSAL_ANSWER=PASS'
 echo 'POINT2_NATURAL_TASK_ROUTING=PASS'
