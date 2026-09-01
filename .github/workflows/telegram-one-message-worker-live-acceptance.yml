@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact deployed production SHA to validate; defaults to the dispatched ref SHA
+        description: Exact deployed production SHA to validate; defaults to dispatched ref SHA
         required: false
         type: string
 
@@ -24,7 +24,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
-      - name: Prove Telegram adapter follows Founder-approved detached Objective architecture
+      - name: Prove one natural-language Telegram Objective executes through the canonical Worker
         shell: bash
         env:
           TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
@@ -67,8 +67,8 @@ jobs:
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 
             # The channel response is an acceptance acknowledgement, not the terminal Objective result.
-            # Completion is therefore proven from detached Management/Execution evidence, not from a
-            # legacy synchronous `execution-objective-workforce-terminal` interaction route marker.
+            # Completion is proven from detached Management/Execution evidence, while terminal channel
+            # delivery belongs to the durable Telegram ingress receipt store. Do not conflate these stores.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q 'route=execution-objective-workforce-accepted' <<<"$LOGS" \
               && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
@@ -77,12 +77,13 @@ jobs:
               if [ -n "$OBJECTIVE_ID" ] \
                 && docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json" \
                 && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
-                && docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json"; then
+                && docker exec "$CID" sh -c "grep -A 8 -B 4 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"; then
                 EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
                 if [ -n "$EVIDENCE" ] \
                   && docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'" \
                   && docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'" \
-                  && docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"; then
+                  && docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'" \
+                  && docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json && grep -q '\"status\" : \"COMPLETED\"' /var/lib/metatron-workforce/management-state.json"; then
                   OUTCOME=EXECUTED
                   break
                 fi
@@ -113,6 +114,8 @@ jobs:
             docker exec "$CID" sh -c "grep -n -C 2 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json || true" >&2
             echo '--- MANAGEMENT CORRELATION ---' >&2
             docker exec "$CID" sh -c "grep -n -C 2 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json || true" >&2
+            echo '--- RUNTIME EVIDENCE FILES ---' >&2
+            docker exec "$CID" sh -c "find /var/lib/metatron-workforce/runtime-evidence -maxdepth 3 -type f -name execution.json -print | tail -20 || true" >&2
             exit 1
           fi
 
@@ -135,6 +138,7 @@ jobs:
             test -n "$EVIDENCE"
             docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json"
             docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
+            docker exec "$CID" sh -c "grep -A 8 -B 4 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"
             docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
             docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
             docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
