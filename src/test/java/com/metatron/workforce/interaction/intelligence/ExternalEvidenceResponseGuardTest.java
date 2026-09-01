@@ -18,8 +18,16 @@ class ExternalEvidenceResponseGuardTest {
     }
 
     @Test
+    void rejectsProviderThatRefusesCurrentValueAfterEvidenceWasRetrieved() {
+        assertThrows(IllegalStateException.class,
+                () -> guard.validate("Hệ thống hiện tại không duy trì nguồn cấp dữ liệu tự động nên tôi không thể cung cấp trực tiếp con số chính xác."));
+        assertThrows(IllegalStateException.class,
+                () -> guard.validate("I cannot provide the current value even though sources were supplied."));
+    }
+
+    @Test
     void acceptsGroundedAnswer() {
         assertDoesNotThrow(() -> guard.validate(
-                "Workforce đã truy xuất các nguồn hiện tại; dữ liệu nguồn cho thấy mức giá được công bố như sau."));
+                "Giá vàng SJC hiện tại theo nguồn đã truy xuất là 129.000.000 đồng/lượng."));
     }
 }
