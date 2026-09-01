@@ -67,6 +67,22 @@ jobs:
               fi
               sleep 2
             done
+            echo "ROUTE_TIMEOUT update_id=$update_id expected=$pattern" >&2
+            docker logs --since "$since" "$CID" 2>&1 | grep -E "update_id=$update_id|metatron_intelligence_latency" >&2 || true
+            return 1
+          }
+
+          wait_terminal() {
+            local since="$1" update_id="$2"
+            for _ in $(seq 1 90); do
+              LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+              if grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "TERMINAL_TIMEOUT update_id=$update_id" >&2
+            docker logs --since "$since" "$CID" 2>&1 | grep -E "update_id=$update_id|metatron_intelligence_latency" >&2 || true
             return 1
           }
 
@@ -103,11 +119,11 @@ jobs:
 
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           send_update "$CASUAL" 'Chào Metatron, hôm nay nói chuyện bình thường thôi.'
-          wait_route "$SINCE" "$CASUAL" 'frontier-semantic-fast'
+          wait_terminal "$SINCE" "$CASUAL"
           LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-          ! grep -Eq "update_id=$CASUAL.*route=execution-objective-|execution-objective-workforce-accepted.*$CASUAL" <<<"$LOGS"
+          ! grep -Eq "update_id=$CASUAL.*route=execution-objective-|execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL" <<<"$LOGS"
 
-          # These domains are deliberately unrelated to gold/FX/weather and to implementation vocabulary.
+          # Deliberately unrelated to gold/FX/weather and to implementation vocabulary.
           assert_current_answer "$VERSION" \
             'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' \
             'Python|stable|version|phiên bản' 1
