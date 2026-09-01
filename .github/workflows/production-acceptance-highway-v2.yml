@@ -27,8 +27,24 @@ jobs:
       - name: Run concurrent isolated production acceptance highway
         shell: bash
         run: |
-          chmod +x scripts/production-acceptance-highway.sh
-          scripts/production-acceptance-highway.sh
+          set -euo pipefail
+          chmod +x scripts/production-acceptance-highway.sh scripts/highway-intelligence-lane.sh
+          mkdir -p "/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
+
+          (set +e; scripts/production-acceptance-highway.sh > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.log" 2>&1; echo $? > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.rc") & CORE_PID=$!
+          (set +e; scripts/highway-intelligence-lane.sh > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.log" 2>&1; echo $? > "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.rc") & INTEL_PID=$!
+
+          echo "HIGHWAY_CORE_PID=$CORE_PID"
+          echo "HIGHWAY_POINT2_INTELLIGENCE_PID=$INTEL_PID"
+          wait "$CORE_PID" || true
+          wait "$INTEL_PID" || true
+
+          cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.log" || true
+          cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.log" || true
+          test "$(cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/highway-core.rc")" = 0
+          test "$(cat "/tmp/metatron-production-highway-${GITHUB_RUN_ID}/point2-intelligence.rc")" = 0
+          echo 'HIGHWAY_POINT2_INTELLIGENCE_CONCURRENT=PASS'
+          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2=PASS'
       - name: Upload highway evidence
         if: always()
         uses: actions/upload-artifact@v4
