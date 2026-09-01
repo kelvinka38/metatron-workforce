@@ -1,0 +1,22 @@
+name: Inspect Production Runner Services
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/ops-inspect-runners.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    steps:
+      - shell: bash
+        run: |
+          set -u
+          id
+          ls -ld /opt /opt/metatron /opt/metatron/* 2>/dev/null || true
+          if sudo -n true 2>/dev/null; then echo SUDO_NONINTERACTIVE=YES; else echo SUDO_NONINTERACTIVE=NO; fi
+          sudo -n systemctl list-units --type=service --all 2>/dev/null | grep -i 'actions.runner' || true
+          ps -ef | grep -E 'Runner.Listener|runsvc.sh' | grep -v grep || true
