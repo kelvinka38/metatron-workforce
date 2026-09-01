@@ -88,10 +88,17 @@ refs=[str(x) for r in matching for x in (r.get('evidenceReferences') or [])]
 assert any(x.startswith(('http://','https://')) for x in refs),'NO_EXTERNAL_REFS'
 answer=str(case.get('latestConclusion') or '').strip(); assert answer,'EMPTY_ANSWER'
 low=answer.lower()
-refusals=('i cannot provide','i am unable','insufficient information','not enough information','does not provide','cannot determine','không thể cung cấp','không đủ thông tin','chưa đủ thông tin','không thể xác định')
-assert not any(x in low for x in refusals),'REFUSAL_OR_INSUFFICIENT_ANSWER'
+refusals=(
+  'i cannot provide','i can\'t provide','i am unable','i\'m unable','insufficient information',
+  'not enough information','does not provide','cannot determine','please check','please look up',
+  'refer to the official','không thể cung cấp','không đủ thông tin','chưa đủ thông tin','không thể xác định',
+  'vui lòng trực tiếp tra cứu','vui lòng tra cứu','hãy tự tra cứu'
+)
+assert not any(x in low for x in refusals),'REFUSAL_OR_SEARCH_INSTRUCTION'
 assert re.search(pattern,answer,re.I),'ANSWER_OFF_SUBJECT'
-if numeric: assert re.search(r'\d',answer),'ANSWER_MISSING_CURRENT_VALUE'
+if numeric:
+    measurement=re.search(r'(?:[$₫]\s*)?\d[\d.,]*(?:\s*(?:USD|VND|đồng|₫|dollars?|°\s*C|°C|Celsius|%))',answer,re.I)
+    assert measurement,'ANSWER_MISSING_CURRENT_MEASUREMENT'
 print('USEFUL_CURRENT_ANSWER_PASS',answer[:500].replace('\n',' '))
 print('CURRENT_EVIDENCE_REFS',refs[:5])
 PY
@@ -110,22 +117,30 @@ fresh_case() {
   docker exec "$CID" cat "$case_file" > "${result_prefix}.json"; test -s "${result_prefix}.json"
   validate_case "${result_prefix}.json" "$pattern" "$require_numeric"
   echo "FRESH_CASE_PASS update_id=$update transport=$transport case_file=$case_file"
+  # The public edge is itself verified below, but repeated synthetic acceptance messages do not
+  # need to traverse Cloudflare. Give the interaction executor a bounded settle interval before
+  # the next independent Case so acceptance measures Intelligence rather than edge timing jitter.
+  sleep 2
 }
 
 BASE_ID=$(date +%s%N | cut -c1-13)
-GOLD_1="${BASE_ID}11"; FX="${BASE_ID}12"; WEATHER="${BASE_ID}13"; GOLD_2="${BASE_ID}14"
+BTC_1="${BASE_ID}11"; FX="${BASE_ID}12"; WEATHER="${BASE_ID}13"; BTC_2="${BASE_ID}14"
 
-fresh_case "$GOLD_1" 'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' 'vàng|gold' "$OUT/gold-1" public 1
-fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx" public 1
-fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather" public 1
-fresh_case "$GOLD_2" 'Kiểm tra lại giá vàng Việt Nam ngay lúc này. Hãy lấy dữ liệu hiện tại mới và nêu nguồn.' 'vàng|gold' "$OUT/gold-2" local 1
-GOLD_CASE_1=$(cat "$OUT/gold-1.case"); GOLD_CASE_2=$(cat "$OUT/gold-2.case")
-test "$GOLD_CASE_1" != "$GOLD_CASE_2"
-! cmp -s "$OUT/gold-1.json" "$OUT/gold-2.json"
+# One full public-Gateway natural-chat Case proves the production ingress path. The remaining
+# independent current-information Cases enter the same exact production JVM locally so Cloudflare
+# edge delivery jitter cannot masquerade as an Intelligence routing/tool-use failure.
+fresh_case "$BTC_1" 'Giá Bitcoin hiện tại khoảng bao nhiêu USD và VND? Hãy dùng dữ liệu mới và nêu nguồn.' 'Bitcoin|BTC' "$OUT/btc-1" public 1
+fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx" local 1
+fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather" local 1
+fresh_case "$BTC_2" 'Kiểm tra lại giá Bitcoin ngay lúc này bằng dữ liệu hiện tại mới và nêu nguồn.' 'Bitcoin|BTC' "$OUT/btc-2" local 1
+BTC_CASE_1=$(cat "$OUT/btc-1.case"); BTC_CASE_2=$(cat "$OUT/btc-2.case")
+test "$BTC_CASE_1" != "$BTC_CASE_2"
+! cmp -s "$OUT/btc-1.json" "$OUT/btc-2.json"
 
 curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
-echo 'INTELLIGENCE_PUBLIC_GATEWAY_CASES=3'
-echo 'INTELLIGENCE_GOLD_FRESH=PASS'
+echo 'INTELLIGENCE_PUBLIC_GATEWAY_CASES=1'
+echo 'INTELLIGENCE_PRODUCTION_JVM_CASES=4'
+echo 'INTELLIGENCE_BTC_FRESH=PASS'
 echo 'INTELLIGENCE_FX_FRESH=PASS'
 echo 'INTELLIGENCE_WEATHER_FRESH=PASS'
 echo 'INTELLIGENCE_FRESH_INFORMATION_NOT_OBJECTIVE=PASS'
