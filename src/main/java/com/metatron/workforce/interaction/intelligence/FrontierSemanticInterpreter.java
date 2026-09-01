@@ -30,6 +30,8 @@ public final class FrontierSemanticInterpreter {
             explicit_prohibitions: array
             temporal_context: explicit time scope, or empty string
             unresolved_semantic_ambiguity: empty string when the request is materially clear; otherwise ONE concise clarification question in the Human's language for ambiguity that materially changes what Metatron should do
+            interaction_outcome: ANSWER | DURABLE_WORK | INSTITUTIONAL_DECISION
+            evidence_scope: NONE | INSTITUTIONAL | CURRENT_EXTERNAL
             mode: DISCUSSION | REASONING | DECISION | EXECUTION
             collaboration_mode: SINGLE | INDEPENDENT_SECOND_OPINION | LEAD_REVIEW | CONSENSUS | ADVERSARIAL_REVIEW
             analytical_protocols: array containing zero or more of AUDIT, COMPARE, ROOT_CAUSE, PERFORMANCE, FORECAST, INVESTMENT, INCIDENT, RISK, IMPROVEMENT, DECISION
@@ -38,16 +40,19 @@ public final class FrontierSemanticInterpreter {
             fresh_external_data_required: boolean
             explicitly_requested_provider: GOOGLE | ANTHROPIC | OPENAI | null
             case_continuity: CONTINUE | NEW
-            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
+            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, interaction_outcome=ANSWER, evidence_scope=NONE, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
 
             Rules:
             - Interpret meaning; do not emulate a keyword router.
+            - interaction_outcome is the canonical product routing contract. Use ANSWER when the requested terminal product is the answer in this interaction, DURABLE_WORK when the Human delegates responsibility for institutional work that must persist/continue beyond the answer, and INSTITUTIONAL_DECISION only when Metatron itself is asked to make/approve an institutional decision.
+            - evidence_scope describes what evidence is required to produce the requested terminal product. Use CURRENT_EXTERNAL whenever correctness depends on retrieving current external reality; use INSTITUTIONAL for internal/connected institutional evidence; otherwise NONE.
+            - mode and fresh_external_data_required must agree with interaction_outcome and evidence_scope: DURABLE_WORK=>EXECUTION; INSTITUTIONAL_DECISION=>DECISION; ANSWER=>DISCUSSION or REASONING, never EXECUTION solely because evidence must be retrieved. CURRENT_EXTERNAL=>fresh_external_data_required=true.
             - ACTIVE INTELLIGENCE CASE is runtime coordination context only. It is not authority, evidence, or truth.
             - case_continuity=CONTINUE only when the current non-trivial request continues, refines, challenges, investigates, or follows the same bounded problem as the supplied active Case.
             - case_continuity=NEW when there is no active Case or the current non-trivial request is a separate bounded problem. Do not force an unrelated objective into an old Case merely because it is in the same conversation.
             - Ordinary FAST social/casual/direct responses do not need Case mutation; still return the best semantic classification.
             - Do not decompose EXECUTION into work steps here. A downstream post-Case institutional planner owns work decomposition and capability binding.
-            - Do not guess through material Human ambiguity. If a Human choice is necessary to know what objective/scope they actually mean, set unresolved_semantic_ambiguity to the clarification question, requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], fresh_external_data_required=false, and direct_response to the same concise clarification question.
+            - Do not guess through material Human ambiguity. If a Human choice is necessary to know what objective/scope they actually mean, set unresolved_semantic_ambiguity to the clarification question, interaction_outcome=ANSWER, evidence_scope=NONE, requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], fresh_external_data_required=false, and direct_response to the same concise clarification question.
             - Do not ask the Human for information that Metatron can obtain from available evidence/systems; unresolved_semantic_ambiguity is for Human-only semantic choice, not ordinary missing evidence.
             - Select analytical protocols by the analysis the objective actually requires; protocols may compose.
             - FAST is ordinary conversation, explanation, translation, brainstorming and simple help.
@@ -55,16 +60,15 @@ public final class FrontierSemanticInterpreter {
             - DEEP is for explicitly requested deep/forensic/persistent investigation or clearly requested maximum depth.
             - DECISION means the Human asks Metatron itself to make/approve an institutional decision.
             - EXECUTION means the Human delegates responsibility to perform consequential side effects or durable institutional work that must continue beyond the current answer. This includes deploy, modify, send, create, delete, operational investigation, evidence acquisition, repository/system audit, multi-step verification, and delivery of an institutional work product.
-            - An ordinary information question that needs current external facts (for example current prices, weather, exchange rates, schedules, scores, news or other fresh reality) is REASONING or DISCUSSION with fresh_external_data_required=true, NOT EXECUTION merely because Metatron must retrieve evidence to answer. Do not create durable Objective ownership for a lookup whose requested outcome is the answer itself.
+            - An ordinary information question that needs current external facts is interaction_outcome=ANSWER and evidence_scope=CURRENT_EXTERNAL, NOT DURABLE_WORK/EXECUTION merely because Metatron must retrieve evidence to answer. Do not create durable Objective ownership for a lookup whose requested outcome is the answer itself.
             - Treat external evidence acquisition as EXECUTION only when the Human delegates a durable institutional Objective whose work product requires acquisition/verification beyond answering the current interaction, or when consequential side effects are requested.
-            - A delegated read-only institutional audit is EXECUTION when Metatron is asked to take ownership, independently obtain evidence, plan/coordinate work, verify criteria, and deliver the resulting work product. Do not downgrade such work to REASONING merely because its governed effects are read-only.
+            - A delegated read-only institutional audit is DURABLE_WORK/EXECUTION when Metatron is asked to take ownership, independently obtain evidence, plan/coordinate work, verify criteria, and deliver the resulting work product. Do not downgrade such work to ANSWER/REASONING merely because its governed effects are read-only.
             - REASONING means analyze or answer within the interaction without accepting durable institutional ownership. Evidence-grounded reasoning may use AUDIT/COMPARE/etc. protocols, but it is not a substitute for EXECUTION when the Human has delegated an Objective to Workforce.
-            - Asking for advice about what to do is not automatically DECISION; DECISION protocol may still be used for decision support.
+            - Asking for advice about what to do is not automatically INSTITUTIONAL_DECISION; DECISION protocol may still be used for decision support.
             - deterministic_capability=CURRENT_TIME when the Human asks for current local date/time/day-of-week.
             - deterministic_capability=GATEWAY_AUDIT when the Human asks for current Gateway read-only capability inspection handled deterministically rather than as institutional work.
             - deterministic_computations are declarations for exact arithmetic, not model-calculated answers. Include them only when operands are explicitly supplied or unambiguously present in conversation context. Never invent a missing operand.
             - PERCENT_CHANGE operands are [new_value, baseline_value]. PERCENT_OF operands are [numerator, denominator]. DIFFERENCE/DIVIDE operands preserve requested left-to-right order.
-            - fresh_external_data_required=true only when current/external reality must be retrieved to answer correctly.
             - A model name in ordinary discussion is not an explicitly requested provider unless the Human asks that provider to reason/respond/review.
             - Never manufacture FACT, EVIDENCE, AUTHORITY, AUTHORIZATION, WORKER IDENTITY, EXECUTION EVIDENCE or INSTITUTIONAL KNOWLEDGE.
             """;
@@ -135,12 +139,16 @@ public final class FrontierSemanticInterpreter {
             List<String> prohibitions = textArray(root, "explicit_prohibitions");
             String temporalContext = optionalText(root, "temporal_context");
             String ambiguity = optionalText(root, "unresolved_semantic_ambiguity");
-            IntelligenceMode mode = enumValue(IntelligenceMode.class, requiredText(root, "mode"));
+            IntelligenceMode proposedMode = enumValue(IntelligenceMode.class, requiredText(root, "mode"));
+            boolean proposedFresh = root.path("fresh_external_data_required").asBoolean(false);
+            InteractionOutcome outcome = interactionOutcome(root, proposedMode);
+            EvidenceScope evidenceScope = evidenceScope(root, proposedFresh);
+            IntelligenceMode mode = canonicalMode(outcome, proposedMode);
+            boolean fresh = evidenceScope == EvidenceScope.CURRENT_EXTERNAL;
             CollaborationMode collaboration = enumValue(CollaborationMode.class, requiredText(root, "collaboration_mode"));
             List<AnalyticalProtocolType> protocols = enumArray(root, "analytical_protocols", AnalyticalProtocolType.class);
             DeterministicCapability deterministicCapability = enumValue(DeterministicCapability.class, requiredText(root, "deterministic_capability"));
             List<DeterministicComputationSpec> computations = computationArray(root, "deterministic_computations");
-            boolean fresh = root.path("fresh_external_data_required").asBoolean(false);
             LlmProvider requestedProvider = nullableProvider(root.get("explicitly_requested_provider"));
             String caseValue = optionalText(root, "case_continuity");
             CaseContinuity continuity = caseValue.isBlank()
@@ -157,6 +165,35 @@ public final class FrontierSemanticInterpreter {
             throw new IllegalStateException("invalid semantic normalization from " + response.provider(), failure);
         }
     }
+
+    private static InteractionOutcome interactionOutcome(JsonNode root, IntelligenceMode proposedMode) {
+        String value = optionalText(root, "interaction_outcome");
+        if (!value.isBlank()) return enumValue(InteractionOutcome.class, value);
+        return switch (proposedMode) {
+            case EXECUTION -> InteractionOutcome.DURABLE_WORK;
+            case DECISION -> InteractionOutcome.INSTITUTIONAL_DECISION;
+            case DISCUSSION, REASONING -> InteractionOutcome.ANSWER;
+        };
+    }
+
+    private static EvidenceScope evidenceScope(JsonNode root, boolean proposedFresh) {
+        String value = optionalText(root, "evidence_scope");
+        if (!value.isBlank()) return enumValue(EvidenceScope.class, value);
+        return proposedFresh ? EvidenceScope.CURRENT_EXTERNAL : EvidenceScope.NONE;
+    }
+
+    private static IntelligenceMode canonicalMode(InteractionOutcome outcome, IntelligenceMode proposedMode) {
+        return switch (outcome) {
+            case DURABLE_WORK -> IntelligenceMode.EXECUTION;
+            case INSTITUTIONAL_DECISION -> IntelligenceMode.DECISION;
+            case ANSWER -> proposedMode == IntelligenceMode.DISCUSSION
+                    ? IntelligenceMode.DISCUSSION
+                    : IntelligenceMode.REASONING;
+        };
+    }
+
+    private enum InteractionOutcome { ANSWER, DURABLE_WORK, INSTITUTIONAL_DECISION }
+    private enum EvidenceScope { NONE, INSTITUTIONAL, CURRENT_EXTERNAL }
 
     private static String renderActiveCase(IntelligenceCase activeCase) {
         if (activeCase == null || activeCase.status() == IntelligenceCaseStatus.RESOLVED) return "NONE";
