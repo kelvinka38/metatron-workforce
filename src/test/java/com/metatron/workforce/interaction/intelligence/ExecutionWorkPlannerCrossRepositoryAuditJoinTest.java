@@ -21,7 +21,8 @@ final class ExecutionWorkPlannerCrossRepositoryAuditJoinTest {
 
             @Override public LlmResponse complete(LlmRequest request) {
                 assertTrue(request.systemContext().contains("cross-repository-audit-analysis"));
-                assertTrue(request.systemContext().contains("Never use `cross-repository-audit-analysis` as a standalone first step"));
+                assertTrue(request.systemContext().contains("For a multi-repository audit, create one `repository.audit.read` step per repository"));
+                assertTrue(request.systemContext().contains("Never use `cross-repository-audit-analysis` for a single-repository audit"));
                 return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
                         {"execution_work_plan":[{
                           "step_id":"step-1",
