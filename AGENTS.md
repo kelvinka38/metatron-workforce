@@ -2,16 +2,34 @@
 
 ## RATIFIED WORKFORCE AUTONOMY CLOSURE — MANDATORY CURRENT BASELINE
 
-Founder approved Workforce Autonomy Closure on 2026-08-31. Before work on ingress, management, staffing, scheduling, runtime, Workplace, Intelligence handoff, BIOS handoff, Observation or completion claims, read `docs/AUTONOMY_CLOSURE/README.md` and every upstream canonical contract it lists.
+Founder approved Workforce Autonomy Closure on 2026-08-31. Production acceptance completed on 2026-09-01.
 
-Current general autonomy status is `PARTIAL / NOT YET ACCEPTED`. Existing APIs, tests, green workflows, async primitives and bounded Telegram repository-audit evidence MUST NOT be generalized to L10 autonomy.
+Current general autonomy status for the Founder-ratified Autonomy Closure scope is:
 
-Non-negotiable target:
+```text
+TECHNICALLY COMPLETE / PRODUCTION AUTONOMY ACCEPTED
+ACCEPTED_L10
+```
+
+Accepted production baseline:
+
+- exact source/deployed SHA: `c7d19e67797b1f97ba118433bc749bb80defe9d0`
+- Golden Slices: `4/4 PASS`
+- mandatory production conditions: `45/45 PASS`
+- unresolved critical contradictions: `0`
+- final ratification run: `33465915027`
+- final artifact: `9784967732`
+- artifact SHA-256: `1aa44620296eb9bc159ecca81b9c2473370b1b69712d8ef1d601c0c39c69e369`
+
+Before work on ingress, management, staffing, scheduling, runtime, Workplace, Intelligence handoff, BIOS handoff, Observation or completion claims, read `docs/AUTONOMY_CLOSURE/README.md`, `docs/AUTONOMY_CLOSURE/FINAL_ACCEPTED_L10_EVIDENCE.md`, and every upstream canonical contract they list.
+
+Do **not** reset the Autonomy Closure program to `PARTIAL`, P0, P1 or another historical gate merely because later product work exists. P0–P10 are closed for this accepted scope. There is no canonical P11 in this program. Reopening requires contradictory production evidence, a materially changed scope that requires new acceptance, or an applicable new canonical decision.
+
+Non-negotiable accepted target:
 
 > Once Workforce durably accepts an Objective and assigns its accountable Manager Worker, Objective lifetime no longer depends on ChatGPT, Telegram, another channel, a model session, a process, or a runtime remaining alive.
 
-Every relevant PR must identify the canonical clauses, domain owners, durability/idempotency/fencing behavior, failure/reconciliation behavior, evidence level and remaining production gates.
-
+Every relevant future PR must still identify the canonical clauses, domain owners, durability/idempotency/fencing behavior, failure/reconciliation behavior, evidence level and any production gate required by the changed scope.
 
 ## Status
 
@@ -110,3 +128,5 @@ Do not introduce keyword/continuation heuristics as the core semantic architectu
 ## Evidence rule
 
 No material implementation claim is complete without the required evidence. Do not promote CI evidence to production evidence, model output to fact, or missing evidence to an architectural assumption.
+
+The accepted Autonomy Closure baseline remains evidence-bound to its exact production scope. Future materially changed behavior must earn appropriate new evidence; it does not automatically inherit `ACCEPTED_L10` merely because this baseline is accepted.
