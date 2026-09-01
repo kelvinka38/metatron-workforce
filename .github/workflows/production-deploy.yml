@@ -28,6 +28,9 @@ jobs:
   test-and-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: metatron-hosted-build-main
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
       - name: Setup Java 22
