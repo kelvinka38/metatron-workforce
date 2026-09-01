@@ -57,10 +57,10 @@ services:
       - workforce-state:/var/lib/metatron-workforce
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null"]
-      interval: 10s
+      interval: 2s
       timeout: 3s
-      retries: 12
-      start_period: 20s
+      retries: 30
+      start_period: 2s
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777
