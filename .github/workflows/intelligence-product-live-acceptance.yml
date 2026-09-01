@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-intelligence-product-live-acceptance
-  cancel-in-progress: true
+  group: metatron-production-state
+  cancel-in-progress: false
 
 jobs:
   accept-intelligence-product:
@@ -113,7 +113,6 @@ jobs:
           WEATHER_UPDATE="${BASE_ID}05"
           AUTO_UPDATE="${BASE_ID}06"
 
-          # 1) Human-readable provider UI must enter canonical, channel-neutral depth control.
           SINCE_DEEP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           send_update "$DEEP_UPDATE" '🔬 Deep'
           wait_for "$SINCE_DEEP" "grep -q 'telegram_answer_ready update_id=$DEEP_UPDATE.*provenance=intelligence-depth-control:telegram:update:$DEEP_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$DEEP_UPDATE' <<<\"\$LOGS\""
@@ -122,9 +121,6 @@ jobs:
           send_update "$MODE_UPDATE" '🎛 Mode'
           wait_for "$SINCE_MODE" "grep -q 'telegram_answer_ready update_id=$MODE_UPDATE.*provenance=intelligence-depth-control:telegram:update:$MODE_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$MODE_UPDATE' <<<\"\$LOGS\""
 
-          # 2) Ordinary fresh-information questions must remain conversational Intelligence work:
-          # semantic cognition -> current external evidence -> grounded terminal answer.
-          # They MUST NOT create a durable Workforce Objective merely because evidence acquisition is required.
           assert_fresh_information_lookup "$GOLD_UPDATE" \
             'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' \
             'vàng|gold'
@@ -135,7 +131,6 @@ jobs:
             'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' \
             'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh'
 
-          # Restore semantic AUTO so acceptance never leaves a Human preference changed.
           SINCE_AUTO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           send_update "$AUTO_UPDATE" '🤖 Auto'
           wait_for "$SINCE_AUTO" "grep -q 'telegram_answer_ready update_id=$AUTO_UPDATE.*provenance=intelligence-depth-control:telegram:update:$AUTO_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$AUTO_UPDATE' <<<\"\$LOGS\""
