@@ -24,6 +24,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -46,6 +49,7 @@ public final class TelegramWebhookController {
     private static final int INTERACTION_THREADS = 4;
     private static final int INTERACTION_QUEUE = 64;
     private static final int MAX_PROCESSING_ATTEMPTS = 3;
+    private static final long MONITOR_REFRESH_SECONDS = 5L;
     private static final Pattern OBJECTIVE_ID = Pattern.compile("(?m)^objective_id=([^\\s]+)$");
 
     private final String secret;
@@ -56,8 +60,10 @@ public final class TelegramWebhookController {
     private final WorkCardRenderer workCardRenderer;
     private final ObjectMapper objectMapper;
     private final ThreadPoolExecutor interactionExecutor;
+    private final ScheduledExecutorService monitorExecutor;
     private final TelegramIngressReceiptStore receiptStore;
     private final Set<Long> scheduledUpdates = ConcurrentHashMap.newKeySet();
+    private final Map<String, ScheduledFuture<?>> monitorTasks = new ConcurrentHashMap<>();
 
     public TelegramWebhookController(
             @Value("${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}") String secret,
@@ -101,6 +107,7 @@ public final class TelegramWebhookController {
                 new ArrayBlockingQueue<>(INTERACTION_QUEUE), namedDaemonThreads("telegram-interaction-"),
                 new ThreadPoolExecutor.CallerRunsPolicy());
         this.interactionExecutor.allowCoreThreadTimeOut(false);
+        this.monitorExecutor = Executors.newScheduledThreadPool(2, namedDaemonThreads("telegram-monitor-"));
         this.receiptStore = new TelegramIngressReceiptStore(Path.of(ingressPath.trim()), objectMapper);
         recoverPendingReceipts();
     }
@@ -115,6 +122,7 @@ public final class TelegramWebhookController {
                 "interaction_threads", INTERACTION_THREADS,
                 "interaction_queue_capacity", INTERACTION_QUEUE,
                 "interaction_queue_depth", interactionExecutor.getQueue().size(),
+                "active_task_monitors", monitorTasks.size(),
                 "durable_failed", receiptStore.count(TelegramIngressReceiptStore.Status.FAILED),
                 "durable_dead_letter", receiptStore.count(TelegramIngressReceiptStore.Status.DEAD_LETTER)));
     }
@@ -157,14 +165,17 @@ public final class TelegramWebhookController {
                 return ResponseEntity.ok().build();
             }
 
-            // Authentication and identity admission happen before any monitoring or institutional processing.
             TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
 
-            // Monitoring is a read-only projection of canonical management state; it does not create new Work.
+            // Human explicitly enters Task Monitoring Mode. This starts/refreshes one live Work Card.
             if (TelegramBotGateway.MONITOR_CONTROL.equals(text.trim()) || "/monitor".equalsIgnoreCase(text.trim())) {
-                gateway.send(new ChannelMessage("telegram", chatId,
-                        workCardRenderer.latestForHuman(identity.human().actorId())));
-                LOG.info("telegram_monitor_snapshot update_id={} human={} chat={}", updateId, identity.human().actorId(), chatId);
+                String monitorChatId = chatId;
+                workCardRenderer.latestObjectiveIdForHuman(identity.human().actorId()).ifPresentOrElse(objectiveId -> {
+                    long messageId = gateway.sendWorkCard(monitorChatId, workCardRenderer.render(objectiveId));
+                    startLiveMonitor(objectiveId, monitorChatId, messageId);
+                }, () -> gateway.send(new ChannelMessage("telegram", monitorChatId,
+                        "📊 METATRON WORK\n\nNo autonomous Objective is currently visible for this Human.")));
+                LOG.info("telegram_monitor_mode_started update_id={} human={} chat={}", updateId, identity.human().actorId(), chatId);
                 return ResponseEntity.ok().build();
             }
 
@@ -253,9 +264,14 @@ public final class TelegramWebhookController {
                     updateId, receipt.telegramUserId(), receipt.chatId(), safeAnswer.length(), response.provenanceReference(),
                     receipt.attempts(), answerMs, objectiveId);
 
-            // Human-facing Objective acceptance is a Work Card, not a debug dump of internal ids.
-            String outbound = objectiveId.isBlank() ? safeAnswer : workCardRenderer.render(objectiveId);
-            String delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), outbound));
+            String delivery;
+            if (objectiveId.isBlank()) {
+                delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
+            } else {
+                long workCardMessageId = gateway.sendWorkCard(inbound.senderId(), workCardRenderer.render(objectiveId));
+                startLiveMonitor(objectiveId, inbound.senderId(), workCardMessageId);
+                delivery = "work-card:" + workCardMessageId;
+            }
             receiptStore.delivered(updateId);
             LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={} objective_id={}",
                     updateId, receipt.telegramUserId(), receipt.chatId(), delivery.length(), objectiveId);
@@ -286,6 +302,26 @@ public final class TelegramWebhookController {
                 scheduleReceipt(updateId);
             }
         }
+    }
+
+    private void startLiveMonitor(String objectiveId, String chatId, long messageId) {
+        ScheduledFuture<?> prior = monitorTasks.remove(objectiveId);
+        if (prior != null) prior.cancel(false);
+        ScheduledFuture<?> future = monitorExecutor.scheduleAtFixedRate(() -> {
+            try {
+                gateway.editWorkCard(chatId, messageId, workCardRenderer.render(objectiveId));
+                if (workCardRenderer.terminal(objectiveId)) {
+                    ScheduledFuture<?> completed = monitorTasks.remove(objectiveId);
+                    if (completed != null) completed.cancel(false);
+                    LOG.info("telegram_monitor_terminal objective_id={} chat={} message_id={}", objectiveId, chatId, messageId);
+                }
+            } catch (RuntimeException failure) {
+                LOG.warn("telegram_monitor_refresh_failed objective_id={} chat={} message_id={} reason={}",
+                        objectiveId, chatId, messageId, failure.getMessage());
+            }
+        }, MONITOR_REFRESH_SECONDS, MONITOR_REFRESH_SECONDS, TimeUnit.SECONDS);
+        monitorTasks.put(objectiveId, future);
+        LOG.info("telegram_monitor_live objective_id={} chat={} message_id={}", objectiveId, chatId, messageId);
     }
 
     static boolean requiresObjectiveBeforeAck(String text) {
