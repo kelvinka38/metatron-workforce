@@ -76,6 +76,18 @@ class WebSearchToolAdapterTest {
     }
 
     @Test
+    void canonicalizesVietnameseHoChiMinhWeatherLocation() {
+        assertEquals("Ho Chi Minh City", WebSearchToolAdapter.weatherLocation(
+                "Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn."));
+    }
+
+    @Test
+    void stripsEnglishWeatherRetrievalInstructionsFromLocation() {
+        assertEquals("Berlin", WebSearchToolAdapter.weatherLocation(
+                "current weather in Berlin using fresh data and cite sources"));
+    }
+
+    @Test
     void treatsExplicitInsufficientGroundingMarkerAsFailure() {
         assertTrue(WebSearchToolAdapter.looksLikeInsufficientAnswer("INSUFFICIENT_EVIDENCE"));
     }
