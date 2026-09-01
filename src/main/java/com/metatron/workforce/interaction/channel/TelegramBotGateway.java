@@ -51,9 +51,7 @@ public final class TelegramBotGateway implements ChannelGateway {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("chat_id", chatId);
         payload.put("text", text);
-        payload.put("reply_markup", Map.of("inline_keyboard", List.of(
-                List.of(Map.of("text", "📊 Refresh", "callback_data", "monitor:refresh")),
-                List.of(Map.of("text", "🔎 Details", "callback_data", "monitor:details")))));
+        payload.put("reply_markup", depthControlReplyMarkup());
         ApiResult result = invoke("sendMessage", payload);
         long messageId = result.json().path("result").path("message_id").asLong(-1L);
         if (messageId < 0) throw new IllegalStateException("telegram_work_card_message_id_missing");
@@ -66,9 +64,6 @@ public final class TelegramBotGateway implements ChannelGateway {
         payload.put("chat_id", chatId);
         payload.put("message_id", messageId);
         payload.put("text", text);
-        payload.put("reply_markup", Map.of("inline_keyboard", List.of(
-                List.of(Map.of("text", "📊 Refresh", "callback_data", "monitor:refresh")),
-                List.of(Map.of("text", "🔎 Details", "callback_data", "monitor:details")))));
         try {
             invoke("editMessageText", payload);
         } catch (IllegalStateException failure) {
