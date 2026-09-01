@@ -1,0 +1,223 @@
+name: Production Acceptance Highway
+
+on:
+  workflow_run:
+    workflows: ["Production Deploy"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One lock protects the identity of the live production deployment while the lanes
+# themselves execute concurrently inside this job. New deploys cannot replace the
+# exact SHA midway through acceptance, but independent acceptance lanes no longer
+# queue behind one another.
+concurrency:
+  group: metatron-production-state
+  cancel-in-progress: false
+
+jobs:
+  highway:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    timeout-minutes: 25
+    env:
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
+    steps:
+      - name: Run exact-SHA production acceptance lanes in parallel
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          echo "HIGHWAY_TARGET_SHA=$TARGET_SHA"
+          echo "HIGHWAY_DEPLOYED_SHA=$DEPLOYED_SHA"
+
+          OUT=/tmp/metatron-production-highway-${GITHUB_RUN_ID}
+          mkdir -p "$OUT"
+
+          send_update() {
+            local update_id="$1" text="$2" response="$3"
+            local body
+            body=$(python3 - "$update_id" "$text" "$TELEGRAM_ALLOWED_USER_ID" <<'PY'
+          import json,sys
+          update=int(sys.argv[1]); text=sys.argv[2]; uid=int(sys.argv[3])
+          print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}},ensure_ascii=False))
+          PY
+            )
+            status=$(curl -sS -o "$response" -w '%{http_code}' --proto '=https' --tlsv1.2 --max-time 20 \
+              -X POST https://gate.metatron.vn/telegram/webhook \
+              -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+              -H 'Content-Type: application/json' --data-binary "$body")
+            test "$status" = 200
+          }
+
+          lane_gateway() {
+            set -euo pipefail
+            echo 'LANE_GATEWAY=START'
+            curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
+            curl -fsS --max-time 5 http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'
+            local observed
+            observed=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+            test "$observed" = "$TARGET_SHA"
+            echo 'PUBLIC_GATEWAY=PASS'
+            echo 'LOCAL_RUNTIME_HEALTH=PASS'
+            echo 'EXACT_SHA_IDENTITY=PASS'
+            echo 'LANE_GATEWAY=PASS'
+          }
+
+          lane_observability() {
+            set -euo pipefail
+            echo 'LANE_OBSERVABILITY=START'
+            DASH=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/monitor)
+            grep -q 'METATRON WORKFORCE' <<<"$DASH"
+            grep -q 'canonical management projection' <<<"$DASH"
+            grep -q 'Work Breakdown' <<<"$DASH"
+            API=$(curl -fsS --max-time 10 -H 'X-Metatron-Actor: human-primary' http://127.0.0.1:8080/workforce/monitor/api/objectives)
+            python3 - "$API" <<'PY'
+          import json,sys
+          rows=json.loads(sys.argv[1]); assert isinstance(rows,list)
+          for row in rows:
+              for key in ('objectiveId','humanStatus','progressPercent','ownerWorker','reportsTo','workload','staffingState','workItems','executionProof'):
+                  assert key in row, (key,row)
+              for work in row['workItems']:
+                  for key in ('requiredCapability','performer','acceptanceCriteria','dependsOn','status'):
+                      assert key in work, (key,work)
+          print('ACCOUNTABLE_WORK_ORDER_API=PASS')
+          print('VISIBLE_OBJECTIVES='+str(len(rows)))
+          PY
+            echo 'LANE_OBSERVABILITY=PASS'
+          }
+
+          lane_fresh_intelligence() {
+            set -euo pipefail
+            echo 'LANE_FRESH_INTELLIGENCE=START'
+            local base since
+            base=$(date +%s%N | cut -c1-14)
+            since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            declare -a ids=("${base}11" "${base}12" "${base}13")
+            declare -a texts=(
+              'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.'
+              'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.'
+              'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.'
+            )
+            for i in 0 1 2; do
+              send_update "${ids[$i]}" "${texts[$i]}" "$OUT/fresh-$i.json" &
+            done
+            wait
+            for attempt in $(seq 1 120); do
+              LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+              ok=1
+              for id in "${ids[@]}"; do
+                grep -q "telegram_send_success update_id=$id" <<<"$LOGS" || ok=0
+                grep -Eq "telegram_answer_ready update_id=$id.*route=intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*" <<<"$LOGS" || ok=0
+                if grep -Eq "telegram_answer_ready update_id=$id.*route=execution-objective-|execution-objective-workforce-accepted.*$id" <<<"$LOGS"; then
+                  echo "FRESH_INFORMATION_WRONGLY_BECAME_OBJECTIVE=$id" >&2
+                  return 1
+                fi
+              done
+              [ "$ok" = 1 ] && break
+              sleep 2
+            done
+            LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+            for id in "${ids[@]}"; do
+              grep -q "telegram_send_success update_id=$id" <<<"$LOGS"
+              grep -Eq "telegram_answer_ready update_id=$id.*route=intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*" <<<"$LOGS"
+              found=0
+              while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                if docker exec "$CID" sh -c "grep -q 'SATISFIED' '$f' && grep -Eq 'https?://' '$f'"; then found=1; break; fi
+              done < <(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$id' /var/lib/metatron-workforce 2>/dev/null || true")
+              test "$found" = 1
+            done
+            echo 'FRESH_INFORMATION_MULTI_DOMAIN=PASS'
+            echo 'FRESH_INFORMATION_NOT_OBJECTIVE=PASS'
+            echo 'LANE_FRESH_INTELLIGENCE=PASS'
+          }
+
+          lane_repository_objective() {
+            set -euo pipefail
+            echo 'LANE_REPOSITORY_OBJECTIVE=START'
+            local update since oid evidence
+            update=$(date +%s%N | cut -c1-18)
+            since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            send_update "$update" 'Execute a governed read-only repository audit of kelvinka38/bios and return evidence. Do not mutate anything.' "$OUT/repository-objective.json"
+            oid=''
+            for attempt in $(seq 1 180); do
+              LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+              oid=$(grep "telegram_send_success update_id=$update" <<<"$LOGS" | tail -1 | sed -n 's/.* objective_id=\([^ ]*\).*/\1/p')
+              if [ -n "$oid" ] \
+                && docker exec "$CID" sh -c "grep -q '$oid' /var/lib/metatron-workforce/management-state.json" \
+                && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
+                && docker exec "$CID" sh -c "grep -A 80 -B 10 '$oid' /var/lib/metatron-workforce/management-state.json | grep -q '\"status\" : \"COMPLETED\"'"; then
+                break
+              fi
+              sleep 2
+            done
+            test -n "$oid"
+            docker exec "$CID" sh -c "grep -q '$oid' /var/lib/metatron-workforce/management-state.json"
+            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
+            evidence=$(docker exec "$CID" sh -c "grep -R -l 'repository=kelvinka38/bios' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
+            test -n "$evidence"
+            docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$evidence' && grep -q 'verdict=PASS' '$evidence'"
+            echo "REPOSITORY_OBJECTIVE_ID=$oid"
+            echo 'REAL_REPOSITORY_TOOL_EVIDENCE=PASS'
+            echo 'LANE_REPOSITORY_OBJECTIVE=PASS'
+          }
+
+          run_lane() {
+            local name="$1" fn="$2"
+            (
+              set +e
+              "$fn" >"$OUT/$name.log" 2>&1
+              rc=$?
+              echo "$rc" >"$OUT/$name.rc"
+              exit "$rc"
+            ) &
+            echo $!
+          }
+
+          P1=$(run_lane gateway lane_gateway)
+          P2=$(run_lane observability lane_observability)
+          P3=$(run_lane fresh-intelligence lane_fresh_intelligence)
+          P4=$(run_lane repository-objective lane_repository_objective)
+
+          rc=0
+          for pid in "$P1" "$P2" "$P3" "$P4"; do
+            wait "$pid" || rc=1
+          done
+
+          for lane in gateway observability fresh-intelligence repository-objective; do
+            echo "===== $lane ====="
+            cat "$OUT/$lane.log" || true
+            test "$(cat "$OUT/$lane.rc")" = 0 || rc=1
+          done
+
+          test "$rc" = 0
+          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_PARALLEL_LANES=4'
+          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
+
+      - name: Upload highway evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-acceptance-highway-${{ github.run_id }}
+          path: /tmp/metatron-production-highway-${{ github.run_id }}/
+          if-no-files-found: warn
+          retention-days: 30
