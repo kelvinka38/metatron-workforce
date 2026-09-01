@@ -32,7 +32,7 @@ public final class FrontierSemanticInterpreter {
             unresolved_semantic_ambiguity: empty string when the request is materially clear; otherwise ONE concise clarification question in the Human's language for ambiguity that materially changes what Metatron should do
             interaction_outcome: ANSWER | DURABLE_WORK | INSTITUTIONAL_DECISION
             evidence_scope: NONE | INSTITUTIONAL | CURRENT_EXTERNAL
-            mode: DISCUSSION | REASONING | DECISION | EXECUTION
+            mode: CASUAL | DISCUSSION | REASONING | DECISION | EXECUTION
             collaboration_mode: SINGLE | INDEPENDENT_SECOND_OPINION | LEAD_REVIEW | CONSENSUS | ADVERSARIAL_REVIEW
             analytical_protocols: array containing zero or more of AUDIT, COMPARE, ROOT_CAUSE, PERFORMANCE, FORECAST, INVESTMENT, INCIDENT, RISK, IMPROVEMENT, DECISION
             deterministic_capability: NONE | CURRENT_TIME | GATEWAY_AUDIT
@@ -40,17 +40,18 @@ public final class FrontierSemanticInterpreter {
             fresh_external_data_required: boolean
             explicitly_requested_provider: GOOGLE | ANTHROPIC | OPENAI | null
             case_continuity: CONTINUE | NEW
-            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, interaction_outcome=ANSWER, evidence_scope=NONE, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
+            direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, interaction_outcome=ANSWER, evidence_scope=NONE, mode is CASUAL or DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
 
             Rules:
             - Interpret meaning; do not emulate a keyword router.
             - interaction_outcome is the canonical product routing contract. Use ANSWER when the requested terminal product is the answer in this interaction, DURABLE_WORK when the Human delegates responsibility for institutional work that must persist/continue beyond the answer, and INSTITUTIONAL_DECISION only when Metatron itself is asked to make/approve an institutional decision.
             - evidence_scope describes what evidence is required to produce the requested terminal product. Use CURRENT_EXTERNAL whenever correctness depends on retrieving current external reality; use INSTITUTIONAL for internal/connected institutional evidence; otherwise NONE.
-            - mode and fresh_external_data_required must agree with interaction_outcome and evidence_scope: DURABLE_WORK=>EXECUTION; INSTITUTIONAL_DECISION=>DECISION; ANSWER=>DISCUSSION or REASONING, never EXECUTION solely because evidence must be retrieved. CURRENT_EXTERNAL=>fresh_external_data_required=true.
+            - mode and fresh_external_data_required must agree with interaction_outcome and evidence_scope: DURABLE_WORK=>EXECUTION; INSTITUTIONAL_DECISION=>DECISION; ANSWER=>CASUAL, DISCUSSION or REASONING, never EXECUTION solely because evidence must be retrieved. CURRENT_EXTERNAL=>fresh_external_data_required=true.
             - ACTIVE INTELLIGENCE CASE is runtime coordination context only. It is not authority, evidence, or truth.
             - case_continuity=CONTINUE only when the current non-trivial request continues, refines, challenges, investigates, or follows the same bounded problem as the supplied active Case.
             - case_continuity=NEW when there is no active Case or the current non-trivial request is a separate bounded problem. Do not force an unrelated objective into an old Case merely because it is in the same conversation.
             - Ordinary FAST social/casual/direct responses do not need Case mutation; still return the best semantic classification.
+            - Use CASUAL for greetings, social conversation and trivial conversational responses that require no analytical work; DISCUSSION for ordinary explanation, translation, brainstorming and simple help.
             - Do not decompose EXECUTION into work steps here. A downstream post-Case institutional planner owns work decomposition and capability binding.
             - Do not guess through material Human ambiguity. If a Human choice is necessary to know what objective/scope they actually mean, set unresolved_semantic_ambiguity to the clarification question, interaction_outcome=ANSWER, evidence_scope=NONE, requested_depth=FAST, mode=DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[], fresh_external_data_required=false, and direct_response to the same concise clarification question.
             - Do not ask the Human for information that Metatron can obtain from available evidence/systems; unresolved_semantic_ambiguity is for Human-only semantic choice, not ordinary missing evidence.
@@ -172,7 +173,7 @@ public final class FrontierSemanticInterpreter {
         return switch (proposedMode) {
             case EXECUTION -> InteractionOutcome.DURABLE_WORK;
             case DECISION -> InteractionOutcome.INSTITUTIONAL_DECISION;
-            case DISCUSSION, REASONING -> InteractionOutcome.ANSWER;
+            case CASUAL, DISCUSSION, REASONING -> InteractionOutcome.ANSWER;
         };
     }
 
@@ -186,9 +187,11 @@ public final class FrontierSemanticInterpreter {
         return switch (outcome) {
             case DURABLE_WORK -> IntelligenceMode.EXECUTION;
             case INSTITUTIONAL_DECISION -> IntelligenceMode.DECISION;
-            case ANSWER -> proposedMode == IntelligenceMode.DISCUSSION
-                    ? IntelligenceMode.DISCUSSION
-                    : IntelligenceMode.REASONING;
+            case ANSWER -> switch (proposedMode) {
+                case CASUAL -> IntelligenceMode.CASUAL;
+                case DISCUSSION -> IntelligenceMode.DISCUSSION;
+                case REASONING, DECISION, EXECUTION -> IntelligenceMode.REASONING;
+            };
         };
     }
 
