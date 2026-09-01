@@ -442,17 +442,20 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         return new CurrencyPair(iterator.next(), iterator.next());
     }
 
-    private static String weatherLocation(String query) {
+    static String weatherLocation(String query) {
         String folded = fold(query);
         if (!(folded.contains("weather") || folded.contains("thoi tiet"))) return "";
+        if (folded.contains("ho chi minh")) return "Ho Chi Minh City";
         Matcher matcher = WEATHER_LOCATION.matcher(query);
         if (matcher.find()) {
             String location = matcher.group(1).trim()
                     .replaceAll("(?iu)\\s+(?:right\\s+now|today|currently|now|thế\\s+nào|hôm\\s+nay|hiện\\s+tại|là\\s+gì).*$", "")
+                    .replaceAll("(?iu)\\s+(?:using|with)\\s+(?:fresh|current|latest).*?$", "")
+                    .replaceAll("(?iu)\\s+(?:and|và)\\s+(?:cite|provide|include|nêu|cho).*?$", "")
+                    .replaceAll("(?iu)^(?:city\\s+of|thành\\s+phố|tp\\.?)\\s+", "")
                     .trim();
             if (!location.isBlank()) return location;
         }
-        if (folded.contains("ho chi minh")) return "Ho Chi Minh City";
         return "";
     }
 
