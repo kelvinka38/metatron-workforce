@@ -97,7 +97,7 @@ start_lane() {
   METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
   METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" METATRON_CONTAINER_MEM_LIMIT=512m \
   METATRON_CONTAINER_MEM_RESERVATION=256m METATRON_CONTAINER_CPUS=0.75 TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" \
-  docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate
+  docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate >&2
   wait_health "$port"
   local cid
   cid=$(METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
