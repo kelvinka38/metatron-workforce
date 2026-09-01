@@ -1,0 +1,50 @@
+name: Highway Hosted Capacity Probe
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/highway-hosted-capacity-probe.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 5
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+      TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+      METATRON_ORGANIZATION_ID: ${{ secrets.METATRON_ORGANIZATION_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      METATRON_GITHUB_TOKEN: ${{ secrets.METATRON_GITHUB_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+    steps:
+      - name: Report only credential availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          present() { [ -n "${!1:-}" ] && echo "$1=PRESENT" || echo "$1=ABSENT"; }
+          present TELEGRAM_BOT_TOKEN
+          present TELEGRAM_WEBHOOK_SECRET
+          present TELEGRAM_ALLOWED_USER_ID
+          present METATRON_ORGANIZATION_ID
+          present OPENAI_API_KEY
+          present GEMINI_API_KEY
+          present ANTHROPIC_API_KEY
+          present METATRON_GITHUB_TOKEN
+          present CLOUDFLARE_API_TOKEN
+          present HETZNER_API_TOKEN
+          if [ -n "${TELEGRAM_WEBHOOK_SECRET:-}" ] && [ -n "${TELEGRAM_ALLOWED_USER_ID:-}" ] \
+             && [ -n "${METATRON_ORGANIZATION_ID:-}" ] \
+             && [ -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}" ]; then
+            echo 'HOSTED_ACCEPTANCE_CORE_CREDENTIALS=AVAILABLE'
+          else
+            echo 'HOSTED_ACCEPTANCE_CORE_CREDENTIALS=UNAVAILABLE'
+          fi
