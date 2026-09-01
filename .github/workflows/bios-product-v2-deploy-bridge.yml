@@ -16,6 +16,7 @@ jobs:
     env:
       BIOS_TARGET_SHA: fcb29f61b204392b50d4b507332ce5f2c0e989c5
       WORKFORCE_REQUIRED_SHA: c7d19e67797b1f97ba118433bc749bb80defe9d0
+      BIOS_BASE: /opt/metatron/metatron-workforce/bios-product-v2
     steps:
       - name: Materialize exact BIOS source
         shell: bash
@@ -64,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE=/opt/metatron/bios
+          BASE="$BIOS_BASE"
           COMPOSE=/tmp/bios-product-v2-closure/deploy/docker-compose.yml
           mkdir -p "$BASE"
           chmod 700 "$BASE"
@@ -83,16 +84,10 @@ jobs:
           docker network inspect metatron-gateway-online >/dev/null
           docker build --pull -t "metatron-bios:$BIOS_TARGET_SHA" /tmp/bios-product-v2-closure
           docker compose -p bios --env-file "$BASE/.env" -f "$COMPOSE" up -d --force-recreate bios
-          for i in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1 && break
-            sleep 2
-          done
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1 && break; sleep 2; done
           CID=$(docker compose -p bios --env-file "$BASE/.env" -f "$COMPOSE" ps -q bios)
           test -n "$CID"
-          for i in $(seq 1 30); do
-            [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy ] && break
-            sleep 2
-          done
+          for i in $(seq 1 30); do [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy ] && break; sleep 2; done
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^BIOS_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$BIOS_TARGET_SHA"
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
@@ -105,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -a; source /opt/metatron/bios/.env; set +a
+          set -a; source "$BIOS_BASE/.env"; set +a
           export TARGET_SHA="$BIOS_TARGET_SHA"
           cd /tmp/bios-product-v2-closure
           python3 scripts/accept_product_v2_p1.py | tee -a /tmp/bios-product-v2-evidence.txt
@@ -118,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -a; source /opt/metatron/bios/.env; set +a
+          set -a; source "$BIOS_BASE/.env"; set +a
           export TARGET_SHA="$BIOS_TARGET_SHA"
           cd /tmp/bios-product-v2-closure
           python3 scripts/accept_product_v2.py | tee -a /tmp/bios-product-v2-evidence.txt
