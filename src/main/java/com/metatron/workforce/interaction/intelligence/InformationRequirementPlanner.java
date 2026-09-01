@@ -39,9 +39,15 @@ public final class InformationRequirementPlanner {
             }
         }
         if (request.freshExternalDataRequired()) {
+            // Freshness is a property of the Human's normalized objective, not a searchable subject by itself.
+            // Bind the requirement question to that objective so acquisition searches for the actual thing the
+            // Human asked about (gold price, exchange rate, incident state, etc.) instead of the meaningless
+            // placeholder phrase "current external evidence".
+            String freshQuestion = request.objective().trim();
+            if (freshQuestion.isBlank()) throw new IllegalArgumentException("fresh external objective must not be blank");
             deduplicated.putIfAbsent("current external evidence", new InformationRequirement(
                     "ir-" + sequence,
-                    "current external evidence",
+                    freshQuestion,
                     "the normalized objective depends on current external reality",
                     InformationRequirementStatus.MISSING,
                     List.of("authorized structured external source", "web/external research"),
