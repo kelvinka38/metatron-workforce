@@ -24,9 +24,11 @@ on:
 permissions:
   contents: read
 
+# Every job that can mutate the single live production stack must share this lock.
+# CI/build work is intentionally off the self-hosted production runner so it can run in parallel.
 concurrency:
-  group: metatron-workforce-production
-  cancel-in-progress: true
+  group: metatron-production-state
+  cancel-in-progress: false
 
 env:
   METATRON_VERSION: "0.1.0"
@@ -34,16 +36,9 @@ env:
 
 jobs:
   test-and-build:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - name: Verify runner host safety
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker info >/dev/null
-          test "$(df --output=pcent / | tail -1 | tr -dc '0-9')" -lt 90
-          SWAP_BYTES=$(swapon --show --bytes --noheadings 2>/dev/null | awk '{s+=$3} END{print s+0}')
-          test "${SWAP_BYTES:-0}" -ge 1073741824
       - uses: actions/checkout@v7
       - name: Setup Java 22
         uses: actions/setup-java@v5
