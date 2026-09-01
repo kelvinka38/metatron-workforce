@@ -27,16 +27,22 @@ final class InformationRequirementPlannerTest {
     }
 
     @Test
-    void currentExternalRealityCreatesExplicitFreshEvidenceRequirement() {
+    void currentExternalRealityCreatesObjectiveBoundFreshEvidenceRequirement() {
         InformationRequirementPlanner planner = new InformationRequirementPlanner(new AnalyticalProtocolRegistry());
         NormalizedRequest request = new NormalizedRequest(
-                "assess current market conditions", "market", List.of(), IntelligenceDepth.ANALYZE,
-                "analysis", List.of(), List.of(), "now", "", IntelligenceMode.REASONING,
-                CollaborationMode.SINGLE, List.of(AnalyticalProtocolType.RISK), DeterministicCapability.NONE,
+                "find today's SJC gold price in Vietnam", "SJC gold price", List.of(), IntelligenceDepth.ANALYZE,
+                "direct natural-language answer", List.of(), List.of(), "today", "", IntelligenceMode.REASONING,
+                CollaborationMode.SINGLE, List.of(), DeterministicCapability.NONE,
                 true, null, LlmProvider.GOOGLE, "");
 
         List<InformationRequirement> requirements = planner.plan(request);
-        assertTrue(requirements.stream().anyMatch(r -> r.question().equals("current external evidence")
-                && r.freshnessRequirement().equals("current")));
+
+        assertEquals(1, requirements.size());
+        InformationRequirement fresh = requirements.getFirst();
+        assertEquals("find today's SJC gold price in Vietnam", fresh.question());
+        assertEquals("current", fresh.freshnessRequirement());
+        assertTrue(fresh.preferredSourceClasses().contains("web/external research"));
+        assertNotEquals("current external evidence", fresh.question(),
+                "freshness placeholder must never become the actual web-search subject");
     }
 }
