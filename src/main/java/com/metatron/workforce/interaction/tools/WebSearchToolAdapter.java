@@ -9,6 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,13 +35,25 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     public static final String CAPABILITY = "web.search";
 
     private static final String BING_ENDPOINT = "https://www.bing.com/search?format=rss&q=";
-    private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s";
-    private static final List<String> GROUNDED_MODELS = List.of("gemini-3.1-flash-lite", "gemini-2.5-flash");
+    private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
+    private static final List<String> GROUNDED_MODELS = List.of(
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash");
     private static final String COINGECKO_BTC = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,vnd&include_last_updated_at=true";
     private static final String COINBASE_BTC = "https://api.coinbase.com/v2/prices/BTC-USD/spot";
     private static final int SEARCH_RESULT_LIMIT = 5;
     private static final int FETCH_RESULT_LIMIT = 3;
     private static final int MAX_EXCERPT_CHARS = 5000;
+    private static final Set<String> QUERY_STOP_WORDS = Set.of(
+            "the", "and", "for", "with", "from", "this", "that", "what", "how", "much", "about",
+            "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
+            "check", "answer", "information", "external", "reality", "please", "new", "fresh",
+            "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "neu", "nguon", "cho", "bao", "nhieu",
+            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "the", "nao", "va", "cua");
 
     private static final Pattern ITEM = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
@@ -99,27 +112,29 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
         try {
             String prompt = "Answer this information requirement using current external reality. Search the web. "
-                    + "Return a direct factual answer useful to the Human, not search instructions and not a refusal when public evidence exists. "
-                    + "Use only facts supported by the search grounding. Requirement: " + query;
+                    + "Return a direct factual answer useful to the Human. When the requirement asks for a current measurement, rate, condition, status, or other observable value, include the concrete current value or condition and its units/context. "
+                    + "Use only facts supported by the search grounding. If the search results are off-topic, stale, or insufficient to answer the requirement directly, output exactly INSUFFICIENT_EVIDENCE. "
+                    + "Requirement: " + query;
             String body = mapper.writeValueAsString(Map.of(
                     "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))),
                     "tools", List.of(Map.of("google_search", Map.of()))
             ));
             for (String model : models) {
                 HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(GEMINI_ENDPOINT.formatted(
-                                URLEncoder.encode(model, StandardCharsets.UTF_8),
-                                URLEncoder.encode(apiKey, StandardCharsets.UTF_8))))
+                                URLEncoder.encode(model, StandardCharsets.UTF_8))))
                         .timeout(Duration.ofSeconds(Math.max(20, timeout.toSeconds())))
                         .header("Content-Type", "application/json")
+                        .header("x-goog-api-key", apiKey)
                         .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                         .build();
                 HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 if (!ok(response)) continue;
                 JsonNode root = mapper.readTree(response.body());
                 JsonNode candidate = root.path("candidates").path(0);
-                String answer = candidate.path("content").path("parts").path(0).path("text").asText("").trim();
+                String answer = candidateText(candidate);
                 List<String> refs = groundingUrls(candidate.path("groundingMetadata"));
-                if (answer.isBlank() || refs.isEmpty() || looksLikeInsufficientAnswer(answer)) continue;
+                if (answer.isBlank() || refs.isEmpty() || looksLikeInsufficientAnswer(answer)
+                        || !materiallyRelevant(query, answer)) continue;
                 String output = "GROUNDED WEB ANSWER\nquery=" + query
                         + "\nanswer=" + answer
                         + "\nsource_urls=" + refs
@@ -137,6 +152,19 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         }
     }
 
+    private static String candidateText(JsonNode candidate) {
+        JsonNode parts = candidate.path("content").path("parts");
+        if (!parts.isArray()) return "";
+        StringBuilder text = new StringBuilder();
+        for (JsonNode part : parts) {
+            String value = part.path("text").asText("").trim();
+            if (value.isBlank()) continue;
+            if (!text.isEmpty()) text.append('\n');
+            text.append(value);
+        }
+        return text.toString().trim();
+    }
+
     private static List<String> groundingUrls(JsonNode groundingMetadata) {
         LinkedHashSet<String> refs = new LinkedHashSet<>();
         JsonNode chunks = groundingMetadata.path("groundingChunks");
@@ -152,12 +180,43 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     static boolean looksLikeInsufficientAnswer(String answer) {
         String v = answer == null ? "" : answer.toLowerCase(Locale.ROOT);
         return v.isBlank()
+                || v.contains("insufficient_evidence") || v.contains("insufficient evidence")
                 || v.contains("i cannot provide") || v.contains("i can't provide")
                 || v.contains("i am unable") || v.contains("i'm unable")
                 || v.contains("insufficient information") || v.contains("not enough information")
                 || v.contains("does not provide") || v.contains("cannot determine")
                 || v.contains("không thể cung cấp") || v.contains("không đủ thông tin")
-                || v.contains("chưa đủ thông tin") || v.contains("không thể xác định");
+                || v.contains("chưa đủ thông tin") || v.contains("không thể xác định")
+                || v.contains("không có đủ bằng chứng");
+    }
+
+    static boolean materiallyRelevant(String query, String evidenceText) {
+        Set<String> subject = subjectTokens(query);
+        if (subject.isEmpty()) return true;
+        Set<String> evidence = subjectTokens(evidenceText);
+        int overlap = 0;
+        for (String token : subject) if (evidence.contains(token)) overlap++;
+        int required = Math.min(2, subject.size());
+        return overlap >= required;
+    }
+
+    private static Set<String> subjectTokens(String value) {
+        String folded = fold(value);
+        LinkedHashSet<String> tokens = new LinkedHashSet<>();
+        for (String token : folded.split("[^a-z0-9]+")) {
+            if (token.length() < 3 || QUERY_STOP_WORDS.contains(token)) continue;
+            tokens.add(token);
+        }
+        return tokens;
+    }
+
+    private static String fold(String value) {
+        if (value == null || value.isBlank()) return "";
+        return Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "")
+                .replace('đ', 'd')
+                .toLowerCase(Locale.ROOT)
+                .trim();
     }
 
     private ToolResult fetchBitcoinPrice(ToolRequest request, String query) {
@@ -204,10 +263,14 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             if (!ok(response)) return ToolResult.failure(request, "web_search_http_status:" + response.statusCode());
             List<Result> results = parseResults(response.body(), SEARCH_RESULT_LIMIT);
             if (results.isEmpty()) return ToolResult.failure(request, "web_search_no_results");
+            List<Result> relevant = results.stream()
+                    .filter(result -> materiallyRelevant(query, result.title() + " " + result.description()))
+                    .toList();
+            if (relevant.isEmpty()) return ToolResult.failure(request, "web_search_no_relevant_results");
             StringBuilder output = new StringBuilder("WEB SEARCH RESULTS\nquery=").append(query).append("\nretrieved_at=").append(Instant.now()).append('\n');
             List<String> evidence = new ArrayList<>();
             int index = 1;
-            for (Result result : results) {
+            for (Result result : relevant) {
                 output.append('[').append(index).append("] ").append(result.title()).append('\n')
                         .append("url=").append(result.url()).append('\n').append("snippet=").append(result.description()).append('\n');
                 if (index <= FETCH_RESULT_LIMIT) {

@@ -16,7 +16,11 @@ final class IntelligenceCaseContinuityPolicy {
     static boolean startsNewCase(IntelligenceCase existing, NormalizedRequest normalized) {
         return existing == null
                 || existing.status() == IntelligenceCaseStatus.RESOLVED
-                || normalized.caseContinuity() == CaseContinuity.NEW;
+                || normalized.caseContinuity() == CaseContinuity.NEW
+                // A current-external answer is a new evidence observation, even when the Human asks
+                // about the same subject again. Conversation history remains available to semantics,
+                // but evidence/requirements from the previous observation must not bleed into this one.
+                || normalized.freshExternalDataRequired();
     }
 
     static List<InformationRequirement> mergeRequirements(IntelligenceCase existing,

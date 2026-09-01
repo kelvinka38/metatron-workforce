@@ -49,6 +49,38 @@ class WebSearchToolAdapterTest {
     }
 
     @Test
+    void rejectsOffTopicRssResultsAsRequirementEvidence() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/search", exchange -> {
+            String rss = "<?xml version=\"1.0\"?><rss><channel>"
+                    + "<item><title>Language translation service</title><link>https://example.com/translate</link>"
+                    + "<description>Translate words and documents between languages.</description></item>"
+                    + "</channel></rss>";
+            byte[] bytes = rss.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/rss+xml");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+
+        String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/search?q=";
+        WebSearchToolAdapter adapter = new WebSearchToolAdapter(
+                HttpClient.newHttpClient(), Duration.ofSeconds(2), endpoint);
+
+        ToolResult result = adapter.execute(new ToolRequest(
+                "web-off-topic", "telegram:human", WebSearchToolAdapter.CAPABILITY,
+                "internet:web-search", "search", "USD VND exchange rate", java.util.List.of("read-only")));
+
+        assertTrue(!result.success());
+        assertEquals("web_search_no_relevant_results", result.output());
+    }
+
+    @Test
+    void treatsExplicitInsufficientGroundingMarkerAsFailure() {
+        assertTrue(WebSearchToolAdapter.looksLikeInsufficientAnswer("INSUFFICIENT_EVIDENCE"));
+    }
+
+    @Test
     void rejectsBlankQueries() {
         WebSearchToolAdapter adapter = new WebSearchToolAdapter();
         ToolResult result = adapter.execute(new ToolRequest(
