@@ -21,7 +21,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -a
           source /opt/metatron/metatron-workforce/.env
+          set +a
           test -n "${GITHUB_TOKEN:-}"
           rm -rf /tmp/bios-product-v2-closure
           cat >/tmp/bios-git-askpass.sh <<'SH'
