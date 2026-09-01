@@ -1,203 +1,28 @@
-name: Intelligence Product Live Acceptance
+name: Intelligence Product Live Acceptance (Manual Forensic)
 
 on:
-  workflow_run:
-    workflows: ["Telegram Provider Adapter Live Acceptance", "Highway Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact deployed production SHA to validate; defaults to dispatched ref SHA
-        required: false
+        description: Exact deployed production SHA to validate
+        required: true
         type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: metatron-production-state
-  cancel-in-progress: false
-
 jobs:
   accept-intelligence-product:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: ${{ inputs.target_sha }}
     steps:
-      - name: Prove visible depth control and grounded fresh-reality acquisition
+      - uses: actions/checkout@v7
+      - name: Run Intelligence forensic lane
         shell: bash
-        env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          test -r "$BASE/.env"
-          set -a; source "$BASE/.env"; set +a
-          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
-
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$TARGET_SHA"
-
-          send_update() {
-            local update_id="$1"
-            local text="$2"
-            local body
-            body=$(python3 - "$update_id" "$text" "$TELEGRAM_ALLOWED_USER_ID" <<'PY'
-          import json,sys
-          update_id=int(sys.argv[1]); text=sys.argv[2]; uid=int(sys.argv[3])
-          print(json.dumps({"update_id":update_id,"message":{"message_id":update_id%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}, ensure_ascii=False))
-          PY
-            )
-            local status
-            status=$(curl -sS -o /tmp/metatron-intelligence-product.json -w '%{http_code}' \
-              --proto '=https' --tlsv1.2 --max-time 20 \
-              -X POST https://gate.metatron.vn/telegram/webhook \
-              -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
-              -H 'Content-Type: application/json' \
-              --data-binary "$body")
-            test "$status" = 200
-          }
-
-          wait_for() {
-            local since="$1"
-            local predicate="$2"
-            for i in $(seq 1 90); do
-              LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
-              if eval "$predicate"; then return 0; fi
-              sleep 2
-            done
-            return 1
-          }
-
-          assert_case_answer() {
-            local case_file="$1"
-            local subject_pattern="$2"
-            local require_numeric="$3"
-            docker exec "$CID" cat "$case_file" | python3 -c '
-          import json,re,sys
-          subject=sys.argv[1]
-          require_numeric=sys.argv[2] == "1"
-          case=json.load(sys.stdin)
-          requirements=case.get("informationRequirements") or []
-          if not requirements:
-              raise SystemExit("NO_INFORMATION_REQUIREMENTS")
-          if not any(re.search(subject, str(r.get("question", "")), re.I) for r in requirements):
-              raise SystemExit("FRESH_REQUIREMENT_LOST_SEMANTIC_SUBJECT")
-          if any(str(r.get("question", "")).strip().lower() == "current external evidence" for r in requirements):
-              raise SystemExit("GENERIC_CURRENT_EXTERNAL_EVIDENCE_QUERY_FORBIDDEN")
-          satisfied=[r for r in requirements if str(r.get("status", "")) == "SATISFIED"]
-          if not satisfied:
-              raise SystemExit("NO_SATISFIED_FRESH_REQUIREMENT")
-          refs=[]
-          for r in satisfied:
-              refs.extend(r.get("evidenceReferences") or [])
-          if not any(str(x).startswith(("http://", "https://")) for x in refs):
-              raise SystemExit("NO_EXTERNAL_EVIDENCE_URL")
-          answer=str(case.get("latestConclusion") or "").strip()
-          if not answer:
-              raise SystemExit("EMPTY_LATEST_CONCLUSION")
-          low=answer.lower()
-          refusal_terms=[
-              "không thể cung cấp trực tiếp con số", "không thể cung cấp con số",
-              "không duy trì nguồn cấp dữ liệu", "không có dữ liệu thời gian thực",
-              "không thể truy cập web", "không có quyền truy cập web",
-              "cannot provide the current value", "cannot access the web",
-              "do not have real-time data", "don t have real-time data"
-          ]
-          if any(term in low for term in refusal_terms):
-              raise SystemExit("FRESH_ANSWER_REFUSAL_AFTER_EVIDENCE")
-          if not re.search(subject, answer, re.I):
-              raise SystemExit("ANSWER_LOST_REQUESTED_SUBJECT")
-          if require_numeric and not re.search(r"\d", answer):
-              raise SystemExit("ANSWER_MISSING_REQUESTED_CURRENT_VALUE")
-          print("ANSWER_COMPLETENESS_PASS")
-          ' "$subject_pattern" "$require_numeric"
-          }
-
-          assert_fresh_information_lookup() {
-            local update_id="$1"
-            local text="$2"
-            local subject_pattern="$3"
-            local require_numeric="$4"
-            local since
-            since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-            send_update "$update_id" "$text"
-            wait_for "$since" "grep -q 'telegram_send_success update_id=$update_id' <<<\"\$LOGS\" && grep -Eq 'telegram_answer_ready update_id=$update_id.*route=intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*' <<<\"\$LOGS\""
-
-            local logs
-            logs=$(docker logs --since "$since" "$CID" 2>&1 || true)
-            if grep -q "telegram_interaction_failed update_id=$update_id" <<<"$logs" \
-              || grep -q "telegram_failure_notification_sent update_id=$update_id" <<<"$logs"; then
-              echo "FRESH_INFORMATION_INTERACTION_FAILED update_id=$update_id" >&2
-              exit 1
-            fi
-            if grep -Eq "telegram_answer_ready update_id=$update_id.*route=execution-objective-|execution-objective-workforce-accepted.*$update_id|METATRON WORK ACCEPTED.*$update_id" <<<"$logs"; then
-              echo "FRESH_INFORMATION_WRONGLY_BECAME_OBJECTIVE update_id=$update_id" >&2
-              exit 1
-            fi
-
-            local case_proof=0
-            while IFS= read -r case_file; do
-              [ -n "$case_file" ] || continue
-              if assert_case_answer "$case_file" "$subject_pattern" "$require_numeric"; then
-                case_proof=1
-                echo "GROUNDED_CASE_FILE=$case_file"
-                break
-              fi
-            done < <(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update_id' /var/lib/metatron-workforce 2>/dev/null || true")
-            test "$case_proof" = 1
-          }
-
-          BASE_ID=$(date +%s%N | cut -c1-14)
-          DEEP_UPDATE="${BASE_ID}01"
-          MODE_UPDATE="${BASE_ID}02"
-          GOLD_UPDATE="${BASE_ID}03"
-          FX_UPDATE="${BASE_ID}04"
-          WEATHER_UPDATE="${BASE_ID}05"
-          GOLD_RECHECK_UPDATE="${BASE_ID}07"
-          AUTO_UPDATE="${BASE_ID}06"
-
-          SINCE_DEEP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          send_update "$DEEP_UPDATE" '🔬 Deep'
-          wait_for "$SINCE_DEEP" "grep -q 'telegram_answer_ready update_id=$DEEP_UPDATE.*provenance=intelligence-depth-control:telegram:update:$DEEP_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$DEEP_UPDATE' <<<\"\$LOGS\""
-
-          SINCE_MODE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          send_update "$MODE_UPDATE" '🎛 Mode'
-          wait_for "$SINCE_MODE" "grep -q 'telegram_answer_ready update_id=$MODE_UPDATE.*provenance=intelligence-depth-control:telegram:update:$MODE_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$MODE_UPDATE' <<<\"\$LOGS\""
-
-          assert_fresh_information_lookup "$GOLD_UPDATE" \
-            'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' \
-            'vàng|gold' 1
-          assert_fresh_information_lookup "$FX_UPDATE" \
-            'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' \
-            'USD|VND|tỷ giá|exchange' 1
-          assert_fresh_information_lookup "$WEATHER_UPDATE" \
-            'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' \
-            'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' 1
-          assert_fresh_information_lookup "$GOLD_RECHECK_UPDATE" \
-            'Kiểm tra lại giá vàng Việt Nam ngay lúc này. Hãy lấy dữ liệu hiện tại mới và nêu nguồn.' \
-            'vàng|gold' 1
-
-          SINCE_AUTO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          send_update "$AUTO_UPDATE" '🤖 Auto'
-          wait_for "$SINCE_AUTO" "grep -q 'telegram_answer_ready update_id=$AUTO_UPDATE.*provenance=intelligence-depth-control:telegram:update:$AUTO_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$AUTO_UPDATE' <<<\"\$LOGS\""
-
-          curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
-
-          echo 'HUMAN_READABLE_DEPTH_CONTROL=PASS'
-          echo 'CANONICAL_DEPTH_STATE=PASS'
-          echo 'DEPTH_STATUS_VISIBILITY=PASS'
-          echo 'FRESH_REALITY_SEMANTIC_ROUTE=PASS'
-          echo 'FRESH_EXTERNAL_EVIDENCE_ACQUIRED=PASS'
-          echo 'REQUIREMENT_SEMANTIC_SUBJECT_PRESERVED=PASS'
-          echo 'REQUIREMENT_EVIDENCE_PRESERVED=PASS'
-          echo 'FRESH_INFORMATION_NOT_OBJECTIVE=PASS'
-          echo 'FRESH_INFORMATION_MULTI_DOMAIN=PASS'
-          echo 'FRESH_INFORMATION_ANSWER_COMPLETENESS=PASS'
-          echo 'FRESH_INFORMATION_REVALIDATION=PASS'
-          echo 'FRESH_REALITY_TERMINAL_DELIVERY=PASS'
-          echo 'DEPTH_PREFERENCE_RESTORED_AUTO=PASS'
-          echo 'INTELLIGENCE_PRODUCT_LIVE_ACCEPTANCE=PASS'
+          chmod +x scripts/highway-intelligence-lane.sh
+          scripts/highway-intelligence-lane.sh
