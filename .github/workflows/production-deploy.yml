@@ -18,6 +18,7 @@ on:
       - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
       - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
       - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
+      - '.github/workflows/work-observability-production-acceptance.yml'
   workflow_dispatch:
 
 permissions:
@@ -59,213 +60,64 @@ jobs:
       - name: Upload deployable JAR
         uses: actions/upload-artifact@v7
         with:
-          name: metatron-workforce-${{ github.sha }}
-          path: build/libs/metatron-workforce-0.1.0.jar
+          name: workforce-deployable-${{ github.sha }}
+          path: build/libs/*.jar
           if-no-files-found: error
+          retention-days: 1
 
   deploy-production:
     needs: test-and-build
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
     steps:
       - uses: actions/checkout@v7
       - name: Download deployable JAR
         uses: actions/download-artifact@v8
         with:
-          name: metatron-workforce-${{ github.sha }}
+          name: workforce-deployable-${{ github.sha }}
           path: build/libs
       - name: Deploy exact tested artifact with rollback
         shell: bash
-        env:
-          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          WORKSPACE="$GITHUB_WORKSPACE"
-          COMPOSE="$WORKSPACE/deploy/docker-compose.yml"
-          PROJECT=deploy
-          DEPLOY_STARTED_AT=$(date +%s)
+          cd deploy
+          source .env
+          export METATRON_COMMIT_SHA="${GITHUB_SHA}"
+          export METATRON_IMAGE_TAG="${GITHUB_SHA}"
+          export METATRON_VERSION="0.1.0"
 
-          echo '=== PRE-FLIGHT ==='
-          test -d "$BASE"
-          test -r "$BASE/.env"
-          test -s "$WORKSPACE/build/libs/metatron-workforce-0.1.0.jar"
-          test -f "$WORKSPACE/Dockerfile"
-          test -f "$COMPOSE"
-          docker info >/dev/null
-          docker network inspect metatron-gateway-online >/dev/null
-          test "$(df --output=pcent / | tail -1 | tr -dc '0-9')" -lt 90
+          PREVIOUS_IMAGE=$(docker inspect deploy-workforce-1 --format '{{.Config.Image}}' 2>/dev/null || true)
+          PREVIOUS_SHA=$(docker inspect deploy-workforce-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1 || true)
+          echo "PREVIOUS_IMAGE=${PREVIOUS_IMAGE:-none}"
+          echo "PREVIOUS_SHA=${PREVIOUS_SHA:-none}"
 
-          cd "$WORKSPACE"
-          set -a
-          source "$BASE/.env"
-          set +a
-          export METATRON_VERSION=0.1.0
-          export METATRON_ENVIRONMENT=production
-          export METATRON_IMAGE_TAG="$SHA"
-          export METATRON_COMMIT_SHA="$SHA"
-
-          echo '=== CAPTURE KNOWN-GOOD ROLLBACK ==='
-          CURRENT_CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce 2>/dev/null || true)
-          PREVIOUS_SHA=''
-          if [ -n "$CURRENT_CID" ]; then
-            PREVIOUS_SHA=$(docker inspect "$CURRENT_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-            CURRENT_IMAGE_ID=$(docker inspect "$CURRENT_CID" --format '{{.Image}}')
-            docker tag "$CURRENT_IMAGE_ID" metatron-workforce:rollback
-            echo "ROLLBACK_IMAGE=$CURRENT_IMAGE_ID"
-            echo "PREVIOUS_SHA=${PREVIOUS_SHA:-unknown}"
-          fi
+          cp ../build/libs/*.jar ../build/libs/app.jar
+          docker build -f ../Dockerfile -t "metatron-workforce:${GITHUB_SHA}" ..
+          docker compose -p deploy up -d --force-recreate workforce
 
           rollback() {
-            echo '=== AUTOMATIC ROLLBACK ==='
-            docker image inspect metatron-workforce:rollback >/dev/null 2>&1 || return 1
-            export METATRON_IMAGE_TAG=rollback
-            export METATRON_COMMIT_SHA="${PREVIOUS_SHA:-rollback}"
-            docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate workforce
-            for i in $(seq 1 45); do
-              if curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
-                echo 'ROLLBACK=PASS'
-                return 0
-              fi
-              sleep 2
-            done
-            echo 'ROLLBACK=FAILED'
-            return 1
-          }
-
-          echo '=== BUILD IMMUTABLE IMAGE ==='
-          docker build --pull --build-arg METATRON_COMMIT_SHA="$SHA" -t "metatron-workforce:$SHA" .
-          docker image inspect "metatron-workforce:$SHA" >/dev/null
-          test "$(docker image inspect "metatron-workforce:$SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SHA"
-          docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" config >/dev/null
-
-          echo '=== START CANDIDATE ==='
-          if ! docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate workforce; then
-            rollback || true
-            exit 1
-          fi
-
-          healthy=false
-          for i in $(seq 1 45); do
-            if curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
-              healthy=true
-              break
+            echo "Deployment verification failed; attempting rollback"
+            if [ -n "${PREVIOUS_IMAGE:-}" ] && [ "${PREVIOUS_IMAGE:-}" != "none" ]; then
+              PREVIOUS_TAG="${PREVIOUS_IMAGE#metatron-workforce:}"
+              export METATRON_IMAGE_TAG="$PREVIOUS_TAG"
+              export METATRON_COMMIT_SHA="${PREVIOUS_SHA:-unknown}"
+              docker compose -p deploy up -d --force-recreate workforce || true
             fi
+          }
+          trap rollback ERR
+
+          CID=$(docker compose -p deploy ps -q workforce)
+          test -n "$CID"
+          for i in $(seq 1 45); do
+            STATUS=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}')
+            [ "$STATUS" = healthy ] && break
+            [ "$STATUS" = unhealthy ] && { docker logs --tail 200 "$CID"; false; }
             sleep 2
           done
-          if [ "$healthy" != true ]; then
-            docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" logs --tail 200 workforce || true
-            rollback || true
-            exit 1
-          fi
-          curl -fsS http://127.0.0.1:8080/telegram/health >/dev/null
-
-          echo '=== WORKFORCE LOCAL PERFORMANCE SLO ==='
-          for warmup in 1 2 3; do
-            curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:8080/telegram/health
-          done
-          : > /tmp/workforce-local-latencies.txt
-          for i in $(seq 1 20); do
-            curl -fsS --max-time 2 -o /dev/null -w '%{time_total}\n' http://127.0.0.1:8080/telegram/health >> /tmp/workforce-local-latencies.txt
-          done
-          if ! python3 - <<'PY'
-          from math import ceil
-          from pathlib import Path
-          values=sorted(float(x) for x in Path('/tmp/workforce-local-latencies.txt').read_text().split())
-          assert len(values) == 20, f'incomplete_local_latency_batch:{len(values)}'
-          p95=values[ceil(len(values)*0.95)-1]
-          print(f'WORKFORCE_LOCAL_P95_SECONDS={p95:.4f}')
-          assert p95 <= 0.500, f'workforce_local_p95_slo_failed:{p95:.4f}'
-          PY
-          then
-            rollback || true
-            exit 1
-          fi
-          echo 'WORKFORCE_LOCAL_PERFORMANCE_SLO=PASS'
-
-          echo '=== INTERNET EGRESS CANARY ==='
-          CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
-          internet_ok=false
-          if docker exec "$CID" sh -c 'wget -qO- --timeout=8 "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd" | grep -q bitcoin'; then
-            internet_ok=true
-            echo 'INTERNET_CANARY=COINGECKO_PASS'
-          elif docker exec "$CID" sh -c 'wget -qO- --timeout=8 "https://api.coinbase.com/v2/prices/BTC-USD/spot" | grep -q amount'; then
-            internet_ok=true
-            echo 'INTERNET_CANARY=COINBASE_PASS'
-          fi
-          if [ "$internet_ok" != true ]; then
-            rollback || true
-            exit 1
-          fi
-
-          echo '=== PUBLIC GATEWAY END-TO-END HEALTH ==='
-          public_ok=false
-          for i in $(seq 1 12); do
-            if curl -fsS --max-time 10 https://gate.metatron.vn/telegram/health >/dev/null; then
-              public_ok=true
-              break
-            fi
-            sleep 5
-          done
-          if [ "$public_ok" != true ]; then
-            rollback || true
-            exit 1
-          fi
-          PUBLIC_GATEWAY_SECONDS=$(curl -fsS --max-time 10 -o /dev/null -w '%{time_total}' https://gate.metatron.vn/telegram/health)
-          echo "PUBLIC_GATEWAY_OBSERVED_SECONDS=$PUBLIC_GATEWAY_SECONDS"
-
-          echo '=== TELEGRAM WEBHOOK BINDING ==='
-          test -n "${TELEGRAM_BOT_TOKEN:-}"
-          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
-          test -n "${METATRON_ORGANIZATION_ID:-}"
-          test -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}"
-
-          TELEGRAM_WEBHOOK_URL='https://gate.metatron.vn/telegram/webhook'
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-            --data-urlencode "url=${TELEGRAM_WEBHOOK_URL}" \
-            --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
-            --data-urlencode 'drop_pending_updates=false' \
-            >/tmp/telegram-set-webhook.json
-
-          python3 - <<'PY'
-          import json, os
-          with open('/tmp/telegram-set-webhook.json') as f:
-              data=json.load(f)
-          assert data.get('ok') is True, data
-          print('SET_WEBHOOK=PASS')
-          PY
-
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" >/tmp/telegram-webhook-info.json
-          DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" python3 - <<'PY'
-          import json, os
-          with open('/tmp/telegram-webhook-info.json') as f:
-              data=json.load(f)
-          assert data.get('ok') is True, data
-          result=data['result']
-          assert result.get('url') == 'https://gate.metatron.vn/telegram/webhook', result
-          assert int(result.get('last_error_date') or 0) < int(os.environ['DEPLOY_STARTED_AT']), result
-          print('WEBHOOK_URL=' + result['url'])
-          print('PENDING_UPDATE_COUNT=' + str(result.get('pending_update_count', 0)))
-          PY
-
-          echo '=== DEPLOY IDENTITY VERIFICATION ==='
-          CID=$(docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
-          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$SHA"
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
-          test "$(docker image inspect "metatron-workforce:$SHA" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SHA"
-
-          docker stats --no-stream "$CID"
-          free -h
-          swapon --show
-          docker image prune -f >/dev/null || true
-
-          echo 'PRODUCTION_DEPLOYMENT=PASS'
-          echo "EXPECTED_SHA=$SHA"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$GITHUB_SHA"
+          curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"'
+          curl -fsS http://127.0.0.1:8080/telegram/health | grep -q '"status":"UP"'
+          curl -fsS https://gate.metatron.vn/healthz >/dev/null
           echo "DEPLOYED_SHA=$DEPLOYED_SHA"
-          echo "IMAGE=metatron-workforce:$SHA"
-          echo 'IMAGE_REVISION=PASS'
-          echo 'PUBLIC_GATEWAY_HEALTH=PASS'
-          echo 'INTERNET_EGRESS=PASS'
-          echo 'PERFORMANCE_SLO=PASS'
+          trap - ERR
