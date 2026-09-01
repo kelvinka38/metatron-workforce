@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE=/opt/metatron/metatron-workforce
+test -r "$BASE/.env"
+set -a; source "$BASE/.env"; set +a
+test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+test -n "${TARGET_SHA:-}"
+
+CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+test -n "$CID"
+DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+test "$DEPLOYED_SHA" = "$TARGET_SHA"
+
+send_update() {
+  local update_id="$1" text="$2" body status
+  body=$(python3 - "$update_id" "$text" "$TELEGRAM_ALLOWED_USER_ID" <<'PY'
+import json,sys
+uid=int(sys.argv[3]); update=int(sys.argv[1])
+print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":sys.argv[2]}},ensure_ascii=False))
+PY
+  )
+  for attempt in 1 2 3 4; do
+    status=$(curl -sS -o "/tmp/point2-${update_id}.json" -w '%{http_code}' \
+      --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 25 \
+      -X POST https://gate.metatron.vn/telegram/webhook \
+      -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+      -H 'Content-Type: application/json' --data-binary "$body" || true)
+    echo "POINT2_INGRESS_ATTEMPT update_id=$update_id attempt=$attempt status=$status"
+    [ "$status" = 200 ] && return 0
+    sleep $((attempt * 2))
+  done
+  return 1
+}
+
+wait_route() {
+  local since="$1" update_id="$2" pattern="$3"
+  for _ in $(seq 1 90); do
+    LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+    if grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" && grep -Eq "telegram_answer_ready update_id=$update_id.*route=$pattern" <<<"$LOGS"; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ROUTE_TIMEOUT update_id=$update_id expected=$pattern" >&2
+  docker logs --since "$since" "$CID" 2>&1 | grep -E "update_id=$update_id|metatron_intelligence_latency" >&2 || true
+  return 1
+}
+
+wait_terminal() {
+  local since="$1" update_id="$2"
+  for _ in $(seq 1 90); do
+    LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+    if grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "TERMINAL_TIMEOUT update_id=$update_id" >&2
+  docker logs --since "$since" "$CID" 2>&1 | grep -E "update_id=$update_id|metatron_intelligence_latency" >&2 || true
+  return 1
+}
+
+assert_current_answer() {
+  local update_id="$1" text="$2" subject="$3" require_numeric="$4" since case_file
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  send_update "$update_id" "$text"
+  wait_route "$since" "$update_id" 'intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*'
+  LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+  ! grep -Eq "update_id=$update_id.*route=execution-objective-|execution-objective-workforce-accepted.*$update_id|METATRON WORK ACCEPTED.*$update_id" <<<"$LOGS"
+  case_file=$(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update_id' /var/lib/metatron-workforce 2>/dev/null | tail -1")
+  test -n "$case_file"
+  docker exec "$CID" cat "$case_file" | python3 -c '
+import json,re,sys
+case=json.load(sys.stdin); subject=sys.argv[1]; numeric=sys.argv[2]=="1"
+reqs=case.get("informationRequirements") or []
+assert reqs, "NO_INFORMATION_REQUIREMENTS"
+assert not any(str(r.get("question","")).strip().lower()=="current external evidence" for r in reqs), "GENERIC_FRESH_QUERY"
+assert any(re.search(subject,str(r.get("question","")),re.I) and str(r.get("status"))=="SATISFIED" for r in reqs), "SEMANTIC_REQUIREMENT_NOT_SATISFIED"
+refs=[x for r in reqs for x in (r.get("evidenceReferences") or [])]
+assert any(str(x).startswith(("http://","https://")) for x in refs), "NO_EXTERNAL_EVIDENCE"
+answer=str(case.get("latestConclusion") or "").strip()
+assert answer, "EMPTY_ANSWER"
+assert re.search(subject,answer,re.I), "ANSWER_LOST_SUBJECT"
+if numeric: assert re.search(r"\d",answer), "ANSWER_MISSING_CURRENT_VALUE"
+print("CURRENT_ANSWER_PASS")
+' "$subject" "$require_numeric"
+}
+
+BASE_ID=$(date +%s%N | cut -c1-14)
+CASUAL="${BASE_ID}41"
+VERSION="${BASE_ID}42"
+LEADER="${BASE_ID}43"
+
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+send_update "$CASUAL" 'Chào Metatron, hôm nay nói chuyện bình thường thôi.'
+wait_terminal "$SINCE" "$CASUAL"
+LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+! grep -Eq "update_id=$CASUAL.*route=execution-objective-|execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL" <<<"$LOGS"
+
+assert_current_answer "$VERSION" \
+  'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' \
+  'Python|stable|version|phiên bản' 1
+assert_current_answer "$LEADER" \
+  'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' \
+  'Indonesia|Tổng thống|President' 0
+
+echo 'POINT2_CASUAL_NOT_OBJECTIVE=PASS'
+echo 'POINT2_CURRENT_EXTERNAL_NOT_OBJECTIVE=PASS'
+echo 'POINT2_DOMAIN_INDEPENDENT_SEMANTIC_REQUIREMENTS=PASS'
+echo 'POINT2_EXTERNAL_EVIDENCE_ACQUIRED=PASS'
+echo 'POINT2_NATURAL_TASK_ROUTING=PASS'
