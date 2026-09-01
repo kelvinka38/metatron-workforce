@@ -50,7 +50,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             - Use exact refs from AVAILABLE EXECUTION CAPABILITIES when a capability can perform the step.
             - Prefer one available bounded/composite capability over inventing lower-level effects that are not independently available.
             - `repository.pr.propose` is the bounded governed mutation capability for the approved Autonomy Closure repair: it performs the approved file repair on a branch and opens the pull request. It never merges. When that capability satisfies a repair-and-open-PR objective, do NOT invent a separate `repository.content.write` step.
-            - `cross-repository-audit-analysis` is an evidence-bound join capability, not a repository reader. For a multi-repository audit, create one `repository.audit.read` step per repository and make the analysis step depend on every audit step. Never use `cross-repository-audit-analysis` as a standalone first step.
+            - `cross-repository-audit-analysis` is an evidence-bound join capability, not a repository reader. For a multi-repository audit, create one `repository.audit.read` step per repository and make the analysis step depend on every audit step. Never use `cross-repository-audit-analysis` for a single-repository audit.
             - If no capability can perform a step, use UNAVAILABLE:<short-semantic-capability-need>.
             - A READ_ONLY capability cannot satisfy MUTATING work.
             - Preserve explicit prohibitions and constraints.
@@ -82,7 +82,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         Objects.requireNonNull(normalized, "normalized");
         Objects.requireNonNull(availableExecutionCapabilities, "availableExecutionCapabilities");
         if (normalized.mode() != IntelligenceMode.EXECUTION) return List.of();
-        if (providers.isEmpty()) throw new IllegalStateException("execution_planning_provider_required");
+
+        List<ExecutionWorkSpec> deterministicFallback = deterministicSingleRepositoryAudit(
+                normalized, availableExecutionCapabilities);
+        if (providers.isEmpty()) {
+            if (!deterministicFallback.isEmpty()) return deterministicFallback;
+            throw new IllegalStateException("execution_planning_provider_required");
+        }
 
         String input = "INTELLIGENCE CASE REF:\n" + caseId
                 + "\n\nNORMALIZED REQUEST (structured; already semantically interpreted):\n"
@@ -98,6 +104,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 List<ExecutionWorkSpec> plan = parse(response);
                 plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
+                plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
                 validate(plan);
                 if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
                 return plan;
@@ -105,6 +112,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 failures.add(new IllegalStateException("execution planning provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
         }
+        if (!deterministicFallback.isEmpty()) return deterministicFallback;
         IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
         throw all;
@@ -287,6 +295,64 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 analysis.acceptanceCriteria(),
                 analysis.evidenceRequirements()));
         return List.copyOf(reconciled);
+    }
+
+    /**
+     * A single-repository read-only audit is already fully covered by repository.audit.read.
+     * Frontier providers must not turn delivery wording into a cross-repository join. Collapse only
+     * the narrow safe shape where the normalized target is one repository and every proposed step
+     * is read-only and uses either repository.audit.read or the inapplicable cross-repository join.
+     */
+    private static List<ExecutionWorkSpec> reconcileSingleRepositoryAudit(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities,
+            List<ExecutionWorkSpec> plan) {
+        List<ExecutionWorkSpec> deterministic = deterministicSingleRepositoryAudit(normalized, availableExecutionCapabilities);
+        if (deterministic.isEmpty() || plan.isEmpty()) return plan;
+        boolean compatible = plan.stream().allMatch(step ->
+                step.consequence() == ExecutionWorkSpec.Consequence.READ_ONLY
+                        && (REPOSITORY_AUDIT_READ.equals(step.requiredCapability())
+                        || CROSS_REPOSITORY_AUDIT_ANALYSIS.equals(step.requiredCapability())));
+        if (!compatible) return plan;
+        return deterministic;
+    }
+
+    /**
+     * Bounded fail-safe planning for the exact capability-shaped case that does not require frontier
+     * decomposition: one unambiguous GitHub repository, explicit audit/read-only semantics, and the
+     * governed repository.audit.read capability present. This creates a Work proposal only; it does
+     * not create authority, assignment, execution evidence, Observation or completion.
+     */
+    private static List<ExecutionWorkSpec> deterministicSingleRepositoryAudit(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!availableExecutionCapabilities.contains(REPOSITORY_AUDIT_READ)) return List.of();
+        List<String> repositories = requestedRepositoryTargets(normalized.target());
+        if (repositories.size() != 1) return List.of();
+        String semantic = (normalized.objective() + " " + normalized.constraints() + " "
+                + normalized.explicitProhibitions() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean auditIntent = semantic.contains("audit");
+        boolean readOnly = semantic.contains("read-only") || semantic.contains("read only")
+                || semantic.contains("do not mutate") || semantic.contains("without mutation")
+                || semantic.contains("without mutating");
+        boolean mutationIntent = semantic.contains("pull request") || semantic.contains(" deploy")
+                || semantic.contains(" delete") || semantic.contains(" merge") || semantic.contains(" commit")
+                || semantic.contains(" push") || semantic.contains(" write") || semantic.contains(" modify")
+                || semantic.contains(" update file") || semantic.contains(" change file") || semantic.contains(" fix code");
+        if (!auditIntent || !readOnly || mutationIntent) return List.of();
+
+        String repository = repositories.getFirst();
+        return List.of(new ExecutionWorkSpec(
+                "repository-audit-read",
+                normalized.objective(),
+                repository,
+                REPOSITORY_AUDIT_READ,
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("governed read-only repository audit completes for " + repository
+                        + " and produces evidence sufficient for Observation"),
+                List.of("durable repository.audit.read execution evidence for " + repository
+                        + " including externally attributable repository evidence")));
     }
 
     private static List<String> requestedRepositoryTargets(String target) {
