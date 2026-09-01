@@ -1,128 +1,14 @@
-name: BIOS Product v2 Production Closure Bridge
+name: BIOS Product v2 Production Closure Bridge — Archived
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/bios-product-v2-deploy-bridge.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  deploy-and-ratify-bios-product-v2:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    env:
-      BIOS_TARGET_SHA: fcb29f61b204392b50d4b507332ce5f2c0e989c5
-      WORKFORCE_REQUIRED_SHA: c7d19e67797b1f97ba118433bc749bb80defe9d0
-      BIOS_BASE: /opt/metatron/metatron-workforce/bios-product-v2
+  archived:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
     steps:
-      - name: Materialize exact BIOS source
-        shell: bash
-        run: |
-          set -euo pipefail
-          set -a
-          source /opt/metatron/metatron-workforce/.env
-          set +a
-          test -n "${GITHUB_TOKEN:-}"
-          rm -rf /tmp/bios-product-v2-closure
-          cat >/tmp/bios-git-askpass.sh <<'SH'
-          #!/bin/sh
-          case "$1" in
-            *Username*) echo x-access-token ;;
-            *Password*) echo "$GITHUB_TOKEN" ;;
-          esac
-          SH
-          chmod 700 /tmp/bios-git-askpass.sh
-          export GIT_ASKPASS=/tmp/bios-git-askpass.sh GIT_TERMINAL_PROMPT=0
-          git clone -q https://github.com/kelvinka38/bios.git /tmp/bios-product-v2-closure
-          cd /tmp/bios-product-v2-closure
-          git checkout -q "$BIOS_TARGET_SHA"
-          test "$(git rev-parse HEAD)" = "$BIOS_TARGET_SHA"
-          test -z "$(git status --porcelain)"
-          rm -f /tmp/bios-git-askpass.sh
-
-      - name: Verify Workforce production dependency
-        shell: bash
-        run: |
-          set -euo pipefail
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$SHA" = "$WORKFORCE_REQUIRED_SHA"
-          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
-          echo "WORKFORCE_PRODUCTION_SHA=$SHA" | tee /tmp/bios-product-v2-evidence.txt
-
-      - name: Run exact BIOS source test suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd /tmp/bios-product-v2-closure
-          python3 -m unittest discover -s tests -p 'test_*.py' 2>&1 | tee -a /tmp/bios-product-v2-evidence.txt
-
-      - name: Deploy exact BIOS SHA to production
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE="$BIOS_BASE"
-          COMPOSE=/tmp/bios-product-v2-closure/deploy/docker-compose.yml
-          mkdir -p "$BASE"
-          chmod 700 "$BASE"
-          if [ ! -s "$BASE/.env" ]; then
-            umask 077
-            printf 'BIOS_API_KEY=%s\n' "$(python3 - <<'PY'
-          import secrets
-          print(secrets.token_urlsafe(48))
-          PY
-          )" > "$BASE/.env"
-          fi
-          chmod 600 "$BASE/.env"
-          set -a; source "$BASE/.env"; set +a
-          export BIOS_IMAGE_TAG="$BIOS_TARGET_SHA"
-          export BIOS_COMMIT_SHA="$BIOS_TARGET_SHA"
-          docker network inspect metatron-gateway-online >/dev/null
-          docker build --pull -t "metatron-bios:$BIOS_TARGET_SHA" /tmp/bios-product-v2-closure
-          docker compose -p bios --env-file "$BASE/.env" -f "$COMPOSE" up -d --force-recreate bios
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1 && break; sleep 2; done
-          CID=$(docker compose -p bios --env-file "$BASE/.env" -f "$COMPOSE" ps -q bios)
-          test -n "$CID"
-          for i in $(seq 1 30); do [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy ] && break; sleep 2; done
-          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^BIOS_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$BIOS_TARGET_SHA"
-          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
-          curl -fsS http://127.0.0.1:18080/health/ready -H "X-BIOS-API-Key: $BIOS_API_KEY" | tee -a /tmp/bios-product-v2-evidence.txt
-          curl -fsS https://gate.metatron.vn/healthz >/dev/null
-          echo "BIOS_PRODUCTION_SHA=$DEPLOYED_SHA" | tee -a /tmp/bios-product-v2-evidence.txt
-          echo 'BIOS_PRODUCTION_DEPLOY=PASS' | tee -a /tmp/bios-product-v2-evidence.txt
-
-      - name: Execute P1 production acceptance including restart continuity
-        shell: bash
-        run: |
-          set -euo pipefail
-          set -a; source "$BIOS_BASE/.env"; set +a
-          export TARGET_SHA="$BIOS_TARGET_SHA"
-          cd /tmp/bios-product-v2-closure
-          python3 scripts/accept_product_v2_p1.py | tee -a /tmp/bios-product-v2-evidence.txt
-          CID=$(docker ps --filter name=bios-bios-1 --format '{{.ID}}' | head -1)
-          docker restart "$CID" >/dev/null
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1 && break; sleep 2; done
-          P1_RESUME_ONLY=1 python3 scripts/accept_product_v2_p1.py | tee -a /tmp/bios-product-v2-evidence.txt
-
-      - name: Execute P2-P9 first-party production acceptance
-        shell: bash
-        run: |
-          set -euo pipefail
-          set -a; source "$BIOS_BASE/.env"; set +a
-          export TARGET_SHA="$BIOS_TARGET_SHA"
-          cd /tmp/bios-product-v2-closure
-          python3 scripts/accept_product_v2.py | tee -a /tmp/bios-product-v2-evidence.txt
-          echo 'BIOS_PRODUCT_1_V2_TECHNICAL_VERDICT=ACCEPTED' | tee -a /tmp/bios-product-v2-evidence.txt
-
-      - name: Upload Product v2 closure evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: bios-product-v2-p1-p9-evidence-${{ github.run_id }}
-          path: /tmp/bios-product-v2-evidence.txt
-          if-no-files-found: error
-          retention-days: 90
+      - run: echo "Archived after BIOS Product #1 v2.0 P1-P9 production acceptance. See BIOS product/BIOS_PRODUCT_V2_ACCEPTANCE_EVIDENCE.md and ratification run 33467056010."
