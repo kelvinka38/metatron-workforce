@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-telegram-provider-adapter-live-acceptance
-  cancel-in-progress: true
+  group: metatron-production-state
+  cancel-in-progress: false
 
 jobs:
   accept-telegram-provider-adapter:
@@ -66,9 +66,6 @@ jobs:
           for i in $(seq 1 120); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 
-            # The channel response is an acceptance acknowledgement, not the terminal Objective result.
-            # Completion is proven from detached Management/Execution evidence, while terminal channel
-            # delivery belongs to the durable Telegram ingress receipt store. Do not conflate these stores.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q 'route=execution-objective-workforce-accepted' <<<"$LOGS" \
               && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
@@ -90,9 +87,6 @@ jobs:
               fi
             fi
 
-            # Architecture-valid fail-closed: frontier semantic/planning capacity is unavailable.
-            # The adapter must return an explicit failure and MUST NOT admit this update into
-            # Workforce execution through raw-text/keyword fallback.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed' <<<"$LOGS"; then
