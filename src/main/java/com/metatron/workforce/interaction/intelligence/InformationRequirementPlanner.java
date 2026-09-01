@@ -3,6 +3,7 @@ package com.metatron.workforce.interaction.intelligence;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -20,7 +21,7 @@ public final class InformationRequirementPlanner {
         int sequence = 1;
         for (AnalyticalProtocol protocol : registry.resolve(request.analyticalProtocols())) {
             for (String requirement : protocol.minimumInformationRequirements()) {
-                String key = requirement.toLowerCase(java.util.Locale.ROOT);
+                String key = requirement.toLowerCase(Locale.ROOT);
                 if (deduplicated.containsKey(key)) continue;
                 String id = "ir-" + sequence++;
                 deduplicated.put(key, new InformationRequirement(
@@ -39,9 +40,20 @@ public final class InformationRequirementPlanner {
             }
         }
         if (request.freshExternalDataRequired()) {
-            deduplicated.putIfAbsent("current external evidence", new InformationRequirement(
+            // The external information requirement must preserve the frontier-normalized subject of the
+            // Human request. A generic label such as "current external evidence" becomes the literal web
+            // search query downstream and can retrieve unrelated material (for example, electrical current)
+            // even when the normalized objective is a gold-price, FX, or weather question.
+            String currentQuestion = request.objective().trim();
+            if (currentQuestion.isBlank()) currentQuestion = request.requestedOutput().trim();
+            if (currentQuestion.isBlank()) currentQuestion = request.target().trim();
+            if (currentQuestion.isBlank()) {
+                throw new IllegalArgumentException("fresh external data requires a non-blank semantic query");
+            }
+            String key = "fresh:" + currentQuestion.toLowerCase(Locale.ROOT);
+            deduplicated.putIfAbsent(key, new InformationRequirement(
                     "ir-" + sequence,
-                    "current external evidence",
+                    currentQuestion,
                     "the normalized objective depends on current external reality",
                     InformationRequirementStatus.MISSING,
                     List.of("authorized structured external source", "web/external research"),
@@ -52,7 +64,7 @@ public final class InformationRequirementPlanner {
     }
 
     private static List<String> preferredSources(String requirement) {
-        String value = requirement.toLowerCase(java.util.Locale.ROOT);
+        String value = requirement.toLowerCase(Locale.ROOT);
         if (value.contains("metric") || value.contains("cash") || value.contains("historical") || value.contains("timeline")) {
             return List.of("validated institutional Knowledge", "connected system/API", "institutional artifact");
         }
