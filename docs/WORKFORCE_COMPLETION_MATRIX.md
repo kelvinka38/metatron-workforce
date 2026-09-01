@@ -1,46 +1,63 @@
 # WORKFORCE COMPLETION MATRIX
 
-**Status:** CURRENT IMPLEMENTATION CONFORMANCE MATRIX — AUTONOMY CLOSURE REVISION  
+**Status:** CURRENT IMPLEMENTATION CONFORMANCE MATRIX — AUTONOMY CLOSURE ACCEPTED  
 **Canonical upstream:** `kelvinka38/metatron-institution/05_WORKFORCE/`  
-**General autonomy verdict:** PARTIAL / NOT YET ACCEPTED
+**Accepted production SHA:** `c7d19e67797b1f97ba118433bc749bb80defe9d0`  
+**General autonomy verdict:** `ACCEPTED_L10`
 
 ## Required interpretation
 
-Earlier revisions described the audited implementation scope as final. The evidence remains useful for the exact primitives and bounded live scenarios tested, but it does not prove the Founder-ratified L10 Workforce Autonomy Closure.
+Earlier revisions correctly prevented bounded evidence from being generalized into institutional autonomy. The upstream production gate has now passed on an exact source/deploy identity, so those earlier `PARTIAL / NOT YET ACCEPTED` status statements are superseded for the Founder-ratified Autonomy Closure scope.
 
-This revision is the authoritative implementation-status interpretation. See `docs/AUTONOMY_CLOSURE/`.
+This matrix does not claim that every possible future Workforce capability is finished. It records that the canonical Autonomy Closure program itself is technically complete and production accepted.
 
-| Capability | Existing implementation/evidence | Current verdict |
+| Capability | Accepted implementation/evidence | Current verdict |
 |---|---|---|
-| Participant -> Worker -> Participation | Core service/API and live lifecycle | Implemented substrate |
-| Persistent Worker identity | durable Core state and replacement tests | Implemented substrate |
-| Capability/Qualification/Availability | Core state/API | Implemented substrate |
-| Objective ownership state | management service/store and bounded tests | Partial; acceptance/fencing/Runner incomplete |
-| First-class Work | InstitutionalWork and durable store/API | Implemented substrate; DAG scheduler incomplete |
-| Assignment | persistent Core Assignment | Implemented substrate |
-| Schedule/finite capacity | operational schedule/capacity APIs/tests | Partial; autonomous ready-set allocation incomplete |
-| Staffing | durable request/proposal lifecycle | Partial; autonomous staffing/formation incomplete |
-| Workplace/Meeting Room | canonical design, services/tests/dashboard | Partial production product/integration |
-| Authorization separation | Phase-6 semantics and denial tests | Implemented substrate; durable dispatch/revocation proof pending |
-| Execution/runtime | handoff, runtime correlation/recovery primitives | Partial; general scheduler/lease recovery path pending |
-| Intelligence | reasoning/memory/provider product and live bounded evidence | Implemented service; management ownership boundary must invert |
-| Observation/evidence | bounded capability evidence | Partial; independent criterion closure pending |
-| Reporting/performance/economics | services and bounded acceptance | Partial L9 enforcement/visibility |
-| Experience/learning | services and acceptance tests | Bounded; general verified admission loop pending |
-| Local recovery/replan | management transition primitives/tests | Partial; autonomous operational recovery pending |
-| Telegram | production repository-audit slice | Bounded capability, not durable general autonomy |
-| ChatGPT adapter | no production Workforce adapter proof | Missing |
-| BIOS integration | approved contract and independent BIOS service | Live Objective-path integration not proved |
-| General L10 autonomy | no complete material production Objective evidence | NOT YET ACCEPTED |
+| Participant -> Worker -> Participation | durable Core identity and participation lifecycle | Accepted substrate |
+| Persistent Worker identity | durable identity independent of runtime replacement | PASS |
+| Capability / Qualification / Availability | governed eligibility and finite-capacity allocation | PASS |
+| Objective ownership state | durable acceptance, exactly-one owner, fencing and history | PASS |
+| First-class Work / Work Graph | durable versioned DAG, fan-out/join and replan history | PASS |
+| Assignment | persistent Assignment distinct from authorization/execution | PASS |
+| Schedule / finite capacity | ready-set scheduling, bounded concurrency and reservation/release | PASS |
+| Staffing | autonomous staffing-gap resolution/escalation path | PASS |
+| AI Worker formation | governed recognition/admission/participation/capability/authority/lifecycle path | PASS |
+| Workplace / Meeting Room | canonical semantics reused; cross-channel continuity proved by invariants | PASS for closure scope |
+| Authorization separation | fail-closed admission, durable binding, revocation/stale fencing | PASS |
+| Execution / runtime | canonical dispatch, durable attempts, leases and recovery | PASS |
+| Observation / evidence | independent criterion-level closure before Objective completion | PASS |
+| Reporting / economics / safety | progress/completion package, cost/resource and bounded-recovery controls | PASS for closure gate |
+| Recovery / replan | process/runtime/provider recovery, stale fencing and reconciliation | PASS |
+| Dead-letter / stuck Objective | operational detection and reconciliation | PASS |
+| Telegram / real interaction provider | real ingress production acceptance and replay protection | PASS |
+| Channel independence after acceptance | Objective lifetime survives channel/model/process/runtime loss | PASS |
+| Full attributable history | reconstructable Objective/owner/graph/assignment/execution/evidence history | PASS |
+| Golden Slices | exact-SHA production evidence | `4/4 PASS` |
+| Mandatory production conditions | final independent ratifier | `45/45 PASS` |
+| General L10 autonomy | final ratifier run `33465915027` | `ACCEPTED_L10` |
 
-## Historical evidence retained
+## Final accepted evidence
 
-Historical implementation/deployment evidence at `6f5b06e78d82d4e93f1cfa632d64557b64ea744c`, production deployment run `33153971165`, Workforce Live Acceptance `33154091624` attempt 2, and Gateway boundary repair run `33155111510` remains valid for the tested Core/API/durability/boundary scope.
+- Production Deploy: `33465202660` — SUCCESS
+- GS1/GS2: `33465333035` — SUCCESS
+- GS3/GS4: `33465332814` — SUCCESS
+- Final ratification: `33465915027` — SUCCESS
+- Final artifact: `9784967732`
+- Artifact SHA-256: `1aa44620296eb9bc159ecca81b9c2473370b1b69712d8ef1d601c0c39c69e369`
+- Golden Slices: `4/4`
+- Production conditions: `45/45`
+- Unresolved critical contradictions: `0`
+- Verdict: `ACCEPTED_L10`
 
-Later production evidence through `9020efe23f4aebca5205917668261f1bdf642373` proves bounded Telegram repository-audit and Intelligence product behavior.
+See `docs/AUTONOMY_CLOSURE/FINAL_ACCEPTED_L10_EVIDENCE.md` for the evidence-bound acceptance record.
 
-These runs do not prove persistent autonomous management, dynamic staffing, durable DAG scheduling, general runtime recovery and Observation closure as a complete loop.
+## Completion rule after closure
 
-## Completion rule
+The previous completion rule prohibited a general completion claim until all critical upstream gates passed. That condition is now satisfied for the Founder-ratified Workforce Autonomy Closure scope.
 
-The repository may report exact component or bounded-slice completion. It MUST NOT report general Workforce completion until all critical gates in upstream `WORKFORCE_AUTONOMY_CLOSURE_ACCEPTANCE_SPEC.md` pass in production with exact source/deploy identity and no hidden Human/interface orchestration.
+Future changes must still report the evidence level actually achieved. A new feature, authority expansion or runtime/provider change does not inherit production acceptance merely because the closure baseline is accepted.
+
+```text
+AUTONOMY CLOSURE = CLOSED / ACCEPTED_L10
+NEXT = POST-CLOSURE PRODUCT & OPERATIONS EVOLUTION UNDER WORKFORCE SOT
+```
