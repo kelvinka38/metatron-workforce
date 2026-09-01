@@ -145,20 +145,26 @@ PY
   return 1
 }
 crash_lane() {
-  local project="$1" lane="$2" port="$3" repo="$4" update="$5" cid oid text evidence
+  local project="$1" lane="$2" port="$3" repo="$4" update="$5" cid oid text evidence restarts_before
   set -euo pipefail
   echo "${lane}=START"
   cid=$(start_lane "$project" "$lane" "$port")
   text="Take ownership of one Objective: perform a governed read-only institutional audit of $repo, verify it through Observation, and deliver evidence. Do not mutate anything."
   send_local_update "$port" "$update" "$text" "$OUT/${lane}-ingress.json"
   oid=$(find_objective "$port" "$update"); test -n "$oid"; echo "${lane}_OBJECTIVE_ID=$oid"
-  docker kill "$cid" >/dev/null
+  restarts_before=$(docker inspect "$cid" --format '{{.RestartCount}}')
+  # Kill PID 1 from inside the container so Docker observes an unplanned process crash.
+  # `docker kill` is a manual stop and intentionally suppresses restart-policy recovery.
+  docker exec "$cid" sh -c 'kill -9 1' >/dev/null 2>&1 || true
   for i in $(seq 1 60); do
-    [ "$(docker inspect "$cid" --format '{{.State.Health.Status}}' 2>/dev/null || true)" = healthy ] && break
+    state=$(docker inspect "$cid" --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)
+    restarts=$(docker inspect "$cid" --format '{{.RestartCount}}' 2>/dev/null || echo 0)
+    if [ "$state" = 'running/healthy' ] && [ "$restarts" -gt "$restarts_before" ]; then break; fi
     sleep 2
   done
+  test "$(docker inspect "$cid" --format '{{.State.Status}}')" = running
   test "$(docker inspect "$cid" --format '{{.State.Health.Status}}')" = healthy
-  test "$(docker inspect "$cid" --format '{{.RestartCount}}')" -ge 1
+  test "$(docker inspect "$cid" --format '{{.RestartCount}}')" -gt "$restarts_before"
   wait_terminal "$port" "$oid"
   docker exec "$cid" sh -c "grep -q '$oid' /var/lib/metatron-workforce/management-state.json"
   evidence=$(docker exec "$cid" sh -c "grep -R -l -F 'repository=$repo' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
@@ -172,14 +178,19 @@ live_gateway() {
   echo 'LIVE_PUBLIC_GATEWAY=PASS'
 }
 live_observability() {
-  DASH=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/monitor)
-  grep -q 'METATRON WORKFORCE' <<<"$DASH"; grep -q 'canonical management projection' <<<"$DASH"
-  API=$(curl -fsS --max-time 10 -H 'X-Metatron-Actor: human-primary' http://127.0.0.1:8080/workforce/monitor/api/objectives)
-  python3 - "$API" <<'PY'
+  local api_file="$OUT/live-observability-api.json"
+  curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/monitor > "$OUT/live-monitor.html"
+  grep -q 'METATRON WORKFORCE' "$OUT/live-monitor.html"
+  grep -q 'canonical management projection' "$OUT/live-monitor.html"
+  curl -fsS --max-time 10 -H 'X-Metatron-Actor: human-primary' http://127.0.0.1:8080/workforce/monitor/api/objectives > "$api_file"
+  python3 - "$api_file" <<'PY'
 import json,sys
-rows=json.loads(sys.argv[1]); assert isinstance(rows,list)
+with open(sys.argv[1], encoding='utf-8') as f:
+    rows=json.load(f)
+assert isinstance(rows,list)
 for row in rows:
-    for key in ('objectiveId','humanStatus','ownerWorker','staffingState','workItems','executionProof'): assert key in row,(key,row)
+    for key in ('objectiveId','humanStatus','ownerWorker','staffingState','workItems','executionProof'):
+        assert key in row,(key,row)
 print('LIVE_OBSERVABILITY=PASS')
 PY
 }
