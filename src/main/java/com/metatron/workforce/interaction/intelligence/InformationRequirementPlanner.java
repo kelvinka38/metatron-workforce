@@ -29,7 +29,7 @@ public final class InformationRequirementPlanner {
                         requirement,
                         "required by " + protocol.type() + " analytical protocol",
                         InformationRequirementStatus.MISSING,
-                        preferredSources(requirement),
+                        preferredSources(protocol.type()),
                         List.of(),
                         request.temporalContext().isBlank() ? "fit for objective" : request.temporalContext(),
                         "sufficient to support a material conclusion",
@@ -40,10 +40,6 @@ public final class InformationRequirementPlanner {
             }
         }
         if (request.freshExternalDataRequired()) {
-            // The external information requirement must preserve the frontier-normalized subject of the
-            // Human request. A generic label such as "current external evidence" becomes the literal web
-            // search query downstream and can retrieve unrelated material (for example, electrical current)
-            // even when the normalized objective is a gold-price, FX, or weather question.
             String currentQuestion = request.objective().trim();
             if (currentQuestion.isBlank()) currentQuestion = request.requestedOutput().trim();
             if (currentQuestion.isBlank()) currentQuestion = request.target().trim();
@@ -63,14 +59,30 @@ public final class InformationRequirementPlanner {
         return new ArrayList<>(deduplicated.values());
     }
 
-    private static List<String> preferredSources(String requirement) {
-        String value = requirement.toLowerCase(Locale.ROOT);
-        if (value.contains("metric") || value.contains("cash") || value.contains("historical") || value.contains("timeline")) {
-            return List.of("validated institutional Knowledge", "connected system/API", "institutional artifact");
-        }
-        if (value.contains("market") || value.contains("external") || value.contains("competitive")) {
-            return List.of("authorized external structured data", "web/external research", "validated Knowledge");
-        }
-        return List.of("validated institutional Knowledge", "institutional artifact", "connected system/API", "authorized Worker observation");
+    /**
+     * Source classes are selected from the semantic analytical protocol, never by scanning the Human text
+     * or the wording of a generated requirement. This keeps acquisition routing domain-independent.
+     */
+    private static List<String> preferredSources(AnalyticalProtocolType protocol) {
+        return switch (protocol) {
+            case COMPARE, FORECAST, INVESTMENT -> List.of(
+                    "validated institutional Knowledge",
+                    "authorized external structured data",
+                    "web/external research",
+                    "institutional artifact",
+                    "connected system/API");
+            case AUDIT, INCIDENT, PERFORMANCE, ROOT_CAUSE -> List.of(
+                    "validated institutional Knowledge",
+                    "institutional artifact",
+                    "connected system/API",
+                    "authorized Worker observation");
+            case RISK, IMPROVEMENT, DECISION -> List.of(
+                    "validated institutional Knowledge",
+                    "institutional artifact",
+                    "connected system/API",
+                    "authorized external structured data",
+                    "web/external research",
+                    "authorized Worker observation");
+        };
     }
 }
