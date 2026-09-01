@@ -53,7 +53,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
             "check", "answer", "information", "external", "reality", "please", "new", "fresh",
             "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "neu", "nguon", "cho", "bao", "nhieu",
-            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "the", "nao", "va", "cua");
+            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua");
 
     private static final Pattern ITEM = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
