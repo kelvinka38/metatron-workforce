@@ -24,7 +24,7 @@ final class ExecutionWorkPlannerTest {
 
             @Override public LlmResponse complete(LlmRequest request) {
                 assertTrue(request.userInput().contains("case-123"));
-                assertTrue(request.userInput().contains("objective=execute governed repository audit"));
+                assertTrue(request.userInput().contains("objective=coordinate governed repository evidence work"));
                 assertTrue(request.userInput().contains("repository.audit.read"));
                 assertFalse(request.userInput().contains("Đụ má audit cái repo này giùm tao"));
                 return planResponse(LlmProvider.GOOGLE);
@@ -34,7 +34,7 @@ final class ExecutionWorkPlannerTest {
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
                 new LlmProviderRouter(List.of(google)), provider -> "planner-test",
                 List.of(LlmProvider.GOOGLE), mapper);
-        NormalizedRequest normalized = normalizedExecution(null);
+        NormalizedRequest normalized = normalizedProviderExecution(null);
 
         List<ExecutionWorkSpec> plan = planner.plan("case-123", normalized, List.of("repository.audit.read"));
 
@@ -99,7 +99,7 @@ final class ExecutionWorkPlannerTest {
                 router, provider -> "planner-test", List.of(LlmProvider.GOOGLE, LlmProvider.ANTHROPIC),
                 new ObjectMapper());
 
-        List<ExecutionWorkSpec> plan = planner.plan("case-123", normalizedExecution(null),
+        List<ExecutionWorkSpec> plan = planner.plan("case-123", normalizedProviderExecution(null),
                 List.of("repository.audit.read"));
 
         assertEquals(1, plan.size());
@@ -157,6 +157,55 @@ final class ExecutionWorkPlannerTest {
     }
 
     @Test
+    void boundedSingleRepositoryAuditNeverDependsOnFrontierPlanningCapacity() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("provider must not be called for exact bounded capability binding");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        List<ExecutionWorkSpec> plan = planner.plan("case-bounded", normalizedExecution(null),
+                List.of("repository.audit.read | governed read-only repository evidence adapter"));
+
+        assertEquals(0, calls.get());
+        assertEquals(1, plan.size());
+        assertEquals("repository.audit.read", plan.getFirst().requiredCapability());
+        assertTrue(plan.getFirst().verifiable());
+    }
+
+    @Test
+    void plannerHardBoundsOversizedCapabilityInventoryBeforeAnyProviderCall() {
+        AtomicInteger inputChars = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                inputChars.set(request.userInput().length());
+                assertTrue(request.userInput().contains("objective=coordinate governed repository evidence work"));
+                assertTrue(request.userInput().contains("repository.audit.read"));
+                return planResponse(LlmProvider.GOOGLE);
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        String giant = "x".repeat(400_000);
+
+        List<ExecutionWorkSpec> plan = planner.plan("case-bounded-input", normalizedProviderExecution(null),
+                List.of("repository.audit.read " + giant, "other.capability " + giant, "third.capability " + giant));
+
+        assertEquals(1, plan.size());
+        assertTrue(inputChars.get() > 0);
+        assertTrue(inputChars.get() <= ExecutionWorkPlanner.MAX_PLANNER_INPUT_CHARS,
+                "planner input must remain bounded, actual=" + inputChars.get());
+    }
+
+    @Test
     void providerlessPlannerStillFailsClosedOutsideBoundedAuditShape() {
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
                 new LlmProviderRouter(List.of()), provider -> "unused", List.of(), new ObjectMapper());
@@ -194,6 +243,15 @@ final class ExecutionWorkPlannerTest {
                 IntelligenceDepth.ANALYZE, "terminal audit result", List.of(), List.of("do not mutate"),
                 "current", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
                 List.of(AnalyticalProtocolType.AUDIT), DeterministicCapability.NONE, List.of(), List.of(),
+                false, explicitlyRequestedProvider, LlmProvider.GOOGLE, "");
+    }
+
+    private static NormalizedRequest normalizedProviderExecution(LlmProvider explicitlyRequestedProvider) {
+        return new NormalizedRequest(
+                "coordinate governed repository evidence work", "kelvinka38/bios", List.of("preserve evidence"),
+                IntelligenceDepth.ANALYZE, "terminal governed result", List.of(), List.of(),
+                "current", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.RISK), DeterministicCapability.NONE, List.of(), List.of(),
                 false, explicitlyRequestedProvider, LlmProvider.GOOGLE, "");
     }
 }
