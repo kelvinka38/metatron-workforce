@@ -1,0 +1,70 @@
+name: Highway Conformance CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/production-acceptance-highway.sh'
+      - 'deploy/docker-compose.yml'
+      - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
+      - '.github/workflows/production-acceptance-highway-v2.yml'
+      - '.github/workflows/highway-conformance-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  topology:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate highway shell
+        run: bash -n scripts/production-acceptance-highway.sh
+      - name: Validate canonical production defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/docker-compose.yml config > /tmp/live.yml
+          grep -q '127.0.0.1:8080' /tmp/live.yml
+          grep -q 'name: metatron-workforce-state' /tmp/live.yml
+          grep -q 'name: metatron-workforce' /tmp/live.yml
+          grep -q 'name: metatron-gateway-online' /tmp/live.yml
+          grep -q 'TELEGRAM_API_BASE_URL: https://api.telegram.org' /tmp/live.yml
+          echo 'HIGHWAY_CANONICAL_DEFAULTS=PASS'
+      - name: Prove two isolated lane configs do not collide
+        shell: bash
+        run: |
+          set -euo pipefail
+          METATRON_HOST_PORT=18111 \
+          METATRON_STATE_VOLUME_NAME=highway-test-a-state \
+          METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network \
+          METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a \
+          TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 \
+          docker compose -p highway-test-a -f deploy/docker-compose.yml config > /tmp/lane-a.yml
+
+          METATRON_HOST_PORT=18222 \
+          METATRON_STATE_VOLUME_NAME=highway-test-b-state \
+          METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network \
+          METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b \
+          TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 \
+          docker compose -p highway-test-b -f deploy/docker-compose.yml config > /tmp/lane-b.yml
+
+          grep -q '127.0.0.1:18111' /tmp/lane-a.yml
+          grep -q 'name: highway-test-a-state' /tmp/lane-a.yml
+          grep -q 'name: highway-test-a-network' /tmp/lane-a.yml
+          grep -q '127.0.0.1:18222' /tmp/lane-b.yml
+          grep -q 'name: highway-test-b-state' /tmp/lane-b.yml
+          grep -q 'name: highway-test-b-network' /tmp/lane-b.yml
+          ! grep -q '18111' /tmp/lane-b.yml
+          ! grep -q '18222' /tmp/lane-a.yml
+          ! cmp -s /tmp/lane-a.yml /tmp/lane-b.yml
+          echo 'HIGHWAY_CONFIG_ISOLATION=PASS'
+      - name: Verify acceptance provider override remains opt-in
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'TELEGRAM_API_BASE_URL' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
+          grep -q 'https://api.telegram.org' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
+          echo 'HIGHWAY_PROVIDER_ISOLATION_WITH_REAL_DEFAULT=PASS'
