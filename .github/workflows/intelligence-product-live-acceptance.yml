@@ -72,11 +72,46 @@ jobs:
             return 1
           }
 
-          BASE_ID=$(date +%s%N | cut -c1-15)
+          assert_fresh_information_lookup() {
+            local update_id="$1"
+            local text="$2"
+            local subject_pattern="$3"
+            local since
+            since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            send_update "$update_id" "$text"
+            wait_for "$since" "grep -q 'telegram_send_success update_id=$update_id' <<<\"\$LOGS\" && grep -Eq 'telegram_answer_ready update_id=$update_id.*route=intelligence-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*' <<<\"\$LOGS\""
+
+            local logs
+            logs=$(docker logs --since "$since" "$CID" 2>&1 || true)
+            if grep -q "telegram_interaction_failed update_id=$update_id" <<<"$logs" \
+              || grep -q "telegram_failure_notification_sent update_id=$update_id" <<<"$logs"; then
+              echo "FRESH_INFORMATION_INTERACTION_FAILED update_id=$update_id" >&2
+              exit 1
+            fi
+            if grep -Eq "telegram_answer_ready update_id=$update_id.*route=execution-objective-|execution-objective-workforce-accepted.*$update_id|METATRON WORK ACCEPTED.*$update_id" <<<"$logs"; then
+              echo "FRESH_INFORMATION_WRONGLY_BECAME_OBJECTIVE update_id=$update_id" >&2
+              exit 1
+            fi
+
+            local case_proof=0
+            while IFS= read -r case_file; do
+              [ -n "$case_file" ] || continue
+              if docker exec "$CID" sh -c "grep -Eqi '$subject_pattern' '$case_file' && grep -q 'SATISFIED' '$case_file' && grep -Eq 'https?://' '$case_file'"; then
+                case_proof=1
+                echo "GROUNDED_CASE_FILE=$case_file"
+                break
+              fi
+            done < <(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update_id' /var/lib/metatron-workforce 2>/dev/null || true")
+            test "$case_proof" = 1
+          }
+
+          BASE_ID=$(date +%s%N | cut -c1-14)
           DEEP_UPDATE="${BASE_ID}01"
           MODE_UPDATE="${BASE_ID}02"
           GOLD_UPDATE="${BASE_ID}03"
-          AUTO_UPDATE="${BASE_ID}04"
+          FX_UPDATE="${BASE_ID}04"
+          WEATHER_UPDATE="${BASE_ID}05"
+          AUTO_UPDATE="${BASE_ID}06"
 
           # 1) Human-readable provider UI must enter canonical, channel-neutral depth control.
           SINCE_DEEP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -87,29 +122,18 @@ jobs:
           send_update "$MODE_UPDATE" '🎛 Mode'
           wait_for "$SINCE_MODE" "grep -q 'telegram_answer_ready update_id=$MODE_UPDATE.*provenance=intelligence-depth-control:telegram:update:$MODE_UPDATE' <<<\"\$LOGS\" && grep -q 'telegram_send_success update_id=$MODE_UPDATE' <<<\"\$LOGS\""
 
-          # 2) A fresh-reality question must pass semantic cognition, acquire current external evidence,
-          # preserve it in the bounded Intelligence Case, and deliver a terminal answer.
-          SINCE_GOLD=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          send_update "$GOLD_UPDATE" 'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.'
-          wait_for "$SINCE_GOLD" "grep -q 'telegram_send_success update_id=$GOLD_UPDATE' <<<\"\$LOGS\" && grep -Eq 'route=intelligence-deep-[^ ]*-ir[1-9][0-9]*of[1-9][0-9]*' <<<\"\$LOGS\""
-
-          LOGS=$(docker logs --since "$SINCE_GOLD" "$CID" 2>&1 || true)
-          if grep -q "telegram_interaction_failed update_id=$GOLD_UPDATE" <<<"$LOGS" \
-            || grep -q "telegram_failure_notification_sent update_id=$GOLD_UPDATE" <<<"$LOGS"; then
-            echo 'FRESH_REALITY_INTERACTION_FAILED' >&2
-            exit 1
-          fi
-
-          CASE_PROOF=0
-          while IFS= read -r case_file; do
-            [ -n "$case_file" ] || continue
-            if docker exec "$CID" sh -c "grep -Eqi 'vàng|gold' '$case_file' && grep -q 'SATISFIED' '$case_file' && grep -Eq 'https?://' '$case_file'"; then
-              CASE_PROOF=1
-              echo "GROUNDED_CASE_FILE=$case_file"
-              break
-            fi
-          done < <(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$GOLD_UPDATE' /var/lib/metatron-workforce 2>/dev/null || true")
-          test "$CASE_PROOF" = 1
+          # 2) Ordinary fresh-information questions must remain conversational Intelligence work:
+          # semantic cognition -> current external evidence -> grounded terminal answer.
+          # They MUST NOT create a durable Workforce Objective merely because evidence acquisition is required.
+          assert_fresh_information_lookup "$GOLD_UPDATE" \
+            'Giá vàng hôm nay tại Việt Nam. Hãy dùng dữ liệu hiện tại và nêu nguồn.' \
+            'vàng|gold'
+          assert_fresh_information_lookup "$FX_UPDATE" \
+            'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' \
+            'USD|VND|tỷ giá|exchange'
+          assert_fresh_information_lookup "$WEATHER_UPDATE" \
+            'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' \
+            'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh'
 
           # Restore semantic AUTO so acceptance never leaves a Human preference changed.
           SINCE_AUTO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -124,6 +148,8 @@ jobs:
           echo 'FRESH_REALITY_SEMANTIC_ROUTE=PASS'
           echo 'FRESH_EXTERNAL_EVIDENCE_ACQUIRED=PASS'
           echo 'REQUIREMENT_EVIDENCE_PRESERVED=PASS'
+          echo 'FRESH_INFORMATION_NOT_OBJECTIVE=PASS'
+          echo 'FRESH_INFORMATION_MULTI_DOMAIN=PASS'
           echo 'FRESH_REALITY_TERMINAL_DELIVERY=PASS'
           echo 'DEPTH_PREFERENCE_RESTORED_AUTO=PASS'
           echo 'INTELLIGENCE_PRODUCT_LIVE_ACCEPTANCE=PASS'
