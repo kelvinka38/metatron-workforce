@@ -81,11 +81,12 @@ jobs:
           echo '=== PRE-FLIGHT ==='
           test -d "$BASE"
           test -r "$BASE/.env"
+          test -n "${RUNNER_TEMP:-}"
           test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
           docker compose -f "$COMPOSE" config >/dev/null
 
           CURRENT_SHA=$(git -C "$BASE" rev-parse HEAD 2>/dev/null || true)
-          BACKUP_DIR="/opt/metatron/backups/$SHA"
+          BACKUP_DIR="$RUNNER_TEMP/metatron-deploy-backups/$SHA"
           mkdir -p "$BACKUP_DIR"
           if [ -f "$BASE/build/libs/metatron-workforce-${METATRON_VERSION}.jar" ]; then
             cp "$BASE/build/libs/metatron-workforce-${METATRON_VERSION}.jar" "$BACKUP_DIR/previous.jar"
