@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: scheduler-consolidated-v3
+      HIGHWAY_REVISION: scheduler-consolidated-v4
     steps:
       - uses: actions/checkout@v7
       - name: Run consolidated concurrent production acceptance highway
@@ -38,19 +38,9 @@ jobs:
           ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
           mkdir -p "$ROOT"
 
-          run_lane() {
-            local name="$1" script="$2"
-            (
-              set +e
-              "$script" > "$ROOT/${name}.log" 2>&1
-              echo $? > "$ROOT/${name}.rc"
-            ) &
-            echo $!
-          }
-
-          CORE_PID=$(run_lane highway-core scripts/production-acceptance-highway.sh)
-          INTEL_PID=$(run_lane intelligence-product scripts/highway-intelligence-lane.sh)
-          POINT2_PID=$(run_lane point2-root-routing scripts/runtime-conformance-point2.sh)
+          (set +e; scripts/production-acceptance-highway.sh > "$ROOT/highway-core.log" 2>&1; echo $? > "$ROOT/highway-core.rc") & CORE_PID=$!
+          (set +e; scripts/highway-intelligence-lane.sh > "$ROOT/intelligence-product.log" 2>&1; echo $? > "$ROOT/intelligence-product.rc") & INTEL_PID=$!
+          (set +e; scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1; echo $? > "$ROOT/point2-root-routing.rc") & POINT2_PID=$!
 
           echo "HIGHWAY_CORE_PID=$CORE_PID"
           echo "HIGHWAY_INTELLIGENCE_PID=$INTEL_PID"
