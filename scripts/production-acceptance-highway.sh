@@ -17,8 +17,6 @@ test "$LIVE_SHA" = "$TARGET_SHA"; test "$(docker inspect "$LIVE_CID" --format '{
 docker image inspect "metatron-workforce:$TARGET_SHA" >/dev/null
 echo "HIGHWAY_TARGET_SHA=$TARGET_SHA"; echo "HIGHWAY_LIVE_SHA=$LIVE_SHA"
 
-# A cancelled/self-hosted acceptance can be terminated before its EXIT trap finishes. Reclaim only
-# Compose resources carrying the Highway's own project label. Never kill an arbitrary port owner.
 reclaim_stale_highway() {
   local project cids networks volumes
   while IFS= read -r project; do
@@ -35,9 +33,6 @@ reclaim_stale_highway() {
 }
 reclaim_stale_highway
 
-# Allocate three ports while sockets are simultaneously bound so they are unique and not inherited
-# from a modulo namespace that can collide with stale runs. The single Highway orchestrator is the
-# only component allowed to consume them after release.
 read -r SINK_PORT PORT_A PORT_B < <(python3 <<'PY'
 import socket
 sockets=[]
@@ -111,7 +106,18 @@ send_local_update() {
   echo "ISOLATED_INGRESS_FAILED port=$port update_id=$update" >&2
   return 1
 }
-wait_health() { local port="$1"; for _ in $(seq 1 60); do curl -fsS --max-time 2 "http://127.0.0.1:$port/actuator/health" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"' && return 0; sleep 2; done; return 1; }
+wait_lane_ready() {
+  local port="$1" cid="$2" http_ok state health
+  for _ in $(seq 1 60); do
+    http_ok=0
+    curl -fsS --max-time 2 "http://127.0.0.1:$port/actuator/health" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"' && http_ok=1 || true
+    state=$(docker inspect "$cid" --format '{{.State.Status}}' 2>/dev/null || true)
+    health=$(docker inspect "$cid" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>/dev/null || true)
+    if [ "$http_ok" = 1 ] && [ "$state" = running ] && [ "$health" = healthy ]; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
 port_is_free() {
   python3 - "$1" <<'PY'
 import socket,sys
@@ -136,9 +142,7 @@ start_lane() {
   fi
   cid=$(METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce) || return 1
   if [ -z "$cid" ]; then echo "HIGHWAY_LANE_CID_MISSING lane=$lane" >&2; return 1; fi
-  if ! wait_health "$port"; then echo "HIGHWAY_LANE_HEALTH_TIMEOUT lane=$lane cid=$cid port=$port" >&2; docker logs "$cid" >&2 || true; return 1; fi
-  test "$(docker inspect "$cid" --format '{{.State.Status}}')" = running || return 1
-  test "$(docker inspect "$cid" --format '{{.State.Health.Status}}')" = healthy || return 1
+  if ! wait_lane_ready "$port" "$cid"; then echo "HIGHWAY_LANE_HEALTH_TIMEOUT lane=$lane cid=$cid port=$port" >&2; docker logs "$cid" >&2 || true; return 1; fi
   test "$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)" = "$TARGET_SHA" || return 1
   echo "$cid"
 }
