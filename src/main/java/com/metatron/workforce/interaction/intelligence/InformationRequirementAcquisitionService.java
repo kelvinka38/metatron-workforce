@@ -243,12 +243,14 @@ public final class InformationRequirementAcquisitionService {
         // New requirements carry the frontier-normalized subject directly. Persisted Cases created before
         // that invariant may still contain the legacy generic label; repair those at the execution boundary
         // so a revalidated current turn searches for the Human's semantic objective rather than the words
-        // "current external evidence".
+        // "current external evidence". Search wording is then lexically canonicalized without changing the
+        // Case requirement itself, so multilingual Human phrasing can match equivalent external evidence.
         String requirementQuestion = requirement.question().trim();
         String query = requirementQuestion.isBlank()
                 || requirementQuestion.equalsIgnoreCase(LEGACY_GENERIC_CURRENT_QUERY)
                 ? normalized.objective().trim()
                 : requirementQuestion;
+        query = canonicalExternalQuery(query);
         if (query.isBlank()) {
             return ToolResult.failure(new ToolRequest(
                     "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
@@ -268,6 +270,25 @@ public final class InformationRequirementAcquisitionService {
         } catch (RuntimeException failure) {
             return ToolResult.failure(request, "information_acquisition_failed:" + failure.getClass().getSimpleName());
         }
+    }
+
+    static String canonicalExternalQuery(String value) {
+        if (value == null || value.isBlank()) return "";
+        return value.trim()
+                .replaceAll("(?iu)phiên\\s+bản", "version")
+                .replaceAll("(?iu)ổn\\s+định", "stable")
+                .replaceAll("(?iu)mới\\s+nhất", "latest")
+                .replaceAll("(?iu)hiện\\s+tại", "current")
+                .replaceAll("(?iu)hôm\\s+nay", "today")
+                .replaceAll("(?iu)tổng\\s+thống", "president")
+                .replaceAll("(?iu)tỷ\\s+giá", "exchange rate")
+                .replaceAll("(?iu)thời\\s+tiết", "weather")
+                .replaceAll("(?iu)dữ\\s+liệu", "data")
+                .replaceAll("(?iu)kiểm\\s+tra", "check")
+                .replaceAll("(?iu)trả\\s+lời", "answer")
+                .replaceAll("(?iu)nêu\\s+nguồn", "cite source")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     private static boolean requiresFreshExternal(NormalizedRequest normalized, InformationRequirement requirement) {
