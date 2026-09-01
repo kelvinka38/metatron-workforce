@@ -69,7 +69,7 @@ class WebSearchToolAdapterTest {
 
         ToolResult result = adapter.execute(new ToolRequest(
                 "web-off-topic", "telegram:human", WebSearchToolAdapter.CAPABILITY,
-                "internet:web-search", "search", "USD VND exchange rate", java.util.List.of("read-only")));
+                "internet:web-search", "search", "Indonesia president", java.util.List.of("read-only")));
 
         assertTrue(!result.success());
         assertEquals("web_search_no_relevant_results", result.output());
