@@ -1,6 +1,6 @@
-# Canonical live production stack. The production acceptance highway validates this exact
-# deployed image concurrently across independent safe-to-parallel lanes while deploy/fault
-# mutation remains serialized at the production-state boundary.
+# Canonical live production stack. Defaults preserve the single live production instance.
+# Highway acceptance may override host port, state volume and workforce network names so multiple
+# exact-image production-equivalent lanes can run concurrently without sharing mutable state.
 services:
   workforce-state-init:
     image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
@@ -22,14 +22,16 @@ services:
     image: metatron-workforce:${METATRON_IMAGE_TAG:-0.1.0}
     restart: unless-stopped
     stop_grace_period: 20s
-    mem_limit: 768m
-    mem_reservation: 384m
-    cpus: 1.50
+    mem_limit: ${METATRON_CONTAINER_MEM_LIMIT:-768m}
+    mem_reservation: ${METATRON_CONTAINER_MEM_RESERVATION:-384m}
+    cpus: ${METATRON_CONTAINER_CPUS:-1.50}
     pids_limit: 256
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${METATRON_HOST_PORT:-8080}:8080"
     expose:
       - "8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       SERVER_PORT: "8080"
       JAVA_TOOL_OPTIONS: "${JAVA_TOOL_OPTIONS:--XX:MaxRAMPercentage=65.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp}"
@@ -39,9 +41,11 @@ services:
       METATRON_MANAGEMENT_STATE_PATH: "${METATRON_MANAGEMENT_STATE_PATH:-/var/lib/metatron-workforce/management-state.json}"
       METATRON_WORKFORCE_CORE_STATE_PATH: "${METATRON_WORKFORCE_CORE_STATE_PATH:-/var/lib/metatron-workforce/workforce-core-state.json}"
       METATRON_RUNTIME_EVIDENCE_DIR: "${METATRON_RUNTIME_EVIDENCE_DIR:-/var/lib/metatron-workforce/runtime-evidence}"
+      METATRON_TELEGRAM_INGRESS_PATH: "${METATRON_TELEGRAM_INGRESS_PATH:-/var/lib/metatron-workforce/telegram-ingress-state.json}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_WEBHOOK_SECRET: "${TELEGRAM_WEBHOOK_SECRET:-}"
       TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID:-}"
+      TELEGRAM_API_BASE_URL: "${TELEGRAM_API_BASE_URL:-https://api.telegram.org}"
       METATRON_ORGANIZATION_ID: "${METATRON_ORGANIZATION_ID:-}"
       METATRON_GATEWAY_AUDIT_URL: "${METATRON_GATEWAY_AUDIT_URL:-http://envoy:8080/healthz}"
       METATRON_GATEWAY_AUDIT_TOKEN: "${METATRON_GATEWAY_AUDIT_TOKEN:-}"
@@ -75,15 +79,15 @@ services:
       workforce:
       gateway:
         aliases:
-          - workforce
+          - ${METATRON_WORKFORCE_GATEWAY_ALIAS:-workforce}
 
 volumes:
   workforce-state:
-    name: metatron-workforce-state
+    name: ${METATRON_STATE_VOLUME_NAME:-metatron-workforce-state}
 
 networks:
   workforce:
-    name: metatron-workforce
+    name: ${METATRON_WORKFORCE_NETWORK_NAME:-metatron-workforce}
   gateway:
     external: true
-    name: metatron-gateway-online
+    name: ${METATRON_GATEWAY_NETWORK_NAME:-metatron-gateway-online}
