@@ -10,6 +10,7 @@ test -r "$BASE/.env"; test -f "$COMPOSE"
 set -a; source "$BASE/.env"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"; test -n "${TELEGRAM_ALLOWED_USER_ID:-}"; test -n "${METATRON_ORGANIZATION_ID:-}"
 test -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}"
+command -v flock >/dev/null
 
 LIVE_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1); test -n "$LIVE_CID"
 LIVE_SHA=$(docker inspect "$LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
@@ -91,6 +92,32 @@ PY
   done
   return 1
 }
+wait_planned() {
+  local port="$1" oid="$2" payload result
+  for _ in $(seq 1 120); do
+    payload=$(curl -fsS --max-time 3 "http://127.0.0.1:$port/workforce/management/objectives/$oid" || true)
+    result=$(python3 - "$payload" <<'PY'
+import json,sys
+try:
+    d=json.loads(sys.argv[1]); o=d.get('objective') or {}; state=o.get('status',''); planned=o.get('plannedWork') or []
+except Exception:
+    print('WAIT'); raise SystemExit
+if state in ('BLOCKED','ESCALATED','CANCELLED'):
+    print('FAILED:'+state)
+elif planned:
+    print('PLANNED')
+else:
+    print('WAIT')
+PY
+    )
+    case "$result" in
+      PLANNED) echo "OBJECTIVE_PLAN_DURABLE=PASS"; return 0;;
+      FAILED:*) echo "OBJECTIVE_PLAN_STATE=$result"; echo "$payload"; return 2;;
+    esac
+    sleep 1
+  done
+  echo 'OBJECTIVE_PLAN_STATE=TIMEOUT'; echo "$payload"; return 1
+}
 wait_terminal() {
   local port="$1" oid="$2" payload state
   for _ in $(seq 1 240); do
@@ -115,8 +142,21 @@ crash_lane() {
   echo "${lane}=START repository=$repo"
   cid=$(start_lane "$project" "$lane" "$port")
   text="Take ownership of one Objective: perform a governed read-only institutional audit of $repo, verify it through Observation, and deliver evidence. Do not mutate anything."
+
+  # The production host has a bounded shared external-provider budget. Serialize only the
+  # Intelligence planning admission for these synthetic destructive lanes, then release the
+  # lock before crash/execution so the actual Objective runtimes remain concurrently active.
+  # This prevents the acceptance harness itself from manufacturing simultaneous provider bursts,
+  # while still proving two isolated JVMs can recover and execute overlapping Objectives.
+  exec 9>"$OUT/execution-planning.lock"
+  flock 9
+  echo "${lane}_PLANNING_ADMISSION=ACQUIRED"
   send_local_update "$port" "$update" "$text" "$OUT/${lane}-ingress.json"
   oid=$(find_objective "$port" "$update"); test -n "$oid"; echo "${lane}_OBJECTIVE_ID=$oid"
+  wait_planned "$port" "$oid"
+  flock -u 9
+  echo "${lane}_PLANNING_ADMISSION=RELEASED"
+
   restarts_before=$(docker inspect "$cid" --format '{{.RestartCount}}'); host_pid=$(docker inspect "$cid" --format '{{.State.Pid}}'); test "$host_pid" -gt 1
   docker run --rm --pid=host --network=none alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc sh -c "kill -9 $host_pid"
   for _ in $(seq 1 60); do
@@ -148,15 +188,11 @@ BASE_ID=$(date +%s%N | cut -c1-14)
 ( trap 'r=$?; echo $r >"'$OUT'/live-gateway.rc"' EXIT; live_gateway >"$OUT/live-gateway.log" 2>&1 ) & P1=$!
 ( trap 'r=$?; echo $r >"'$OUT'/live-observability.rc"' EXIT; live_observability >"$OUT/live-observability.log" 2>&1 ) & P2=$!
 ( trap 'r=$?; echo $r >"'$OUT'/lane-a.rc"' EXIT; crash_lane "$PROJECT_A" lane-a "$PORT_A" kelvinka38/bios "${BASE_ID}31" >"$OUT/lane-a.log" 2>&1 ) & P3=$!
-# Both destructive lanes use the same bounded known-good repository workload. Their independence is
-# proven by distinct Objective ids, projects, ports, volumes, networks, JVMs and crash/recovery state;
-# repository diversity is not part of the Highway invariant. A small stagger avoids external-provider
-# burst coupling while the long-running Objectives still overlap and remain genuinely concurrent.
-( trap 'r=$?; echo $r >"'$OUT'/lane-b.rc"' EXIT; sleep 10; crash_lane "$PROJECT_B" lane-b "$PORT_B" kelvinka38/bios "${BASE_ID}32" >"$OUT/lane-b.log" 2>&1 ) & P4=$!
+( trap 'r=$?; echo $r >"'$OUT'/lane-b.rc"' EXIT; crash_lane "$PROJECT_B" lane-b "$PORT_B" kelvinka38/bios "${BASE_ID}32" >"$OUT/lane-b.log" 2>&1 ) & P4=$!
 echo "HIGHWAY_LANE_PIDS=$P1,$P2,$P3,$P4"
 rc=0
 for pid in "$P1" "$P2" "$P3" "$P4"; do wait "$pid" || rc=1; done
 for lane in live-gateway live-observability lane-a lane-b; do echo "===== $lane ====="; cat "$OUT/$lane.log" || true; test -f "$OUT/$lane.rc" || rc=1; [ -f "$OUT/$lane.rc" ] && test "$(cat "$OUT/$lane.rc")" = 0 || rc=1; done
 FINAL_LIVE_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1); test -n "$FINAL_LIVE_CID"; test "$(docker inspect "$FINAL_LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
 FINAL_LIVE_SHA=$(docker inspect "$FINAL_LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1); echo "HIGHWAY_FINAL_LIVE_SHA=$FINAL_LIVE_SHA"; test "$FINAL_LIVE_SHA" = "$TARGET_SHA"; test "$rc" = 0
-echo 'HIGHWAY_LIVE_PARALLEL_LANES=2'; echo 'HIGHWAY_ISOLATED_DESTRUCTIVE_LANES=2'; echo 'HIGHWAY_CONCURRENT_LANES=4'; echo 'HIGHWAY_STATE_ISOLATION=PASS'; echo 'HIGHWAY_DESTRUCTIVE_PARALLELISM=PASS'; echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
+echo 'HIGHWAY_LIVE_PARALLEL_LANES=2'; echo 'HIGHWAY_ISOLATED_DESTRUCTIVE_LANES=2'; echo 'HIGHWAY_CONCURRENT_LANES=4'; echo 'HIGHWAY_STATE_ISOLATION=PASS'; echo 'HIGHWAY_DESTRUCTIVE_PARALLELISM=PASS'; echo 'HIGHWAY_PLANNING_CAPACITY_SERIALIZATION=PASS'; echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
