@@ -4,10 +4,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scripts/production-acceptance-highway.sh'
+      - 'scripts/**'
       - 'deploy/docker-compose.yml'
       - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
+      - '.github/workflows/production-deploy.yml'
       - '.github/workflows/production-acceptance-highway-v2.yml'
+      - '.github/workflows/intelligence-product-live-acceptance.yml'
+      - '.github/workflows/runtime-conformance-point2.yml'
       - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
@@ -20,8 +23,28 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Validate highway shell
-        run: bash -n scripts/production-acceptance-highway.sh
+      - name: Validate highway shells
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/production-acceptance-highway.sh
+          bash -n scripts/highway-intelligence-lane.sh
+          bash -n scripts/runtime-conformance-point2.sh
+          echo 'HIGHWAY_SHELLS=PASS'
+      - name: Enforce one automatic production acceptance orchestrator
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'workflows: \["Highway Production Deploy"\]' .github/workflows/production-acceptance-highway-v2.yml
+          ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
+          ! grep -q 'workflow_run:' .github/workflows/runtime-conformance-point2.yml
+          grep -q "scripts/production-acceptance-highway.sh" .github/workflows/production-acceptance-highway-v2.yml
+          grep -q "scripts/highway-intelligence-lane.sh" .github/workflows/production-acceptance-highway-v2.yml
+          grep -q "scripts/runtime-conformance-point2.sh" .github/workflows/production-acceptance-highway-v2.yml
+          ! grep -Eq 'PID=\$\(run_lane|PID=\$\([^)]*&' .github/workflows/production-acceptance-highway-v2.yml
+          grep -q "- 'scripts/\*\*'" .github/workflows/production-deploy.yml
+          echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
+          echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Validate canonical production defaults
         shell: bash
         run: |
