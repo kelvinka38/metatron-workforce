@@ -26,13 +26,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker compose -f deploy/docker-compose.yml config > /tmp/live.yml
-          grep -q '127.0.0.1:8080' /tmp/live.yml
-          grep -q 'name: metatron-workforce-state' /tmp/live.yml
-          grep -q 'name: metatron-workforce' /tmp/live.yml
-          grep -q 'name: metatron-gateway-online' /tmp/live.yml
-          grep -q 'TELEGRAM_API_BASE_URL: https://api.telegram.org' /tmp/live.yml
-          echo 'HIGHWAY_CANONICAL_DEFAULTS=PASS'
+          docker compose -f deploy/docker-compose.yml config --format json > /tmp/live.json
+          python3 - /tmp/live.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); w=d['services']['workforce']
+          p=w['ports'][0]
+          assert str(p['published'])=='8080' and str(p['target'])=='8080' and p['host_ip']=='127.0.0.1', p
+          assert d['volumes']['workforce-state']['name']=='metatron-workforce-state'
+          assert d['networks']['workforce']['name']=='metatron-workforce'
+          assert d['networks']['gateway']['name']=='metatron-gateway-online'
+          assert w['environment']['TELEGRAM_API_BASE_URL']=='https://api.telegram.org'
+          print('HIGHWAY_CANONICAL_DEFAULTS=PASS')
+          PY
       - name: Prove two isolated lane configs do not collide
         shell: bash
         run: |
@@ -42,25 +47,37 @@ jobs:
           METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network \
           METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a \
           TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 \
-          docker compose -p highway-test-a -f deploy/docker-compose.yml config > /tmp/lane-a.yml
+          docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/lane-a.json
 
           METATRON_HOST_PORT=18222 \
           METATRON_STATE_VOLUME_NAME=highway-test-b-state \
           METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network \
           METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b \
           TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 \
-          docker compose -p highway-test-b -f deploy/docker-compose.yml config > /tmp/lane-b.yml
+          docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/lane-b.json
 
-          grep -q '127.0.0.1:18111' /tmp/lane-a.yml
-          grep -q 'name: highway-test-a-state' /tmp/lane-a.yml
-          grep -q 'name: highway-test-a-network' /tmp/lane-a.yml
-          grep -q '127.0.0.1:18222' /tmp/lane-b.yml
-          grep -q 'name: highway-test-b-state' /tmp/lane-b.yml
-          grep -q 'name: highway-test-b-network' /tmp/lane-b.yml
-          ! grep -q '18111' /tmp/lane-b.yml
-          ! grep -q '18222' /tmp/lane-a.yml
-          ! cmp -s /tmp/lane-a.yml /tmp/lane-b.yml
-          echo 'HIGHWAY_CONFIG_ISOLATION=PASS'
+          python3 - /tmp/lane-a.json /tmp/lane-b.json <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
+          def facts(d):
+              w=d['services']['workforce']; p=w['ports'][0]
+              return {
+                  'port':str(p['published']), 'host':p['host_ip'],
+                  'volume':d['volumes']['workforce-state']['name'],
+                  'network':d['networks']['workforce']['name'],
+                  'telegram':w['environment']['TELEGRAM_API_BASE_URL'],
+                  'aliases':tuple(w['networks']['gateway'].get('aliases',[])),
+              }
+          fa,fb=facts(a),facts(b)
+          assert fa['host']==fb['host']=='127.0.0.1'
+          assert fa['port']=='18111' and fb['port']=='18222', (fa,fb)
+          assert fa['volume']=='highway-test-a-state' and fb['volume']=='highway-test-b-state', (fa,fb)
+          assert fa['network']=='highway-test-a-network' and fb['network']=='highway-test-b-network', (fa,fb)
+          assert fa['telegram'].endswith(':19111') and fb['telegram'].endswith(':19222'), (fa,fb)
+          assert 'workforce-highway-test-a' in fa['aliases'] and 'workforce-highway-test-b' in fb['aliases'], (fa,fb)
+          for key in ('port','volume','network','telegram','aliases'): assert fa[key] != fb[key], (key,fa,fb)
+          print('HIGHWAY_CONFIG_ISOLATION=PASS')
+          PY
       - name: Verify acceptance provider override remains opt-in
         shell: bash
         run: |
