@@ -17,7 +17,46 @@ test "$LIVE_SHA" = "$TARGET_SHA"; test "$(docker inspect "$LIVE_CID" --format '{
 docker image inspect "metatron-workforce:$TARGET_SHA" >/dev/null
 echo "HIGHWAY_TARGET_SHA=$TARGET_SHA"; echo "HIGHWAY_LIVE_SHA=$LIVE_SHA"
 
-SINK_PORT=$((19000 + GITHUB_RUN_ID % 500))
+# A cancelled/self-hosted acceptance can be terminated before its EXIT trap finishes. Reclaim only
+# Compose resources carrying the Highway's own project label. Never kill an arbitrary port owner.
+reclaim_stale_highway() {
+  local project cids networks volumes
+  while IFS= read -r project; do
+    [ -n "$project" ] || continue
+    [[ "$project" =~ ^highway-[0-9]+-lane-[ab]$ ]] || continue
+    echo "HIGHWAY_RECLAIM_STALE_PROJECT=$project"
+    cids=$(docker ps -aq --filter "label=com.docker.compose.project=$project" || true)
+    [ -z "$cids" ] || docker rm -f $cids >/dev/null 2>&1 || true
+    networks=$(docker network ls -q --filter "label=com.docker.compose.project=$project" || true)
+    [ -z "$networks" ] || docker network rm $networks >/dev/null 2>&1 || true
+    volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=$project" || true)
+    [ -z "$volumes" ] || docker volume rm -f $volumes >/dev/null 2>&1 || true
+  done < <(docker ps -a --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}' | sort -u)
+}
+reclaim_stale_highway
+
+# Allocate three ports while sockets are simultaneously bound so they are unique and not inherited
+# from a modulo namespace that can collide with stale runs. The single Highway orchestrator is the
+# only component allowed to consume them after release.
+read -r SINK_PORT PORT_A PORT_B < <(python3 <<'PY'
+import socket
+sockets=[]
+try:
+    for _ in range(3):
+        s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        s.bind(('127.0.0.1',0))
+        sockets.append(s)
+    print(*(s.getsockname()[1] for s in sockets))
+finally:
+    for s in sockets:
+        s.close()
+PY
+)
+test -n "$SINK_PORT"; test -n "$PORT_A"; test -n "$PORT_B"
+test "$SINK_PORT" != "$PORT_A"; test "$SINK_PORT" != "$PORT_B"; test "$PORT_A" != "$PORT_B"
+echo "HIGHWAY_DYNAMIC_PORTS=$SINK_PORT,$PORT_A,$PORT_B"
+
+PROJECT_A="highway-${GITHUB_RUN_ID}-lane-a"; PROJECT_B="highway-${GITHUB_RUN_ID}-lane-b"
 python3 - "$SINK_PORT" "$OUT/telegram-sink.log" <<'PY' &
 import json,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
@@ -33,8 +72,6 @@ class H(BaseHTTPRequestHandler):
 ThreadingHTTPServer(('0.0.0.0',port),H).serve_forever()
 PY
 SINK_PID=$!
-PROJECT_A="highway-${GITHUB_RUN_ID}-lane-a"; PROJECT_B="highway-${GITHUB_RUN_ID}-lane-b"
-PORT_A=$((18100 + GITHUB_RUN_ID % 100)); PORT_B=$((18200 + GITHUB_RUN_ID % 100))
 
 down_lane() {
   local project="$1" port="$2" lane="$3"
@@ -44,7 +81,14 @@ down_lane() {
 }
 cleanup() { set +e; down_lane "$PROJECT_A" "$PORT_A" lane-a; down_lane "$PROJECT_B" "$PORT_B" lane-b; kill "$SINK_PID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-for _ in $(seq 1 30); do curl -fsS --max-time 1 -X POST "http://127.0.0.1:$SINK_PORT/bottest/sendMessage" -H 'Content-Type: application/json' -d '{}' >/dev/null && break; sleep 1; done
+sink_ready=0
+for _ in $(seq 1 30); do
+  if curl -fsS --max-time 1 -X POST "http://127.0.0.1:$SINK_PORT/bottest/sendMessage" -H 'Content-Type: application/json' -d '{}' >/dev/null; then sink_ready=1; break; fi
+  kill -0 "$SINK_PID" >/dev/null 2>&1 || break
+  sleep 1
+done
+test "$sink_ready" = 1; kill -0 "$SINK_PID" >/dev/null 2>&1
+echo 'HIGHWAY_TELEGRAM_SINK=READY'
 
 telegram_body() {
   python3 - "$1" "$2" "$TELEGRAM_ALLOWED_USER_ID" <<'PY'
@@ -68,15 +112,35 @@ send_local_update() {
   return 1
 }
 wait_health() { local port="$1"; for _ in $(seq 1 60); do curl -fsS --max-time 2 "http://127.0.0.1:$port/actuator/health" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"' && return 0; sleep 2; done; return 1; }
+port_is_free() {
+  python3 - "$1" <<'PY'
+import socket,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+try:
+    s.bind(('127.0.0.1',int(sys.argv[1])))
+except OSError:
+    raise SystemExit(1)
+finally:
+    s.close()
+PY
+}
 start_lane() {
   local project="$1" lane="$2" port="$3" cid
-  METATRON_VERSION=0.1.0 METATRON_ENVIRONMENT=production METATRON_IMAGE_TAG="$TARGET_SHA" METATRON_COMMIT_SHA="$TARGET_SHA" \
-  METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
-  METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" METATRON_CONTAINER_MEM_LIMIT=512m METATRON_CONTAINER_MEM_RESERVATION=256m METATRON_CONTAINER_CPUS=0.75 \
-  TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate >&2
-  wait_health "$port"
-  cid=$(METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
-  test -n "$cid"; test "$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)" = "$TARGET_SHA"; echo "$cid"
+  if ! port_is_free "$port"; then echo "HIGHWAY_PORT_NOT_FREE lane=$lane port=$port" >&2; return 1; fi
+  if ! METATRON_VERSION=0.1.0 METATRON_ENVIRONMENT=production METATRON_IMAGE_TAG="$TARGET_SHA" METATRON_COMMIT_SHA="$TARGET_SHA" \
+    METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
+    METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" METATRON_CONTAINER_MEM_LIMIT=512m METATRON_CONTAINER_MEM_RESERVATION=256m METATRON_CONTAINER_CPUS=0.75 \
+    TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate >&2; then
+    echo "HIGHWAY_LANE_START_FAILED lane=$lane project=$project port=$port" >&2
+    return 1
+  fi
+  cid=$(METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce) || return 1
+  if [ -z "$cid" ]; then echo "HIGHWAY_LANE_CID_MISSING lane=$lane" >&2; return 1; fi
+  if ! wait_health "$port"; then echo "HIGHWAY_LANE_HEALTH_TIMEOUT lane=$lane cid=$cid port=$port" >&2; docker logs "$cid" >&2 || true; return 1; fi
+  test "$(docker inspect "$cid" --format '{{.State.Status}}')" = running || return 1
+  test "$(docker inspect "$cid" --format '{{.State.Health.Status}}')" = healthy || return 1
+  test "$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)" = "$TARGET_SHA" || return 1
+  echo "$cid"
 }
 find_objective() {
   local port="$1" update="$2" payload oid
@@ -149,7 +213,7 @@ crash_lane() {
   local project="$1" lane="$2" port="$3" repo="$4" update="$5" cid oid text evidence restarts_before host_pid state restarts
   set -euo pipefail
   echo "${lane}=START repository=$repo"
-  cid=$(start_lane "$project" "$lane" "$port")
+  if ! cid=$(start_lane "$project" "$lane" "$port"); then echo "${lane}_START=FAILED"; return 1; fi
   text="Take ownership of one Objective: perform a governed single-repository read-only audit of $repo using the available repository audit capability, verify it through Observation, and deliver the resulting evidence. Do not mutate anything and do not perform cross-repository analysis."
 
   exec 9>"$OUT/execution-planning.lock"; flock 9
@@ -197,4 +261,4 @@ for pid in "$P1" "$P2" "$P3" "$P4"; do wait "$pid" || rc=1; done
 for lane in live-gateway live-observability lane-a lane-b; do echo "===== $lane ====="; cat "$OUT/$lane.log" || true; test -f "$OUT/$lane.rc" || rc=1; [ -f "$OUT/$lane.rc" ] && test "$(cat "$OUT/$lane.rc")" = 0 || rc=1; done
 FINAL_LIVE_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1); test -n "$FINAL_LIVE_CID"; test "$(docker inspect "$FINAL_LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
 FINAL_LIVE_SHA=$(docker inspect "$FINAL_LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1); echo "HIGHWAY_FINAL_LIVE_SHA=$FINAL_LIVE_SHA"; test "$FINAL_LIVE_SHA" = "$TARGET_SHA"; test "$rc" = 0
-echo 'HIGHWAY_LIVE_PARALLEL_LANES=2'; echo 'HIGHWAY_ISOLATED_DESTRUCTIVE_LANES=2'; echo 'HIGHWAY_CONCURRENT_LANES=4'; echo 'HIGHWAY_STATE_ISOLATION=PASS'; echo 'HIGHWAY_DESTRUCTIVE_PARALLELISM=PASS'; echo 'HIGHWAY_PLANNING_CAPACITY_SERIALIZATION=PASS'; echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
+echo 'HIGHWAY_LIVE_PARALLEL_LANES=2'; echo 'HIGHWAY_ISOLATED_DESTRUCTIVE_LANES=2'; echo 'HIGHWAY_CONCURRENT_LANES=4'; echo 'HIGHWAY_STATE_ISOLATION=PASS'; echo 'HIGHWAY_DESTRUCTIVE_PARALLELISM=PASS'; echo 'HIGHWAY_PLANNING_CAPACITY_SERIALIZATION=PASS'; echo 'HIGHWAY_STALE_RESOURCE_RECLAMATION=PASS'; echo 'HIGHWAY_DYNAMIC_PORT_ISOLATION=PASS'; echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
