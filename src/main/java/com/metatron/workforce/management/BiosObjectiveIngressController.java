@@ -68,7 +68,10 @@ public final class BiosObjectiveIngressController {
         ManagementObjective objective;
         try {
             objective = management.get(command.objectiveId());
-            if (!objective.ownershipReference().equals("human:" + command.initiatingActorId())
+            AutonomousObjectiveWork existing = management.objectiveWork(command.objectiveId())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                            "objective id has no durable autonomous work context"));
+            if (!existing.humanId().equals(command.initiatingActorId())
                     || !objective.organizationContextId().equals(command.organizationContextId())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "objective id belongs to another institutional context");
