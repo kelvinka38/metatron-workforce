@@ -12,6 +12,7 @@ CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
 test -n "$CID"
 DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
 test "$DEPLOYED_SHA" = "$TARGET_SHA"
+test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
 
 send_update() {
   local update_id="$1" text="$2" body status
@@ -21,13 +22,16 @@ uid=int(sys.argv[3]); update=int(sys.argv[1])
 print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":sys.argv[2]}},ensure_ascii=False))
 PY
   )
+  # Point 2 validates natural-task semantics on the exact live production runtime. Public Gateway
+  # traversal is already independently proven by the Highway core plus three public fresh-info cases.
+  # Keep this lane on localhost so edge/tunnel transport noise cannot be misclassified as a routing defect.
   for attempt in 1 2 3 4; do
     status=$(curl -sS -o "/tmp/point2-${update_id}.json" -w '%{http_code}' \
-      --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 25 \
-      -X POST https://gate.metatron.vn/telegram/webhook \
+      --connect-timeout 3 --max-time 25 \
+      -X POST http://127.0.0.1:8080/telegram/webhook \
       -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
       -H 'Content-Type: application/json' --data-binary "$body" || true)
-    echo "POINT2_INGRESS_ATTEMPT update_id=$update_id attempt=$attempt status=$status"
+    echo "POINT2_INGRESS_ATTEMPT transport=local-live update_id=$update_id attempt=$attempt status=$status"
     [ "$status" = 200 ] && return 0
     sleep $((attempt * 2))
   done
@@ -38,7 +42,9 @@ wait_route() {
   local since="$1" update_id="$2" pattern="$3"
   for _ in $(seq 1 90); do
     LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
-    if grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" && grep -Eq "telegram_answer_ready update_id=$update_id.*route=$pattern" <<<"$LOGS"; then
+    if grep -q "telegram_webhook_ack update_id=$update_id" <<<"$LOGS" \
+      && grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" \
+      && grep -Eq "telegram_answer_ready update_id=$update_id.*route=$pattern" <<<"$LOGS"; then
       return 0
     fi
     sleep 2
@@ -52,7 +58,9 @@ wait_terminal() {
   local since="$1" update_id="$2"
   for _ in $(seq 1 90); do
     LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
-    if grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then
+    if grep -q "telegram_webhook_ack update_id=$update_id" <<<"$LOGS" \
+      && grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" \
+      && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then
       return 0
     fi
     sleep 2
@@ -106,6 +114,7 @@ assert_current_answer "$LEADER" \
   'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' \
   'Indonesia|Tổng thống|President' 0
 
+echo 'POINT2_LOCAL_LIVE_RUNTIME=PASS'
 echo 'POINT2_CASUAL_NOT_OBJECTIVE=PASS'
 echo 'POINT2_CURRENT_EXTERNAL_NOT_OBJECTIVE=PASS'
 echo 'POINT2_DOMAIN_INDEPENDENT_SEMANTIC_REQUIREMENTS=PASS'
