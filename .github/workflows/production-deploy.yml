@@ -24,12 +24,6 @@ on:
 permissions:
   contents: read
 
-# Every job that can mutate the single live production stack must share this lock.
-# CI/build work is intentionally off the self-hosted production runner so it can run in parallel.
-concurrency:
-  group: metatron-production-state
-  cancel-in-progress: false
-
 env:
   METATRON_VERSION: "0.1.0"
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
@@ -63,6 +57,9 @@ jobs:
     needs: test-and-build
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
+    concurrency:
+      group: metatron-production-state
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
       - name: Download deployable JAR
