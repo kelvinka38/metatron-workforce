@@ -25,11 +25,20 @@ public final class TelegramBotGateway implements ChannelGateway {
     private final String botToken;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final String apiBaseUrl;
 
     public TelegramBotGateway(String botToken, HttpClient httpClient, ObjectMapper objectMapper) {
+        this(botToken, httpClient, objectMapper,
+                System.getenv().getOrDefault("TELEGRAM_API_BASE_URL", "https://api.telegram.org"));
+    }
+
+    TelegramBotGateway(String botToken, HttpClient httpClient, ObjectMapper objectMapper, String apiBaseUrl) {
         this.botToken = Objects.requireNonNull(botToken, "botToken");
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
+        String normalized = Objects.requireNonNull(apiBaseUrl, "apiBaseUrl").trim();
+        if (normalized.isBlank()) throw new IllegalArgumentException("telegram_api_base_url_required");
+        this.apiBaseUrl = normalized.endsWith("/") ? normalized.substring(0, normalized.length() - 1) : normalized;
     }
 
     @Override
@@ -88,7 +97,7 @@ public final class TelegramBotGateway implements ChannelGateway {
         try {
             String body = objectMapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.telegram.org/bot" + botToken + "/" + method))
+                    .uri(URI.create(apiBaseUrl + "/bot" + botToken + "/" + method))
                     .timeout(Duration.ofSeconds(10))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
