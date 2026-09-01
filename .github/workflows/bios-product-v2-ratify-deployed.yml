@@ -1,0 +1,81 @@
+name: BIOS Product v2 Ratify Deployed
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/bios-product-v2-ratify-deployed.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ratify:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    env:
+      BIOS_TARGET_SHA: fcb29f61b204392b50d4b507332ce5f2c0e989c5
+      WORKFORCE_REQUIRED_SHA: c7d19e67797b1f97ba118433bc749bb80defe9d0
+      BIOS_BASE: /opt/metatron/metatron-workforce/bios-product-v2
+    steps:
+      - name: Materialize exact BIOS source and verify production identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source /opt/metatron/metatron-workforce/.env; set +a
+          rm -rf /tmp/bios-product-v2-ratify
+          cat >/tmp/bios-git-askpass.sh <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) echo x-access-token ;;
+            *Password*) echo "$GITHUB_TOKEN" ;;
+          esac
+          SH
+          chmod 700 /tmp/bios-git-askpass.sh
+          export GIT_ASKPASS=/tmp/bios-git-askpass.sh GIT_TERMINAL_PROMPT=0
+          git clone -q https://github.com/kelvinka38/bios.git /tmp/bios-product-v2-ratify
+          cd /tmp/bios-product-v2-ratify
+          git checkout -q "$BIOS_TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$BIOS_TARGET_SHA"
+          rm -f /tmp/bios-git-askpass.sh
+          BIOS_CID=$(docker ps --filter name=metatron-bios --format '{{.ID}}' | head -1)
+          test -n "$BIOS_CID"
+          BIOS_SHA=$(docker inspect "$BIOS_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^BIOS_COMMIT_SHA=//p' | head -1)
+          test "$BIOS_SHA" = "$BIOS_TARGET_SHA"
+          test "$(docker inspect "$BIOS_CID" --format '{{.State.Health.Status}}')" = healthy
+          WF_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          WF_SHA=$(docker inspect "$WF_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$WF_SHA" = "$WORKFORCE_REQUIRED_SHA"
+          echo "BIOS_PRODUCTION_SHA=$BIOS_SHA" | tee /tmp/bios-product-v2-final-evidence.txt
+          echo "WORKFORCE_PRODUCTION_SHA=$WF_SHA" | tee -a /tmp/bios-product-v2-final-evidence.txt
+
+      - name: P1 production continuity
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source "$BIOS_BASE/.env"; set +a
+          export TARGET_SHA="$BIOS_TARGET_SHA"
+          cd /tmp/bios-product-v2-ratify
+          python3 scripts/accept_product_v2_p1.py | tee -a /tmp/bios-product-v2-final-evidence.txt
+          BIOS_CID=$(docker ps --filter name=metatron-bios --format '{{.ID}}' | head -1)
+          docker restart "$BIOS_CID" >/dev/null
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1 && break; sleep 2; done
+          P1_RESUME_ONLY=1 python3 scripts/accept_product_v2_p1.py | tee -a /tmp/bios-product-v2-final-evidence.txt
+
+      - name: P2-P9 production proving
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a; source "$BIOS_BASE/.env"; set +a
+          export TARGET_SHA="$BIOS_TARGET_SHA"
+          cd /tmp/bios-product-v2-ratify
+          python3 scripts/accept_product_v2.py | tee -a /tmp/bios-product-v2-final-evidence.txt
+          echo 'BIOS_PRODUCT_1_V2_TECHNICAL_VERDICT=ACCEPTED' | tee -a /tmp/bios-product-v2-final-evidence.txt
+
+      - name: Upload final evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: bios-product-v2-final-evidence-${{ github.run_id }}
+          path: /tmp/bios-product-v2-final-evidence.txt
+          if-no-files-found: error
+          retention-days: 90
