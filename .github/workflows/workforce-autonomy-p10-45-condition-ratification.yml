@@ -157,7 +157,7 @@ jobs:
             )
             curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
               "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" -o "$E/$run_id.zip"
-            unzip -q "$E/$run_id.zip" -d "$dest"
+            python3 -m zipfile -e "$E/$run_id.zip" "$dest"
           }
           download_artifact "$GS12_RUN_ID" 'workforce-p10-production-evidence-' "$E/gs12"
           download_artifact "$GS34_RUN_ID" 'workforce-p10-gs34-production-evidence-' "$E/gs34"
