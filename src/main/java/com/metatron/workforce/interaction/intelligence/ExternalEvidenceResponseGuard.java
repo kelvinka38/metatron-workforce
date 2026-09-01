@@ -4,8 +4,8 @@ import java.util.Locale;
 
 /**
  * Deterministic consistency guard for answers produced after successful external evidence retrieval.
- * A provider must not claim that Metatron lacks web/current-data access when Workforce has already
- * supplied external evidence for the same request.
+ * A provider must not deny access to current evidence, or refuse to report a current value merely because
+ * it believes the model itself lacks a live feed, after Workforce has already supplied current external evidence.
  */
 public final class ExternalEvidenceResponseGuard {
 
@@ -23,6 +23,11 @@ public final class ExternalEvidenceResponseGuard {
                 "không thể truy cập internet",
                 "không thể truy cập web",
                 "không có quyền truy cập web",
+                "không duy trì nguồn cấp dữ liệu",
+                "không duy trì feed dữ liệu",
+                "không thể cung cấp trực tiếp con số",
+                "không thể cung cấp con số chính xác",
+                "không thể cung cấp giá hiện tại",
                 "i don't have real-time data",
                 "i do not have real-time data",
                 "i can't access the web",
@@ -30,7 +35,11 @@ public final class ExternalEvidenceResponseGuard {
                 "i don't have web access",
                 "i do not have web access",
                 "i can't browse the internet",
-                "i cannot browse the internet")) {
+                "i cannot browse the internet",
+                "i cannot provide the current value",
+                "i can't provide the current value",
+                "i cannot provide the exact current value",
+                "i can't provide the exact current value")) {
             throw new IllegalStateException("EXTERNAL_EVIDENCE_CONTRADICTION");
         }
     }
