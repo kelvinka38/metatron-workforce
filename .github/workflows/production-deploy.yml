@@ -1,4 +1,4 @@
-name: Production Deploy
+name: Highway Production Deploy
 
 on:
   push:
@@ -12,13 +12,7 @@ on:
       - 'Dockerfile'
       - 'deploy/**'
       - '.github/workflows/production-deploy.yml'
-      - '.github/workflows/gateway-final-live-acceptance.yml'
-      - '.github/workflows/telegram-one-message-worker-live-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
-      - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
-      - '.github/workflows/work-observability-production-acceptance.yml'
+      - '.github/workflows/production-acceptance-highway.yml'
   workflow_dispatch:
 
 permissions:
@@ -58,7 +52,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     concurrency:
-      group: metatron-production-state
+      group: metatron-live-deploy
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
