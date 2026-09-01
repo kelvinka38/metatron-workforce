@@ -68,7 +68,7 @@ public final class BiosObjectiveIngressController {
         ManagementObjective objective;
         try {
             objective = management.get(command.objectiveId());
-            AutonomousObjectiveWork existing = management.objectiveWork(command.objectiveId())
+            AutonomousObjectiveWork existing = management.autonomousObjective(command.objectiveId())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
                             "objective id has no durable autonomous work context"));
             if (!existing.humanId().equals(command.initiatingActorId())
