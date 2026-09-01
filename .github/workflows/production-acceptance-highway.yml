@@ -117,10 +117,12 @@ jobs:
               'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.'
               'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.'
             )
+            pids=()
             for i in 0 1 2; do
               send_update "${ids[$i]}" "${texts[$i]}" "$OUT/fresh-$i.json" &
+              pids+=("$!")
             done
-            wait
+            for pid in "${pids[@]}"; do wait "$pid"; done
             for attempt in $(seq 1 120); do
               LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
               ok=1
@@ -181,23 +183,28 @@ jobs:
             echo 'LANE_REPOSITORY_OBJECTIVE=PASS'
           }
 
-          run_lane() {
-            local name="$1" fn="$2"
-            (
-              set +e
-              "$fn" >"$OUT/$name.log" 2>&1
-              rc=$?
-              echo "$rc" >"$OUT/$name.rc"
-              exit "$rc"
-            ) &
-            echo $!
-          }
+          (
+            set +e
+            lane_gateway >"$OUT/gateway.log" 2>&1
+            echo "$?" >"$OUT/gateway.rc"
+          ) & P1=$!
+          (
+            set +e
+            lane_observability >"$OUT/observability.log" 2>&1
+            echo "$?" >"$OUT/observability.rc"
+          ) & P2=$!
+          (
+            set +e
+            lane_fresh_intelligence >"$OUT/fresh-intelligence.log" 2>&1
+            echo "$?" >"$OUT/fresh-intelligence.rc"
+          ) & P3=$!
+          (
+            set +e
+            lane_repository_objective >"$OUT/repository-objective.log" 2>&1
+            echo "$?" >"$OUT/repository-objective.rc"
+          ) & P4=$!
 
-          P1=$(run_lane gateway lane_gateway)
-          P2=$(run_lane observability lane_observability)
-          P3=$(run_lane fresh-intelligence lane_fresh_intelligence)
-          P4=$(run_lane repository-objective lane_repository_objective)
-
+          echo "HIGHWAY_LANE_PIDS=$P1,$P2,$P3,$P4"
           rc=0
           for pid in "$P1" "$P2" "$P3" "$P4"; do
             wait "$pid" || rc=1
