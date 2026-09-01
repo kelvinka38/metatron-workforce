@@ -68,6 +68,11 @@ public final class BiosObjectiveIngressController {
         ManagementObjective objective;
         try {
             objective = management.get(command.objectiveId());
+            if (!objective.ownershipReference().equals("human:" + command.initiatingActorId())
+                    || !objective.organizationContextId().equals(command.organizationContextId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "objective id belongs to another institutional context");
+            }
         } catch (IllegalArgumentException unknown) {
             objective = management.acceptHumanObjective(
                     command.objectiveId(), "metatron-workforce", command.organizationContextId(),
@@ -91,7 +96,9 @@ public final class BiosObjectiveIngressController {
     }
 
     private static void require(String value, String field) {
-        if (value == null || value.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " required");
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " required");
+        }
     }
 
     public record BiosObjectiveCommand(String objectiveId, String caseId, String programId,
