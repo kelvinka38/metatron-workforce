@@ -14,13 +14,9 @@ on:
 permissions:
   contents: read
 
-# The live deployment identity is frozen while the highway runs. Inside this single production
-# scheduling slot, independent live checks and isolated production-equivalent stacks execute in
-# parallel. Destructive acceptance never mutates the canonical live container/state.
-concurrency:
-  group: metatron-production-state
-  cancel-in-progress: false
-
+# Highway deliberately has no repository-wide production concurrency group.
+# Deployment mutation remains serialized by Production Deploy itself. This workflow proves
+# parallel acceptance using immutable exact-image lanes; it must never become another global queue.
 jobs:
   highway:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
@@ -57,9 +53,6 @@ jobs:
           echo "HIGHWAY_TARGET_SHA=$TARGET_SHA"
           echo "HIGHWAY_LIVE_SHA=$LIVE_SHA"
 
-          # A Telegram-compatible local sink lets isolated lanes traverse the real provider adapter
-          # without sending acceptance noise to the Founder. The canonical live lane still proves the
-          # real public Telegram/Gateway boundary.
           SINK_PORT=$((19000 + GITHUB_RUN_ID % 500))
           python3 - "$SINK_PORT" "$OUT/telegram-sink.log" <<'PY' &
           import json,sys
@@ -71,8 +64,7 @@ jobs:
                   n=int(self.headers.get('content-length','0')); body=self.rfile.read(n)
                   H.counter+=1
                   with open(log,'ab') as f: f.write(self.path.encode()+b' '+body+b'\n')
-                  payload={"ok":True,"result":{"message_id":H.counter}}
-                  raw=json.dumps(payload).encode()
+                  raw=json.dumps({"ok":True,"result":{"message_id":H.counter}}).encode()
                   self.send_response(200); self.send_header('Content-Type','application/json')
                   self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
               def log_message(self,*args): pass
@@ -80,14 +72,24 @@ jobs:
           PY
           SINK_PID=$!
 
-          PROJECTS=()
+          PROJECT_A="highway-${GITHUB_RUN_ID}-lane-a"
+          PROJECT_B="highway-${GITHUB_RUN_ID}-lane-b"
+          PORT_A=$((18100 + GITHUB_RUN_ID % 100))
+          PORT_B=$((18200 + GITHUB_RUN_ID % 100))
+
+          down_lane() {
+            local project="$1" port="$2" lane="$3"
+            METATRON_HOST_PORT="$port" \
+            METATRON_STATE_VOLUME_NAME="${project}-state" \
+            METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
+            METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" \
+            TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" \
+            docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
+          }
           cleanup() {
             set +e
-            for project in "${PROJECTS[@]:-}"; do
-              METATRON_STATE_VOLUME_NAME="${project}-state" \
-              METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
-              docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
-            done
+            down_lane "$PROJECT_A" "$PORT_A" lane-a
+            down_lane "$PROJECT_B" "$PORT_B" lane-b
             kill "$SINK_PID" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
@@ -107,8 +109,7 @@ jobs:
           }
 
           send_local_update() {
-            local port="$1" update="$2" text="$3" output="$4"
-            local body status
+            local port="$1" update="$2" text="$3" output="$4" body status
             body=$(telegram_body "$update" "$text")
             status=$(curl -sS -o "$output" -w '%{http_code}' --max-time 20 \
               -X POST "http://127.0.0.1:$port/telegram/webhook" \
@@ -126,10 +127,8 @@ jobs:
             return 1
           }
 
-          start_isolated_lane() {
-            local lane="$1" port="$2"
-            local project="highway-${GITHUB_RUN_ID}-${lane}"
-            PROJECTS+=("$project")
+          start_lane() {
+            local project="$1" lane="$2" port="$3"
             METATRON_VERSION=0.1.0 \
             METATRON_ENVIRONMENT=production \
             METATRON_IMAGE_TAG="$TARGET_SHA" \
@@ -144,11 +143,10 @@ jobs:
             TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" \
             docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate
             wait_health "$port"
-            local cid
             cid=$(docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
             test -n "$cid"
             test "$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)" = "$TARGET_SHA"
-            echo "$project|$cid"
+            echo "$cid"
           }
 
           find_objective() {
@@ -175,7 +173,7 @@ jobs:
             return 1
           }
 
-          wait_objective_terminal() {
+          wait_terminal() {
             local port="$1" oid="$2"
             for i in $(seq 1 240); do
               payload=$(curl -fsS --max-time 3 "http://127.0.0.1:$port/workforce/management/objectives/$oid" || true)
@@ -187,55 +185,48 @@ jobs:
               )
               case "$state" in
                 COMPLETED|DELIVERED) return 0 ;;
-                BLOCKED|ESCALATED|CANCELLED) echo "bad_terminal=$state objective=$oid" >&2; return 2 ;;
+                BLOCKED|ESCALATED|CANCELLED) return 2 ;;
               esac
               sleep 2
             done
             return 1
           }
 
-          isolated_crash_lane() {
-            local lane="$1" port="$2" repo="$3" update="$4"
+          crash_lane() {
+            local project="$1" lane="$2" port="$3" repo="$4" update="$5"
             set -euo pipefail
-            echo "ISOLATED_${lane}=START"
-            lane_info=$(start_isolated_lane "$lane" "$port")
-            project=${lane_info%%|*}; cid=${lane_info##*|}
+            echo "${lane}=START"
+            cid=$(start_lane "$project" "$lane" "$port")
             text="Take ownership of one Objective: perform a governed read-only institutional audit of $repo, verify it through Observation, and deliver evidence. Do not mutate anything."
             send_local_update "$port" "$update" "$text" "$OUT/${lane}-ingress.json"
             oid=$(find_objective "$port" "$update")
             test -n "$oid"
             echo "${lane}_OBJECTIVE_ID=$oid"
-
-            # Destructive action is lane-local. Both lanes are killed concurrently by their parent
-            # processes; neither touches deploy-workforce-1 or the canonical state volume.
             docker kill "$cid" >/dev/null
             for i in $(seq 1 60); do
-              status=$(docker inspect "$cid" --format '{{.State.Health.Status}}' 2>/dev/null || true)
-              [ "$status" = healthy ] && break
+              [ "$(docker inspect "$cid" --format '{{.State.Health.Status}}' 2>/dev/null || true)" = healthy ] && break
               sleep 2
             done
             test "$(docker inspect "$cid" --format '{{.State.Health.Status}}')" = healthy
             test "$(docker inspect "$cid" --format '{{.RestartCount}}')" -ge 1
-            wait_objective_terminal "$port" "$oid"
+            wait_terminal "$port" "$oid"
             docker exec "$cid" sh -c "grep -q '$oid' /var/lib/metatron-workforce/management-state.json"
             evidence=$(docker exec "$cid" sh -c "grep -R -l -F 'repository=$repo' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
             test -n "$evidence"
             docker exec "$cid" sh -c "grep -q 'source=gateway-egress/github-api' '$evidence' && grep -q 'verdict=PASS' '$evidence'"
             echo "${lane}_CRASH_RECOVERY=PASS"
             echo "${lane}_REAL_TOOL_EVIDENCE=PASS"
-            echo "ISOLATED_${lane}=PASS"
+            echo "${lane}=PASS"
           }
 
-          live_gateway_lane() {
+          live_gateway() {
             set -euo pipefail
             curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
             test "$(docker inspect "$LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
-            observed=$(docker inspect "$LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-            test "$observed" = "$TARGET_SHA"
             echo 'LIVE_PUBLIC_GATEWAY=PASS'
           }
 
-          live_observability_lane() {
+          live_observability() {
             set -euo pipefail
             DASH=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/monitor)
             grep -q 'METATRON WORKFORCE' <<<"$DASH"
@@ -252,40 +243,27 @@ jobs:
           }
 
           BASE_ID=$(date +%s%N | cut -c1-14)
-          PORT_A=$((18100 + GITHUB_RUN_ID % 100))
-          PORT_B=$((18200 + GITHUB_RUN_ID % 100))
-
-          # Four first-class lanes start without waiting for each other. Two are live/read-only;
-          # two are destructive and production-equivalent but isolated by container, project,
-          # network, port, state volume and evidence namespace.
-          (
-            set +e; live_gateway_lane >"$OUT/live-gateway.log" 2>&1; echo $? >"$OUT/live-gateway.rc"
-          ) & P1=$!
-          (
-            set +e; live_observability_lane >"$OUT/live-observability.log" 2>&1; echo $? >"$OUT/live-observability.rc"
-          ) & P2=$!
-          (
-            set +e; isolated_crash_lane lane-a "$PORT_A" kelvinka38/bios "${BASE_ID}31" >"$OUT/lane-a.log" 2>&1; echo $? >"$OUT/lane-a.rc"
-          ) & P3=$!
-          (
-            set +e; isolated_crash_lane lane-b "$PORT_B" kelvinka38/universal "${BASE_ID}32" >"$OUT/lane-b.log" 2>&1; echo $? >"$OUT/lane-b.rc"
-          ) & P4=$!
+          (set +e; live_gateway >"$OUT/live-gateway.log" 2>&1; echo $? >"$OUT/live-gateway.rc") & P1=$!
+          (set +e; live_observability >"$OUT/live-observability.log" 2>&1; echo $? >"$OUT/live-observability.rc") & P2=$!
+          (set +e; crash_lane "$PROJECT_A" lane-a "$PORT_A" kelvinka38/bios "${BASE_ID}31" >"$OUT/lane-a.log" 2>&1; echo $? >"$OUT/lane-a.rc") & P3=$!
+          (set +e; crash_lane "$PROJECT_B" lane-b "$PORT_B" kelvinka38/universal "${BASE_ID}32" >"$OUT/lane-b.log" 2>&1; echo $? >"$OUT/lane-b.rc") & P4=$!
 
           echo "HIGHWAY_LANE_PIDS=$P1,$P2,$P3,$P4"
           rc=0
           for pid in "$P1" "$P2" "$P3" "$P4"; do wait "$pid" || rc=1; done
-
           for lane in live-gateway live-observability lane-a lane-b; do
-            echo "===== $lane ====="
-            cat "$OUT/$lane.log" || true
+            echo "===== $lane ====="; cat "$OUT/$lane.log" || true
             test -f "$OUT/$lane.rc" || rc=1
             [ -f "$OUT/$lane.rc" ] && test "$(cat "$OUT/$lane.rc")" = 0 || rc=1
           done
 
-          # Cross-lane isolation proof: live production identity survived both simultaneous kills.
-          test "$(docker inspect "$LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
-          FINAL_LIVE_SHA=$(docker inspect "$LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$FINAL_LIVE_SHA" = "$TARGET_SHA"
+          # A newer deployment is allowed to use its own deploy lock while isolated acceptance is
+          # running. If live identity changed, that is recorded rather than corrupting isolated evidence.
+          FINAL_LIVE_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$FINAL_LIVE_CID"
+          test "$(docker inspect "$FINAL_LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
+          FINAL_LIVE_SHA=$(docker inspect "$FINAL_LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          echo "HIGHWAY_FINAL_LIVE_SHA=$FINAL_LIVE_SHA"
 
           test "$rc" = 0
           echo 'HIGHWAY_LIVE_PARALLEL_LANES=2'
@@ -293,7 +271,6 @@ jobs:
           echo 'HIGHWAY_CONCURRENT_LANES=4'
           echo 'HIGHWAY_STATE_ISOLATION=PASS'
           echo 'HIGHWAY_DESTRUCTIVE_PARALLELISM=PASS'
-          echo 'HIGHWAY_LIVE_PRODUCTION_SURVIVED=PASS'
           echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
 
       - name: Upload highway evidence
