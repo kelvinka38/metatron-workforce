@@ -20,6 +20,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String REPOSITORY_PR_PROPOSE = "repository.pr.propose";
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
+    static final int MAX_PLANNER_INPUT_CHARS = 24_000;
+    private static final int MAX_CAPABILITY_ENTRIES = 128;
+    private static final int MAX_CAPABILITY_ENTRY_CHARS = 256;
 
     private static final String SYSTEM = """
             You are Metatron's institutional execution work planner.
@@ -83,18 +86,35 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         Objects.requireNonNull(availableExecutionCapabilities, "availableExecutionCapabilities");
         if (normalized.mode() != IntelligenceMode.EXECUTION) return List.of();
 
-        List<ExecutionWorkSpec> deterministicFallback = deterministicSingleRepositoryAudit(
+        // Capability binding is deterministic when one governed bounded capability already exactly
+        // covers the normalized work. Invoking frontier providers first adds latency/capacity failure
+        // without adding decomposition value and can incorrectly BLOCK otherwise executable work.
+        List<ExecutionWorkSpec> deterministicPlan = deterministicSingleRepositoryAudit(
                 normalized, availableExecutionCapabilities);
+        if (!deterministicPlan.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicPlan);
+            return deterministicPlan;
+        }
         if (providers.isEmpty()) {
-            if (!deterministicFallback.isEmpty()) return deterministicFallback;
+            if (!deterministicPlan.isEmpty()) {
+                validate(deterministicPlan);
+                return deterministicPlan;
+            }
             throw new IllegalStateException("execution_planning_provider_required");
         }
 
-        String input = "INTELLIGENCE CASE REF:\n" + caseId
+        String prefix = "INTELLIGENCE CASE REF:\n" + bounded(caseId, 512)
                 + "\n\nNORMALIZED REQUEST (structured; already semantically interpreted):\n"
-                + render(normalized)
-                + "\n\nAVAILABLE EXECUTION CAPABILITIES (inventory only; never authority):\n"
-                + (availableExecutionCapabilities.isEmpty() ? "NONE" : String.join("\n", availableExecutionCapabilities));
+                + bounded(render(normalized), 8_000)
+                + "\n\nAVAILABLE EXECUTION CAPABILITIES (inventory only; never authority):\n";
+        if (prefix.length() >= MAX_PLANNER_INPUT_CHARS) {
+            throw new IllegalStateException("execution_planning_input_exceeds_bound_before_capability_inventory");
+        }
+        String input = prefix + renderCapabilities(
+                availableExecutionCapabilities, MAX_PLANNER_INPUT_CHARS - prefix.length());
+        if (input.length() > MAX_PLANNER_INPUT_CHARS) {
+            throw new IllegalStateException("execution_planning_input_exceeds_bound");
+        }
 
         List<LlmProvider> orderedProviders = providersFor(normalized);
         List<RuntimeException> failures = new ArrayList<>();
@@ -112,7 +132,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 failures.add(new IllegalStateException("execution planning provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
         }
-        if (!deterministicFallback.isEmpty()) return deterministicFallback;
+        if (!deterministicPlan.isEmpty()) {
+            validate(deterministicPlan);
+            return deterministicPlan;
+        }
         IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
         throw all;
@@ -138,6 +161,39 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 + "\nmode=" + request.mode()
                 + "\nanalytical_protocols=" + request.analyticalProtocols()
                 + "\ntemporal_context=" + request.temporalContext();
+    }
+
+    private static String renderCapabilities(List<String> capabilities, int charBudget) {
+        if (capabilities.isEmpty() || charBudget <= 0) return "NONE";
+        StringBuilder out = new StringBuilder(Math.min(charBudget, 4096));
+        int emitted = 0;
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        for (String raw : capabilities) {
+            if (emitted >= MAX_CAPABILITY_ENTRIES || out.length() >= charBudget) break;
+            String line = raw == null ? "" : raw.replaceAll("\\s+", " ").trim();
+            if (line.isBlank()) continue;
+            line = bounded(line, MAX_CAPABILITY_ENTRY_CHARS);
+            if (!seen.add(line)) continue;
+            int remaining = charBudget - out.length();
+            if (remaining <= 1) break;
+            if (line.length() + 1 > remaining) line = line.substring(0, Math.max(0, remaining - 1));
+            if (line.isBlank()) break;
+            out.append(line).append('\n');
+            emitted++;
+        }
+        if (out.isEmpty()) return "NONE";
+        if (emitted < capabilities.size()) {
+            String marker = "... capability inventory bounded; omitted=" + Math.max(0, capabilities.size() - emitted);
+            int remaining = charBudget - out.length();
+            if (remaining > 1) out.append(marker, 0, Math.min(marker.length(), remaining - 1)).append('\n');
+        }
+        return out.toString().trim();
+    }
+
+    private static String bounded(String value, int maxChars) {
+        if (value == null || value.isBlank() || maxChars <= 0) return "";
+        String trimmed = value.trim();
+        return trimmed.length() <= maxChars ? trimmed : trimmed.substring(0, maxChars);
     }
 
     private List<ExecutionWorkSpec> parse(LlmResponse response) {
@@ -168,19 +224,11 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
     }
 
-    /**
-     * Frontier models occasionally decompose an already bounded capability into an unavailable
-     * lower-level effect followed by the real composite capability. That creates a false staffing
-     * gap even though Workforce has an executable governed adapter. Reconcile only the narrow,
-     * policy-known PR pattern: one unavailable repository write chain ending in the existing
-     * repository.pr.propose capability. The composite keeps the first dependency fence and unions
-     * all criterion/evidence requirements; it does not manufacture authority or execution evidence.
-     */
     private static List<ExecutionWorkSpec> reconcileCompositeCapabilities(
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities,
             List<ExecutionWorkSpec> plan) {
-        if (!availableExecutionCapabilities.contains(REPOSITORY_PR_PROPOSE)
+        if (!hasCapability(availableExecutionCapabilities, REPOSITORY_PR_PROPOSE)
                 || !requestsRepositoryPullRequest(normalized)
                 || plan.isEmpty()) return plan;
 
@@ -222,14 +270,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
 
         ExecutionWorkSpec composite = new ExecutionWorkSpec(
-                first.stepId(),
-                normalized.objective(),
+                first.stepId(), normalized.objective(),
                 normalized.target().isBlank() ? first.target() : normalized.target(),
-                REPOSITORY_PR_PROPOSE,
-                first.dependsOn(),
-                ExecutionWorkSpec.Consequence.MUTATING,
-                List.copyOf(criteria),
-                List.copyOf(evidence));
+                REPOSITORY_PR_PROPOSE, first.dependsOn(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.copyOf(criteria), List.copyOf(evidence));
 
         List<ExecutionWorkSpec> reconciled = new ArrayList<>();
         reconciled.addAll(plan.subList(0, unavailableWriteIndex));
@@ -246,19 +290,12 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         return List.copyOf(reconciled);
     }
 
-    /**
-     * A cross-repository analysis capability is a Work Graph join. If a frontier planner collapses
-     * an explicitly multi-repository read-only audit into one standalone join node, materialize the
-     * prerequisite repository.audit.read fan-out from the normalized target. This is intentionally
-     * narrow: it only handles a single READ_ONLY join-only proposal, requires both governed
-     * capabilities to be available, and derives every repository from the already-normalized target.
-     */
     private static List<ExecutionWorkSpec> reconcileCrossRepositoryAuditJoin(
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities,
             List<ExecutionWorkSpec> plan) {
-        if (!availableExecutionCapabilities.contains(REPOSITORY_AUDIT_READ)
-                || !availableExecutionCapabilities.contains(CROSS_REPOSITORY_AUDIT_ANALYSIS)
+        if (!hasCapability(availableExecutionCapabilities, REPOSITORY_AUDIT_READ)
+                || !hasCapability(availableExecutionCapabilities, CROSS_REPOSITORY_AUDIT_ANALYSIS)
                 || plan.size() != 1) return plan;
 
         ExecutionWorkSpec analysis = plan.getFirst();
@@ -276,33 +313,18 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             String stepId = analysis.stepId() + "-audit-" + (i + 1);
             dependencies.add(stepId);
             reconciled.add(new ExecutionWorkSpec(
-                    stepId,
-                    "Perform governed read-only repository audit for " + repository,
-                    repository,
-                    REPOSITORY_AUDIT_READ,
-                    List.of(),
-                    ExecutionWorkSpec.Consequence.READ_ONLY,
+                    stepId, "Perform governed read-only repository audit for " + repository,
+                    repository, REPOSITORY_AUDIT_READ, List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
                     List.of("governed read-only repository audit completes for " + repository),
                     List.of("durable repository.audit.read execution evidence for " + repository)));
         }
         reconciled.add(new ExecutionWorkSpec(
-                analysis.stepId(),
-                analysis.objective(),
-                analysis.target(),
-                CROSS_REPOSITORY_AUDIT_ANALYSIS,
-                List.copyOf(dependencies),
-                ExecutionWorkSpec.Consequence.READ_ONLY,
-                analysis.acceptanceCriteria(),
-                analysis.evidenceRequirements()));
+                analysis.stepId(), analysis.objective(), analysis.target(), CROSS_REPOSITORY_AUDIT_ANALYSIS,
+                List.copyOf(dependencies), ExecutionWorkSpec.Consequence.READ_ONLY,
+                analysis.acceptanceCriteria(), analysis.evidenceRequirements()));
         return List.copyOf(reconciled);
     }
 
-    /**
-     * A single-repository read-only audit is already fully covered by repository.audit.read.
-     * Frontier providers must not turn delivery wording into a cross-repository join. Collapse only
-     * the narrow safe shape where the normalized target is one repository and every proposed step
-     * is read-only and uses either repository.audit.read or the inapplicable cross-repository join.
-     */
     private static List<ExecutionWorkSpec> reconcileSingleRepositoryAudit(
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities,
@@ -317,16 +339,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         return deterministic;
     }
 
-    /**
-     * Bounded fail-safe planning for the exact capability-shaped case that does not require frontier
-     * decomposition: one unambiguous GitHub repository, explicit audit/read-only semantics, and the
-     * governed repository.audit.read capability present. This creates a Work proposal only; it does
-     * not create authority, assignment, execution evidence, Observation or completion.
-     */
     private static List<ExecutionWorkSpec> deterministicSingleRepositoryAudit(
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities) {
-        if (!availableExecutionCapabilities.contains(REPOSITORY_AUDIT_READ)) return List.of();
+        if (!hasCapability(availableExecutionCapabilities, REPOSITORY_AUDIT_READ)) return List.of();
         List<String> repositories = requestedRepositoryTargets(normalized.target());
         if (repositories.size() != 1) return List.of();
         String semantic = (normalized.objective() + " " + normalized.constraints() + " "
@@ -343,16 +359,23 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
 
         String repository = repositories.getFirst();
         return List.of(new ExecutionWorkSpec(
-                "repository-audit-read",
-                normalized.objective(),
-                repository,
-                REPOSITORY_AUDIT_READ,
-                List.of(),
+                "repository-audit-read", normalized.objective(), repository, REPOSITORY_AUDIT_READ, List.of(),
                 ExecutionWorkSpec.Consequence.READ_ONLY,
                 List.of("governed read-only repository audit completes for " + repository
                         + " and produces evidence sufficient for Observation"),
                 List.of("durable repository.audit.read execution evidence for " + repository
                         + " including externally attributable repository evidence")));
+    }
+
+    private static boolean hasCapability(List<String> capabilities, String required) {
+        for (String raw : capabilities) {
+            if (raw == null) continue;
+            String value = raw.trim();
+            if (value.equals(required)) return true;
+            if (value.startsWith(required + " ") || value.startsWith(required + "|")
+                    || value.startsWith(required + "\t") || value.startsWith(required + " - ")) return true;
+        }
+        return false;
     }
 
     private static List<String> requestedRepositoryTargets(String target) {
