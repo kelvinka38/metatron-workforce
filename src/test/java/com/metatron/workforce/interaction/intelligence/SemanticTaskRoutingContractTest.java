@@ -57,6 +57,16 @@ final class SemanticTaskRoutingContractTest {
     }
 
     @Test
+    void casualConversationRemainsCasualAndOutsideObjectiveOwnership() {
+        NormalizedRequest request = interpret(json(
+                "greet the Human conversationally",
+                "ANSWER", "NONE", "CASUAL", false));
+
+        assertEquals(IntelligenceMode.CASUAL, request.mode());
+        assertFalse(request.freshExternalDataRequired());
+    }
+
+    @Test
     void institutionalDecisionIsKeptSeparateFromExecutionAndReasoning() {
         NormalizedRequest request = interpret(json(
                 "approve the institutional release decision",
