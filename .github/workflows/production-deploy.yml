@@ -82,6 +82,8 @@ jobs:
           test -d "$BASE"
           test -r "$BASE/.env"
           test -n "${RUNNER_TEMP:-}"
+          test -d "$WORKSPACE/.git"
+          test "$(git -C "$WORKSPACE" rev-parse HEAD)" = "$SHA"
           test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
           docker compose -f "$COMPOSE" config >/dev/null
 
@@ -93,10 +95,11 @@ jobs:
           fi
           printf '%s\n' "$CURRENT_SHA" > "$BACKUP_DIR/previous-sha"
 
-          echo '=== INSTALL EXACT TESTED ARTIFACT ==='
-          git -C "$BASE" fetch origin main
+          echo '=== INSTALL EXACT TESTED SOURCE + ARTIFACT ==='
+          git -C "$BASE" fetch "$WORKSPACE" "$SHA"
           git -C "$BASE" reset --hard "$SHA"
           git -C "$BASE" clean -fd
+          test "$(git -C "$BASE" rev-parse HEAD)" = "$SHA"
           mkdir -p "$BASE/build/libs"
           cp "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar" "$BASE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
 
