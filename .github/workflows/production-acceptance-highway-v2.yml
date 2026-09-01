@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: scheduler-consolidated-v5
+      HIGHWAY_REVISION: scheduler-consolidated-v6
     steps:
       - uses: actions/checkout@v7
       - name: Run consolidated concurrent production acceptance highway
@@ -42,17 +42,36 @@ jobs:
           ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
           mkdir -p "$ROOT"
 
+          # Core Highway is independently isolated and may run concurrently with the live
+          # functional acceptance stream. Intelligence and Point-2 both exercise the same live
+          # Telegram ingress + bounded interaction executor, so running those two synthetic
+          # streams concurrently creates acceptance-induced contention that real Telegram does
+          # not require. Serialize only that truly shared mutable resource while preserving
+          # concurrency across independent production acceptance work.
           (set +e; scripts/production-acceptance-highway.sh > "$ROOT/highway-core.log" 2>&1; echo $? > "$ROOT/highway-core.rc") & CORE_PID=$!
-          (set +e; scripts/highway-intelligence-lane.sh > "$ROOT/intelligence-product.log" 2>&1; echo $? > "$ROOT/intelligence-product.rc") & INTEL_PID=$!
-          (set +e; scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1; echo $? > "$ROOT/point2-root-routing.rc") & POINT2_PID=$!
+
+          (
+            set +e
+            scripts/highway-intelligence-lane.sh > "$ROOT/intelligence-product.log" 2>&1
+            INTEL_RC=$?
+            echo "$INTEL_RC" > "$ROOT/intelligence-product.rc"
+            if [ "$INTEL_RC" -ne 0 ]; then
+              echo 125 > "$ROOT/point2-root-routing.rc"
+              echo 'SKIPPED: intelligence live lane failed; shared live ingress remains fail-closed.' > "$ROOT/point2-root-routing.log"
+              exit "$INTEL_RC"
+            fi
+
+            scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1
+            POINT2_RC=$?
+            echo "$POINT2_RC" > "$ROOT/point2-root-routing.rc"
+            exit "$POINT2_RC"
+          ) & LIVE_FUNCTIONAL_PID=$!
 
           echo "HIGHWAY_CORE_PID=$CORE_PID"
-          echo "HIGHWAY_INTELLIGENCE_PID=$INTEL_PID"
-          echo "HIGHWAY_POINT2_ROOT_PID=$POINT2_PID"
+          echo "HIGHWAY_LIVE_FUNCTIONAL_PID=$LIVE_FUNCTIONAL_PID"
 
           wait "$CORE_PID" || true
-          wait "$INTEL_PID" || true
-          wait "$POINT2_PID" || true
+          wait "$LIVE_FUNCTIONAL_PID" || true
 
           for lane in highway-core intelligence-product point2-root-routing; do
             echo "===== ${lane} ====="
@@ -63,7 +82,8 @@ jobs:
 
           echo 'HIGHWAY_SCHEDULER_SINGLE_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_STALE_ACCEPTANCE_SUPERSESSION=PASS'
-          echo 'HIGHWAY_SAFE_LANES_CONCURRENT=PASS'
+          echo 'HIGHWAY_INDEPENDENT_WORK_CONCURRENT=PASS'
+          echo 'HIGHWAY_SHARED_LIVE_INGRESS_CONTENTION_SERIALIZED=PASS'
           echo 'HIGHWAY_INTELLIGENCE_PRODUCT=PASS'
           echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
           echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2=PASS'
