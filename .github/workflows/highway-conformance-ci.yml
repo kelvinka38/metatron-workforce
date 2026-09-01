@@ -43,6 +43,20 @@ jobs:
           grep -q "scripts/runtime-conformance-point2.sh" .github/workflows/production-acceptance-highway-v2.yml
           ! grep -Eq 'PID=\$\(run_lane|PID=\$\([^)]*&' .github/workflows/production-acceptance-highway-v2.yml
           grep -q -- "- 'scripts/\*\*'" .github/workflows/production-deploy.yml
+          grep -q 'group: metatron-hosted-build-main' .github/workflows/production-deploy.yml
+          grep -q 'group: metatron-live-deploy' .github/workflows/production-deploy.yml
+          grep -q 'group: metatron-production-acceptance-highway' .github/workflows/production-acceptance-highway-v2.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          deploy=Path('.github/workflows/production-deploy.yml').read_text()
+          highway=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
+          build=deploy.split('  deploy-production:',1)[0]
+          deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
+          assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
+          assert 'group: metatron-live-deploy' in deploy_job and 'cancel-in-progress: false' in deploy_job
+          assert 'group: metatron-production-acceptance-highway' in highway and 'cancel-in-progress: true' in highway
+          print('HIGHWAY_COALESCING_POLICY=PASS')
+          PY
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Validate canonical production defaults
