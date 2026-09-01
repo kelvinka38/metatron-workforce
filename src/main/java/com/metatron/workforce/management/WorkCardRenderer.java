@@ -32,6 +32,11 @@ public final class WorkCardRenderer {
         return render(management.get(objectiveId));
     }
 
+    public boolean terminal(String objectiveId) {
+        return management.findAutonomousWork(objectiveId).map(AutonomousObjectiveWork::terminal)
+                .orElseGet(() -> management.get(objectiveId).terminal());
+    }
+
     private String render(ManagementObjective objective) {
         AutonomousObjectiveWork work = management.findAutonomousWork(objective.objectiveId()).orElse(null);
         if (work == null) return "📊 METATRON WORK\n\n" + compact(objective.description()) + "\n\nSTATUS  " + objective.status();
