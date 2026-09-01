@@ -65,17 +65,29 @@ jobs:
         run: |
           set -euo pipefail
           BASE=/opt/metatron/bios
-          source "$BASE/.env"
+          COMPOSE=/tmp/bios-product-v2-closure/deploy/docker-compose.yml
+          mkdir -p "$BASE"
+          chmod 700 "$BASE"
+          if [ ! -s "$BASE/.env" ]; then
+            umask 077
+            printf 'BIOS_API_KEY=%s\n' "$(python3 - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(48))
+          PY
+          )" > "$BASE/.env"
+          fi
+          chmod 600 "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
           export BIOS_IMAGE_TAG="$BIOS_TARGET_SHA"
           export BIOS_COMMIT_SHA="$BIOS_TARGET_SHA"
-          cd /tmp/bios-product-v2-closure/deploy
-          docker compose -p bios --env-file "$BASE/.env" build bios
-          docker compose -p bios --env-file "$BASE/.env" up -d --force-recreate bios
+          docker network inspect metatron-gateway-online >/dev/null
+          docker build --pull -t "metatron-bios:$BIOS_TARGET_SHA" /tmp/bios-product-v2-closure
+          docker compose -p bios --env-file "$BASE/.env" -f "$COMPOSE" up -d --force-recreate bios
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1 && break
             sleep 2
           done
-          CID=$(docker ps --filter name=bios-bios-1 --format '{{.ID}}' | head -1)
+          CID=$(docker compose -p bios --env-file "$BASE/.env" -f "$COMPOSE" ps -q bios)
           test -n "$CID"
           for i in $(seq 1 30); do
             [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy ] && break
@@ -93,8 +105,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source /opt/metatron/bios/.env
-          export BIOS_API_KEY TARGET_SHA="$BIOS_TARGET_SHA"
+          set -a; source /opt/metatron/bios/.env; set +a
+          export TARGET_SHA="$BIOS_TARGET_SHA"
           cd /tmp/bios-product-v2-closure
           python3 scripts/accept_product_v2_p1.py | tee -a /tmp/bios-product-v2-evidence.txt
           CID=$(docker ps --filter name=bios-bios-1 --format '{{.ID}}' | head -1)
@@ -106,8 +118,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source /opt/metatron/bios/.env
-          export BIOS_API_KEY TARGET_SHA="$BIOS_TARGET_SHA"
+          set -a; source /opt/metatron/bios/.env; set +a
+          export TARGET_SHA="$BIOS_TARGET_SHA"
           cd /tmp/bios-product-v2-closure
           python3 scripts/accept_product_v2.py | tee -a /tmp/bios-product-v2-evidence.txt
           echo 'BIOS_PRODUCT_1_V2_TECHNICAL_VERDICT=ACCEPTED' | tee -a /tmp/bios-product-v2-evidence.txt
