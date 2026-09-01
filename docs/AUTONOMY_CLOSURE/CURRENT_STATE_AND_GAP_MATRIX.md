@@ -1,65 +1,77 @@
 # WORKFORCE AUTONOMY CLOSURE — CURRENT STATE AND GAP MATRIX
 
-**Status:** AUDITED IMPLEMENTATION BASELINE  
-**Baseline:** `metatron-workforce/main` at `7a680b41286214837ad86d5a9c59dbbc3f207b29` (P1–P9/L9 implementation deployed; P10 acceptance pending)  
-**Production evidence baseline:** bounded slices through `9020efe23f4aebca5205917668261f1bdf642373`  
-**General autonomy verdict:** PARTIAL / NOT YET ACCEPTED
+**Status:** FINAL ACCEPTED AUTONOMY-CLOSURE BASELINE  
+**Accepted production SHA:** `c7d19e67797b1f97ba118433bc749bb80defe9d0`  
+**Production acceptance date:** 2026-09-01  
+**General autonomy verdict:** `ACCEPTED_L10`
 
 ## Interpretation
 
-This matrix distinguishes implemented primitives, bounded acceptance and missing autonomous closure. It supersedes prior general-completion interpretations in `docs/WORKFORCE_COMPLETION_MATRIX.md`; historical evidence remains valid only for the scope it actually tested.
+This matrix records the final state of the Founder-ratified Workforce Autonomy Closure program. Earlier revisions correctly reported `PARTIAL / NOT YET ACCEPTED` while evidence was incomplete. They are historical baselines and MUST NOT be used as the current status.
 
-| Area | Current evidence | Autonomy-closure status |
+The formal acceptance record is `FINAL_ACCEPTED_L10_EVIDENCE.md`.
+
+| Area | Accepted evidence/state | Autonomy-closure verdict |
 |---|---|---|
-| Participant/Worker/Participation | Persistent Core APIs and live lifecycle tests | Implemented substrate |
-| Capability/Qualification/Availability/Assignment | Persistent Core state, governed allocation and admission evidence | Implemented through governed allocation; P10 production proof pending |
-| Objective state | Durable acceptance, owner and outbox path plus persistent Management state | Implemented; P10 production proof pending |
-| Conversational acceptance | Durable accept-persist-detach ingress with fast Objective acknowledgement | Implemented; real-provider P10 proof pending |
-| Accountable ownership | Transactional owner persistence plus Runner lease/fencing | Implemented; adversarial P10 proof pending |
-| Management Runner | Persistent autonomous runner with wake/reconcile, lease and fencing | Implemented; adversarial P10 proof pending |
-| Work Graph | Durable versioned DAG, ready-set scheduler, joins and stale-version fencing | Implemented; elastic P10 proof pending |
-| Parallel scheduling | Ready-set scheduler with bounded concurrent dispatch and join semantics | Implemented; Golden Slice 4 proof pending |
-| Durable queue | Some domain state is durable | Interaction/Workplace queues include in-memory implementations; closure missing |
-| Staffing | Governed autonomous staffing/formation policy integrated with allocation | Implemented for bounded capabilities; P10 staffing proof pending |
-| AI Worker formation | Governed Participant/Worker/Participation formation with capability, qualification and availability | Implemented for bounded capability formation; production scope remains evidence-bound |
-| Execution capability | Repository audit is a real bounded capability | General capability execution incomplete |
-| Remote runtime | Execution attempts/runtime capacity bound into autonomous dispatch path | Implemented; failure-injection P10 proof pending |
-| Runtime recovery | Durable execution attempts, runtime recovery and stale-attempt fencing | Implemented; Golden Slice 3 proof pending |
-| Authorization | Fail-closed admission, durable dispatch binding and authority revocation fencing | Implemented; P10 production proof pending |
-| Observation closure | Durable criterion-level Observation boundary and completion gate | Implemented machinery; live authoritative verifiers and P10 evidence required |
-| Intelligence | Provider-neutral reasoning, memory, research and modes exist | Current conversation path reasons before Workforce ownership; boundary must invert |
-| Telegram | Production one-message repository-audit slice passes | In-memory 4-thread/64-item executor is not durable autonomy |
-| ChatGPT | This repository has no live ChatGPT-to-Workforce adapter proof | Not integrated |
-| Workplace/Meeting Room | Durable cross-channel Objective continuity, progress and delivery records | Integrated for Autonomy Closure scope; P10 cross-channel proof pending |
-| BIOS | BIOS service is deployed; Workforce has local BIOS kernel/contract | Live BIOS service not proved in the Objective path |
-| Knowledge/Learning | Learning/admission primitives exist | No general verified closure-to-Knowledge loop proved |
-| Economy | Durable per-Objective cost, attempts, deadline and risk safety ledger | L9 controls implemented/deployed; formal P10 evidence pending |
-| Production acceptance | Deployment, live APIs and bounded vertical slices pass | L10 gate has not passed |
+| Participant / Worker / Participation | Durable Core identity and participation semantics; exact-SHA invariant suite | PASS |
+| Capability / Qualification / Availability / Assignment | Governed eligibility, finite capacity, reservation/release and assignment lifecycle | PASS |
+| Objective acceptance | Durable accept/persist/detach, replay protection, fast acknowledgement | PASS |
+| Accountable ownership | Exactly one active owner plus lease/fencing/reconciliation | PASS |
+| Management Runner | Durable wake/reconcile loop; restart and stale-runner fencing | PASS |
+| Work Graph | Durable versioned DAG, fan-out/join, replan history and stale-version fencing | PASS |
+| Parallel scheduling | Independent ready branches execute concurrently within bounded capacity | PASS |
+| Durable messaging / retry | Inbox/outbox/idempotency and bounded retry/reconciliation invariants | PASS |
+| Staffing | Institutional staffing-gap path and governed autonomous allocation | PASS |
+| AI Worker formation | Recognition/admission/participation/capability/qualification/authority/lifecycle gates exercised | PASS |
+| Execution capability | Authorized Work dispatches through canonical Execution | PASS |
+| Execution attempts / runtime | Durable attempt identity, leases, fencing and idempotency | PASS |
+| Runtime recovery | Process/runtime loss, expired/abandoned execution and orphaned-capacity reconciliation | PASS |
+| Authorization | Fail-closed admission, durable binding and authority-revocation fencing | PASS |
+| Observation closure | Criterion-level Observation/evidence required before completion | PASS |
+| Workplace / cross-channel continuity | Canonical Conversation/Meeting/Decision semantics and cross-channel query/delivery invariants | PASS |
+| Progress / completion evidence | Reconstructable progress and completion package including work, workers, attempts, recovery, cost, duration and risk | PASS |
+| Budget / bounded recovery | Resource thresholds, attempt ceilings and bounded recovery loop | PASS |
+| Dead-letter / stuck recovery | Detection and institutional reconciliation path | PASS |
+| Full history | Objective lifecycle attributable and reconstructable | PASS |
+| Golden Slice 1 | exact-SHA production run `33465333035` | PASS |
+| Golden Slice 2 | exact-SHA production run `33465333035`; Founder merge boundary preserved | PASS |
+| Golden Slice 3 | exact-SHA production run `33465332814` | PASS |
+| Golden Slice 4 | exact-SHA production run `33465332814` | PASS |
+| Mandatory production gate | final ratification run `33465915027`; 45/45; zero unresolved critical contradictions | PASS |
+| General L10 institutional autonomy | final ratifier verdict | `ACCEPTED_L10` |
 
-## Root causes of slow/timeout interaction
+## Final production evidence
 
-The prior synchronous/process-local interaction coupling has been superseded by durable accept-persist-detach ingress and a persistent Management Runner. Remaining closure risk is no longer the existence of these primitives; it is production proof that a material Objective traverses them end-to-end without external orchestration. P10 Golden Slices and the 45-condition gate remain authoritative.
+```text
+TARGET_SHA=c7d19e67797b1f97ba118433bc749bb80defe9d0
+DEPLOYED_SHA=c7d19e67797b1f97ba118433bc749bb80defe9d0
+P10_GOLDEN_SLICES=4/4
+P10_PRODUCTION_CONDITIONS=45/45
+P10_UNRESOLVED_CRITICAL_CONTRADICTIONS=0
+P10_FINAL_VERDICT=ACCEPTED_L10
+```
 
-## Existing evidence retained
-
-The following claims remain valid within their tested scope:
-
-- Worker/Core lifecycle and durable state primitives exist;
-- management Objective/history persistence can survive process replacement when durable storage is injected;
-- Assignment, authorization, execution and runtime concepts are separated in code/tests;
-- bounded local recovery transitions exist;
-- Telegram can route one natural-language repository-audit request to a concrete Worker/capability in production;
-- the Intelligence product has live production evidence for its bounded UX/reality behavior;
-- BIOS has independent deployment/acceptance evidence.
-
-None of these alone proves a general autonomous Workforce.
+Final artifact: `9784967732`  
+SHA-256: `1aa44620296eb9bc159ecca81b9c2473370b1b69712d8ef1d601c0c39c69e369`
 
 ## Golden Slice 2 repeatable mutation sentinel
 
-The line below is a production acceptance fixture inside the already-approved GS2 mutation scope. Canonical `main` MUST retain `UNSET`. The governed `repository.pr.propose` capability may replace it only on its Objective-scoped `autonomy/gs2-*` proposal branch, open a Pull Request for Human review, and MUST NOT merge that Pull Request or mutate another path.
+The line below remains a production acceptance fixture inside the approved GS2 mutation scope. Canonical `main` MUST retain `UNSET`. A governed `repository.pr.propose` capability may replace it only on its Objective-scoped `autonomy/gs2-*` proposal branch, open a Pull Request for Human review, and MUST NOT merge that Pull Request or mutate another path.
 
 GS2_AUTONOMOUS_PROBE=UNSET
 
+## Remaining gaps
+
+There are **no remaining blockers inside the Founder-ratified Autonomy Closure acceptance scope**.
+
+Future Workforce products, new capabilities, broader mutation authorities, new providers/channels, changed runtime topology, or materially changed semantics may introduce new engineering/evidence work. Such future work is not evidence that this closure remained unfinished, and this `ACCEPTED_L10` verdict must not be generalized beyond its accepted scope.
+
 ## Current maturity
 
-The repository contains evidence spanning L1-L3 for general flows and higher bounded evidence for selected slices. No single general material Objective has yet passed all L10 production gates. Report the system as `PARTIAL / BOUNDED AUTONOMY`, not `COMPLETE`.
+```text
+WORKFORCE AUTONOMY CLOSURE = TECHNICALLY COMPLETE / ACCEPTED_L10
+P0–P10 = CLOSED
+NEXT = POST-CLOSURE PRODUCT / OPERATIONS EVOLUTION UNDER CANONICAL SOT
+```
+
+There is no canonical P11 in this implementation program.

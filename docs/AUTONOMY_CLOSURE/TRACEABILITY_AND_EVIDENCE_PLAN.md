@@ -1,11 +1,15 @@
 # WORKFORCE AUTONOMY CLOSURE — TRACEABILITY AND EVIDENCE PLAN
 
-**Status:** ACTIVE IMPLEMENTATION CONTROL  
+**Status:** CLOSED CONTROL BASELINE — FINAL D7 / `ACCEPTED_L10` EVIDENCE RECORDED  
 **Purpose:** Keep canonical decisions, code, tests, deployment and production evidence connected.
+
+Final accepted production baseline: `c7d19e67797b1f97ba118433bc749bb80defe9d0`.  
+Final ratification: run `33465915027`, 4/4 Golden Slices, 45/45 mandatory production conditions, zero unresolved critical contradictions.  
+Canonical implementation evidence record: `FINAL_ACCEPTED_L10_EVIDENCE.md`.
 
 ## 1. Required PR traceability
 
-Every autonomy-closure PR SHALL include:
+Every future autonomy-related PR SHALL include:
 
 ```text
 Canonical decision IDs/clauses
@@ -15,9 +19,9 @@ Persistent state/schema changes
 Idempotency/fencing behavior
 Failure/reconciliation behavior
 Unit/integration tests
-Production acceptance gates advanced
+Production acceptance gates advanced or preserved
 Evidence level achieved
-Known remaining gaps
+Known remaining gaps for the changed scope
 ```
 
 ## 2. Decision-to-delivery matrix
@@ -40,7 +44,7 @@ Known remaining gaps
 | Workplace/Meeting reuse | projections, Conversation/Meeting/Decision refs | cross-channel continuity and no duplicate truth |
 | Budget/risk governance | Economy envelope and scheduler guards | threshold/kill-switch/replan/escalation proof |
 | BIOS boundary | live service adapter and correlation | BIOS Program -> Workforce Objective -> verified Outcome |
-| L10 claim | all four golden slices | exact-SHA independent production verdict |
+| L10 claim | all four golden slices + mandatory production gate | exact-SHA independent production verdict |
 
 ## 3. Evidence levels
 
@@ -58,6 +62,8 @@ D7 GENERAL_L10_ACCEPTED
 ```
 
 Do not promote an artifact without new evidence. A test that manually calls transitions can reach D3 for composition but cannot prove autonomous management behavior.
+
+The accepted Autonomy Closure baseline has reached **D7 / GENERAL_L10_ACCEPTED** for its canonical scope. Future materially changed behavior must independently establish the appropriate evidence level.
 
 ## 4. Golden-slice evidence bundle
 
@@ -85,6 +91,24 @@ CI protects contracts and regressions. Production acceptance proves institutiona
 
 A workflow MUST identify which steps are setup/test-driver actions and which transitions were autonomously produced by the deployed Management Runner/Scheduler/Execution/Observation loop.
 
-## 6. Claim owner
+## 6. Final claim owner and accepted evidence
 
 No component owner may self-generalize a bounded success. Formal autonomy status is recorded only after the full acceptance package is reviewed against the upstream gate.
+
+That review completed on 2026-09-01:
+
+```text
+TARGET_SHA=c7d19e67797b1f97ba118433bc749bb80defe9d0
+DEPLOYED_SHA=c7d19e67797b1f97ba118433bc749bb80defe9d0
+GS1_GS2_RUN=33465333035
+GS3_GS4_RUN=33465332814
+FINAL_RATIFICATION_RUN=33465915027
+P10_GOLDEN_SLICES=4/4
+P10_PRODUCTION_CONDITIONS=45/45
+P10_UNRESOLVED_CRITICAL_CONTRADICTIONS=0
+P10_FINAL_VERDICT=ACCEPTED_L10
+FINAL_ARTIFACT=9784967732
+FINAL_ARTIFACT_SHA256=1aa44620296eb9bc159ecca81b9c2473370b1b69712d8ef1d601c0c39c69e369
+```
+
+The traceability control remains active for future changes, but the Autonomy Closure implementation program itself is closed.
