@@ -136,7 +136,7 @@ jobs:
           curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"'
 
           echo '=== INTERNET EGRESS ==='
-          docker exec "$CID" sh -c 'curl -fsS --connect-timeout 5 --max-time 10 https://api.github.com/zen >/dev/null'
+          docker exec "$CID" sh -c 'wget -qO- --timeout=10 https://api.github.com/zen >/dev/null'
 
           echo '=== TELEGRAM WEBHOOK ==='
           test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
