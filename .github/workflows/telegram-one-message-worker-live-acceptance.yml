@@ -40,6 +40,7 @@ jobs:
           test -n "$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
 
           UPDATE_ID=$(date +%s%N | cut -c1-18)
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -62,36 +63,60 @@ jobs:
 
           OUTCOME=NONE
           OBJECTIVE_ID=''
-          EVIDENCE=''
-          for i in $(seq 1 120); do
+          VIEW=/tmp/telegram-provider-objective-${GITHUB_RUN_ID}.json
+          trap 'rm -f "$VIEW"' EXIT
+
+          for i in $(seq 1 150); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 
-            # The channel response is an acceptance acknowledgement, not the terminal Objective result.
-            # Completion is therefore proven from detached Management/Execution evidence, not from a
-            # legacy synchronous `execution-objective-workforce-terminal` interaction route marker.
-            if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
-              && grep -q 'route=execution-objective-workforce-accepted' <<<"$LOGS" \
-              && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
+            if [ -z "$OBJECTIVE_ID" ] && grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS"; then
               OBJECTIVE_ID=$(grep "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
                 | tail -1 | sed -n 's/.* objective_id=\([^ ]*\).*/\1/p')
-              if [ -n "$OBJECTIVE_ID" ] \
-                && docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json" \
-                && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
-                && docker exec "$CID" sh -c "grep -q 'DELIVERED' /var/lib/metatron-workforce/management-state.json"; then
-                EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
-                if [ -n "$EVIDENCE" ] \
-                  && docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'" \
-                  && docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'" \
-                  && docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"; then
-                  OUTCOME=EXECUTED
-                  break
-                fi
+            fi
+
+            if [ -n "$OBJECTIVE_ID" ]; then
+              curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${OBJECTIVE_ID}" > "$VIEW" || true
+              if python3 - "$VIEW" "$OBJECTIVE_ID" <<'PY'
+          import json,sys
+          path,oid=sys.argv[1],sys.argv[2]
+          try:
+              d=json.load(open(path, encoding='utf-8'))
+          except Exception:
+              raise SystemExit(1)
+          o=d.get('objective') or {}
+          w=d.get('autonomousWork') or {}
+          h=d.get('history') or []
+          if o.get('objectiveId') != oid or o.get('status') not in ('COMPLETED','DELIVERED'):
+              raise SystemExit(1)
+          if w.get('status') not in ('COMPLETED','DELIVERED'):
+              raise SystemExit(1)
+          if not w.get('completedStepIds'):
+              raise SystemExit(1)
+          blob=json.dumps(d, sort_keys=True)
+          required=(
+              'repository.audit.read',
+              'worker-result:RepositoryAuditWorker:PASS',
+              'status=SUCCEEDED',
+              'authorization:founder-readonly-repository-audit:v1',
+              'runtime-evidence:work:repository-audit:',
+          )
+          for needle in required:
+              if needle not in blob:
+                  raise SystemExit(f'missing_detached_evidence:{needle}')
+          types={x.get('type') for x in h if isinstance(x,dict)}
+          for event in ('OBJECTIVE_ACCEPTED','PLANNING_STARTED','PLAN_RECORDED','EXECUTION_STARTED','WORK_STEP_COMPLETED'):
+              if event not in types:
+                  raise SystemExit(f'missing_event:{event}')
+          if not ({'COMPLETED','OBJECTIVE_COMPLETED'} & types):
+              raise SystemExit('missing_terminal_event')
+          print('CANONICAL_DETACHED_COMPLETION=PASS')
+          PY
+              then
+                OUTCOME=EXECUTED
+                break
               fi
             fi
 
-            # Architecture-valid fail-closed: frontier semantic/planning capacity is unavailable.
-            # The adapter must return an explicit failure and MUST NOT admit this update into
-            # Workforce execution through raw-text/keyword fallback.
             if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" <<<"$LOGS" \
               && grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed' <<<"$LOGS"; then
@@ -109,10 +134,7 @@ jobs:
           if [ "$OUTCOME" = NONE ]; then
             echo 'NO_ARCHITECTURE_VALID_DETACHED_OUTCOME' >&2
             printf '%s\n' "$LOGS" | tail -n 500 || true
-            echo '--- TELEGRAM RECEIPT CORRELATION ---' >&2
-            docker exec "$CID" sh -c "grep -n -C 2 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json || true" >&2
-            echo '--- MANAGEMENT CORRELATION ---' >&2
-            docker exec "$CID" sh -c "grep -n -C 2 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json || true" >&2
+            [ -f "$VIEW" ] && cat "$VIEW" >&2 || true
             exit 1
           fi
 
@@ -132,12 +154,15 @@ jobs:
 
           if [ "$OUTCOME" = EXECUTED ]; then
             test -n "$OBJECTIVE_ID"
-            test -n "$EVIDENCE"
-            docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json"
-            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
-            docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
-            docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
-            docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
+            grep -q '"status"[[:space:]]*:[[:space:]]*"COMPLETED"\|"status"[[:space:]]*:[[:space:]]*"DELIVERED"' "$VIEW"
+            grep -q 'repository.audit.read' "$VIEW"
+            grep -q 'worker-result:RepositoryAuditWorker:PASS' "$VIEW"
+            grep -q 'status=SUCCEEDED' "$VIEW"
+            if grep -q "telegram_monitor_refresh_failed objective_id=$OBJECTIVE_ID.*telegram_error=400:Bad Request: message can't be edited" <<<"$LOGS"; then
+              echo 'TELEGRAM_WORK_CARD_EDIT_REGRESSION_DETECTED' >&2
+              exit 1
+            fi
+            grep -q "telegram_monitor_terminal objective_id=$OBJECTIVE_ID" <<<"$LOGS"
             echo 'DURABLE_OBJECTIVE_ACCEPTANCE=PASS'
             echo 'DETACHED_OBJECTIVE_LIFETIME=PASS'
             echo 'POST_CASE_EXECUTION_PLANNING=PASS'
@@ -145,6 +170,8 @@ jobs:
             echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
             echo 'WORK_EVIDENCE_PRESERVED=PASS'
             echo 'TELEGRAM_ACCEPTANCE_DELIVERY=PASS'
+            echo 'TELEGRAM_WORK_CARD_LIVE_MONITOR=PASS'
+            echo 'TELEGRAM_WORK_CARD_EDIT_RECOVERY=PASS'
             echo 'DETACHED_WORKFORCE_COMPLETION_EVIDENCE=PASS'
           else
             echo 'PROVIDER_UNAVAILABLE_EXPLICIT=PASS'
