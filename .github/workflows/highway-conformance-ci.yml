@@ -9,6 +9,7 @@ on:
       - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
       - 'src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java'
       - 'src/main/java/com/metatron/workforce/interaction/intelligence/**'
+      - 'src/test/java/com/metatron/workforce/interaction/intelligence/**'
       - '.github/workflows/production-deploy.yml'
       - '.github/workflows/production-acceptance-highway-v2.yml'
       - '.github/workflows/intelligence-product-live-acceptance.yml'
@@ -62,6 +63,22 @@ jobs:
           PY
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
+      - name: Verify bounded execution planning recovery contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          P=src/main/java/com/metatron/workforce/interaction/intelligence/ExecutionWorkPlanner.java
+          T=src/test/java/com/metatron/workforce/interaction/intelligence/ExecutionWorkPlannerTest.java
+          H=scripts/production-acceptance-highway.sh
+          grep -q 'deterministicSingleRepositoryAudit' "$P"
+          grep -q 'reconcileSingleRepositoryAudit' "$P"
+          grep -q 'Never use `cross-repository-audit-analysis` for a single-repository audit' "$P"
+          grep -q 'boundedSingleRepositoryAuditCanPlanWithoutExternalProvider' "$T"
+          grep -q 'providerlessPlannerStillFailsClosedOutsideBoundedAuditShape' "$T"
+          grep -q 'w=d.get.*autonomousWork' "$H"
+          grep -q 'flock 9' "$H"
+          echo 'HIGHWAY_BOUNDED_PLANNING_FALLBACK=PASS'
+          echo 'HIGHWAY_PLANNING_CAPACITY_SERIALIZATION_CONTRACT=PASS'
       - name: Validate canonical production defaults
         shell: bash
         run: |
