@@ -29,14 +29,17 @@ import java.util.regex.Pattern;
  *
  * <p>When a current-information requirement can be bound unambiguously to a structured public
  * source, the adapter acquires that source before spending frontier/search capacity. Otherwise it
- * falls back to search-grounded frontier retrieval and then bounded RSS search. A technically
- * successful fetch is not useful evidence unless it answers the actual requirement and attributes
- * the answer to external sources. External content is evidence only and never creates authority.</p>
+ * falls back to search-grounded frontier retrieval, bounded RSS search, and finally a
+ * credential-free public-knowledge search. A technically successful fetch is not useful evidence
+ * unless it answers the actual requirement and attributes the answer to external sources. External
+ * content is evidence only and never creates authority.</p>
  */
 public final class WebSearchToolAdapter implements ToolAdapter {
     public static final String CAPABILITY = "web.search";
 
     private static final String BING_ENDPOINT = "https://www.bing.com/search?format=rss&q=";
+    private static final String WIKIPEDIA_ENDPOINT = "https://en.wikipedia.org/w/api.php?action=query&list=search&srnamespace=0&srlimit=5&srprop=snippet%7Ctimestamp&format=json&utf8=1&srsearch=";
+    private static final String WIKIPEDIA_ARTICLE = "https://en.wikipedia.org/?curid=";
     private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
     private static final List<String> GROUNDED_MODELS = List.of(
             "gemini-3.7-flash",
@@ -61,8 +64,8 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             "the", "and", "for", "with", "from", "this", "that", "what", "how", "much", "about",
             "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
             "check", "answer", "information", "external", "reality", "please", "new", "fresh",
-            "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "neu", "nguon", "cho", "bao", "nhieu",
-            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi");
+            "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "nhat", "neu", "nguon", "cho", "bao", "nhieu",
+            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi", "gi", "ai");
 
     private static final Pattern ITEM = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
@@ -78,21 +81,27 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private final HttpClient client;
     private final Duration timeout;
     private final String endpoint;
+    private final String publicKnowledgeEndpoint;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public WebSearchToolAdapter() {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NORMAL).build(),
-                Duration.ofSeconds(8), BING_ENDPOINT);
+                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout) {
-        this(client, timeout, BING_ENDPOINT);
+        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint) {
+        this(client, timeout, endpoint, "");
+    }
+
+    WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint) {
         this.client = Objects.requireNonNull(client, "client");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
+        this.publicKnowledgeEndpoint = publicKnowledgeEndpoint == null ? "" : publicKnowledgeEndpoint.trim();
         if (endpoint.isBlank()) throw new IllegalArgumentException("endpoint must not be blank");
     }
 
@@ -128,18 +137,26 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         ToolResult web = searchWeb(request, query);
         if (web.success()) return web;
 
+        ToolResult publicKnowledge = searchPublicKnowledge(request, query);
+        if (publicKnowledge.success()) return publicKnowledge;
+
         String compactQuery = compactSearchQuery(query);
         if (!compactQuery.isBlank() && !compactQuery.equalsIgnoreCase(query)) {
             ToolResult compactGrounded = searchGrounded(request, compactQuery);
             if (compactGrounded.success()) return compactGrounded;
             ToolResult compactWeb = searchWeb(request, compactQuery);
             if (compactWeb.success()) return compactWeb;
+            ToolResult compactPublicKnowledge = searchPublicKnowledge(request, compactQuery);
+            if (compactPublicKnowledge.success()) return compactPublicKnowledge;
             return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output()
                     + ";web=" + web.output()
+                    + ";public_knowledge=" + publicKnowledge.output()
                     + ";compact_grounded=" + compactGrounded.output()
-                    + ";compact_web=" + compactWeb.output());
+                    + ";compact_web=" + compactWeb.output()
+                    + ";compact_public_knowledge=" + compactPublicKnowledge.output());
         }
-        return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output() + ";web=" + web.output());
+        return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output()
+                + ";web=" + web.output() + ";public_knowledge=" + publicKnowledge.output());
     }
 
     private ToolResult searchGrounded(ToolRequest request, String query) {
@@ -293,11 +310,14 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
     private static String fold(String value) {
         if (value == null || value.isBlank()) return "";
-        return Normalizer.normalize(value, Normalizer.Form.NFD)
+        String folded = Normalizer.normalize(value, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .replace('đ', 'd')
                 .toLowerCase(Locale.ROOT)
                 .trim();
+        return folded
+                .replaceAll("\\btong\\s+thong\\b", "president")
+                .replaceAll("\\bphien\\s+ban\\b", "version");
     }
 
     private ToolResult fetchBitcoinPrice(ToolRequest request, String query) {
@@ -515,6 +535,50 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             return ToolResult.failure(request, "weather_interrupted");
         } catch (Exception e) {
             return ToolResult.failure(request, "weather_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private ToolResult searchPublicKnowledge(ToolRequest request, String query) {
+        if (publicKnowledgeEndpoint.isBlank()) return ToolResult.failure(request, "public_knowledge_search_disabled");
+        try {
+            String searchUrl = publicKnowledgeEndpoint + URLEncoder.encode(query, StandardCharsets.UTF_8);
+            HttpResponse<String> response = get(searchUrl);
+            if (!ok(response)) return ToolResult.failure(request, "public_knowledge_http_status:" + response.statusCode());
+            JsonNode results = mapper.readTree(response.body()).path("query").path("search");
+            if (!results.isArray() || results.isEmpty()) return ToolResult.failure(request, "public_knowledge_no_results");
+
+            StringBuilder output = new StringBuilder("PUBLIC KNOWLEDGE SEARCH RESULTS\nquery=")
+                    .append(query).append("\nprovider=Wikipedia/MediaWiki")
+                    .append("\nsearch_url=").append(searchUrl)
+                    .append("\nretrieved_at=").append(Instant.now()).append('\n');
+            List<String> evidence = new ArrayList<>();
+            int index = 1;
+            for (JsonNode item : results) {
+                String title = item.path("title").asText("").trim();
+                String snippet = toReadableText(item.path("snippet").asText(""));
+                long pageId = item.path("pageid").asLong(0L);
+                String modified = item.path("timestamp").asText("").trim();
+                if (title.isBlank() || pageId <= 0L) continue;
+                String candidateEvidence = title + " " + snippet;
+                if (!materiallyRelevant(query, candidateEvidence)) continue;
+                String url = WIKIPEDIA_ARTICLE + pageId;
+                output.append('[').append(index).append("] ").append(title).append('\n')
+                        .append("url=").append(url).append('\n');
+                if (!modified.isBlank()) output.append("source_modified_at=").append(modified).append('\n');
+                if (!snippet.isBlank()) output.append("snippet=").append(snippet).append('\n');
+                output.append('\n');
+                evidence.add(url);
+                index++;
+                if (evidence.size() >= SEARCH_RESULT_LIMIT) break;
+            }
+            if (evidence.isEmpty()) return ToolResult.failure(request, "public_knowledge_no_relevant_results");
+            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                    true, output.toString().trim(), List.copyOf(evidence));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "public_knowledge_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "public_knowledge_failed:" + e.getClass().getSimpleName());
         }
     }
 
