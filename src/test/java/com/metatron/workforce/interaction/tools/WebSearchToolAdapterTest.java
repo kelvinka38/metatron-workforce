@@ -135,6 +135,16 @@ class WebSearchToolAdapterTest {
     }
 
     @Test
+    void bindsSemanticBitcoinValuationToStructuredMarketSources() {
+        assertTrue(WebSearchToolAdapter.bitcoinStructuredSourceEligible(
+                "Retrieve the current Bitcoin valuation in USD and VND and cite the source."));
+        assertTrue(WebSearchToolAdapter.bitcoinStructuredSourceEligible(
+                "Giá Bitcoin hiện tại khoảng bao nhiêu USD và VND?"));
+        assertTrue(!WebSearchToolAdapter.bitcoinStructuredSourceEligible(
+                "Explain Bitcoin consensus architecture."));
+    }
+
+    @Test
     void treatsExplicitInsufficientGroundingMarkerAsFailure() {
         assertTrue(WebSearchToolAdapter.looksLikeInsufficientAnswer("INSUFFICIENT_EVIDENCE"));
     }
