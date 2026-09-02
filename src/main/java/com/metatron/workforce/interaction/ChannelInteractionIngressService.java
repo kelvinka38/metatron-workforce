@@ -6,6 +6,7 @@ import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
+import com.metatron.workforce.workplace.WorkplaceMeetingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -18,7 +19,7 @@ import java.util.Objects;
  *
  * Channel providers are adapters only. Telegram, Zalo, Web, API or another approved provider must
  * authenticate/map their external identity and then submit a normalized {@link MetatronInteraction}
- * here. No provider owns intelligence, conversation memory, depth control or execution orchestration.
+ * here. No provider owns intelligence, Workplace, conversation memory, depth control or execution orchestration.
  */
 @Service
 public final class ChannelInteractionIngressService {
@@ -41,6 +42,7 @@ public final class ChannelInteractionIngressService {
             IntelligenceCaseStore intelligenceCaseStore,
             IntelligenceDepthControlService intelligenceDepthControlService,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
+            WorkplaceMeetingService workplaceMeetingService,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/conversations}}") String conversationMemoryPath,
             ObjectMapper objectMapper) {
         Objects.requireNonNull(objectMapper, "objectMapper");
@@ -54,6 +56,7 @@ public final class ChannelInteractionIngressService {
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
                 Objects.requireNonNull(intelligenceDepthControlService, "intelligenceDepthControlService"),
+                Objects.requireNonNull(workplaceMeetingService, "workplaceMeetingService"),
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
