@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HumanObjectiveIngressServiceTest {
 
     @Test
-    void missingCapabilityBecomesStaffingBlockerWithoutMintingExecutionAuthorization() {
+    void missingExecutionCapabilityTriggersBoundedReplanWithoutMintingAuthorizationOrFakeStaffing() {
         ManagementAutonomyService management = new ManagementAutonomyService();
         Clock clock = Clock.fixed(Instant.parse("2026-08-30T03:00:00Z"), ZoneOffset.UTC);
         AutonomousManagementRunner runner = runner(management, List.of(), clock);
@@ -54,7 +54,7 @@ class HumanObjectiveIngressServiceTest {
         runner.runOnce();
 
         ManagementObjective objective = management.get(receipt.objectiveId());
-        assertEquals(ManagementObjective.Status.BLOCKED, objective.status());
+        assertEquals(ManagementObjective.Status.REPLANNING, objective.status());
         assertEquals("worker-head", objective.ownerWorkerId());
         assertTrue(objective.description().contains("Fix admitted defects"));
         assertTrue(objective.description().contains("Case: case-001"));
@@ -66,7 +66,12 @@ class HumanObjectiveIngressServiceTest {
         assertTrue(acceptanceDetail.contains("execution_authorization=NONE"));
         assertFalse(acceptanceDetail.contains("authorization:workplace-request-only"));
         assertTrue(management.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED
+                        && event.detail().contains("execution-capability-unavailable")));
+        assertFalse(management.history(receipt.objectiveId()).stream()
                 .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.STAFFING_NEED_DETECTED));
+        assertFalse(management.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.detail().contains("staffing-required:UNAVAILABLE:repository.write")));
     }
 
     @Test
