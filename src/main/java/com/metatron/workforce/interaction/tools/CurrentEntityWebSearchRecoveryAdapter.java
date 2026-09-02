@@ -30,7 +30,7 @@ public final class CurrentEntityWebSearchRecoveryAdapter implements ToolAdapter 
             "please", "provide", "provides", "providing", "cite", "determine", "identify", "find", "online",
             "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "nhat", "neu", "nguon", "cho", "bao", "nhieu",
             "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi",
-            "gi", "ai", "la", "xac", "dinh", "dua", "tren", "thong", "tin", "truc", "tuyen");
+            "gi", "ai", "la", "xac", "dinh", "dua", "tren", "bang", "cach", "thong", "tin", "truc", "tuyen");
 
     private final ToolAdapter delegate;
 
@@ -174,6 +174,7 @@ public final class CurrentEntityWebSearchRecoveryAdapter implements ToolAdapter 
                 .replaceAll("\\bxac\\s+dinh\\b", "determine")
                 .replaceAll("\\bkiem\\s+tra\\b", "check")
                 .replaceAll("\\bdua\\s+tren\\b", "using")
+                .replaceAll("\\bbang\\s+cach\\b", "using")
                 .replaceAll("\\bnguon\\s+thong\\s+tin\\b", "source")
                 .replaceAll("\\bnguon\\s+truc\\s+tuyen\\b", "source")
                 .replaceAll("\\btruc\\s+tuyen\\b", "online")
