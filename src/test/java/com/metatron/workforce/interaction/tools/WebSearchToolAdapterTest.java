@@ -86,6 +86,16 @@ class WebSearchToolAdapterTest {
     }
 
     @Test
+    void compactsMultilingualCurrentInformationQueryToSubjectTerms() {
+        assertEquals("version stable python",
+                WebSearchToolAdapter.compactSearchQuery(
+                        "version stable latest của Python current là gì? check nguồn current rồi answer"));
+        assertEquals("president indonesia",
+                WebSearchToolAdapter.compactSearchQuery(
+                        "Ai current đang là president Indonesia? check nguồn current rồi answer"));
+    }
+
+    @Test
     void rejectsOffTopicRssResultsAsRequirementEvidence() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/search", exchange -> {
