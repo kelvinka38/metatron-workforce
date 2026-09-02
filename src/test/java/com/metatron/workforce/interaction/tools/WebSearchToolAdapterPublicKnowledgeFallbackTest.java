@@ -10,7 +10,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WebSearchToolAdapterPublicKnowledgeFallbackTest {
@@ -36,7 +35,8 @@ class WebSearchToolAdapterPublicKnowledgeFallbackTest {
         assertTrue(result.success(), result.output());
         assertTrue(result.output().contains("PUBLIC KNOWLEDGE SEARCH RESULTS"), result.output());
         assertTrue(result.output().contains("Python 3.14.8"), result.output());
-        assertEquals("https://en.wikipedia.org/?curid=23862", result.evidenceReferences().getFirst());
+        assertTrue(result.output().contains("source_excerpt=History of Python. As of September 2026, Python 3.14.8 is the latest stable version."), result.output());
+        assertTrue(result.evidenceReferences().getFirst().endsWith("/article?curid=23862"), result.evidenceReferences().toString());
     }
 
     @Test
@@ -54,7 +54,8 @@ class WebSearchToolAdapterPublicKnowledgeFallbackTest {
         assertTrue(result.success(), result.output());
         assertTrue(result.output().contains("President of Indonesia"), result.output());
         assertTrue(result.output().contains("Prabowo Subianto"), result.output());
-        assertEquals("https://en.wikipedia.org/?curid=24150", result.evidenceReferences().getFirst());
+        assertTrue(result.output().contains("source_excerpt=President of Indonesia. The current president is Prabowo Subianto"), result.output());
+        assertTrue(result.evidenceReferences().getFirst().endsWith("/article?curid=24150"), result.evidenceReferences().toString());
         String compact = WebSearchToolAdapter.compactSearchQuery(
                 "Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.");
         assertTrue(compact.contains("president"), compact);
@@ -65,7 +66,8 @@ class WebSearchToolAdapterPublicKnowledgeFallbackTest {
         int port = server.getAddress().getPort();
         return new WebSearchToolAdapter(HttpClient.newHttpClient(), Duration.ofSeconds(2),
                 "http://127.0.0.1:" + port + "/search?q=",
-                "http://127.0.0.1:" + port + "/wiki?q=");
+                "http://127.0.0.1:" + port + "/wiki?q=",
+                "http://127.0.0.1:" + port + "/article?curid=");
     }
 
     private void startFallbackServer(String title, String snippet, long pageId) throws Exception {
@@ -85,6 +87,8 @@ class WebSearchToolAdapterPublicKnowledgeFallbackTest {
                     + "\"timestamp\":\"2026-09-02T00:00:00Z\"}]}}";
             respond(exchange, "application/json", json);
         });
+        server.createContext("/article", exchange ->
+                respond(exchange, "text/html", "<html><body>" + title + ". " + snippet + "</body></html>"));
         server.start();
     }
 
