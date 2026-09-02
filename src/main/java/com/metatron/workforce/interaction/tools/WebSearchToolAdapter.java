@@ -3,6 +3,8 @@ package com.metatron.workforce.interaction.tools;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -39,7 +41,9 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private static final List<String> GROUNDED_MODELS = List.of("gemini-3.1-flash-lite", "gemini-2.5-flash");
     private static final String COINGECKO_BTC = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,vnd&include_last_updated_at=true";
     private static final String COINBASE_BTC = "https://api.coinbase.com/v2/prices/BTC-USD/spot";
+    private static final String KRAKEN_BTC = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
     private static final String FRANKFURTER_RATE = "https://api.frankfurter.dev/v2/rate/%s/%s";
+    private static final String OPEN_EXCHANGE_LATEST = "https://open.er-api.com/v6/latest/%s";
     private static final String OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json";
     private static final String OPEN_METEO_CURRENT = "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto";
     private static final int SEARCH_RESULT_LIMIT = 5;
@@ -96,7 +100,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         String query = request.input() == null ? "" : request.input().trim();
         if (query.isBlank()) return ToolResult.failure(request, "web_search_query_empty");
 
-        if (isBitcoinPriceQuery(query)) {
+        if (bitcoinStructuredSourceEligible(query)) {
             ToolResult market = fetchBitcoinPrice(request, query);
             if (market.success()) return market;
         }
@@ -252,7 +256,10 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
     private ToolResult fetchBitcoinPrice(ToolRequest request, String query) {
         ToolResult primary = fetchBitcoinFromCoinGecko(request, query);
-        return primary.success() ? primary : fetchBitcoinFromCoinbase(request, query);
+        if (primary.success()) return primary;
+        ToolResult secondary = fetchBitcoinFromCoinbase(request, query);
+        if (secondary.success()) return secondary;
+        return fetchBitcoinFromKraken(request, query);
     }
 
     private ToolResult fetchBitcoinFromCoinGecko(ToolRequest request, String query) {
@@ -264,13 +271,20 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             String updated = first(COINGECKO_UPDATED, response.body());
             if (usd.isBlank()) return ToolResult.failure(request, "coingecko_price_missing");
             String sourceTime = updated.isBlank() ? Instant.now().toString() : Instant.ofEpochSecond(Long.parseLong(updated)).toString();
-            String output = "CURRENT EXTERNAL DATA\nquery=" + query + "\nasset=Bitcoin (BTC)\nprice_usd=" + usd + "\n"
-                    + (vnd.isBlank() ? "" : "price_vnd=" + vnd + "\n") + "source=CoinGecko\nsource_url=" + COINGECKO_BTC
-                    + "\nsource_updated_at=" + sourceTime + "\nretrieved_at=" + Instant.now();
-            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(), true, output, List.of(COINGECKO_BTC));
+            if (requiresCurrency(query, "VND") && vnd.isBlank()) {
+                OpenRateObservation fx = fetchOpenRate("USD", "VND");
+                if (fx == null) return ToolResult.failure(request, "coingecko_vnd_missing_and_fx_unavailable");
+                vnd = convert(usd, fx.rate());
+                return bitcoinResult(request, query, usd, vnd, "CoinGecko + ExchangeRate-API Open Access",
+                        sourceTime, List.of(COINGECKO_BTC, fx.sourceUrl()), "fx_source_updated_at=" + fx.updatedAt());
+            }
+            return bitcoinResult(request, query, usd, vnd, "CoinGecko", sourceTime, List.of(COINGECKO_BTC), "");
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt(); return ToolResult.failure(request, "coingecko_interrupted");
-        } catch (Exception e) { return ToolResult.failure(request, "coingecko_failed:" + e.getClass().getSimpleName()); }
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "coingecko_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "coingecko_failed:" + e.getClass().getSimpleName());
+        }
     }
 
     private ToolResult fetchBitcoinFromCoinbase(ToolRequest request, String query) {
@@ -279,22 +293,77 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             if (!ok(response)) return ToolResult.failure(request, "coinbase_http_status:" + response.statusCode());
             String usd = first(COINBASE_AMOUNT, response.body());
             if (usd.isBlank()) return ToolResult.failure(request, "coinbase_price_missing");
-            String output = "CURRENT EXTERNAL DATA\nquery=" + query + "\nasset=Bitcoin (BTC)\nprice_usd=" + usd
-                    + "\nsource=Coinbase\nsource_url=" + COINBASE_BTC + "\nretrieved_at=" + Instant.now();
-            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(), true, output, List.of(COINBASE_BTC));
+            return bitcoinUsdFallbackResult(request, query, usd, "Coinbase", COINBASE_BTC);
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt(); return ToolResult.failure(request, "coinbase_interrupted");
-        } catch (Exception e) { return ToolResult.failure(request, "coinbase_failed:" + e.getClass().getSimpleName()); }
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "coinbase_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "coinbase_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private ToolResult fetchBitcoinFromKraken(ToolRequest request, String query) {
+        try {
+            HttpResponse<String> response = get(KRAKEN_BTC);
+            if (!ok(response)) return ToolResult.failure(request, "kraken_http_status:" + response.statusCode());
+            JsonNode root = mapper.readTree(response.body());
+            JsonNode result = root.path("result");
+            if (!result.isObject() || result.isEmpty()) return ToolResult.failure(request, "kraken_price_missing");
+            JsonNode ticker = result.fields().next().getValue();
+            String usd = ticker.path("c").path(0).asText("").trim();
+            if (usd.isBlank()) return ToolResult.failure(request, "kraken_price_missing");
+            return bitcoinUsdFallbackResult(request, query, usd, "Kraken", KRAKEN_BTC);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "kraken_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "kraken_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private ToolResult bitcoinUsdFallbackResult(ToolRequest request, String query, String usd,
+                                                String sourceName, String sourceUrl) throws Exception {
+        if (!requiresCurrency(query, "VND")) {
+            return bitcoinResult(request, query, usd, "", sourceName, Instant.now().toString(),
+                    List.of(sourceUrl), "");
+        }
+        OpenRateObservation fx = fetchOpenRate("USD", "VND");
+        if (fx == null) return ToolResult.failure(request, sourceName.toLowerCase(Locale.ROOT) + "_fx_unavailable");
+        String vnd = convert(usd, fx.rate());
+        return bitcoinResult(request, query, usd, vnd, sourceName + " + ExchangeRate-API Open Access",
+                Instant.now().toString(), List.of(sourceUrl, fx.sourceUrl()),
+                "fx_source_updated_at=" + fx.updatedAt());
+    }
+
+    private ToolResult bitcoinResult(ToolRequest request, String query, String usd, String vnd,
+                                     String sourceName, String sourceTime, List<String> refs, String extra) {
+        StringBuilder output = new StringBuilder("CURRENT EXTERNAL DATA\nquery=").append(query)
+                .append("\nasset=Bitcoin (BTC)")
+                .append("\nprice_usd=").append(usd).append(" USD");
+        if (vnd != null && !vnd.isBlank()) output.append("\nprice_vnd=").append(vnd).append(" VND");
+        output.append("\nsource=").append(sourceName)
+                .append("\nsource_urls=").append(refs)
+                .append("\nsource_updated_at=").append(sourceTime);
+        if (extra != null && !extra.isBlank()) output.append('\n').append(extra);
+        output.append("\nretrieved_at=").append(Instant.now());
+        return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                true, output.toString(), List.copyOf(refs));
     }
 
     private ToolResult fetchExchangeRate(ToolRequest request, String query, CurrencyPair pair) {
+        ToolResult primary = fetchExchangeRateFromFrankfurter(request, query, pair);
+        if (primary.success()) return primary;
+        return fetchExchangeRateFromOpenApi(request, query, pair);
+    }
+
+    private ToolResult fetchExchangeRateFromFrankfurter(ToolRequest request, String query, CurrencyPair pair) {
         String sourceUrl = FRANKFURTER_RATE.formatted(pair.base(), pair.quote());
         try {
             HttpResponse<String> response = get(sourceUrl);
-            if (!ok(response)) return ToolResult.failure(request, "exchange_rate_http_status:" + response.statusCode());
+            if (!ok(response)) return ToolResult.failure(request, "frankfurter_http_status:" + response.statusCode());
             JsonNode root = mapper.readTree(response.body());
             JsonNode rateNode = root.path("rate");
-            if (!rateNode.isNumber()) return ToolResult.failure(request, "exchange_rate_missing");
+            if (!rateNode.isNumber()) return ToolResult.failure(request, "frankfurter_rate_missing");
             String rate = rateNode.asText();
             String date = root.path("date").asText("");
             String output = "CURRENT EXTERNAL EXCHANGE RATE\nquery=" + query
@@ -309,10 +378,48 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                     true, output, List.of(sourceUrl));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return ToolResult.failure(request, "exchange_rate_interrupted");
+            return ToolResult.failure(request, "frankfurter_interrupted");
         } catch (Exception e) {
-            return ToolResult.failure(request, "exchange_rate_failed:" + e.getClass().getSimpleName());
+            return ToolResult.failure(request, "frankfurter_failed:" + e.getClass().getSimpleName());
         }
+    }
+
+    private ToolResult fetchExchangeRateFromOpenApi(ToolRequest request, String query, CurrencyPair pair) {
+        try {
+            OpenRateObservation observation = fetchOpenRate(pair.base(), pair.quote());
+            if (observation == null) return ToolResult.failure(request, "open_exchange_rate_missing");
+            String output = "CURRENT EXTERNAL EXCHANGE RATE\nquery=" + query
+                    + "\nbase=" + pair.base()
+                    + "\nquote=" + pair.quote()
+                    + "\nexchange_rate=" + observation.rate().stripTrailingZeros().toPlainString()
+                    + " " + pair.quote() + " per " + pair.base()
+                    + "\nsource_updated_at=" + observation.updatedAt()
+                    + "\nsource=ExchangeRate-API Open Access"
+                    + "\nsource_url=" + observation.sourceUrl()
+                    + "\nretrieved_at=" + Instant.now();
+            return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
+                    true, output, List.of(observation.sourceUrl()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "open_exchange_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "open_exchange_failed:" + e.getClass().getSimpleName());
+        }
+    }
+
+    private OpenRateObservation fetchOpenRate(String base, String quote) throws Exception {
+        String sourceUrl = OPEN_EXCHANGE_LATEST.formatted(URLEncoder.encode(base, StandardCharsets.UTF_8));
+        HttpResponse<String> response = get(sourceUrl);
+        if (!ok(response)) return null;
+        JsonNode root = mapper.readTree(response.body());
+        if (!"success".equalsIgnoreCase(root.path("result").asText(""))) return null;
+        JsonNode rateNode = root.path("rates").path(quote);
+        if (!rateNode.isNumber()) return null;
+        BigDecimal rate = rateNode.decimalValue();
+        if (rate.signum() <= 0) return null;
+        String updated = root.path("time_last_update_utc").asText("");
+        if (updated.isBlank()) updated = root.path("time_last_update_unix").asText("");
+        return new OpenRateObservation(rate, updated, sourceUrl);
     }
 
     private ToolResult fetchCurrentWeather(ToolRequest request, String query, String location) {
@@ -403,21 +510,30 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             }
             return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(), true, output.toString().trim(), List.copyOf(evidence));
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt(); return ToolResult.failure(request, "web_search_interrupted");
-        } catch (Exception e) { return ToolResult.failure(request, "web_search_failed:" + e.getClass().getSimpleName()); }
+            Thread.currentThread().interrupt();
+            return ToolResult.failure(request, "web_search_interrupted");
+        } catch (Exception e) {
+            return ToolResult.failure(request, "web_search_failed:" + e.getClass().getSimpleName());
+        }
     }
 
     private String fetchReadableExcerpt(String url) {
         try {
-            URI uri = URI.create(url); String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            URI uri = URI.create(url);
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
             if (!scheme.equals("http") && !scheme.equals("https")) return "";
-            HttpResponse<String> response = get(url); if (!ok(response)) return "";
+            HttpResponse<String> response = get(url);
+            if (!ok(response)) return "";
             String contentType = response.headers().firstValue("content-type").orElse("").toLowerCase(Locale.ROOT);
             if (!(contentType.contains("text/html") || contentType.contains("text/plain") || contentType.contains("application/xhtml"))) return "";
             String readable = toReadableText(response.body());
             return readable.length() <= MAX_EXCERPT_CHARS ? readable : readable.substring(0, MAX_EXCERPT_CHARS);
-        } catch (InterruptedException e) { Thread.currentThread().interrupt(); return ""; }
-        catch (Exception ignored) { return ""; }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "";
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private HttpResponse<String> get(String url) throws Exception {
@@ -437,13 +553,16 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
     private static boolean ok(HttpResponse<?> response) { return response.statusCode() >= 200 && response.statusCode() < 300; }
 
-    private static boolean isBitcoinPriceQuery(String query) {
+    static boolean bitcoinStructuredSourceEligible(String query) {
         String value = fold(query);
         boolean bitcoin = value.contains("bitcoin") || value.matches(".*\\bbtc\\b.*");
-        boolean priceIntent = value.contains("gia") || value.contains("price") || value.contains("bao nhieu")
-                || value.contains("hom nay") || value.contains("hien tai") || value.contains("ngay luc")
-                || value.contains("now") || value.contains("current");
-        return bitcoin && priceIntent;
+        boolean valueIntent = value.contains("gia") || value.contains("price") || value.contains("value")
+                || value.contains("valuation") || value.contains("quote") || value.contains("worth")
+                || value.contains("bao nhieu") || value.contains("market");
+        boolean freshness = value.contains("hom nay") || value.contains("hien tai") || value.contains("ngay luc")
+                || value.contains("today") || value.contains("latest") || value.contains("now") || value.contains("current");
+        boolean currencyContext = requiresCurrency(query, "USD") || requiresCurrency(query, "VND");
+        return bitcoin && (valueIntent || (freshness && currencyContext));
     }
 
     private static boolean isExchangeRateQuery(String query) {
@@ -470,6 +589,12 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         return new CurrencyPair(iterator.next(), iterator.next());
     }
 
+    private static boolean requiresCurrency(String query, String currency) {
+        if (query == null || query.isBlank()) return false;
+        return Pattern.compile("(?i)(?:^|[^A-Z])" + Pattern.quote(currency) + "(?:[^A-Z]|$)")
+                .matcher(query).find();
+    }
+
     static String weatherLocation(String query) {
         String folded = fold(query);
         if (!(folded.contains("weather") || folded.contains("thoi tiet"))) return "";
@@ -485,6 +610,10 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             if (!location.isBlank()) return location;
         }
         return "";
+    }
+
+    private static String convert(String amount, BigDecimal rate) {
+        return new BigDecimal(amount).multiply(rate, MathContext.DECIMAL64).stripTrailingZeros().toPlainString();
     }
 
     private static String weatherCondition(int code) {
@@ -504,25 +633,42 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         };
     }
 
-    private static String first(Pattern pattern, String value) { Matcher matcher = pattern.matcher(value == null ? "" : value); return matcher.find() ? matcher.group(1) : ""; }
-    static List<String> parseEvidenceUrls(String xml) { return parseResults(xml, SEARCH_RESULT_LIMIT).stream().map(Result::url).toList(); }
+    private static String first(Pattern pattern, String value) {
+        Matcher matcher = pattern.matcher(value == null ? "" : value);
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
+    static List<String> parseEvidenceUrls(String xml) {
+        return parseResults(xml, SEARCH_RESULT_LIMIT).stream().map(Result::url).toList();
+    }
+
     private static List<Result> parseResults(String xml, int max) {
-        List<Result> results = new ArrayList<>(); Matcher items = ITEM.matcher(xml == null ? "" : xml);
+        List<Result> results = new ArrayList<>();
+        Matcher items = ITEM.matcher(xml == null ? "" : xml);
         while (items.find() && results.size() < max) {
-            String item = items.group(1), title = extract(item, "title"), url = extract(item, "link"), description = extract(item, "description");
+            String item = items.group(1);
+            String title = extract(item, "title");
+            String url = extract(item, "link");
+            String description = extract(item, "description");
             if (!title.isBlank() && !url.isBlank()) results.add(new Result(decode(title), url.trim(), decode(description)));
         }
         return List.copyOf(results);
     }
+
     private static String extract(String source, String tag) {
         Pattern pattern = Pattern.compile(String.format(TAG.pattern(), Pattern.quote(tag), Pattern.quote(tag)), Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
-        Matcher matcher = pattern.matcher(source); if (!matcher.find()) return ""; return matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+        Matcher matcher = pattern.matcher(source);
+        if (!matcher.find()) return "";
+        return matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
     }
+
     private static String decode(String value) {
         if (value == null) return "";
         return value.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
                 .replace("&#39;", "'").replace("&nbsp;", " ").replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
     }
+
+    private record OpenRateObservation(BigDecimal rate, String updatedAt, String sourceUrl) {}
     private record CurrencyPair(String base, String quote) {}
     private record Result(String title, String url, String description) {}
     private record SearchEvidence(Result result, String excerpt) {}
