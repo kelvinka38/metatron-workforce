@@ -196,7 +196,6 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                 JsonNode groundingMetadata = candidate.path("groundingMetadata");
                 String answer = candidateText(candidate);
                 List<String> refs = groundingUrls(groundingMetadata);
-                String relevanceContext = answer + " " + groundingQueryText(groundingMetadata);
                 if (answer.isBlank()) {
                     failures.add(model + ":empty_answer");
                     continue;
@@ -209,18 +208,23 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                     failures.add(model + ":insufficient_answer");
                     continue;
                 }
-                if (!materiallyRelevant(query, relevanceContext)) {
-                    failures.add(model + ":relevance_rejected");
+                List<VerifiedSource> verified = verifiedSources(query, refs);
+                if (verified.isEmpty()) {
+                    failures.add(model + ":source_body_relevance_rejected");
                     continue;
                 }
-                String output = "GROUNDED WEB ANSWER\nquery=" + query
-                        + "\nanswer=" + answer
-                        + "\nsearch_queries=" + groundingQueryText(groundingMetadata)
-                        + "\nsource_urls=" + refs
-                        + "\nretrieved_at=" + Instant.now()
-                        + "\nprovider=google-search-grounding\nmodel=" + model;
+                List<String> verifiedRefs = verified.stream().map(VerifiedSource::url).toList();
+                StringBuilder output = new StringBuilder("GROUNDED WEB ANSWER\nquery=").append(query)
+                        .append("\nanswer=").append(answer)
+                        .append("\nsearch_queries=").append(groundingQueryText(groundingMetadata))
+                        .append("\nsource_urls=").append(verifiedRefs)
+                        .append("\nretrieved_at=").append(Instant.now())
+                        .append("\nprovider=google-search-grounding\nmodel=").append(model);
+                for (VerifiedSource source : verified) {
+                    output.append("\nsource_excerpt=").append(source.excerpt());
+                }
                 return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
-                        true, output, refs);
+                        true, output.toString(), verifiedRefs);
             }
             return ToolResult.failure(request, "grounded_search_no_sufficient_grounded_answer:" + failures);
         } catch (InterruptedException e) {
@@ -559,13 +563,14 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                 long pageId = item.path("pageid").asLong(0L);
                 String modified = item.path("timestamp").asText("").trim();
                 if (title.isBlank() || pageId <= 0L) continue;
-                String candidateEvidence = title + " " + snippet;
-                if (!materiallyRelevant(query, candidateEvidence)) continue;
                 String url = WIKIPEDIA_ARTICLE + pageId;
+                String excerpt = fetchReadableExcerpt(url);
+                if (excerpt.isBlank() || !materiallyRelevant(query, excerpt)) continue;
                 output.append('[').append(index).append("] ").append(title).append('\n')
                         .append("url=").append(url).append('\n');
                 if (!modified.isBlank()) output.append("source_modified_at=").append(modified).append('\n');
                 if (!snippet.isBlank()) output.append("snippet=").append(snippet).append('\n');
+                output.append("source_excerpt=").append(excerpt).append('\n');
                 output.append('\n');
                 evidence.add(url);
                 index++;
@@ -580,6 +585,20 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         } catch (Exception e) {
             return ToolResult.failure(request, "public_knowledge_failed:" + e.getClass().getSimpleName());
         }
+    }
+
+    private List<VerifiedSource> verifiedSources(String query, List<String> refs) {
+        List<VerifiedSource> verified = new ArrayList<>();
+        int fetched = 0;
+        for (String ref : refs) {
+            if (fetched >= FETCH_RESULT_LIMIT) break;
+            String excerpt = fetchReadableExcerpt(ref);
+            fetched++;
+            if (!excerpt.isBlank() && materiallyRelevant(query, excerpt)) {
+                verified.add(new VerifiedSource(ref, excerpt));
+            }
+        }
+        return List.copyOf(verified);
     }
 
     private ToolResult searchWeb(ToolRequest request, String query) {
@@ -780,4 +799,5 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private record CurrencyPair(String base, String quote) {}
     private record Result(String title, String url, String description) {}
     private record SearchEvidence(Result result, String excerpt) {}
+    private record VerifiedSource(String url, String excerpt) {}
 }
