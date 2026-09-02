@@ -1,5 +1,6 @@
 package com.metatron.workforce.observation;
 
+import com.metatron.workforce.interaction.intelligence.GeneralActionComposingExecutionPlanProposalService;
 import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
@@ -14,8 +15,8 @@ import java.util.Optional;
 
 /**
  * Independent Observation adapter for general workspace execution.
- * It never converts execution evidence into truth. Instead it re-opens the durable Objective workspace
- * and, when acceptance requires build/test, independently re-executes the verification command.
+ * It never converts execution evidence into truth. Instead it re-opens the durable Objective workspace,
+ * observes Git/file state and, when acceptance requires build/test, independently re-executes verification.
  */
 @Component
 public final class GeneralWorkspaceObservationVerifier implements ObservationVerifier {
@@ -32,7 +33,8 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
     public boolean supports(ObservationRequirement requirement) {
         return requirement.evidenceRequirements().stream().anyMatch(value ->
                 value.startsWith("general-action-composition:")
-                        || value.startsWith("requested-capability:"));
+                        || value.startsWith("requested-capability:")
+                        || value.equals(GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER));
     }
 
     @Override
@@ -87,26 +89,59 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                     evidence, ObservationReport.Quality.HIGH, verdict));
         }
 
-        // For code/file/git outcomes, inspect the durable state rather than accepting the execution journal.
+        // For code/file/git outcomes, inspect durable Git state. A clean working tree can still contain
+        // a valid committed work product, so inspect HEAD^..HEAD before falling back to working-tree state.
         if (Files.exists(workspaces.resolve(workspace, ".git"))) {
-            WorkerExecutionSandboxService.SandboxResult diff = sandbox.run(
+            WorkerExecutionSandboxService.SandboxResult head = sandbox.run(
                     GeneralWorkspaceAutonomousCapability.WORKER_ID,
-                    requirement.objectiveId(), "git", List.of("status", "--short"));
-            evidence.add("observation-git-status:workspace=" + diff.workspaceKey()
-                    + ":exit=" + diff.exitCode()
-                    + ":changed=" + !diff.output().isBlank());
-            if (!diff.success()) {
+                    requirement.objectiveId(), "git", List.of("rev-parse", "HEAD"));
+            if (!head.success() || !head.output().trim().matches("[0-9a-f]{40}")) {
                 return Optional.of(report(requirement, at,
-                        "Independent Git workspace inspection failed: " + abbreviate(diff.output()),
+                        "Independent Git HEAD inspection failed: " + abbreviate(head.output()),
                         "independent-git-workspace-inspection", evidence,
                         ObservationReport.Quality.MEDIUM, ObservationReport.CriterionResult.INCONCLUSIVE));
             }
-            boolean mutationExpected = requested.contains("patch") || requested.contains("write")
-                    || requested.contains("code") || requested.contains("file")
-                    || criterion.contains("change") || criterion.contains("modify") || criterion.contains("write");
-            if (mutationExpected && diff.output().isBlank()) {
+            evidence.add("observation-git-head:workspace=" + head.workspaceKey() + ":sha=" + head.output().trim());
+
+            WorkerExecutionSandboxService.SandboxResult commitCount = sandbox.run(
+                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    requirement.objectiveId(), "git", List.of("rev-list", "--count", "HEAD"));
+            int commits = parsePositiveInt(commitCount.output());
+            String committedDelta = "";
+            if (commitCount.success() && commits >= 2) {
+                WorkerExecutionSandboxService.SandboxResult delta = sandbox.run(
+                        GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                        requirement.objectiveId(), "git", List.of("diff", "--name-only", "HEAD^", "HEAD", "--"));
+                if (delta.success()) {
+                    committedDelta = delta.output().trim();
+                    evidence.add("observation-git-commit-delta:workspace=" + delta.workspaceKey()
+                            + ":changed=" + !committedDelta.isBlank()
+                            + ":paths=" + abbreviate(committedDelta));
+                }
+            }
+
+            WorkerExecutionSandboxService.SandboxResult status = sandbox.run(
+                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    requirement.objectiveId(), "git", List.of("status", "--short"));
+            if (!status.success()) {
                 return Optional.of(report(requirement, at,
-                        "Workspace is a Git repository but no file change is independently observable",
+                        "Independent Git workspace inspection failed: " + abbreviate(status.output()),
+                        "independent-git-workspace-inspection", evidence,
+                        ObservationReport.Quality.MEDIUM, ObservationReport.CriterionResult.INCONCLUSIVE));
+            }
+            String workingDelta = status.output().trim();
+            evidence.add("observation-git-status:workspace=" + status.workspaceKey()
+                    + ":exit=" + status.exitCode()
+                    + ":changed=" + !workingDelta.isBlank());
+
+            boolean mutationExpected = requested.contains("patch") || requested.contains("write")
+                    || requested.contains("code") || requested.contains("file") || requested.contains("git")
+                    || criterion.contains("change") || criterion.contains("modify") || criterion.contains("write")
+                    || criterion.contains("commit") || criterion.contains("patch") || criterion.contains("code")
+                    || criterion.contains("file");
+            if (mutationExpected && committedDelta.isBlank() && workingDelta.isBlank()) {
+                return Optional.of(report(requirement, at,
+                        "Workspace is a Git repository but no committed or working-tree file change is independently observable",
                         "independent-git-workspace-inspection", evidence,
                         ObservationReport.Quality.HIGH, ObservationReport.CriterionResult.FAIL));
             }
@@ -142,6 +177,15 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                 .filter(value -> value.startsWith("requested-capability:"))
                 .map(value -> value.substring("requested-capability:".length()))
                 .findFirst().orElse(GeneralWorkspaceAutonomousCapability.CAPABILITY);
+    }
+
+    private static int parsePositiveInt(String value) {
+        try {
+            int parsed = Integer.parseInt(value == null ? "" : value.trim());
+            return Math.max(parsed, 0);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private static ObservationReport report(ObservationRequirement requirement,
