@@ -29,6 +29,8 @@ class InformationRequirementAcquisitionServiceTest {
                 "What is the latest stable version of Visual Studio Code? Check current sources and answer the user.");
         String productionParaphrase = InformationRequirementAcquisitionService.canonicalExternalQuery(
                 "Kiểm tra phiên bản ổn định (stable) mới nhất hiện tại của Python bằng cách tra cứu nguồn hiện tại và trả lời kèm theo nguồn.");
+        String productionRequirement = InformationRequirementAcquisitionService.canonicalExternalQuery(
+                "Kiểm tra và cung cấp thông tin về phiên bản stable mới nhất của Python hiện tại từ nguồn chính thức.");
 
         assertEquals("Python latest stable version",
                 InformationRequirementAcquisitionService.searchOptimizedExternalQuery(vietnamese));
@@ -36,6 +38,8 @@ class InformationRequirementAcquisitionServiceTest {
                 InformationRequirementAcquisitionService.searchOptimizedExternalQuery(english));
         assertEquals("Python latest stable version",
                 InformationRequirementAcquisitionService.searchOptimizedExternalQuery(productionParaphrase));
+        assertEquals("Python latest stable version",
+                InformationRequirementAcquisitionService.searchOptimizedExternalQuery(productionRequirement));
     }
 
     @Test
