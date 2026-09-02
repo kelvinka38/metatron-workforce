@@ -4,6 +4,7 @@ import com.metatron.workforce.interaction.intelligence.IntelligenceDepthContract
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 import com.metatron.workforce.interaction.memory.ConversationMemoryStore;
+import com.metatron.workforce.workplace.WorkplaceMeetingService;
 
 import java.util.Objects;
 
@@ -12,6 +13,7 @@ public final class MetatronConversationRuntime {
     private final ConversationMemoryStore memory;
     private final MetatronIntelligenceResponder intelligence;
     private final IntelligenceDepthControlService depthControl;
+    private final WorkplaceMeetingService meetingRoom;
     private final int maxTurns;
     private final int maxChars;
 
@@ -20,7 +22,7 @@ public final class MetatronConversationRuntime {
                                        MetatronIntelligenceResponder intelligence,
                                        int maxTurns,
                                        int maxChars) {
-        this(memory, intelligence, null, maxTurns, maxChars);
+        this(memory, intelligence, null, null, maxTurns, maxChars);
     }
 
     public MetatronConversationRuntime(ConversationMemoryStore memory,
@@ -28,9 +30,19 @@ public final class MetatronConversationRuntime {
                                        IntelligenceDepthControlService depthControl,
                                        int maxTurns,
                                        int maxChars) {
+        this(memory, intelligence, depthControl, null, maxTurns, maxChars);
+    }
+
+    public MetatronConversationRuntime(ConversationMemoryStore memory,
+                                       MetatronIntelligenceResponder intelligence,
+                                       IntelligenceDepthControlService depthControl,
+                                       WorkplaceMeetingService meetingRoom,
+                                       int maxTurns,
+                                       int maxChars) {
         this.memory = Objects.requireNonNull(memory, "memory");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
         this.depthControl = depthControl;
+        this.meetingRoom = meetingRoom;
         if (maxTurns < 1 || maxChars < 1) throw new IllegalArgumentException("memory limits must be positive");
         this.maxTurns = maxTurns;
         this.maxChars = maxChars;
@@ -56,6 +68,22 @@ public final class MetatronConversationRuntime {
         String history = memory.contextFor(
                 interaction.conversationId(), interaction.text(), maxTurns,
                 Math.max(4, maxTurns / 4), maxChars);
+
+        // Workplace semantics are first class and channel-independent. A Meeting is not an Intelligence prompt
+        // and must not be accidentally materialized as an execution Objective.
+        if (meetingRoom != null && meetingRoom.supports(interaction.text())) {
+            String meetingAnswer = meetingRoom.handle(interaction, history);
+            String answer = depthControl == null
+                    ? meetingAnswer
+                    : depthControl.responseSignature(interaction.conversationId()) + "\n\n" + meetingAnswer;
+            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
+            MeetingRoomReference reference = meetingRoom.findByExternalMessageReference(interaction.externalMessageReference())
+                    .map(m -> new MeetingRoomReference(m.meetingId()))
+                    .orElse(new MeetingRoomReference("meeting:unresolved"));
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), answer, reference.meetingId());
+        }
+
         IntelligenceDepthContract contract = depthControl == null
                 ? IntelligenceDepthContract.automatic()
                 : depthControl.contract(interaction.conversationId());
@@ -84,4 +112,6 @@ public final class MetatronConversationRuntime {
                 interaction.externalMessageReference(), interaction.text());
         return handle(normalized);
     }
+
+    private record MeetingRoomReference(String meetingId) {}
 }
