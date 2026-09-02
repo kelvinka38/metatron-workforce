@@ -3,6 +3,7 @@ package com.metatron.workforce.action;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
+import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
@@ -14,20 +15,23 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** General governed file/process/shell/Git/build/test actions scoped to one Objective workspace. */
+/** General governed repository/file/process/shell/Git/build/test actions scoped to one Objective workspace. */
 public final class GeneralWorkspaceActionCatalog {
     private final ObjectiveWorkspaceService workspaces;
     private final WorkerExecutionSandboxService sandbox;
     private final WorkerRuntimeProfileBindingService profiles;
+    private final RepositoryWorkspaceMaterializationService repositories;
     private final ObjectMapper json;
 
     public GeneralWorkspaceActionCatalog(ObjectiveWorkspaceService workspaces,
                                          WorkerExecutionSandboxService sandbox,
                                          WorkerRuntimeProfileBindingService profiles,
+                                         RepositoryWorkspaceMaterializationService repositories,
                                          ObjectMapper json) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
+        this.repositories = Objects.requireNonNull(repositories, "repositories");
         this.json = Objects.requireNonNull(json, "json");
     }
 
@@ -35,6 +39,7 @@ public final class GeneralWorkspaceActionCatalog {
         WorkerRuntimeProfileBindingService.ToolProfile profile = profiles.requireBinding(workerId).profile();
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(objectiveId, workerId);
         List<ActionFabric.Action> actions = new ArrayList<>();
+        add(profile, actions, repositoryMaterialize(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, fileRead(workerId, authorizationReference, workspace));
         add(profile, actions, fileList(workerId, authorizationReference, workspace));
         add(profile, actions, fileWrite(workerId, authorizationReference, workspace));
@@ -52,6 +57,49 @@ public final class GeneralWorkspaceActionCatalog {
                             List<ActionFabric.Action> actions,
                             ActionFabric.Action action) {
         if (profile.actionRefs().contains(action.actionRef())) actions.add(action);
+    }
+
+    private ActionFabric.Action repositoryMaterialize(String worker, String auth, String objectiveId,
+                                                       ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        return action("workspace.repository.materialize", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+            String repository = input(request, "repository");
+            String ref = request.inputs().getOrDefault("ref", "main");
+            RepositoryWorkspaceMaterializationService.MaterializedRepository materialized =
+                    repositories.materialize(worker, objectiveId, repository, ref);
+
+            runOrThrow(worker, objectiveId, "git", List.of("init", "-q"), "git init");
+            runOrThrow(worker, objectiveId, "git", List.of("config", "user.name", "Metatron Workforce"), "git user.name");
+            runOrThrow(worker, objectiveId, "git", List.of("config", "user.email", "workforce@metatron.local"), "git user.email");
+            runOrThrow(worker, objectiveId, "git", List.of("add", "-A"), "git baseline add");
+            runOrThrow(worker, objectiveId, "git", List.of("commit", "-q", "-m", "metatron materialized baseline"), "git baseline commit");
+            WorkerExecutionSandboxService.SandboxResult head = runOrThrow(
+                    worker, objectiveId, "git", List.of("rev-parse", "HEAD"), "git baseline head");
+            String localHead = head.output().trim();
+            if (!localHead.matches("[0-9a-f]{40}")) throw new IllegalStateException("local materialized baseline missing Git SHA");
+
+            Map<String, String> outputs = new LinkedHashMap<>();
+            outputs.put("repository", materialized.repository());
+            outputs.put("requestedRef", materialized.requestedRef());
+            outputs.put("sourceCommitSha", materialized.resolvedCommitSha());
+            outputs.put("localBaselineCommitSha", localHead);
+            outputs.put("materializedFiles", Integer.toString(materialized.files()));
+            outputs.put("materializedBytes", Long.toString(materialized.bytes()));
+            outputs.put("workspaceRef", workspace.workspaceRef());
+            return observation(request.actionRef(), true, "private repository materialized into isolated Objective workspace",
+                    outputs, List.of(
+                            "repository-materialized:" + materialized.repository() + "@" + materialized.resolvedCommitSha(),
+                            "objective-workspace:" + workspace.workspaceKey() + ":baseline=" + localHead));
+        });
+    }
+
+    private WorkerExecutionSandboxService.SandboxResult runOrThrow(String worker, String objectiveId,
+                                                                    String executable, List<String> args,
+                                                                    String operation) {
+        WorkerExecutionSandboxService.SandboxResult result = sandbox.run(worker, objectiveId, executable, args);
+        if (!result.success()) {
+            throw new IllegalStateException(operation + " failed: " + abbreviate(result.output()));
+        }
+        return result;
     }
 
     private ActionFabric.Action fileRead(String worker, String auth, ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
@@ -216,6 +264,11 @@ public final class GeneralWorkspaceActionCatalog {
         String value = request.inputs().get(key);
         if (value == null || value.isBlank()) throw new IllegalArgumentException("action input required: " + key);
         return value;
+    }
+
+    private static String abbreviate(String value) {
+        String clean = value == null ? "" : value.replace('\n', ' ').replace('\r', ' ').trim();
+        return clean.length() <= 300 ? clean : clean.substring(0, 300);
     }
 
     private record BuildCommand(String executable, List<String> args) {}
