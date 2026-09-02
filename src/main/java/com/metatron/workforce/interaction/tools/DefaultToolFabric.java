@@ -70,6 +70,12 @@ public final class DefaultToolFabric {
      * require source identity overlap and an answer-shaped version observation before the fabric admits
      * a successful result. A nominally successful but off-topic primary result therefore falls through
      * to bounded semantic recovery instead of contaminating Case evidence.
+     *
+     * <p>Subject identity MUST use the same multilingual semantic extraction as version recovery. The
+     * acquisition layer may preserve source qualifiers such as Vietnamese "trực tuyến" while optimizing
+     * a query. Treating those qualifier tokens as part of the product subject makes correct official
+     * evidence impossible to admit. The legacy tokenizer is retained only as a fallback for very short
+     * subjects that the recovery tokenizer intentionally ignores.</p>
      */
     static boolean semanticEvidenceAdmissible(ToolRequest request, ToolResult result) {
         if (!WebSearchToolAdapter.CAPABILITY.equals(request.capability())) return true;
@@ -77,7 +83,8 @@ public final class DefaultToolFabric {
         if (!qualifierSensitiveVersionQuery(query)) return true;
         if (result.evidenceReferences().isEmpty()) return false;
 
-        Set<String> subject = subjectTokens(query);
+        Set<String> subject = SubjectOnlyVersionWebSearchRecoveryAdapter.subjectTokens(request.input());
+        if (subject.isEmpty()) subject = legacySubjectTokens(query);
         if (subject.isEmpty()) return false;
 
         String evidenceBody = result.output()
@@ -97,7 +104,7 @@ public final class DefaultToolFabric {
                 && query.matches(".*\\b(stable|latest|current|currently|today|now)\\b.*");
     }
 
-    private static Set<String> subjectTokens(String query) {
+    private static Set<String> legacySubjectTokens(String query) {
         LinkedHashSet<String> tokens = new LinkedHashSet<>();
         for (String token : query.split("[^a-z0-9]+")) {
             if (token.length() < 2 || VERSION_QUERY_STOP_WORDS.contains(token)) continue;
