@@ -3,6 +3,7 @@ package com.metatron.workforce.interaction.tools;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -29,6 +30,30 @@ class SubjectOnlyVersionWebSearchRecoveryAdapterTest {
         assertTrue(result.success(), result.output());
         assertEquals("python", delegatedQuery.get());
         assertEquals(List.of("https://www.python.org/downloads/"), result.evidenceReferences());
+        assertTrue(result.output().contains("Python 3.14.7"));
+    }
+
+    @Test
+    void recoversVietnameseVersionRequirementUsingOnlyRealSubjectIdentity() {
+        AtomicReference<String> delegatedQuery = new AtomicReference<>();
+        ToolAdapter delegate = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) {
+                delegatedQuery.set(request.input());
+                return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(), true,
+                        "WEB SEARCH RESULTS\nquery=python\nsource_excerpt=Download Python 3.14.7 from the official Python website.",
+                        List.of("https://www.python.org/downloads/"));
+            }
+        };
+        SubjectOnlyVersionWebSearchRecoveryAdapter adapter = new SubjectOnlyVersionWebSearchRecoveryAdapter(delegate);
+
+        ToolResult result = adapter.execute(request(
+                "Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời."));
+
+        assertTrue(result.success(), result.output());
+        assertEquals("python", delegatedQuery.get());
+        assertEquals(Set.of("python"), SubjectOnlyVersionWebSearchRecoveryAdapter.subjectTokens(
+                "Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời."));
         assertTrue(result.output().contains("Python 3.14.7"));
     }
 
