@@ -1,5 +1,5 @@
 # Canonical live production stack. Defaults preserve the single live production instance.
-# Highway acceptance may override host port, state volume and workforce network names so multiple
+# Highway acceptance may override host port, state/workspace volumes and workforce network names so multiple
 # exact-image production-equivalent lanes can run concurrently without sharing mutable state.
 services:
   workforce-state-init:
@@ -12,10 +12,66 @@ services:
     volumes:
       - workforce-state:/state
 
+  workforce-workspace-init:
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 10001:10001 /workspaces && chmod 700 /workspaces"]
+    restart: "no"
+    read_only: true
+    network_mode: none
+    volumes:
+      - workforce-objective-workspaces:/workspaces
+
+  workforce-sandbox:
+    depends_on:
+      workforce-workspace-init:
+        condition: service_completed_successfully
+    build:
+      context: ..
+      dockerfile: runtime-sandbox/Dockerfile
+    image: metatron-workforce-sandbox:${METATRON_IMAGE_TAG:-0.1.0}
+    restart: unless-stopped
+    mem_limit: ${METATRON_SANDBOX_MEM_LIMIT:-768m}
+    mem_reservation: ${METATRON_SANDBOX_MEM_RESERVATION:-256m}
+    cpus: ${METATRON_SANDBOX_CPUS:-1.00}
+    pids_limit: 192
+    expose:
+      - "8090"
+    environment:
+      SANDBOX_TOKEN: "${METATRON_SANDBOX_TOKEN:-}"
+      SANDBOX_WORKSPACE_ROOT: "/workspaces"
+      SANDBOX_ALLOWED_EXECUTABLES: "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw"
+    volumes:
+      - workforce-objective-workspaces:/workspaces
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2))['status']=='UP'"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    networks:
+      workforce:
+        aliases:
+          - workforce-sandbox
+
   workforce:
     depends_on:
       workforce-state-init:
         condition: service_completed_successfully
+      workforce-workspace-init:
+        condition: service_completed_successfully
+      workforce-sandbox:
+        condition: service_healthy
     build:
       context: ..
       dockerfile: Dockerfile
@@ -43,6 +99,10 @@ services:
       METATRON_RUNTIME_EVIDENCE_DIR: "${METATRON_RUNTIME_EVIDENCE_DIR:-/var/lib/metatron-workforce/runtime-evidence}"
       METATRON_TELEGRAM_INGRESS_PATH: "${METATRON_TELEGRAM_INGRESS_PATH:-/var/lib/metatron-workforce/telegram-ingress-state.json}"
       METATRON_RUNTIME_EXECUTION_TOKEN: "${METATRON_RUNTIME_EXECUTION_TOKEN:-}"
+      METATRON_RUNTIME_PROFILE_BINDINGS_PATH: "${METATRON_RUNTIME_PROFILE_BINDINGS_PATH:-/var/lib/metatron-workforce/runtime-profile-bindings.tsv}"
+      METATRON_OBJECTIVE_WORKSPACE_ROOT: "${METATRON_OBJECTIVE_WORKSPACE_ROOT:-/var/lib/metatron-workforce/objective-workspaces}"
+      METATRON_SANDBOX_URL: "${METATRON_SANDBOX_URL:-http://workforce-sandbox:8090}"
+      METATRON_SANDBOX_TOKEN: "${METATRON_SANDBOX_TOKEN:-}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_WEBHOOK_SECRET: "${TELEGRAM_WEBHOOK_SECRET:-}"
       TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID:-}"
@@ -63,6 +123,7 @@ services:
       HETZNER_API_TOKEN: "${HETZNER_API_TOKEN:-}"
     volumes:
       - workforce-state:/var/lib/metatron-workforce
+      - workforce-objective-workspaces:/var/lib/metatron-workforce/objective-workspaces
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null"]
       interval: 2s
@@ -85,6 +146,8 @@ services:
 volumes:
   workforce-state:
     name: ${METATRON_STATE_VOLUME_NAME:-metatron-workforce-state}
+  workforce-objective-workspaces:
+    name: ${METATRON_WORKSPACE_VOLUME_NAME:-metatron-workforce-objective-workspaces}
 
 networks:
   workforce:

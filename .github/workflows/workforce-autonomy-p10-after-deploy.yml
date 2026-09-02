@@ -2,34 +2,53 @@ name: Workforce Autonomy P10 After Deploy
 
 on:
   workflow_run:
-    workflows: ["Production Deploy"]
+    workflows: ["Highway Production Deploy"]
     types: [completed]
 
 permissions:
   contents: read
+  actions: write
 
-# The dedicated GS1/GS2 and GS3/GS4 workflows are already triggered directly by
-# successful Production Deploy completion. Do not dispatch Closure Final here:
-# that created a third self-hosted production workload which duplicated the
-# Golden Slices, competed for the single production runner, and could inject a
-# second runtime fault while the authoritative slice workflows were still running.
+# This is a dispatch-only handoff. It does not consume the single production runner.
+# The two acceptance workflows share their production concurrency group and therefore
+# serialize destructive/fault-injection work against the same exact deployed SHA.
 concurrency:
-  group: workforce-autonomy-p10-after-deploy
+  group: workforce-autonomy-p10-after-deploy-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  record-dedicated-slice-handoff:
+  dispatch-dedicated-slices:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    runs-on: ubuntu-latest
     steps:
-      - name: Record exact-SHA handoff to dedicated production acceptance
+      - name: Dispatch exact-SHA GS1/GS2 and GS3/GS4 acceptance
         env:
+          GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$TARGET_SHA"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          dispatch() {
+            local workflow="$1"
+            local payload
+            payload=$(python3 - "$TARGET_SHA" <<'PY'
+          import json,sys
+          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1]}}))
+          PY
+            )
+            status=$(curl -sS -o /tmp/dispatch-response.json -w '%{http_code}' \
+              -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              -H 'Content-Type: application/json' \
+              --data-binary "$payload")
+            test "$status" = 204
+            echo "DISPATCHED_WORKFLOW=$workflow"
+          }
+          dispatch workforce-autonomy-p10-production-acceptance.yml
+          dispatch workforce-autonomy-p10-gs3-gs4-production-acceptance.yml
           echo "P10_DEPLOYED_SHA=$TARGET_SHA"
-          echo 'P10_GS1_GS2_HANDOFF=WORKFLOW_RUN_NATIVE'
-          echo 'P10_GS3_GS4_HANDOFF=WORKFLOW_RUN_NATIVE'
-          echo 'P10_CLOSURE_FINAL_DISPATCH=DEFERRED_UNTIL_DEDICATED_SLICES_PASS'
+          echo 'P10_GS1_GS2_HANDOFF=DISPATCHED'
+          echo 'P10_GS3_GS4_HANDOFF=DISPATCHED'

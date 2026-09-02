@@ -30,7 +30,19 @@ public final class ExecutionAdmissionService {
         }
 
         verifyRequiredGuidance(request);
+        verifyActualWork(request);
         return ExecutionState.ADMITTED;
+    }
+
+    private static void verifyActualWork(ExecutionRequest request) {
+        if (request.workSpec() == null) {
+            throw new IllegalStateException("actual work missing");
+        }
+        if (request.workSpec().stepId().isBlank()
+                || request.workSpec().objective().isBlank()
+                || request.workSpec().requiredCapability().isBlank()) {
+            throw new IllegalStateException("actual work incomplete");
+        }
     }
 
     private static void verifyRequiredGuidance(ExecutionRequest request) {

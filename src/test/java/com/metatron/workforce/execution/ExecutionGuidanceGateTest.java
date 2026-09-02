@@ -1,5 +1,6 @@
 package com.metatron.workforce.execution;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -13,7 +14,7 @@ class ExecutionGuidanceGateTest {
     void assignmentWithoutGuidanceRemainsBackwardCompatible() {
         Assignment assignment = new Assignment("a-1", "w-1");
         ExecutionRequest request = new ExecutionRequest(
-                "e-1", assignment, new Authorization("auth-1", "w-1"), Instant.now());
+                "e-1", assignment, new Authorization("auth-1", "w-1"), work("step-1"), Instant.now());
 
         assertEquals(ExecutionState.ADMITTED, new ExecutionAdmissionService().admit(request));
     }
@@ -46,7 +47,7 @@ class ExecutionGuidanceGateTest {
         assertFalse(receipts.get(0).contentSha256().isBlank());
 
         ExecutionRequest request = new ExecutionRequest(
-                "e-3", assignment, new Authorization("auth-3", "w-3"), receipts, Instant.now());
+                "e-3", assignment, new Authorization("auth-3", "w-3"), work("step-3"), receipts, Instant.now());
         assertEquals(ExecutionState.ADMITTED, new ExecutionAdmissionService().admit(request));
     }
 
@@ -69,5 +70,11 @@ class ExecutionGuidanceGateTest {
         IllegalStateException error = assertThrows(IllegalStateException.class,
                 () -> new ExecutionAdmissionService().admit(request));
         assertEquals("guidance_provenance_mismatch:gateway-sot", error.getMessage());
+    }
+
+    private static ExecutionWorkSpec work(String stepId) {
+        return new ExecutionWorkSpec(stepId, "execute governed test work", "target", "test.capability",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("work completed"), List.of("execution-evidence"));
     }
 }

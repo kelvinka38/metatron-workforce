@@ -23,7 +23,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Run strict autonomous production slices
         shell: bash
@@ -40,11 +40,14 @@ jobs:
           test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
 
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          SANDBOX_CID=$(docker ps --filter name=deploy-workforce-sandbox-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
+          test -n "$SANDBOX_CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$TARGET_SHA"
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
-          printf 'target_sha=%s\ndeployed_sha=%s\ncontainer=%s\n' "$TARGET_SHA" "$DEPLOYED_SHA" "$CID" > "$EVIDENCE/deployment.txt"
+          test "$(docker inspect "$SANDBOX_CID" --format '{{.State.Health.Status}}')" = healthy
+          printf 'target_sha=%s\ndeployed_sha=%s\ncontainer=%s\nsandbox_container=%s\n' "$TARGET_SHA" "$DEPLOYED_SHA" "$CID" "$SANDBOX_CID" > "$EVIDENCE/deployment.txt"
 
           submit_objective() {
             local label="$1"
@@ -69,10 +72,8 @@ jobs:
             echo "${label}_ACK_HTTP=$status"
             echo "${label}_ACK_MILLIS=$elapsed_ms"
             test "$status" = 200
-            # Acceptance must detach quickly; execution is not allowed to hold the interaction open.
             test "$elapsed_ms" -lt 5000
 
-            # Replay the exact provider event. This is a duplicate-delivery probe, not a second Objective.
             status=$(curl -sS -o "$duplicate_response" -w '%{http_code}' --proto '=https' --tlsv1.2 --max-time 20 \
               -X POST https://gate.metatron.vn/telegram/webhook \
               -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
@@ -112,7 +113,7 @@ jobs:
           wait_terminal() {
             local label="$1" oid="$2"
             local view="$EVIDENCE/${label}-terminal-view.json"
-            for i in $(seq 1 450); do
+            for i in $(seq 1 600); do
               curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/${oid}" > "$view" || true
               state=$(python3 - "$view" <<'PY'
           import json,sys
@@ -133,17 +134,17 @@ jobs:
           snapshot_state() {
             local label="$1"
             docker exec "$CID" sh -c 'for f in /var/lib/metatron-workforce/*.json; do [ -f "$f" ] && { echo "===== $f ====="; cat "$f"; echo; }; done' > "$EVIDENCE/${label}-durable-state.txt"
-            docker exec "$CID" sh -c 'find /var/lib/metatron-workforce/runtime-evidence -type f -maxdepth 2 -print 2>/dev/null | sort' > "$EVIDENCE/${label}-runtime-files.txt" || true
+            docker exec "$CID" sh -c 'find /var/lib/metatron-workforce/runtime-evidence -type f -maxdepth 4 -print 2>/dev/null | sort' > "$EVIDENCE/${label}-runtime-files.txt" || true
           }
 
           assert_gs1() {
             local oid="$1"
             snapshot_state gs1
             OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
-          import json,os,re,sys
+          import json,os
           oid=os.environ['OID']; root=os.environ['EVIDENCE']
           view=json.load(open(root+'/gs1-terminal-view.json'))
-          o=view.get('objective') or {}; work=view.get('autonomousWork') or {}; hist=view.get('history') or []
+          o=view.get('objective') or {}; hist=view.get('history') or []
           assert o.get('objectiveId')==oid, (o.get('objectiveId'),oid)
           assert o.get('status') in ('COMPLETED','DELIVERED'), o.get('status')
           assert o.get('ownerWorkerId'), 'missing_owner'
@@ -156,11 +157,9 @@ jobs:
           print('GS1_FOUR_REPOSITORIES_PLANNED=PASS')
           print('GS1_AUTONOMOUS_CAPABILITY_BINDING=PASS')
           PY
-            # Runtime evidence must independently show all four repository effects.
             for repo in kelvinka38/universal kelvinka38/metatron-institution kelvinka38/metatron-workforce kelvinka38/bios; do
               docker exec "$CID" sh -c "grep -R -l -F 'repository=$repo' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | head -1" | grep -q .
             done
-            # Observation state must contain this Objective and a PASS criterion result.
             docker exec "$CID" sh -c "grep -F '$oid' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
             echo 'GS1_RUNTIME_EFFECT_EVIDENCE=PASS'
             echo 'GS1_INDEPENDENT_OBSERVATION_PRESENT=PASS'
@@ -168,6 +167,7 @@ jobs:
 
           assert_gs2() {
             local oid="$1"
+            local proof_path='docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md'
             snapshot_state gs2
             OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
           import json,os
@@ -176,35 +176,100 @@ jobs:
           o=view.get('objective') or {}; blob=json.dumps(view,sort_keys=True)
           assert o.get('objectiveId')==oid
           assert o.get('status') in ('COMPLETED','DELIVERED'), o.get('status')
-          assert 'repository.pr.propose' in blob, 'planner_did_not_select_pr_capability'
+          assert 'execution.general.workspace' in blob, 'planner_did_not_bind_general_workspace_capability'
+          assert 'general-action-runtime:execution.general.workspace' in blob, 'general_runtime_observation_marker_missing'
           print('GS2_OBJECTIVE_TERMINAL=PASS')
-          print('GS2_MUTATION_CAPABILITY_BINDING=PASS')
+          print('GS2_GENERAL_CAPABILITY_BINDING=PASS')
           PY
-            PR_URL=$(docker exec "$CID" sh -c "grep -Rho 'github-pr:https://github.com/kelvinka38/metatron-workforce/pull/[0-9]*' /var/lib/metatron-workforce 2>/dev/null | tail -1 | sed 's/^github-pr://'" || true)
-            test -n "$PR_URL"
-            PR_NUMBER=${PR_URL##*/}
-            curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/kelvinka38/metatron-workforce/pulls/$PR_NUMBER" > "$EVIDENCE/gs2-pr.json"
-            curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/kelvinka38/metatron-workforce/pulls/$PR_NUMBER/files?per_page=100" > "$EVIDENCE/gs2-pr-files.json"
-            python3 - "$EVIDENCE/gs2-pr.json" "$EVIDENCE/gs2-pr-files.json" <<'PY'
-          import json,sys
-          pr=json.load(open(sys.argv[1])); files=json.load(open(sys.argv[2]))
-          assert pr.get('state')=='open', pr.get('state')
-          assert pr.get('merged') is False and pr.get('merged_at') is None, 'PR_MUST_REMAIN_UNMERGED'
-          assert (pr.get('base') or {}).get('ref')=='main'
-          assert ((pr.get('head') or {}).get('ref') or '').startswith('autonomy/gs2-')
-          assert [f.get('filename') for f in files]==['docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md'], files
-          print('GS2_PR_OPEN=PASS')
-          print('GS2_PR_UNMERGED_FOUNDER_BOUNDARY=PASS')
-          print('GS2_CHANGE_SCOPE=PASS')
+
+            ACTION_FILE=$(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$oid\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null | head -1" || true)
+            test -n "$ACTION_FILE"
+            docker exec "$CID" sh -c "cat '$ACTION_FILE'" > "$EVIDENCE/gs2-action-journal.jsonl"
+
+            TARGET_SHA="$TARGET_SHA" PROOF_PATH="$proof_path" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+          import json,os
+          target=os.environ['TARGET_SHA']; proof_path=os.environ['PROOF_PATH']; root=os.environ['EVIDENCE']
+          rows=[json.loads(line) for line in open(root+'/gs2-action-journal.jsonl',encoding='utf-8') if line.strip()]
+          assert rows, 'empty_action_journal'
+          successful=[r for r in rows if r.get('actionSuccess') is True]
+          actions=[r.get('thoughtAction') for r in successful]
+          for required in ('workspace.repository.materialize','workspace.file.write','workspace.test.run','workspace.git.run'):
+              assert required in actions, f'missing_successful_action:{required}'
+          materialized=next(r for r in successful if r.get('thoughtAction')=='workspace.repository.materialize')
+          outputs=materialized.get('outputs') or {}
+          assert outputs.get('repository')=='kelvinka38/metatron-workforce', outputs
+          assert outputs.get('sourceCommitSha')==target, (outputs.get('sourceCommitSha'),target)
+          baseline=outputs.get('localBaselineCommitSha','')
+          assert len(baseline)==40
+          workspace_ref=outputs.get('workspaceRef','')
+          assert workspace_ref.startswith('objective-workspace:'), workspace_ref
+          workspace_key=workspace_ref.split(':',1)[1]
+          writes=[r for r in successful if r.get('thoughtAction')=='workspace.file.write']
+          assert any((r.get('thoughtInputs') or {}).get('path')==proof_path for r in writes), 'proof_file_not_written'
+          git_rows=[r for r in successful if r.get('thoughtAction')=='workspace.git.run']
+          parsed=[]
+          for row in git_rows:
+              raw=(row.get('thoughtInputs') or {}).get('argsJson','[]')
+              try: args=json.loads(raw)
+              except Exception: args=[]
+              parsed.append(args)
+          assert any(args and args[0]=='add' and proof_path in args for args in parsed), parsed
+          assert any(args and args[0]=='commit' for args in parsed), parsed
+          assert not any(args and args[0] in ('push','fetch','pull','remote') for args in parsed), parsed
+          with open(root+'/gs2-journal-proof.env','w',encoding='utf-8') as f:
+              f.write('WORKSPACE_KEY='+workspace_key+'\n')
+              f.write('BASELINE_SHA='+baseline+'\n')
+          print('GS2_REPOSITORY_MATERIALIZATION=PASS')
+          print('GS2_COGNITIVE_ACTION_FABRIC=PASS')
+          print('GS2_TEST_ACTION=PASS')
+          print('GS2_LOCAL_GIT_COMMIT_ACTION=PASS')
           PY
-            docker exec "$CID" sh -c "grep -F '$oid' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
-            echo "GS2_PR_URL=$PR_URL"
-            echo 'GS2_INDEPENDENT_OBSERVATION_PRESENT=PASS'
+            source "$EVIDENCE/gs2-journal-proof.env"
+            [[ "$WORKSPACE_KEY" =~ ^[0-9a-f]{32}$ ]]
+            [[ "$BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+            LOCAL_HEAD=$(docker exec "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" rev-parse HEAD | tr -d '\r\n')
+            [[ "$LOCAL_HEAD" =~ ^[0-9a-f]{40}$ ]]
+            test "$LOCAL_HEAD" != "$BASELINE_SHA"
+            CHANGED_PATHS=$(docker exec "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" diff-tree --no-commit-id --name-only -r HEAD | sed '/^$/d')
+            test "$CHANGED_PATHS" = "$proof_path"
+            docker exec "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" show "HEAD:$proof_path" | grep -F "$TARGET_SHA" >/dev/null
+
+            docker exec "$CID" cat /var/lib/metatron-workforce/observation-state.json > "$EVIDENCE/gs2-observation-state.json"
+            OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+          import json,os
+          oid=os.environ['OID']; root=os.environ['EVIDENCE']
+          d=json.load(open(root+'/gs2-observation-state.json'))
+          reports=d.get('reportsByRequirement') or {}
+          selected=[r for r in reports.values() if r.get('objectiveId')==oid]
+          assert selected, 'no_observation_reports_for_gs2'
+          assert all(r.get('criterionResult')=='PASS' and r.get('quality')!='INSUFFICIENT' for r in selected), selected
+          assert any(r.get('method')=='independent-sandbox-test-rerun' for r in selected), selected
+          print('GS2_INDEPENDENT_OBSERVATION=PASS')
+          PY
+
+            if docker inspect "$SANDBOX_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Eq '^(GITHUB_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|ANTHROPIC_API_KEY|CLOUDFLARE_API_TOKEN|HETZNER_API_TOKEN)=.'; then
+              echo 'SANDBOX_INSTITUTIONAL_CREDENTIAL_LEAK' >&2
+              exit 1
+            fi
+
+            cat > "$EVIDENCE/gs2-general-runtime.txt" <<EOF
+          general_capability=execution.general.workspace
+          repository=kelvinka38/metatron-workforce
+          source_commit_sha=$TARGET_SHA
+          workspace_materialized=PASS
+          cognitive_action_fabric=PASS
+          test_action=PASS
+          independent_observation=PASS
+          sandbox_isolated=PASS
+          local_git_commit=$LOCAL_HEAD
+          local_git_baseline=$BASELINE_SHA
+          workspace_key=$WORKSPACE_KEY
+          changed_path=$CHANGED_PATHS
+          EOF
+            echo 'GS2_GENERAL_EXECUTION_RUNTIME=PASS'
           }
 
-          # Golden Slice 1 — one Objective, four independent read-only repository audits.
           GS1_UPDATE=$(date +%s%N | cut -c1-18)
           GS1_TEXT='Take ownership of one Objective: perform a governed read-only institutional audit of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios. Independently plan the work, audit all four repositories in parallel where dependencies allow, join the results, analyze contradictions, verify every acceptance criterion through Observation, and deliver one evidence-backed completion. Do not mutate anything.'
           submit_objective gs1 "$GS1_TEXT" "$GS1_UPDATE"
@@ -214,9 +279,8 @@ jobs:
           wait_terminal gs1 "$GS1_OID"
           assert_gs1 "$GS1_OID"
 
-          # Golden Slice 2 — governed defect repair and PR creation; merge is forbidden.
           GS2_UPDATE=$((GS1_UPDATE+1))
-          GS2_TEXT='Take ownership of one governed mutation Objective in kelvinka38/metatron-workforce: repair the stale Workforce Autonomy Closure implementation baseline in docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md, verify the change, and open a pull request for Founder approval. Do not merge it.'
+          GS2_TEXT="Take ownership of one governed general engineering Objective against kelvinka38/metatron-workforce at exact source commit $TARGET_SHA. Materialize that exact repository snapshot into the Objective workspace. Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md with a short proof containing exact source SHA $TARGET_SHA. Run the repository test suite through the governed test action and require it to pass. Stage only that proof file and create one local Git commit as the immutable work product. Verify the result through independent Observation. Do not push, do not open a pull request, do not modify any remote repository state."
           submit_objective gs2 "$GS2_TEXT" "$GS2_UPDATE"
           locate_objective gs2 "$GS2_UPDATE"
           GS2_OID=$(cat "$EVIDENCE/gs2-objective-id.txt")
@@ -224,12 +288,12 @@ jobs:
           wait_terminal gs2 "$GS2_OID"
           assert_gs2 "$GS2_OID"
 
-          # Copy final logs and durable state without mutating institutional state.
-          docker logs --since 45m "$CID" > "$EVIDENCE/workforce.log" 2>&1 || true
+          docker logs --since 60m "$CID" > "$EVIDENCE/workforce.log" 2>&1 || true
+          docker logs --since 60m "$SANDBOX_CID" > "$EVIDENCE/workforce-sandbox.log" 2>&1 || true
           tar -C "$EVIDENCE" -czf "/tmp/workforce-p10-${GITHUB_RUN_ID}.tgz" .
           echo 'P10_GOLDEN_SLICE_1=PASS'
-          echo 'P10_GOLDEN_SLICE_2=PASS'
-          echo 'P10_GS2_FOUNDER_MERGE_BOUNDARY=PRESERVED'
+          echo 'P10_GOLDEN_SLICE_2_GENERAL_EXECUTION_RUNTIME=PASS'
+          echo 'P10_GS2_REMOTE_MUTATION=NONE'
           echo 'P10_L10_VERDICT=NOT_YET_CLAIMED_GS3_GS4_AND_45_GATE_REMAIN'
 
       - name: Upload P10 evidence

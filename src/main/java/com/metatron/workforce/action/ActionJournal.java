@@ -58,6 +58,7 @@ public interface ActionJournal {
                 row.put("idempotencyKey", idempotencyKey);
                 row.put("cycle", cycle.number());
                 row.put("thoughtAction", cycle.thought().actionRef());
+                row.put("thoughtInputs", cycle.thought().inputs());
                 row.put("thoughtRationale", cycle.thought().rationale());
                 row.put("actionSuccess", cycle.observation().success());
                 row.put("actionSummary", cycle.observation().summary());

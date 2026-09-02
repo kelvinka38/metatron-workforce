@@ -10,6 +10,7 @@ on:
       - 'gradle/**'
       - 'gradlew'
       - 'Dockerfile'
+      - 'runtime-sandbox/**'
       - 'deploy/**'
       - 'scripts/**'
       - '.github/workflows/production-deploy.yml'
@@ -47,7 +48,14 @@ jobs:
       - name: Test and build with bounded memory
         run: ./gradlew clean test bootJar --no-daemon --max-workers=1
       - name: Validate production compose
+        env:
+          METATRON_SANDBOX_TOKEN: compose-validation-only
         run: docker compose -f deploy/docker-compose.yml config >/dev/null
+      - name: Build sandbox image contract
+        env:
+          METATRON_IMAGE_TAG: hosted-${{ github.sha }}
+          METATRON_SANDBOX_TOKEN: hosted-build-contract
+        run: docker compose -f deploy/docker-compose.yml build workforce-sandbox
       - name: Upload deployable JAR
         uses: actions/upload-artifact@v7
         with:
@@ -59,8 +67,6 @@ jobs:
     needs: test-and-build
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
-    # Repository-wide production lane. If a newer exact SHA is ready to deploy,
-    # it supersedes any stale Highway acceptance still exercising the old SHA.
     concurrency:
       group: metatron-production-lane
       cancel-in-progress: true
@@ -71,7 +77,7 @@ jobs:
         with:
           name: metatron-workforce-${{ github.sha }}
           path: build/libs
-      - name: Deploy exact tested artifact with image rollback
+      - name: Deploy exact tested artifact and isolated sandbox with rollback
         shell: bash
         env:
           SHA: ${{ github.sha }}
@@ -90,26 +96,33 @@ jobs:
           test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
           set -a; source "$BASE/.env"; set +a
 
-          # Remote runtime execution is an internal effect boundary and must never start open.
-          # Generate one persistent host-local transport credential if the existing production
-          # environment has not provisioned one yet. Never echo the credential to Actions logs.
-          if [ -z "${METATRON_RUNTIME_EXECUTION_TOKEN:-}" ]; then
-            python3 - "$BASE/.env" <<'PY'
+          # Internal effect-boundary tokens are host-local credentials. Persist them once, never log them.
+          python3 - "$BASE/.env" <<'PY'
           import os,secrets,sys
           path=sys.argv[1]
           with open(path,'r',encoding='utf-8') as f:
               lines=f.read().splitlines()
-          lines=[line for line in lines if not line.startswith('METATRON_RUNTIME_EXECUTION_TOKEN=')]
-          lines.append('METATRON_RUNTIME_EXECUTION_TOKEN=' + secrets.token_urlsafe(48))
-          tmp=path+'.runtime-token.tmp'
-          with open(tmp,'w',encoding='utf-8') as f:
-              f.write('\n'.join(lines)+'\n')
-          os.chmod(tmp,0o600)
-          os.replace(tmp,path)
+          existing={}
+          for line in lines:
+              if '=' in line and not line.lstrip().startswith('#'):
+                  key,value=line.split('=',1)
+                  existing[key]=value
+          changed=False
+          for key in ('METATRON_RUNTIME_EXECUTION_TOKEN','METATRON_SANDBOX_TOKEN'):
+              if not existing.get(key,'').strip():
+                  lines=[line for line in lines if not line.startswith(key+'=')]
+                  lines.append(key+'='+secrets.token_urlsafe(48))
+                  changed=True
+          if changed:
+              tmp=path+'.internal-token.tmp'
+              with open(tmp,'w',encoding='utf-8') as f:
+                  f.write('\n'.join(lines)+'\n')
+              os.chmod(tmp,0o600)
+              os.replace(tmp,path)
           PY
-            set -a; source "$BASE/.env"; set +a
-          fi
+          set -a; source "$BASE/.env"; set +a
           test -n "${METATRON_RUNTIME_EXECUTION_TOKEN:-}"
+          test -n "${METATRON_SANDBOX_TOKEN:-}"
           METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" docker compose -p "$PROJECT" -f "$COMPOSE" config >/dev/null
 
           PREVIOUS_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
@@ -125,22 +138,24 @@ jobs:
           docker image inspect "$PREVIOUS_IMAGE" >/dev/null
 
           rollback() {
-            echo '=== ROLLBACK TO PREVIOUS IMMUTABLE IMAGE ==='
+            echo '=== ROLLBACK WORKFORCE TO PREVIOUS IMMUTABLE IMAGE ==='
             METATRON_IMAGE_TAG="$PREVIOUS_TAG" METATRON_COMMIT_SHA="$PREVIOUS_SHA" \
-              docker compose -p "$PROJECT" -f "$COMPOSE" up -d --no-build --force-recreate workforce || true
+              docker compose -p "$PROJECT" -f "$COMPOSE" up -d --no-build --force-recreate --no-deps workforce || true
+            docker compose -p "$PROJECT" -f "$COMPOSE" stop workforce-sandbox >/dev/null 2>&1 || true
           }
           trap rollback ERR
 
-          echo '=== BUILD EXACT TESTED IMAGE FROM RUNNER WORKSPACE ==='
+          echo '=== BUILD EXACT TESTED WORKFORCE + SANDBOX IMAGES ==='
           METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" \
-            docker compose -p "$PROJECT" -f "$COMPOSE" build workforce
+            docker compose -p "$PROJECT" -f "$COMPOSE" build workforce workforce-sandbox
           docker image inspect "metatron-workforce:$SHA" >/dev/null
+          docker image inspect "metatron-workforce-sandbox:$SHA" >/dev/null
 
-          echo '=== DEPLOY EXACT TESTED IMAGE ==='
+          echo '=== DEPLOY EXACT TESTED STACK ==='
           METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" \
-            docker compose -p "$PROJECT" -f "$COMPOSE" up -d --no-build --force-recreate workforce
+            docker compose -p "$PROJECT" -f "$COMPOSE" up -d --no-build --force-recreate workforce-sandbox workforce
 
-          echo '=== VERIFY CONTAINER ==='
+          echo '=== VERIFY WORKFORCE CONTAINER ==='
           CID=$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q workforce)
           test -n "$CID"
           for i in $(seq 1 90); do
@@ -155,6 +170,27 @@ jobs:
           test "$DEPLOYED_SHA" = "$SHA"
           test "$DEPLOYED_IMAGE" = "metatron-workforce:$SHA"
           docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^METATRON_RUNTIME_EXECUTION_TOKEN=.'
+          docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^METATRON_SANDBOX_TOKEN=.'
+
+          echo '=== VERIFY ISOLATED SANDBOX ==='
+          SID=$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q workforce-sandbox)
+          test -n "$SID"
+          for i in $(seq 1 90); do
+            SSTATUS=$(docker inspect "$SID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+            [ "$SSTATUS" = healthy ] && break
+            sleep 2
+          done
+          SSTATUS=$(docker inspect "$SID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+          test "$SSTATUS" = healthy
+          test "$(docker inspect "$SID" --format '{{.Config.Image}}')" = "metatron-workforce-sandbox:$SHA"
+          SANDBOX_ENV=$(docker inspect "$SID" --format '{{range .Config.Env}}{{println .}}{{end}}')
+          for forbidden in GITHUB_TOKEN OPENAI_API_KEY GEMINI_API_KEY ANTHROPIC_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET CLOUDFLARE_API_TOKEN HETZNER_API_TOKEN; do
+            if printf '%s\n' "$SANDBOX_ENV" | grep -q "^${forbidden}="; then
+              echo "sandbox received forbidden institutional credential: $forbidden" >&2
+              exit 1
+            fi
+          done
+          docker exec "$CID" sh -c 'wget -qO- --timeout=5 http://workforce-sandbox:8090/health' | grep -q '"status":"UP"'
 
           echo '=== PUBLIC GATEWAY ==='
           curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 15 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
@@ -184,5 +220,6 @@ jobs:
           trap - ERR
           echo "PRODUCTION_SHA=$SHA"
           echo "PRODUCTION_IMAGE=metatron-workforce:$SHA"
+          echo "SANDBOX_IMAGE=metatron-workforce-sandbox:$SHA"
           echo "DEPLOY_SECONDS=$ELAPSED"
           echo 'PRODUCTION_DEPLOY=PASS'
