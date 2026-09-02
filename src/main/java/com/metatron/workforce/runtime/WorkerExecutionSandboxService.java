@@ -49,13 +49,18 @@ public final class WorkerExecutionSandboxService {
                                          ObjectMapper json) {
         this.http = Objects.requireNonNull(http, "http");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
-        this.token = require(token, "sandbox token");
+        this.token = token == null ? "" : token.trim();
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.json = Objects.requireNonNull(json, "json");
     }
 
+    public boolean provisioned() {
+        return !token.isBlank();
+    }
+
     public SandboxResult run(String workerId, String objectiveId, String executable, List<String> args) {
+        if (!provisioned()) throw new IllegalStateException("sandbox-execution-token-not-provisioned");
         WorkerRuntimeProfileBindingService.Binding binding = profiles.requireBinding(workerId);
         WorkerRuntimeProfileBindingService.ToolProfile profile = binding.profile();
         requireAllowedExecutable(profile, executable);
