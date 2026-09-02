@@ -30,6 +30,7 @@ send_update() {
   local update="$1" text="$2" transport="${3:-public}" body status attempt output attempts_log url
   local -a curl_transport
   body=$(telegram_body "$update" "$text")
+  printf '%s\n' "$body" > "$OUT/intelligence-${update}-request.json"
   output="$OUT/intelligence-${update}-ingress.json"
   attempts_log="$OUT/intelligence-${update}-ingress-attempts.log"
   : > "$attempts_log"
@@ -62,6 +63,17 @@ wait_answer() {
   done
   echo "INTELLIGENCE_RUNTIME_TIMEOUT update_id=$update" >&2
   return 1
+}
+
+persist_candidate_cases() {
+  local update="$1" prefix="$2" case_file index=0
+  while IFS= read -r case_file; do
+    [ -n "$case_file" ] || continue
+    index=$((index + 1))
+    printf '%s\n' "$case_file" > "${prefix}.candidate-${index}.path"
+    docker exec "$CID" cat "$case_file" > "${prefix}.candidate-${index}.json" || true
+  done < <(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update' /var/lib/metatron-workforce/intelligence-cases 2>/dev/null || true")
+  echo "INTELLIGENCE_CANDIDATE_CASES update_id=$update count=$index"
 }
 
 case_file_for_update() {
@@ -110,6 +122,7 @@ fresh_case() {
   send_update "$update" "$text" "$transport"
   wait_answer "$since" "$update"
   log="$OUT/intelligence-${update}-runtime.log"
+  persist_candidate_cases "$update" "$result_prefix"
   ! grep -q "telegram_interaction_failed update_id=$update" "$log"
   ! grep -Eq "execution-objective-workforce-accepted.*$update|METATRON WORK ACCEPTED.*$update|telegram_answer_ready update_id=$update.*objective_id=[^[:space:]]+" "$log"
   case_file=$(case_file_for_update "$update" "$pattern"); test -n "$case_file"
