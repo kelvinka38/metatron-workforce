@@ -129,7 +129,8 @@ class WebSearchToolAdapterTest {
                 "internet:web-search", "search", "Indonesia president", java.util.List.of("read-only")));
 
         assertTrue(!result.success());
-        assertEquals("web_search_no_relevant_results", result.output());
+        assertTrue(result.output().contains("web_search_no_relevant_results"), result.output());
+        assertTrue(result.output().contains("grounded_search_credential_unavailable"), result.output());
     }
 
     @Test
