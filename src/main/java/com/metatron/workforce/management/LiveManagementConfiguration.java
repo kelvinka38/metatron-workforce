@@ -14,6 +14,7 @@ import com.metatron.workforce.runtime.FileRuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeRegistry;
+import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -148,8 +149,9 @@ public class LiveManagementConfiguration {
 
     @Bean
     AutonomousStaffingService autonomousStaffingService(WorkforceCoreService core,
-                                                         List<AutonomousStaffingPolicy> policies) {
-        return new AutonomousStaffingService(core, policies);
+                                                         List<AutonomousStaffingPolicy> policies,
+                                                         WorkerRuntimeProfileBindingService runtimeProfiles) {
+        return new AutonomousStaffingService(core, policies, runtimeProfiles);
     }
 
     @Bean

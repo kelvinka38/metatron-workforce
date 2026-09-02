@@ -1,6 +1,7 @@
 package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
 import java.time.Instant;
 import java.util.Comparator;
@@ -13,6 +14,7 @@ import java.util.stream.Collectors;
 /**
  * Workforce Management staffing orchestrator. It coordinates approved formation but writes all
  * institutional identity, participation, capability and capacity state through Workforce Core.
+ * A formed Worker is not usable until its approved runtime/tool profile is durably bound.
  */
 public final class AutonomousStaffingService {
     public enum GapReason {
@@ -43,9 +45,17 @@ public final class AutonomousStaffingService {
 
     private final WorkforceCoreService core;
     private final Map<String, AutonomousStaffingPolicy> policies;
+    private final WorkerRuntimeProfileBindingService runtimeProfiles;
 
     public AutonomousStaffingService(WorkforceCoreService core, List<AutonomousStaffingPolicy> policies) {
+        this(core, policies, WorkerRuntimeProfileBindingService.inMemory());
+    }
+
+    public AutonomousStaffingService(WorkforceCoreService core,
+                                     List<AutonomousStaffingPolicy> policies,
+                                     WorkerRuntimeProfileBindingService runtimeProfiles) {
         this.core = Objects.requireNonNull(core);
+        this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
         this.policies = List.copyOf(policies).stream().collect(Collectors.toUnmodifiableMap(
                 AutonomousStaffingPolicy::capabilityRef,
                 Function.identity(),
@@ -65,8 +75,21 @@ public final class AutonomousStaffingService {
                 .filter(w -> capability.supportsWorker(w.workerId()))
                 .toList();
         if (!eligible.isEmpty()) {
-            return new StaffingOutcome(GapReason.STAFFED, eligible.getFirst().workerId(),
-                    List.of("staffing:reused-worker=" + eligible.getFirst().workerId()));
+            String workerId = eligible.getFirst().workerId();
+            AutonomousStaffingPolicy policy = policies.get(capability.capabilityRef());
+            List<String> evidence;
+            if (policy != null) {
+                var spec = policy.formationSpec();
+                WorkerRuntimeProfileBindingService.Binding binding = runtimeProfiles.bind(
+                        workerId, spec.runtimeProfileRef(), capability.capabilityRef(), at);
+                evidence = List.of(
+                        "staffing:reused-worker=" + workerId,
+                        "runtime-profile-bound:" + binding.profile().profileRef(),
+                        "runtime-actions=" + binding.profile().actionRefs().stream().sorted().toList());
+            } else {
+                evidence = List.of("staffing:reused-worker=" + workerId);
+            }
+            return new StaffingOutcome(GapReason.STAFFED, workerId, evidence);
         }
 
         AutonomousStaffingPolicy policy = policies.get(capability.capabilityRef());
@@ -99,6 +122,8 @@ public final class AutonomousStaffingService {
         core.attestCapability(spec.workerId(), capability.capabilityRef(), spec.capabilityLevel(), spec.capabilityEvidenceRef());
         core.attestQualification(spec.workerId(), spec.qualificationRef(), spec.qualificationEvidenceRef(), null);
         core.setAvailability(spec.workerId(), true, spec.capacity());
+        WorkerRuntimeProfileBindingService.Binding runtimeBinding = runtimeProfiles.bind(
+                spec.workerId(), spec.runtimeProfileRef(), capability.capabilityRef(), at);
 
         var nowEligible = core.eligibleWorkers(capability.capabilityRef(), capability.minimumCapabilityLevel(),
                         capability.requiredCapacity(), at).stream()
@@ -117,7 +142,8 @@ public final class AutonomousStaffingService {
                 "capability-evidence:" + spec.capabilityEvidenceRef(),
                 "qualification-evidence:" + spec.qualificationEvidenceRef(),
                 "authority-envelope:" + spec.authorityEnvelopeRef(),
-                "runtime-profile:" + spec.runtimeProfileRef(),
+                "runtime-profile-bound:" + runtimeBinding.profile().profileRef(),
+                "runtime-actions=" + runtimeBinding.profile().actionRefs().stream().sorted().toList(),
                 "cost-limit:" + spec.costLimitRef(),
                 "lifecycle:" + spec.lifecycleRef()));
     }

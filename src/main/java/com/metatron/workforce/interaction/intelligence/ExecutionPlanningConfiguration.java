@@ -50,8 +50,9 @@ public class ExecutionPlanningConfiguration {
             case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
             case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
         };
-        return new ExecutionWorkPlanner(
+        ExecutionPlanProposalService frontierPlanner = new ExecutionWorkPlanner(
                 new LlmProviderRouter(clients), modelSelector, providers, objectMapper);
+        return new GeneralActionComposingExecutionPlanProposalService(frontierPlanner);
     }
 
     private static boolean present(String value) {

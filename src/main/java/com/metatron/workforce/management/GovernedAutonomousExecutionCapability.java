@@ -150,6 +150,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     executionId,
                     new Assignment(coreAssignment.assignmentId(), coreAssignment.workerId()),
                     new Authorization(coreAssignment.authorizationRef(), coreAssignment.workerId()),
+                    request.workSpec(),
                     clock.instant()));
             if (admitted != ExecutionState.ADMITTED) throw new SecurityException("execution-not-admitted:" + admitted);
 
