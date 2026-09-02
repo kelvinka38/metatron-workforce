@@ -94,11 +94,13 @@ PY
 }
 
 no_objective_for_update() {
-  local update="$1" payload
-  payload=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/management/objectives)
-  python3 - "$payload" "$update" <<'PY'
+  local update="$1" registry="$OUT/objectives-no-objective-$1.json"
+  curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/management/objectives > "$registry"
+  python3 - "$registry" "$update" <<'PY'
 import json,sys
-rows=json.loads(sys.argv[1]); needle=f'telegram:update:{sys.argv[2]}'
+with open(sys.argv[1],encoding='utf-8') as handle:
+    rows=json.load(handle)
+needle=f'telegram:update:{sys.argv[2]}'
 assert not any(needle in json.dumps(r,sort_keys=True) for r in rows), 'UNEXPECTED_OBJECTIVE'
 PY
 }
@@ -115,8 +117,11 @@ echo 'POINT5_PHASE=MULTI_ROLE_MEETING'
 MEETING_UPDATE=$(date +%s%N | cut -c1-18)
 MEETING_TEXT='Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn kế hoạch tăng trưởng Metatron và đưa recommendation. Hãy giữ rõ disagreement, risk và follow-up.'
 send_public "$MEETING_UPDATE" "$MEETING_TEXT"
-test "$(wait_receipt_delivered "$MEETING_UPDATE" 0)" = NONE
+MEETING_RECEIPT=$(wait_receipt_delivered "$MEETING_UPDATE" 0)
+test "$MEETING_RECEIPT" = NONE
+echo 'POINT5_MEETING_RECEIPT_DELIVERED=PASS'
 no_objective_for_update "$MEETING_UPDATE"
+echo 'POINT5_MEETING_NO_OBJECTIVE=PASS'
 
 MEETING_ID=''
 for _ in $(seq 1 120); do
@@ -222,6 +227,7 @@ done
 case "$TERMINAL" in COMPLETED|DELIVERED) ;; *) echo "POINT5_OBJECTIVE_TIMEOUT=$OID" >&2; exit 1 ;; esac
 RECEIPT_OID=$(wait_receipt_delivered "$OBJECTIVE_UPDATE" 1)
 test "$RECEIPT_OID" = "$OID"
+echo 'POINT5_OBJECTIVE_RECEIPT_DELIVERED=PASS'
 
 JOURNAL=$(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null | tail -1" || true)
 test -n "$JOURNAL"
