@@ -94,11 +94,13 @@ PY
 }
 
 no_objective_for_update() {
-  local update="$1" payload
-  payload=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/management/objectives)
-  python3 - "$payload" "$update" <<'PY'
+  local update="$1" registry="$OUT/objectives-no-objective-$1.json"
+  curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/management/objectives > "$registry"
+  python3 - "$registry" "$update" <<'PY'
 import json,sys
-rows=json.loads(sys.argv[1]); needle=f'telegram:update:{sys.argv[2]}'
+with open(sys.argv[1],encoding='utf-8') as handle:
+    rows=json.load(handle)
+needle=f'telegram:update:{sys.argv[2]}'
 assert not any(needle in json.dumps(r,sort_keys=True) for r in rows), 'UNEXPECTED_OBJECTIVE'
 PY
 }
