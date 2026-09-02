@@ -22,9 +22,11 @@ class WebSearchToolAdapterTest {
     @Test
     void parsesSearchResultsAndAttributesEvidence() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
+        int port = server.getAddress().getPort();
         server.createContext("/search", exchange -> {
+            String source = "http://127.0.0.1:" + port + "/a";
             String rss = "<?xml version=\"1.0\"?><rss><channel>"
-                    + "<item><title>Example result</title><link>https://example.com/a</link>"
+                    + "<item><title>Example result</title><link>" + source + "</link>"
                     + "<description>Example snippet &amp; evidence.</description></item>"
                     + "</channel></rss>";
             byte[] bytes = rss.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -32,9 +34,16 @@ class WebSearchToolAdapterTest {
             exchange.sendResponseHeaders(200, bytes.length);
             try (var output = exchange.getResponseBody()) { output.write(bytes); }
         });
+        server.createContext("/a", exchange -> {
+            String html = "<html><body>Example result with example evidence from the fetched source body.</body></html>";
+            byte[] bytes = html.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
         server.start();
 
-        String endpoint = "http://127.0.0.1:" + server.getAddress().getPort() + "/search?q=";
+        String endpoint = "http://127.0.0.1:" + port + "/search?q=";
         WebSearchToolAdapter adapter = new WebSearchToolAdapter(
                 HttpClient.newHttpClient(), Duration.ofSeconds(2), endpoint);
 
@@ -43,9 +52,10 @@ class WebSearchToolAdapterTest {
                 "internet:web-search", "search", "example result", java.util.List.of("read-only")));
 
         assertTrue(result.success(), result.output());
-        assertEquals("https://example.com/a", result.evidenceReferences().getFirst());
+        assertEquals("http://127.0.0.1:" + port + "/a", result.evidenceReferences().getFirst());
         assertTrue(result.output().contains("Example result"));
         assertTrue(result.output().contains("Example snippet & evidence."));
+        assertTrue(result.output().contains("source_excerpt=Example result with example evidence from the fetched source body."));
     }
 
     @Test
@@ -93,6 +103,9 @@ class WebSearchToolAdapterTest {
         assertEquals("president indonesia",
                 WebSearchToolAdapter.compactSearchQuery(
                         "Ai current đang là president Indonesia? check nguồn current rồi answer"));
+        assertEquals("version stable python",
+                WebSearchToolAdapter.compactSearchQuery(
+                        "Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời."));
     }
 
     @Test
