@@ -2,7 +2,7 @@ name: Runtime Conformance Point 4 Production Acceptance
 
 on:
   workflow_run:
-    workflows: ["Production Deploy"]
+    workflows: ["Highway Production Deploy"]
     types: [completed]
   workflow_dispatch:
     inputs:
