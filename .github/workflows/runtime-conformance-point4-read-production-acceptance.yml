@@ -1,14 +1,11 @@
-name: Runtime Conformance Point 4 Read Production Acceptance
+name: Runtime Conformance Point 4 Read Production Acceptance (Manual Forensic)
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
         description: Exact deployed SHA to validate
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -16,11 +13,10 @@ permissions:
 
 concurrency:
   group: runtime-conformance-point4-read-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   cognitive-repository-audit:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 25
@@ -28,7 +24,7 @@ jobs:
       - name: Accept live read-only Cognitive Worker
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
+          TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
