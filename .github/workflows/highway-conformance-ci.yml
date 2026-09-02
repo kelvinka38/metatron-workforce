@@ -14,6 +14,9 @@ on:
       - '.github/workflows/production-acceptance-highway-v2.yml'
       - '.github/workflows/intelligence-product-live-acceptance.yml'
       - '.github/workflows/runtime-conformance-point2.yml'
+      - '.github/workflows/runtime-conformance-point4-production-acceptance.yml'
+      - '.github/workflows/runtime-conformance-point4-read-production-acceptance.yml'
+      - '.github/workflows/runtime-conformance-point5-production-acceptance.yml'
       - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
@@ -33,33 +36,60 @@ jobs:
           bash -n scripts/production-acceptance-highway.sh
           bash -n scripts/highway-intelligence-lane.sh
           bash -n scripts/runtime-conformance-point2.sh
+          bash -n scripts/runtime-conformance-point5.sh
           echo 'HIGHWAY_SHELLS=PASS'
-      - name: Enforce one automatic capacity-phased production orchestrator
+      - name: Enforce one automatic latest-SHA production lane
         shell: bash
         run: |
           set -euo pipefail
           H=.github/workflows/production-acceptance-highway-v2.yml
+          D=.github/workflows/production-deploy.yml
+          P4=.github/workflows/runtime-conformance-point4-production-acceptance.yml
+          P4R=.github/workflows/runtime-conformance-point4-read-production-acceptance.yml
+          P5=.github/workflows/runtime-conformance-point5-production-acceptance.yml
+
           grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
           ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
           ! grep -q 'workflow_run:' .github/workflows/runtime-conformance-point2.yml
-          grep -q 'HIGHWAY_REVISION: capacity-phased-' "$H"
+          ! grep -q 'workflow_run:' "$P4"
+          ! grep -q 'workflow_run:' "$P4R"
+          ! grep -q 'workflow_run:' "$P5"
+          grep -q 'workflow_dispatch:' "$P4"
+          grep -q 'workflow_dispatch:' "$P4R"
+          grep -q 'workflow_dispatch:' "$P5"
+
+          grep -q 'HIGHWAY_REVISION: single-production-lane-' "$H"
+          grep -q 'group: metatron-production-lane' "$H"
+          grep -q 'cancel-in-progress: true' "$H"
+          grep -q 'group: metatron-production-lane' "$D"
+          grep -q 'cancel-in-progress: true' "$D"
+
           grep -q "scripts/production-acceptance-highway.sh" "$H"
           grep -q "scripts/highway-intelligence-lane.sh" "$H"
           grep -q "scripts/runtime-conformance-point2.sh" "$H"
-          ! grep -Eq 'production-acceptance-highway\.sh.*&|highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&' "$H"
+          grep -q "scripts/runtime-conformance-point5.sh" "$H"
+          grep -q "scripts/runtime-conformance-point5.sh" "$P5"
+          ! grep -Eq 'production-acceptance-highway\.sh.*&|highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&|runtime-conformance-point5\.sh.*&' "$H"
+
           python3 - <<'PY'
           from pathlib import Path
           deploy=Path('.github/workflows/production-deploy.yml').read_text()
           h=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
-          positions=[h.index('scripts/production-acceptance-highway.sh >'),h.index('scripts/highway-intelligence-lane.sh >'),h.index('scripts/runtime-conformance-point2.sh >')]
-          assert positions==sorted(positions) and len(set(positions))==3,positions
+          positions=[
+              h.index('scripts/production-acceptance-highway.sh >'),
+              h.index('scripts/highway-intelligence-lane.sh >'),
+              h.index('scripts/runtime-conformance-point2.sh >'),
+              h.index('scripts/runtime-conformance-point5.sh >'),
+          ]
+          assert positions==sorted(positions) and len(set(positions))==4,positions
           build=deploy.split('  deploy-production:',1)[0]
           deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
           assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
-          assert 'group: metatron-live-deploy' in deploy_job and 'cancel-in-progress: false' in deploy_job
-          assert 'group: metatron-production-acceptance-highway' in h and 'cancel-in-progress: true' in h
+          assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: true' in deploy_job
+          assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
           print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
-          print('HIGHWAY_COALESCING_POLICY=PASS')
+          print('HIGHWAY_LATEST_SHA_WINS_POLICY=PASS')
+          print('HIGHWAY_RATIFIED_POINT_WORKFLOWS_MANUAL_ONLY=PASS')
           PY
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
