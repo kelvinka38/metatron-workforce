@@ -49,12 +49,25 @@ public class GeneralExecutionRuntimeConfiguration {
     }
 
     @Bean
+    RepositoryWorkspaceMaterializationService repositoryWorkspaceMaterializationService(
+            @Value("${GITHUB_TOKEN:}") String githubToken,
+            ObjectiveWorkspaceService workspaces,
+            ObjectMapper json) {
+        HttpClient http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        return new RepositoryWorkspaceMaterializationService(http, githubToken, workspaces, json);
+    }
+
+    @Bean
     GeneralWorkspaceActionCatalog generalWorkspaceActionCatalog(
             ObjectiveWorkspaceService workspaces,
             WorkerExecutionSandboxService sandbox,
             WorkerRuntimeProfileBindingService profiles,
+            RepositoryWorkspaceMaterializationService repositories,
             ObjectMapper json) {
-        return new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, json);
+        return new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, repositories, json);
     }
 
     @Bean
