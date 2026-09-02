@@ -62,6 +62,7 @@ public final class WorkplaceMeetingService {
         if (roles.size() < 2) throw new IllegalArgumentException("Meeting Room requires at least two explicit roles");
 
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
+        String followUpRef = "meeting-follow-up:" + id;
         String now = Instant.now().toString();
         String organizer = "human:" + interaction.human().actorId();
         List<String> participants = new ArrayList<>();
@@ -94,7 +95,10 @@ public final class WorkplaceMeetingService {
         store.save(current);
 
         MeetingRoleDeliberator.Deliberation synthesis = deliberator.synthesize(interaction.text(), contributions, conversationContext);
-        List<String> actionItems = List.of("Founder reviews the recommendation; any consequential action requires a separate authorized Objective/Decision path.");
+        List<String> actionItems = List.of(
+                "handoff_ref=" + followUpRef
+                        + "; Founder may use this durable reference for a separately authorized Objective/Decision. "
+                        + "The Meeting itself creates no execution authority.");
         lifecycle.add(MeetingRecord.Status.CLOSED.name());
         String closedAt = Instant.now().toString();
         List<String> evidence = new ArrayList<>(baseEvidence(interaction));
@@ -102,6 +106,8 @@ public final class WorkplaceMeetingService {
             if (!c.providerReference().isBlank()) evidence.add(c.providerReference());
         }
         if (!synthesis.providerReference().isBlank()) evidence.add(synthesis.providerReference());
+        evidence.add("meeting-handoff:" + followUpRef
+                + ":route=authorized-objective-or-decision:authority-created=false");
         current = new MeetingRecord(id, interaction.organizationContextId(), interaction.conversationId(),
                 interaction.channelProvider(), interaction.externalMessageReference(), "Institutional multi-role meeting",
                 interaction.text(), organizer, participants, agenda, contributions, synthesis.text(), actionItems,
@@ -184,9 +190,10 @@ public final class WorkplaceMeetingService {
                 .append("meeting_id=").append(m.meetingId()).append('\n')
                 .append("status=").append(m.status()).append('\n')
                 .append("participants=").append(String.join(", ", m.participants())).append('\n')
-                .append("authority_created=false\n\n");
+                .append("authority_created=false\n")
+                .append("follow_up_ref=").append(m.followUpReference()).append("\n\n");
         for (MeetingRecord.Contribution c : m.contributions()) {
-            out.append("[" ).append(c.role()).append("]\n").append(c.text()).append("\n\n");
+            out.append("[").append(c.role()).append("]\n").append(c.text()).append("\n\n");
         }
         out.append("[MEETING SYNTHESIS]\n").append(m.recommendation())
                 .append("\n\nFollow-up: ").append(String.join(" ", m.actionItems()));
