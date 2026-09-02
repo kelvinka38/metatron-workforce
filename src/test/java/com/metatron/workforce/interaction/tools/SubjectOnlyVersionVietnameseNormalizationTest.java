@@ -17,14 +17,15 @@ class SubjectOnlyVersionVietnameseNormalizationTest {
     }
 
     @Test
-    void extractsOnlyPythonFromNormalizedVietnameseRequirementAndRecoversVersion() {
+    void extractsOnlyPythonFromNormalizedVietnameseRequirementAndUsesOfficialVersionDiscovery() {
         AtomicReference<String> delegatedQuery = new AtomicReference<>();
         ToolAdapter delegate = new ToolAdapter() {
             @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
             @Override public ToolResult execute(ToolRequest request) {
                 delegatedQuery.set(request.input());
                 return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(), true,
-                        "WEB SEARCH RESULTS\nquery=python\nsource_excerpt=Python 3.14.7 is available from python.org.",
+                        "WEB SEARCH RESULTS\nquery=" + request.input()
+                                + "\nsource_excerpt=Python 3.14.7 is available from the official Python downloads page.",
                         List.of("https://www.python.org/downloads/"));
             }
         };
@@ -36,7 +37,7 @@ class SubjectOnlyVersionVietnameseNormalizationTest {
                 "internet:web-search", "search", requirement, List.of("read-only")));
 
         assertTrue(result.success(), result.output());
-        assertEquals("python", delegatedQuery.get());
+        assertEquals("python official latest stable version download release", delegatedQuery.get());
         assertEquals(Set.of("python"), SubjectOnlyVersionWebSearchRecoveryAdapter.subjectTokens(requirement));
     }
 }
