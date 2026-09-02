@@ -64,7 +64,7 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
                 request.target(),
                 request.operation(),
                 subjectQuery,
-                request.constraints());
+                request.authorityContext());
         ToolResult delegated;
         try {
             delegated = Objects.requireNonNull(delegate.execute(delegatedRequest), "delegated result");
