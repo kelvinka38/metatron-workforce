@@ -49,6 +49,43 @@ class WebSearchToolAdapterTest {
     }
 
     @Test
+    void fetchedSourceExcerptCanEstablishRequirementRelevance() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        int port = server.getAddress().getPort();
+        server.createContext("/search", exchange -> {
+            String source = "http://127.0.0.1:" + port + "/python";
+            String rss = "<?xml version=\"1.0\"?><rss><channel>"
+                    + "<item><title>Python downloads</title><link>" + source + "</link>"
+                    + "<description>Official Python download page.</description></item>"
+                    + "</channel></rss>";
+            byte[] bytes = rss.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/rss+xml");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.createContext("/python", exchange -> {
+            String html = "<html><body>Latest stable Python version: Python 3.14.2.</body></html>";
+            byte[] bytes = html.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/html");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+
+        String endpoint = "http://127.0.0.1:" + port + "/search?q=";
+        WebSearchToolAdapter adapter = new WebSearchToolAdapter(
+                HttpClient.newHttpClient(), Duration.ofSeconds(2), endpoint);
+
+        ToolResult result = adapter.execute(new ToolRequest(
+                "web-python", "telegram:human", WebSearchToolAdapter.CAPABILITY,
+                "internet:web-search", "search", "Python stable version", java.util.List.of("read-only")));
+
+        assertTrue(result.success(), result.output());
+        assertEquals("http://127.0.0.1:" + port + "/python", result.evidenceReferences().getFirst());
+        assertTrue(result.output().contains("source_excerpt=Latest stable Python version: Python 3.14.2."));
+    }
+
+    @Test
     void rejectsOffTopicRssResultsAsRequirementEvidence() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/search", exchange -> {
