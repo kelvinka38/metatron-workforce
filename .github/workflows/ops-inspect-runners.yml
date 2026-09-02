@@ -20,3 +20,26 @@ jobs:
           if sudo -n true 2>/dev/null; then echo SUDO_NONINTERACTIVE=YES; else echo SUDO_NONINTERACTIVE=NO; fi
           sudo -n systemctl list-units --type=service --all 2>/dev/null | grep -i 'actions.runner' || true
           ps -ef | grep -E 'Runner.Listener|runsvc.sh' | grep -v grep || true
+
+          echo '=== WORKFORCE CURRENT ==='
+          docker ps -a --filter name=deploy-workforce-1 --no-trunc || true
+          WID=$(docker ps -aq --filter name=deploy-workforce-1 | head -1)
+          if [ -n "$WID" ]; then
+            docker inspect "$WID" --format 'workforce_image={{.Config.Image}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{end}} exit={{.State.ExitCode}}' || true
+          fi
+
+          echo '=== SANDBOX FORENSICS ==='
+          docker ps -a --filter name=deploy-workforce-sandbox-1 --no-trunc || true
+          SID=$(docker ps -aq --filter name=deploy-workforce-sandbox-1 | head -1)
+          if [ -n "$SID" ]; then
+            docker inspect "$SID" --format 'sandbox_image={{.Config.Image}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{end}} exit={{.State.ExitCode}} error={{.State.Error}} oom={{.State.OOMKilled}}' || true
+            echo '--- sandbox logs ---'
+            docker logs "$SID" 2>&1 || true
+            echo '--- sandbox mounts ---'
+            docker inspect "$SID" --format '{{range .Mounts}}{{println .Type .Name .Source .Destination .RW}}{{end}}' || true
+            echo '--- sandbox env keys only ---'
+            docker inspect "$SID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed 's/=.*$/=<redacted>/' | sort || true
+          fi
+
+          echo '=== OBJECTIVE WORKSPACE VOLUME ==='
+          docker volume inspect metatron-workforce-objective-workspaces || true
