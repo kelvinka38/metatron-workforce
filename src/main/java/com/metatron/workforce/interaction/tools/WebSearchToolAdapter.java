@@ -55,7 +55,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private static final String OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json";
     private static final String OPEN_METEO_CURRENT = "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto";
     private static final int SEARCH_RESULT_LIMIT = 5;
-    private static final int FETCH_RESULT_LIMIT = 3;
+    private static final int FETCH_RESULT_LIMIT = 5;
     private static final int MAX_EXCERPT_CHARS = 5000;
     private static final Set<String> KNOWN_CURRENCIES = Set.of(
             "USD", "VND", "EUR", "GBP", "JPY", "CNY", "KRW", "SGD", "THB", "AUD", "CAD",
@@ -65,7 +65,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
             "check", "answer", "information", "external", "reality", "please", "new", "fresh",
             "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "nhat", "neu", "nguon", "cho", "bao", "nhieu",
-            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi", "gi", "ai");
+            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi", "gi", "ai", "loi");
 
     private static final Pattern ITEM = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
@@ -598,9 +598,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                     excerpt = fetchReadableExcerpt(result.url());
                     fetched++;
                 }
-                String candidateEvidence = result.title() + " " + result.description()
-                        + (excerpt.isBlank() ? "" : " " + excerpt);
-                if (materiallyRelevant(query, candidateEvidence)) {
+                if (!excerpt.isBlank() && materiallyRelevant(query, excerpt)) {
                     relevant.add(new SearchEvidence(result, excerpt));
                 }
             }
@@ -613,7 +611,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                 Result result = item.result();
                 output.append('[').append(index).append("] ").append(result.title()).append('\n')
                         .append("url=").append(result.url()).append('\n').append("snippet=").append(result.description()).append('\n');
-                if (!item.excerpt().isBlank()) output.append("source_excerpt=").append(item.excerpt()).append('\n');
+                output.append("source_excerpt=").append(item.excerpt()).append('\n');
                 output.append('\n');
                 evidence.add(result.url());
                 index++;

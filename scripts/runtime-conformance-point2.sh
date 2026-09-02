@@ -52,7 +52,7 @@ wait_terminal() {
 }
 
 assert_current_answer() {
-  local update_id="$1" text="$2" subject="$3" require_numeric="$4" since case_file
+  local update_id="$1" text="$2" subject="$3" require_numeric="$4" source_terms="$5" since case_file
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   send_update "$update_id" "$text"
   wait_terminal "$since" "$update_id"
@@ -63,16 +63,28 @@ assert_current_answer() {
   test -n "$case_file"
   printf '%s\n' "$case_file" > "$OUT/${update_id}-case-path.txt"
   docker exec "$CID" cat "$case_file" | tee "$OUT/${update_id}-case.json" | python3 -c '
-import json,re,sys
-case=json.load(sys.stdin); subject=sys.argv[1]; numeric=sys.argv[2]=="1"
+import json,re,sys,urllib.request
+case=json.load(sys.stdin); subject=sys.argv[1]; numeric=sys.argv[2]=="1"; source_terms=[x for x in sys.argv[3].split(",") if x]
 reqs=case.get("informationRequirements") or []
 assert reqs, "NO_INFORMATION_REQUIREMENTS"
 assert not any(str(r.get("question","")).strip().lower()=="current external evidence" for r in reqs), "GENERIC_FRESH_QUERY"
 matching=[r for r in reqs if re.search(subject,str(r.get("question","")),re.I)]
 assert matching, "SEMANTIC_REQUIREMENT_LOST_SUBJECT"
 assert any(str(r.get("status"))=="SATISFIED" for r in matching), "SEMANTIC_REQUIREMENT_NOT_SATISFIED"
-refs=[str(x) for r in matching for x in (r.get("evidenceReferences") or [])]
-assert any(x.startswith(("http://","https://")) for x in refs), "NO_EXTERNAL_EVIDENCE"
+refs=[str(x) for r in matching for x in (r.get("evidenceReferences") or []) if str(x).startswith(("http://","https://"))]
+assert refs, "NO_EXTERNAL_EVIDENCE"
+validated=[]
+for url in refs:
+    try:
+        req=urllib.request.Request(url,headers={"User-Agent":"Metatron-Point2-Acceptance/1.0"})
+        with urllib.request.urlopen(req,timeout=12) as response:
+            body=response.read(1000000).decode("utf-8","ignore")
+        text=re.sub(r"<[^>]+>"," ",body)
+        text=re.sub(r"\s+"," ",text)
+        if all(re.search(term,text,re.I) for term in source_terms): validated.append(url)
+    except Exception:
+        pass
+assert validated, "SOURCE_LEVEL_EVIDENCE_ENTITY_MISMATCH"
 answer=str(case.get("latestConclusion") or "").strip(); assert answer, "EMPTY_ANSWER"
 low=answer.lower()
 refusals=("i cannot provide","i can’t provide","unable to provide","insufficient information","not enough information","does not provide","cannot determine","không thể cung cấp","không đủ thông tin","chưa đủ thông tin","không thể xác định")
@@ -81,7 +93,8 @@ assert re.search(subject,answer,re.I), "ANSWER_LOST_SUBJECT"
 if numeric: assert re.search(r"\d",answer), "ANSWER_MISSING_CURRENT_VALUE"
 print("CURRENT_ANSWER_PASS",answer[:500].replace("\n"," "))
 print("CURRENT_EVIDENCE_REFS",refs[:5])
-' "$subject" "$require_numeric"
+print("SOURCE_LEVEL_EVIDENCE_PASS",validated[:5])
+' "$subject" "$require_numeric" "$source_terms"
 }
 
 BASE_ID=$(date +%s%N | cut -c1-14)
@@ -93,13 +106,14 @@ LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 printf '%s\n' "$LOGS" > "$OUT/${CASUAL}-runtime.log"
 ! grep -Eq "execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL|telegram_answer_ready update_id=$CASUAL.*objective_id=[^[:space:]]+" <<<"$LOGS"
 
-assert_current_answer "$VERSION" 'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' 'Python|stable|version|phiên bản' 1
-assert_current_answer "$LEADER" 'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' 'Indonesia|Tổng thống|President' 0
+assert_current_answer "$VERSION" 'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' 'Python|stable|version|phiên bản' 1 'Python,3\.[0-9]+'
+assert_current_answer "$LEADER" 'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' 'Indonesia|Tổng thống|President' 0 'Indonesia,(?:President|Presiden)'
 
 echo 'POINT2_LOCAL_LIVE_RUNTIME=PASS'
 echo 'POINT2_CASUAL_NOT_OBJECTIVE=PASS'
 echo 'POINT2_CURRENT_EXTERNAL_NOT_OBJECTIVE=PASS'
 echo 'POINT2_DOMAIN_INDEPENDENT_SEMANTIC_REQUIREMENTS=PASS'
 echo 'POINT2_EXTERNAL_EVIDENCE_ACQUIRED=PASS'
+echo 'POINT2_SOURCE_LEVEL_EVIDENCE_RELEVANCE=PASS'
 echo 'POINT2_USEFUL_NON_REFUSAL_ANSWER=PASS'
 echo 'POINT2_NATURAL_TASK_ROUTING=PASS'
