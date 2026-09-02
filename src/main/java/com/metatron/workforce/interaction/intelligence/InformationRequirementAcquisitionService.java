@@ -240,11 +240,6 @@ public final class InformationRequirementAcquisitionService {
                                        InformationRequirement requirement,
                                        String requester,
                                        String caseId) {
-        // New requirements carry the frontier-normalized subject directly. Persisted Cases created before
-        // that invariant may still contain the legacy generic label; repair those at the execution boundary
-        // so a revalidated current turn searches for the Human's semantic objective rather than the words
-        // "current external evidence". Search wording is then lexically canonicalized without changing the
-        // Case requirement itself, so multilingual Human phrasing can match equivalent external evidence.
         String requirementQuestion = requirement.question().trim();
         String query = requirementQuestion.isBlank()
                 || requirementQuestion.equalsIgnoreCase(LEGACY_GENERIC_CURRENT_QUERY)
@@ -287,15 +282,18 @@ public final class InformationRequirementAcquisitionService {
                 .replaceAll("(?iu)kiểm\\s+tra", "check")
                 .replaceAll("(?iu)trả\\s+lời", "answer")
                 .replaceAll("(?iu)nêu\\s+nguồn", "cite source")
+                .replaceAll("(?iu)(?<!\\p{L})bằng\\s+cách(?!\\p{L})", "using")
+                .replaceAll("(?iu)(?<!\\p{L})tra\\s+cứu(?!\\p{L})", "check")
+                .replaceAll("(?iu)(?<!\\p{L})kèm\\s+theo(?!\\p{L})", "with")
+                .replaceAll("(?iu)(?<!\\p{L})người\\s+dùng(?!\\p{L})", "user")
+                .replaceAll("(?iu)(?<!\\p{L})của(?!\\p{L})", "of")
+                .replaceAll("(?iu)(?<!\\p{L})từ(?!\\p{L})", "from")
+                .replaceAll("(?iu)(?<!\\p{L})và(?!\\p{L})", "and")
+                .replaceAll("(?iu)(?<!\\p{L})nguồn(?!\\p{L})", "source")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
 
-    /**
-     * Converts verbose multilingual current-version requirements into a bounded search-engine query
-     * before the first external call. This is answer-type generic (any versioned subject) and keeps
-     * the subject dynamic; it never embeds a product name or a version value.
-     */
     static String searchOptimizedExternalQuery(String value) {
         if (value == null || value.isBlank()) return "";
         String canonical = value.trim().replaceAll("\\s+", " ");
@@ -309,7 +307,7 @@ public final class InformationRequirementAcquisitionService {
                 .replaceAll("(?iu)\\b(?:check|answer|please|cite|source|sources|data|information|external|fresh|user|users)\\b", " ")
                 .replaceAll("(?iu)(?<![\\p{L}\\p{N}_])(?:của|từ|và|là|gì|nguồn|người\\s+dùng|cho|hãy|đang|rồi)(?![\\p{L}\\p{N}_])", " ")
                 .replaceAll("(?iu)\\b(?:what|which|is|are|the|a|an|of|from|for|and|with|using|to)\\b", " ")
-                .replaceAll("[?!.;,]+", " ")
+                .replaceAll("[()?!.,;]+", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
         if (subject.isBlank()) return canonical;
