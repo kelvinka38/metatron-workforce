@@ -29,6 +29,10 @@ import java.util.regex.Pattern;
 public final class GitHubRepositoryObservationVerifier implements ObservationVerifier {
     private static final Pattern REPOSITORY = Pattern.compile("(?i)(?:https?://github\\.com/)?([a-z0-9_.-]+)/([a-z0-9_.-]+)");
     private static final Pattern PR_EVIDENCE = Pattern.compile("github-pr:https://github\\.com/([^/]+/[^/]+)/pull/(\\d+)");
+    private static final Pattern PROBE_EVIDENCE = Pattern.compile("github-gs2-probe:([0-9a-f]{16})");
+    private static final Pattern GS2_BRANCH = Pattern.compile("autonomy/gs2-([0-9a-f]{16})");
+    private static final String UNSET_SENTINEL = "GS2_AUTONOMOUS_PROBE=UNSET";
+    private static final String PROBE_PREFIX = "GS2_AUTONOMOUS_PROBE=";
 
     private final HttpClient http;
     private final ObjectMapper json;
@@ -120,17 +124,19 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         boolean onlyAllowedFile = files.isArray() && files.size() == 1
                 && RepositoryPullRequestAutonomousCapability.ALLOWED_PATH.equals(files.get(0).path("filename").asText());
 
-        JsonNode contentNode = get("/repos/" + pull.repository() + "/contents/"
-                + encodePath(RepositoryPullRequestAutonomousCapability.ALLOWED_PATH) + "?ref=" + encode(head));
-        String encoded = contentNode.path("content").asText().replace("\n", "");
-        String content = encoded.isBlank() ? "" : new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
-        boolean repaired = content.contains("Persistent autonomous runner with wake/reconcile")
-                && content.contains("Durable versioned DAG")
-                && content.contains("L9 controls implemented/deployed")
-                && !content.contains("Missing persistent self-driving runner");
+        String mainContent = readContent(pull.repository(), RepositoryPullRequestAutonomousCapability.ALLOWED_PATH, "main");
+        String branchContent = readContent(pull.repository(), RepositoryPullRequestAutonomousCapability.ALLOWED_PATH, head);
+        String evidenceProbe = probeEvidence(executionEvidenceReferences);
+        Matcher branchMatcher = GS2_BRANCH.matcher(head);
+        String branchProbe = branchMatcher.matches() ? branchMatcher.group(1) : "";
+        boolean probeBound = !branchProbe.isBlank() && branchProbe.equals(evidenceProbe);
+        boolean mainFixtureValid = occurrences(mainContent, UNSET_SENTINEL) == 1;
+        String expectedBranchContent = mainFixtureValid && probeBound
+                ? replaceUniqueSentinel(mainContent, branchProbe) : "";
+        boolean exactBoundedMutation = mainFixtureValid && probeBound && expectedBranchContent.equals(branchContent);
         boolean noMergeClaim = executionEvidenceReferences.stream().anyMatch("github-merge-performed:false"::equals);
-        boolean pass = open && unmerged && "main".equals(base) && head.startsWith("autonomy/gs2-")
-                && onlyAllowedFile && repaired && noMergeClaim;
+        boolean pass = open && unmerged && "main".equals(base) && onlyAllowedFile
+                && exactBoundedMutation && noMergeClaim;
 
         List<String> evidence = List.of(
                 "github-pr-observation:https://github.com/" + pull.repository() + "/pull/" + pull.number(),
@@ -140,20 +146,49 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
                 "github-pr-observation-head:" + head,
                 "github-pr-observation-files:" + files.size(),
                 "github-pr-observation-allowed-path-only:" + onlyAllowedFile,
-                "github-pr-observation-gap-matrix-repaired:" + repaired,
+                "github-pr-observation-main-fixture-valid:" + mainFixtureValid,
+                "github-pr-observation-probe-bound:" + probeBound,
+                "github-pr-observation-exact-bounded-mutation:" + exactBoundedMutation,
                 "github-pr-observation-fresh-api-read:true");
         return new ObservationReport(
                 "observation:github-pr:" + pull.number() + ":" + requirement.requirementId(),
                 requirement.requirementId(), requirement.objectiveId(), requirement.target(),
-                pass ? "controlled defect repaired in open unmerged PR; Founder merge boundary preserved"
-                        : "PR mutation does not satisfy bounded Golden Slice 2 constraints",
+                pass ? "fresh GitHub reads prove the open unmerged PR contains exactly the authorized GS2 sentinel mutation"
+                        : "PR mutation does not satisfy the exact bounded Golden Slice 2 contract",
                 "authoritative-github-api-read", at, at, evidence,
                 0.99,
                 ObservationReport.Quality.HIGH,
                 pass ? "" : "open=" + open + ",unmerged=" + unmerged + ",base=" + base
-                        + ",head=" + head + ",allowedFile=" + onlyAllowedFile + ",repaired=" + repaired
-                        + ",noMergeClaim=" + noMergeClaim,
+                        + ",head=" + head + ",allowedFile=" + onlyAllowedFile
+                        + ",mainFixtureValid=" + mainFixtureValid + ",probeBound=" + probeBound
+                        + ",exactBoundedMutation=" + exactBoundedMutation + ",noMergeClaim=" + noMergeClaim,
                 pass ? ObservationReport.CriterionResult.PASS : ObservationReport.CriterionResult.FAIL);
+    }
+
+    private String readContent(String repository, String path, String ref) throws Exception {
+        JsonNode node = get("/repos/" + repository + "/contents/" + encodePath(path) + "?ref=" + encode(ref));
+        String encoded = node.path("content").asText().replace("\n", "");
+        return encoded.isBlank() ? "" : new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
+    }
+
+    private static String replaceUniqueSentinel(String mainContent, String probe) {
+        if (occurrences(mainContent, UNSET_SENTINEL) != 1) {
+            throw new IllegalStateException("canonical main must contain exactly one GS2 UNSET sentinel");
+        }
+        int index = mainContent.indexOf(UNSET_SENTINEL);
+        return mainContent.substring(0, index) + PROBE_PREFIX + probe
+                + mainContent.substring(index + UNSET_SENTINEL.length());
+    }
+
+    private static int occurrences(String value, String needle) {
+        if (value == null || value.isEmpty() || needle.isEmpty()) return 0;
+        int count = 0;
+        int from = 0;
+        while ((from = value.indexOf(needle, from)) >= 0) {
+            count++;
+            from += needle.length();
+        }
+        return count;
     }
 
     private PullEvidence pullEvidence(List<String> evidence) {
@@ -162,6 +197,14 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
             if (matcher.matches()) return new PullEvidence(matcher.group(1), Integer.parseInt(matcher.group(2)));
         }
         return null;
+    }
+
+    private static String probeEvidence(List<String> evidence) {
+        for (String value : evidence) {
+            Matcher matcher = PROBE_EVIDENCE.matcher(value == null ? "" : value.trim());
+            if (matcher.matches()) return matcher.group(1);
+        }
+        return "";
     }
 
     private JsonNode get(String path) throws Exception {
