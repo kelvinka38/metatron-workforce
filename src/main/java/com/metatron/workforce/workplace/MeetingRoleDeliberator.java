@@ -13,8 +13,10 @@ import com.metatron.workforce.interaction.llm.OpenAiLlmProviderClient;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /** Role identity is institutional; provider identity is only inference substrate. */
@@ -39,8 +41,8 @@ public interface MeetingRoleDeliberator {
 
     final class ProviderBacked implements MeetingRoleDeliberator {
         private final LlmProviderRouter router;
-        private final LlmProvider provider;
-        private final String model;
+        private final List<LlmProvider> providerOrder;
+        private final Map<LlmProvider, String> models;
 
         ProviderBacked(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                        String configuredProvider, String openAiModel, String googleModel, String anthropicModel,
@@ -54,12 +56,32 @@ public interface MeetingRoleDeliberator {
             if (present(anthropicApiKey)) clients.add(new AnthropicLlmProviderClient(anthropicApiKey, http, json));
             if (clients.isEmpty()) throw new IllegalStateException("Meeting Room requires at least one configured frontier provider");
             this.router = new LlmProviderRouter(clients);
-            this.provider = chooseProvider(clients, configuredProvider);
-            this.model = switch (provider) {
-                case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini");
-                case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
-                case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
-            };
+            LlmProvider preferred = chooseProvider(clients, configuredProvider);
+            this.providerOrder = orderedProviders(clients, preferred);
+            EnumMap<LlmProvider, String> configuredModels = new EnumMap<>(LlmProvider.class);
+            for (LlmProviderClient client : clients) {
+                configuredModels.put(client.provider(), switch (client.provider()) {
+                    case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini");
+                    case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
+                    case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
+                });
+            }
+            this.models = Map.copyOf(configuredModels);
+        }
+
+        /** Test seam for deterministic provider-failover conformance without external network calls. */
+        ProviderBacked(LlmProviderRouter router, List<LlmProvider> providerOrder, Map<LlmProvider, String> models) {
+            this.router = Objects.requireNonNull(router, "router");
+            Objects.requireNonNull(providerOrder, "providerOrder");
+            Objects.requireNonNull(models, "models");
+            if (providerOrder.isEmpty()) throw new IllegalArgumentException("provider order required");
+            for (LlmProvider provider : providerOrder) {
+                if (!models.containsKey(provider) || models.get(provider) == null || models.get(provider).isBlank()) {
+                    throw new IllegalArgumentException("model required for Meeting provider: " + provider);
+                }
+            }
+            this.providerOrder = List.copyOf(providerOrder);
+            this.models = Map.copyOf(models);
         }
 
         @Override
@@ -99,9 +121,29 @@ public interface MeetingRoleDeliberator {
         }
 
         private Deliberation complete(String system, String input) {
-            LlmResponse response = router.complete(new LlmRequest(provider, model, system, input));
-            return new Deliberation(response.text(), "provider:" + response.provider().name().toLowerCase(Locale.ROOT)
-                    + ":model:" + response.model() + ":request:" + String.valueOf(response.providerRequestReference()));
+            List<String> failures = new ArrayList<>();
+            RuntimeException lastFailure = null;
+            for (LlmProvider provider : providerOrder) {
+                String model = models.get(provider);
+                try {
+                    LlmResponse response = router.complete(new LlmRequest(provider, model, system, input));
+                    return new Deliberation(response.text(), "provider:" + response.provider().name().toLowerCase(Locale.ROOT)
+                            + ":model:" + response.model() + ":request:" + String.valueOf(response.providerRequestReference()));
+                } catch (RuntimeException failure) {
+                    lastFailure = failure;
+                    failures.add(provider.name().toLowerCase(Locale.ROOT) + "=" + compactFailure(failure));
+                }
+            }
+            throw new IllegalStateException("meeting_provider_exhausted:" + String.join(";", failures), lastFailure);
+        }
+
+        private static List<LlmProvider> orderedProviders(List<LlmProviderClient> clients, LlmProvider preferred) {
+            List<LlmProvider> order = new ArrayList<>();
+            order.add(preferred);
+            for (LlmProviderClient client : clients) {
+                if (client.provider() != preferred && !order.contains(client.provider())) order.add(client.provider());
+            }
+            return List.copyOf(order);
         }
 
         private static LlmProvider chooseProvider(List<LlmProviderClient> clients, String configured) {
@@ -111,6 +153,13 @@ public interface MeetingRoleDeliberator {
                 throw new IllegalStateException("configured Meeting provider is unavailable: " + requested);
             }
             return clients.get(0).provider();
+        }
+
+        private static String compactFailure(RuntimeException failure) {
+            String message = failure.getMessage();
+            String value = failure.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ":" + message);
+            value = value.replaceAll("\\s+", " ").trim();
+            return value.length() <= 320 ? value : value.substring(0, 320);
         }
 
         private static String safeContext(String value) {
