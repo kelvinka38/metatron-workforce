@@ -43,7 +43,7 @@ ALLOWED = {x.strip() for x in os.environ.get(
     "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw"
 ).split(",") if x.strip()}
 WORKSPACE_RE = re.compile(r"^[0-9a-f]{32}$")
-SHELL_DENY = re.compile(r"[;&|><`$\\n\\r]|\\$\\(")
+SHELL_DENY = re.compile(r"[;&|><`$\n\r]|\$\(")
 MAX_REQUEST = 128_000
 
 
