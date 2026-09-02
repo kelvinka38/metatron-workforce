@@ -44,6 +44,7 @@ class Point5WorkplaceRuntimeConformanceTest {
         String response = service.handle(interaction, "prior conversation context");
         assertTrue(response.startsWith("METATRON MEETING COMPLETED"));
         assertTrue(response.contains("authority_created=false"));
+        assertTrue(response.contains("follow_up_ref=meeting-follow-up:meeting:"));
         assertTrue(response.contains("[Head of Strategy]"));
         assertTrue(response.contains("[Head of Finance]"));
         assertTrue(response.contains("[Head of Operations]"));
@@ -56,6 +57,10 @@ class Point5WorkplaceRuntimeConformanceTest {
         assertEquals(3, meeting.contributions().stream().map(MeetingRecord.Contribution::participant).distinct().count());
         assertFalse(meeting.recommendation().isBlank());
         assertFalse(meeting.actionItems().isEmpty());
+        assertTrue(meeting.actionItems().getFirst().contains("handoff_ref=" + meeting.followUpReference()));
+        assertTrue(meeting.evidenceRefs().stream().anyMatch(v ->
+                v.contains("meeting-handoff:" + meeting.followUpReference())
+                        && v.contains("authority-created=false")));
         assertTrue(meeting.decisionRefs().isEmpty());
         assertFalse(meeting.authorityCreated());
         assertEquals("telegram", meeting.channelProvider());
@@ -64,8 +69,10 @@ class Point5WorkplaceRuntimeConformanceTest {
 
         MeetingRecord reloaded = new PersistentMeetingStore(temp.resolve("meetings"), json).find(meeting.meetingId()).orElseThrow();
         assertEquals(meeting.meetingId(), reloaded.meetingId());
+        assertEquals(meeting.followUpReference(), reloaded.followUpReference());
         assertEquals(MeetingRecord.Status.FOLLOW_UP, reloaded.status());
         assertEquals(3, reloaded.contributions().size());
+        assertFalse(reloaded.authorityCreated());
     }
 
     @Test
