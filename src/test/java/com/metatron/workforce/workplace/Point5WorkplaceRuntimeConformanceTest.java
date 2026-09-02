@@ -1,0 +1,89 @@
+package com.metatron.workforce.workplace;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.MetatronInteraction;
+import com.metatron.workforce.phase3.ActorRef;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class Point5WorkplaceRuntimeConformanceTest {
+    @TempDir Path temp;
+
+    @Test
+    void multiRoleMeetingIsFirstClassDurableAndDoesNotCreateAuthority() {
+        ObjectMapper json = new ObjectMapper();
+        PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("meetings"), json);
+        MeetingRoleDeliberator fake = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                return new Deliberation("Assessment from " + role + "; risk and recommendation are explicit.",
+                        "provider:test:role:" + role.replace(' ', '-'));
+            }
+            @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                return new Deliberation("Shared ground exists; disagreements remain explicit; Founder review is recommended.",
+                        "provider:test:synthesis");
+            }
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(store, fake);
+
+        String request = "Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn kế hoạch mở thị trường rồi đưa recommendation.";
+        assertTrue(service.supports(request));
+        assertFalse(service.supports("Giá Bitcoin hôm nay là bao nhiêu?"));
+        assertFalse(service.supports("Take ownership of one Objective: audit kelvinka38/bios and deliver verified evidence."));
+
+        MetatronInteraction interaction = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:founder:1", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:point5-1", request);
+
+        String response = service.handle(interaction, "prior conversation context");
+        assertTrue(response.startsWith("METATRON MEETING COMPLETED"));
+        assertTrue(response.contains("authority_created=false"));
+        assertTrue(response.contains("[Head of Strategy]"));
+        assertTrue(response.contains("[Head of Finance]"));
+        assertTrue(response.contains("[Head of Operations]"));
+
+        MeetingRecord meeting = service.findByExternalMessageReference("telegram:update:point5-1").orElseThrow();
+        assertEquals(MeetingRecord.Status.FOLLOW_UP, meeting.status());
+        assertEquals(List.of("PROPOSED", "OPEN", "ACTIVE", "DECISION_PENDING", "CLOSED", "FOLLOW_UP"), meeting.lifecycle());
+        assertEquals(4, meeting.participants().size()); // Human organizer + three requested roles.
+        assertEquals(3, meeting.contributions().size());
+        assertEquals(3, meeting.contributions().stream().map(MeetingRecord.Contribution::participant).distinct().count());
+        assertFalse(meeting.recommendation().isBlank());
+        assertFalse(meeting.actionItems().isEmpty());
+        assertTrue(meeting.decisionRefs().isEmpty());
+        assertFalse(meeting.authorityCreated());
+        assertEquals("telegram", meeting.channelProvider());
+        assertEquals("conversation:founder:1", meeting.conversationId());
+        assertTrue(meeting.evidenceRefs().stream().anyMatch(v -> v.equals("interaction:telegram:update:point5-1")));
+
+        MeetingRecord reloaded = new PersistentMeetingStore(temp.resolve("meetings"), json).find(meeting.meetingId()).orElseThrow();
+        assertEquals(meeting.meetingId(), reloaded.meetingId());
+        assertEquals(MeetingRecord.Status.FOLLOW_UP, reloaded.status());
+        assertEquals(3, reloaded.contributions().size());
+    }
+
+    @Test
+    void meetingIntentIsChannelIndependentAndRequiresExplicitRoles() {
+        ObjectMapper json = new ObjectMapper();
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("other"), json),
+                new MeetingRoleDeliberator() {
+                    @Override public Deliberation deliberate(String role, String purpose, String context) {
+                        return new Deliberation(role + " contribution", "provider:test");
+                    }
+                    @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                        return new Deliberation("synthesis", "provider:test");
+                    }
+                });
+        assertTrue(service.supports("Summon Head of Strategy and Head of Finance into a meeting about unit economics."));
+        assertTrue(service.supports("Mời Strategy, Finance và Operations họp về P&L."));
+        assertFalse(service.supports("Let's have a meeting sometime."));
+        assertFalse(service.supports("Finance outlook this week?"));
+    }
+}
