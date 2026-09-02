@@ -78,6 +78,94 @@ class AutonomousManagementRecoveryTest {
     }
 
     @Test
+    void exhaustedRoutineRecoveryTriggersOneAutonomousReplanAndCompletesOnNewGraph() {
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:05:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger executions = new AtomicInteger();
+
+        AutonomousExecutionCapability recoveredAfterReplan = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                int attempt = executions.incrementAndGet();
+                if (attempt <= 3) throw new IllegalStateException("provider-remained-unavailable-" + attempt);
+                return new CapabilityResult(true, "worker-replanned", "assignment-replanned",
+                        "work-replanned", List.of("evidence:replanned-outcome"), "PASS");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(recoveredAfterReplan), coordination, clock,
+                "runner-replan", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        management.acceptHumanObjective(
+                "objective-replan", "worker-head", "org-metatron", "Recover through a managed replan",
+                "human:founder", "request-admission:replan", "case-replan", "conversation-replan",
+                "message-replan", "telegram", request(), clock.instant());
+
+        runner.runOnce();
+        assertEquals(ManagementObjective.Status.REPLANNING, management.get("objective-replan").status());
+        assertEquals(1, management.history("objective-replan").stream()
+                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
+                .count());
+
+        runner.runOnce();
+
+        assertEquals(4, executions.get());
+        assertEquals(ManagementObjective.Status.COMPLETED, management.get("objective-replan").status());
+        assertEquals(List.of(DurableWorkGraph.Status.SUPERSEDED, DurableWorkGraph.Status.COMPLETED),
+                coordination.graphHistory("objective-replan").stream().map(DurableWorkGraph::status).toList());
+        assertTrue(management.outbox().stream()
+                .anyMatch(message -> message.messageType().equals("ObjectiveOutcomeReportReady")
+                        && message.payload().contains("evidence:replanned-outcome")));
+    }
+
+    @Test
+    void repeatedFailureAfterBoundedReplanEscalatesInsteadOfLoopingForever() {
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:07:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger executions = new AtomicInteger();
+
+        AutonomousExecutionCapability unavailable = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                executions.incrementAndGet();
+                throw new IllegalStateException("provider-persistently-unavailable");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(unavailable), coordination, clock,
+                "runner-bounded-replan", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        management.acceptHumanObjective(
+                "objective-bounded-replan", "worker-head", "org-metatron", "Bound impossible recovery",
+                "human:founder", "request-admission:bounded-replan", "case-bounded-replan",
+                "conversation-bounded-replan", "message-bounded-replan", "telegram",
+                request(), clock.instant());
+
+        runner.runOnce();
+        runner.runOnce();
+
+        assertEquals(6, executions.get());
+        assertEquals(ManagementObjective.Status.ESCALATED,
+                management.get("objective-bounded-replan").status());
+        assertEquals(1, management.history("objective-bounded-replan").stream()
+                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
+                .count());
+        assertTrue(management.history("objective-bounded-replan").stream()
+                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.ESCALATED)
+                .anyMatch(event -> event.detail().contains("bounded-autonomous-recovery-exhausted")));
+    }
+
+    @Test
     void authorizationFailureIsNeverAutomaticallyRetried() {
         Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:10:00Z"), ZoneOffset.UTC);
         ManagementAutonomyService management = new ManagementAutonomyService();
