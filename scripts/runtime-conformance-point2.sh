@@ -2,6 +2,8 @@
 set -euo pipefail
 
 BASE=/opt/metatron/metatron-workforce
+OUT="/tmp/metatron-production-highway-${GITHUB_RUN_ID:-manual}/point2-root"
+mkdir -p "$OUT"
 test -r "$BASE/.env"
 set -a; source "$BASE/.env"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
@@ -22,8 +24,9 @@ uid=int(sys.argv[3]); update=int(sys.argv[1])
 print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":sys.argv[2]}},ensure_ascii=False))
 PY
   )
+  printf '%s\n' "$body" > "$OUT/${update_id}-request.json"
   for attempt in 1 2 3 4; do
-    status=$(curl -sS -o "/tmp/point2-${update_id}.json" -w '%{http_code}' --connect-timeout 3 --max-time 25 \
+    status=$(curl -sS -o "$OUT/${update_id}-ingress.json" -w '%{http_code}' --connect-timeout 3 --max-time 25 \
       -X POST http://127.0.0.1:8080/telegram/webhook \
       -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
       -H 'Content-Type: application/json' --data-binary "$body" || true)
@@ -54,10 +57,12 @@ assert_current_answer() {
   send_update "$update_id" "$text"
   wait_terminal "$since" "$update_id"
   LOGS=$(docker logs --since "$since" "$CID" 2>&1 || true)
+  printf '%s\n' "$LOGS" > "$OUT/${update_id}-runtime.log"
   ! grep -Eq "execution-objective-workforce-accepted.*$update_id|METATRON WORK ACCEPTED.*$update_id|telegram_answer_ready update_id=$update_id.*objective_id=[^[:space:]]+" <<<"$LOGS"
   case_file=$(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$update_id' /var/lib/metatron-workforce/intelligence-cases 2>/dev/null | tail -1")
   test -n "$case_file"
-  docker exec "$CID" cat "$case_file" | python3 -c '
+  printf '%s\n' "$case_file" > "$OUT/${update_id}-case-path.txt"
+  docker exec "$CID" cat "$case_file" | tee "$OUT/${update_id}-case.json" | python3 -c '
 import json,re,sys
 case=json.load(sys.stdin); subject=sys.argv[1]; numeric=sys.argv[2]=="1"
 reqs=case.get("informationRequirements") or []
@@ -85,6 +90,7 @@ SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 send_update "$CASUAL" 'Chào Metatron, hôm nay nói chuyện bình thường thôi.'
 wait_terminal "$SINCE" "$CASUAL"
 LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+printf '%s\n' "$LOGS" > "$OUT/${CASUAL}-runtime.log"
 ! grep -Eq "execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL|telegram_answer_ready update_id=$CASUAL.*objective_id=[^[:space:]]+" <<<"$LOGS"
 
 assert_current_answer "$VERSION" 'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' 'Python|stable|version|phiên bản' 1
