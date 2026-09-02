@@ -87,12 +87,11 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
-        List<Map<String, Object>> catalog = context.catalog().stream().map(entry -> Map.<String, Object>of(
-                "actionRef", entry.actionRef(), "consequence", entry.consequence().name())).toList();
+        List<String> catalog = context.availableActions();
         List<Map<String, Object>> history = context.history().stream()
                 .skip(Math.max(0, context.history().size() - 10L))
                 .map(cycle -> Map.<String, Object>of(
-                        "cycle", cycle.index(),
+                        "cycle", cycle.number(),
                         "actionRef", cycle.thought().actionRef(),
                         "inputs", cycle.thought().inputs(),
                         "observationSuccess", cycle.observation().success(),
