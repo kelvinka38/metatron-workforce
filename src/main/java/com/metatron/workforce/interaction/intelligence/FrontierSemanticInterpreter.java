@@ -84,6 +84,14 @@ public final class FrontierSemanticInterpreter {
             " nguon moi nhat ", " cap nhat moi ", " cap nhat hien tai "
     );
 
+    private static final List<String> EXPLICIT_CURRENT_TIME_PHRASES = List.of(
+            " what time ", " current time ", " local time ", " time is it ",
+            " current date ", " today's date ", " todays date ", " what date ",
+            " what day ", " day of week ", " day-of-week ",
+            " may gio ", " gio hien tai ", " gio bay gio ", " bay gio la may gio ",
+            " ngay may ", " hom nay la ngay may ", " thu may ", " hom nay thu may "
+    );
+
     private final LlmProviderRouter router;
     private final Function<LlmProvider, String> modelSelector;
     private final List<LlmProvider> providers;
@@ -172,6 +180,10 @@ public final class FrontierSemanticInterpreter {
             CollaborationMode collaboration = enumValue(CollaborationMode.class, requiredText(root, "collaboration_mode"));
             List<AnalyticalProtocolType> protocols = enumArray(root, "analytical_protocols", AnalyticalProtocolType.class);
             DeterministicCapability deterministicCapability = enumValue(DeterministicCapability.class, requiredText(root, "deterministic_capability"));
+            if (deterministicCapability == DeterministicCapability.CURRENT_TIME
+                    && !explicitlyRequestsCurrentTime(humanText)) {
+                deterministicCapability = DeterministicCapability.NONE;
+            }
             List<DeterministicComputationSpec> computations = computationArray(root, "deterministic_computations");
             LlmProvider requestedProvider = nullableProvider(root.get("explicitly_requested_provider"));
             String caseValue = optionalText(root, "case_continuity");
@@ -199,6 +211,14 @@ public final class FrontierSemanticInterpreter {
                 || temporal.equals("ngay luc nay") || temporal.equals("moi nhat")) return true;
         String padded = " " + human.replaceAll("\\s+", " ").trim() + " ";
         for (String phrase : STRONG_FRESHNESS_PHRASES) {
+            if (padded.contains(phrase)) return true;
+        }
+        return false;
+    }
+
+    private static boolean explicitlyRequestsCurrentTime(String humanText) {
+        String padded = " " + folded(humanText).replaceAll("\\s+", " ").trim() + " ";
+        for (String phrase : EXPLICIT_CURRENT_TIME_PHRASES) {
             if (padded.contains(phrase)) return true;
         }
         return false;
