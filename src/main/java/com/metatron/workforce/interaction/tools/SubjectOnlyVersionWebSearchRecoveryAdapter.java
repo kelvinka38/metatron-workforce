@@ -19,6 +19,17 @@ import java.util.Set;
  * a single failing result URL aborting the whole version lookup.</p>
  */
 public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAdapter {
+    private static final Set<String> SUBJECT_STOP_WORDS = Set.of(
+            "the", "and", "for", "with", "from", "this", "that", "what", "which", "how", "much", "about",
+            "current", "currently", "latest", "today", "now", "new", "fresh", "official", "officially",
+            "stable", "version", "versions", "release", "releases", "released", "build", "edition", "lts",
+            "data", "source", "sources", "use", "using", "check", "answer", "information", "external", "reality",
+            "please", "provide", "provides", "providing", "cite", "download", "downloads", "user", "users",
+            "determine", "online",
+            "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "nhat", "neu", "nguon", "cho", "bao", "nhieu",
+            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi", "gi", "ai", "la",
+            "phien", "ban", "on", "dinh", "loi", "xac", "truc", "tuyen");
+
     private final ToolAdapter delegate;
 
     public SubjectOnlyVersionWebSearchRecoveryAdapter() {
@@ -48,7 +59,7 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
             return ToolResult.failure(request, "subject_only_version_recovery_unsupported");
         }
 
-        Set<String> subject = SemanticQualifierWebSearchRecoveryAdapter.subjectTokens(query);
+        Set<String> subject = subjectTokens(query);
         if (subject.isEmpty()) {
             return ToolResult.failure(request, "subject_only_version_recovery_subject_missing");
         }
@@ -96,10 +107,20 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
                 output, List.copyOf(delegated.evidenceReferences()));
     }
 
+    static Set<String> subjectTokens(String query) {
+        LinkedHashSet<String> tokens = new LinkedHashSet<>();
+        for (String token : fold(query).split("[^a-z0-9]+")) {
+            if (token.length() < 3 || SUBJECT_STOP_WORDS.contains(token)) continue;
+            tokens.add(token);
+        }
+        return Set.copyOf(tokens);
+    }
+
     private static boolean supports(String query) {
         String folded = fold(query);
-        return folded.matches(".*\\b(version|versions|release|releases|lts)\\b.*")
-                && folded.matches(".*\\b(stable|latest|current|currently|today|now)\\b.*");
+        boolean versionIntent = folded.matches(".*\\b(version|versions|release|releases|lts)\\b.*");
+        boolean freshnessIntent = folded.matches(".*\\b(stable|latest|current|currently|today|now)\\b.*");
+        return versionIntent && freshnessIntent;
     }
 
     private static String orderedSubjectQuery(String query, Set<String> subject) {
@@ -112,10 +133,22 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
 
     private static String fold(String value) {
         if (value == null || value.isBlank()) return "";
-        return Normalizer.normalize(value, Normalizer.Form.NFD)
+        String folded = Normalizer.normalize(value, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .replace('đ', 'd')
                 .toLowerCase(Locale.ROOT)
+                .replaceAll("\\s+", " ")
+                .trim();
+        return folded
+                .replaceAll("\\bphien\\s+ban\\b", "version")
+                .replaceAll("\\bmoi\\s+nhat\\b", "latest")
+                .replaceAll("\\bhien\\s+tai\\b", "current")
+                .replaceAll("\\bon\\s+dinh\\b", "stable")
+                .replaceAll("\\bkiem\\s+tra\\b", "check")
+                .replaceAll("\\btra\\s+loi\\b", "answer")
+                .replaceAll("\\bnguon\\s+truc\\s+tuyen\\b", "source")
+                .replaceAll("\\btruc\\s+tuyen\\b", "online")
+                .replaceAll("\\bxac\\s+dinh\\b", "determine")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
