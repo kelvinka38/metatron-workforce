@@ -107,7 +107,7 @@ public final class WorkerRuntimeProfileBindingService {
                             "workspace.git.status", "workspace.git.diff", "workspace.git.run",
                             "workspace.build.run", "workspace.test.run"),
                     Set.of("git", "java", "javac", "sh", "bash", "gradle", "mvn", "./gradlew", "./mvnw"),
-                    true, 120, 2_000_000);
+                    true, 300, 2_000_000);
         }
         // Bounded legacy profiles remain usable through their already-authorized capability adapter.
         return new ToolProfile(runtimeProfileRef, Set.of("capability:" + capabilityRef), Set.of(), false, 60, 512_000);
