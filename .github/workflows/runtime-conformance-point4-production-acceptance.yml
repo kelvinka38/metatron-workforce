@@ -107,7 +107,7 @@ jobs:
           JOURNAL=$(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null | tail -1" || true)
           test -n "$JOURNAL"
           docker exec "$CID" cat "$JOURNAL" > "$OUT/action-journal.jsonl"
-          python3 - "$OUT/action-journal.jsonl" <<'PY'
+          python3 - "$OUT/action-journal.jsonl" "$OUT/pr-url.txt" <<'PY'
           import json,sys
           rows=[json.loads(line) for line in open(sys.argv[1],encoding='utf-8') if line.strip()]
           expected=[
@@ -126,14 +126,18 @@ jobs:
           assert all(r.get('actionSuccess') is True for r in rows)
           assert [r.get('reflection') for r in rows]==['CONTINUE','CONTINUE','CONTINUE','CONTINUE','COMPLETE']
           assert not any('merge' in str(r.get('thoughtAction','')).lower() for r in rows)
+          pr_url=(rows[-1].get('outputs') or {}).get('prUrl','')
+          assert pr_url.startswith('https://github.com/kelvinka38/metatron-workforce/pull/'), pr_url
+          open(sys.argv[2],'w',encoding='utf-8').write(pr_url+'\n')
           print('POINT4_COGNITIVE_SEQUENCE=PASS')
           print('POINT4_PER_ACTION_WORKER_ATTRIBUTION=PASS')
           print('POINT4_PER_ACTION_AUTHORIZATION=PASS')
           print('POINT4_OBSERVATION_DRIVEN_REFLECTION=PASS')
+          print('POINT4_CURRENT_OBJECTIVE_PR_ATTRIBUTION=PASS')
           print('POINT4_NO_MERGE_ACTION=PASS')
           PY
 
-          PR_URL=$(docker exec "$CID" sh -c "grep -Rho 'github-pr:https://github.com/kelvinka38/metatron-workforce/pull/[0-9]*' /var/lib/metatron-workforce 2>/dev/null | tail -1 | sed 's/^github-pr://'" || true)
+          PR_URL=$(cat "$OUT/pr-url.txt")
           test -n "$PR_URL"
           PR_NUMBER=${PR_URL##*/}
           curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' \
