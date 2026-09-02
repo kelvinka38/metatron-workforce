@@ -2,6 +2,9 @@ package com.metatron.workforce.management;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.action.ActionFabric;
+import com.metatron.workforce.action.ActionJournal;
+import com.metatron.workforce.action.CognitiveWorkerRuntime;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -18,15 +21,17 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
- * Founder-approved, tightly bounded Golden Slice 2 mutation capability.
+ * Founder-approved bounded GitHub mutation executed by an assigned Cognitive Worker.
  *
- * <p>The only permitted effect is to replace the stable GS2 UNSET sentinel in the canonical
- * Autonomy Closure gap matrix on an Objective-scoped proposal branch and open a Pull Request.
- * Canonical main stays unchanged until a Human explicitly merges. This keeps the original allowed
- * repository/path boundary while making the production slice repeatable.</p>
+ * <p>The capability remains the Management contract, but the Worker no longer receives one opaque
+ * execute() effect. It sees a governed Action catalog and advances through a bounded
+ * think -> act -> observe -> reflect loop. Each GitHub effect is separately authorized by the
+ * Action Fabric and durably journaled. Main is never mutated or merged by this capability.</p>
  */
 @Component
 public final class RepositoryPullRequestAutonomousCapability implements AutonomousExecutionCapability {
@@ -38,6 +43,12 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
     public static final String ALLOWED_PATH = "docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md";
     static final String UNSET_SENTINEL = "GS2_AUTONOMOUS_PROBE=UNSET";
     static final String PROBE_PREFIX = "GS2_AUTONOMOUS_PROBE=";
+
+    static final String ACTION_READ_MAIN = "github.repository.main-ref.read";
+    static final String ACTION_READ_SOURCE = "github.repository.approved-file.read";
+    static final String ACTION_ENSURE_BRANCH = "github.repository.proposal-branch.ensure";
+    static final String ACTION_WRITE_PROBE = "github.repository.approved-file.propose";
+    static final String ACTION_ENSURE_PR = "github.repository.pull-request.ensure";
 
     private final HttpClient http;
     private final ObjectMapper json;
@@ -59,7 +70,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
 
     @Override public String capabilityRef() { return CAPABILITY; }
     @Override public String capabilityDescription() {
-        return CAPABILITY + " — bounded repeatable GS2 gap-matrix sentinel mutation; opens PR only; never merges";
+        return CAPABILITY + " — Cognitive Worker + governed Action Fabric; bounded GS2 proposal PR; never merges";
     }
     @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
@@ -69,74 +80,234 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
     public CapabilityResult execute(CapabilityRequest request) {
         requireGovernance(request);
         if (token.isBlank()) throw new SecurityException("GITHUB_TOKEN required for governed PR proposal");
-        try {
-            String baseSha = getJson("/repos/" + ALLOWED_REPOSITORY + "/git/ref/heads/main")
-                    .at("/object/sha").asText();
-            if (baseSha.isBlank()) throw new IllegalStateException("GitHub main ref missing SHA");
 
-            JsonNode source = getJson("/repos/" + ALLOWED_REPOSITORY + "/contents/"
-                    + encodePath(ALLOWED_PATH) + "?ref=main");
-            String sourceSha = source.path("sha").asText();
-            String original = decodeContent(source);
-            if (sourceSha.isBlank() || original.isBlank()) {
-                throw new IllegalStateException("GS2 mutation source unavailable");
+        ActionFabric fabric = new ActionFabric(List.of(
+                readMainAction(), readSourceAction(), ensureBranchAction(), writeProbeAction(), ensurePullRequestAction()));
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(
+                fabric, ActionJournal.runtimeEvidenceJournal(), 8);
+        String probe = shortHash(request.idempotencyKey());
+        String branch = "autonomy/gs2-" + probe;
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
+                request.allocatedWorkerId(),
+                request.assignmentReference(),
+                request.authorizationReference(),
+                request.objectiveId(),
+                request.workSpec(),
+                request.idempotencyKey(),
+                new PullRequestBrain(probe, branch));
+
+        if (!outcome.success()) {
+            throw new IllegalStateException("governed GitHub PR proposal failed: " + outcome.summary());
+        }
+        String prNumber = outcome.memory().getOrDefault("prNumber", "");
+        String prUrl = outcome.memory().getOrDefault("prUrl", "");
+        if (prNumber.isBlank() || prUrl.isBlank()) {
+            throw new IllegalStateException("cognitive worker completed without PR identity");
+        }
+
+        List<String> evidence = new ArrayList<>(outcome.evidenceReferences());
+        evidence.add("github-pr:" + prUrl);
+        evidence.add("github-pr-number:" + prNumber);
+        evidence.add("github-branch:" + branch);
+        evidence.add("github-changed-path:" + ALLOWED_PATH);
+        evidence.add("github-gs2-probe:" + probe);
+        evidence.add("github-merge-performed:false");
+        evidence.add("github-idempotency:" + request.idempotencyKey());
+        evidence.add("cognitive-action-count:" + outcome.cycles().size());
+        return new CapabilityResult(true, request.allocatedWorkerId(), request.assignmentReference(),
+                "work:repository-pr:" + request.objectiveId() + ":" + request.workSpec().stepId(), evidence,
+                "Cognitive Worker opened governed unmerged PR #" + prNumber
+                        + " after " + outcome.cycles().size() + " authorized actions");
+    }
+
+    private ActionFabric.Action readMainAction() {
+        return new BoundedAction(ACTION_READ_MAIN, ActionFabric.Consequence.READ_ONLY) {
+            @Override protected ActionFabric.ActionObservation perform(ActionFabric.ActionRequest request) throws Exception {
+                JsonNode ref = getJson("/repos/" + ALLOWED_REPOSITORY + "/git/ref/heads/main");
+                String baseSha = ref.at("/object/sha").asText();
+                if (baseSha.isBlank()) throw new IllegalStateException("GitHub main ref missing SHA");
+                return ActionFabric.ActionObservation.success(actionRef(), "read canonical main ref",
+                        Map.of("baseSha", baseSha), List.of("github-base-sha:" + baseSha));
             }
+        };
+    }
 
-            String probe = shortHash(request.idempotencyKey());
-            String mutated = applyProbe(original, probe);
-            String branch = "autonomy/gs2-" + probe;
-            ensureBranch(branch, baseSha);
-
-            JsonNode branchFile = getJson("/repos/" + ALLOWED_REPOSITORY + "/contents/"
-                    + encodePath(ALLOWED_PATH) + "?ref=" + encode(branch));
-            String branchText = decodeContent(branchFile);
-            if (!hasProbe(branchText, probe)) {
-                if (!branchText.contains(UNSET_SENTINEL)) {
-                    throw new IllegalStateException("GS2 proposal branch source is outside bounded mutation state");
+    private ActionFabric.Action readSourceAction() {
+        return new BoundedAction(ACTION_READ_SOURCE, ActionFabric.Consequence.READ_ONLY) {
+            @Override protected ActionFabric.ActionObservation perform(ActionFabric.ActionRequest request) throws Exception {
+                JsonNode source = getJson("/repos/" + ALLOWED_REPOSITORY + "/contents/"
+                        + encodePath(ALLOWED_PATH) + "?ref=main");
+                String sourceSha = source.path("sha").asText();
+                String original = decodeContent(source);
+                if (sourceSha.isBlank() || original.isBlank()) throw new IllegalStateException("GS2 mutation source unavailable");
+                int first = original.indexOf(UNSET_SENTINEL);
+                if (first < 0 || first != original.lastIndexOf(UNSET_SENTINEL)) {
+                    throw new IllegalStateException("canonical GS2 source must contain exactly one UNSET sentinel");
                 }
-                String body = json.createObjectNode()
-                        .put("message", "test(autonomy): record GS2 autonomous mutation probe")
-                        .put("content", Base64.getEncoder().encodeToString(mutated.getBytes(StandardCharsets.UTF_8)))
-                        .put("sha", branchFile.path("sha").asText())
-                        .put("branch", branch).toString();
-                sendJson("PUT", "/repos/" + ALLOWED_REPOSITORY + "/contents/" + encodePath(ALLOWED_PATH),
-                        body, 200, 201);
+                return ActionFabric.ActionObservation.success(actionRef(), "validated approved canonical mutation source",
+                        Map.of("sourceSha", sourceSha, "sourceValidated", "true"),
+                        List.of("github-source-sha:" + sourceSha, "github-approved-path:" + ALLOWED_PATH));
             }
+        };
+    }
 
-            JsonNode pr = findOpenPull(branch);
-            if (pr == null) {
-                String body = json.createObjectNode()
-                        .put("title", "test(autonomy): GS2 governed mutation probe " + probe)
-                        .put("head", branch)
-                        .put("base", "main")
-                        .put("body", "Golden Slice 2 governed mutation proposal. Workforce changed only the approved Autonomy Closure gap-matrix sentinel. Human approval is required before merge; this capability exposes no merge operation.")
-                        .toString();
-                pr = sendJson("POST", "/repos/" + ALLOWED_REPOSITORY + "/pulls", body, 201);
+    private ActionFabric.Action ensureBranchAction() {
+        return new BoundedAction(ACTION_ENSURE_BRANCH, ActionFabric.Consequence.MUTATING) {
+            @Override protected ActionFabric.ActionObservation perform(ActionFabric.ActionRequest request) throws Exception {
+                String branch = requiredInput(request, "branch");
+                String baseSha = requiredInput(request, "baseSha");
+                requireProposalBranch(branch);
+                HttpResponse<String> existing = send("GET", "/repos/" + ALLOWED_REPOSITORY
+                        + "/git/ref/heads/" + encodePath(branch), null);
+                if (existing.statusCode() != 200) {
+                    if (existing.statusCode() != 404) throw failure("read branch", existing);
+                    String body = json.createObjectNode().put("ref", "refs/heads/" + branch)
+                            .put("sha", baseSha).toString();
+                    sendJson("POST", "/repos/" + ALLOWED_REPOSITORY + "/git/refs", body, 201);
+                }
+                return ActionFabric.ActionObservation.success(actionRef(), "proposal branch ready",
+                        Map.of("branchReady", "true"),
+                        List.of("github-branch:" + branch, "github-branch-base-sha:" + baseSha));
             }
+        };
+    }
 
-            int number = pr.path("number").asInt();
-            String htmlUrl = pr.path("html_url").asText();
-            if (number <= 0 || htmlUrl.isBlank()) throw new IllegalStateException("GitHub PR response incomplete");
-            if (pr.path("merged").asBoolean(false)) throw new SecurityException("Golden Slice 2 PR unexpectedly merged");
+    private ActionFabric.Action writeProbeAction() {
+        return new BoundedAction(ACTION_WRITE_PROBE, ActionFabric.Consequence.MUTATING) {
+            @Override protected ActionFabric.ActionObservation perform(ActionFabric.ActionRequest request) throws Exception {
+                String branch = requiredInput(request, "branch");
+                String probe = requireProbe(requiredInput(request, "probe"));
+                requireProposalBranch(branch);
+                JsonNode branchFile = getJson("/repos/" + ALLOWED_REPOSITORY + "/contents/"
+                        + encodePath(ALLOWED_PATH) + "?ref=" + encode(branch));
+                String branchText = decodeContent(branchFile);
+                if (!hasProbe(branchText, probe)) {
+                    String mutated = applyProbe(branchText, probe);
+                    String body = json.createObjectNode()
+                            .put("message", "test(autonomy): record GS2 autonomous mutation probe")
+                            .put("content", Base64.getEncoder().encodeToString(mutated.getBytes(StandardCharsets.UTF_8)))
+                            .put("sha", branchFile.path("sha").asText())
+                            .put("branch", branch).toString();
+                    sendJson("PUT", "/repos/" + ALLOWED_REPOSITORY + "/contents/" + encodePath(ALLOWED_PATH),
+                            body, 200, 201);
+                }
+                return ActionFabric.ActionObservation.success(actionRef(), "approved file proposal materialized",
+                        Map.of("probeWritten", "true"),
+                        List.of("github-changed-path:" + ALLOWED_PATH, "github-gs2-probe:" + probe));
+            }
+        };
+    }
 
-            List<String> evidence = new ArrayList<>();
-            evidence.add("github-pr:" + htmlUrl);
-            evidence.add("github-pr-number:" + number);
-            evidence.add("github-pr-state:" + pr.path("state").asText());
-            evidence.add("github-branch:" + branch);
-            evidence.add("github-base-sha:" + baseSha);
-            evidence.add("github-changed-path:" + ALLOWED_PATH);
-            evidence.add("github-gs2-probe:" + probe);
-            evidence.add("github-merge-performed:false");
-            evidence.add("github-idempotency:" + request.idempotencyKey());
-            return new CapabilityResult(true, request.allocatedWorkerId(), request.assignmentReference(),
-                    "work:repository-pr:" + request.objectiveId() + ":" + request.workSpec().stepId(), evidence,
-                    "opened governed unmerged PR #" + number + " for repeatable GS2 mutation probe " + probe);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("GitHub mutation interrupted", e);
-        } catch (Exception e) {
-            throw new IllegalStateException("governed GitHub PR proposal failed: " + e.getMessage(), e);
+    private ActionFabric.Action ensurePullRequestAction() {
+        return new BoundedAction(ACTION_ENSURE_PR, ActionFabric.Consequence.MUTATING) {
+            @Override protected ActionFabric.ActionObservation perform(ActionFabric.ActionRequest request) throws Exception {
+                String branch = requiredInput(request, "branch");
+                String probe = requireProbe(requiredInput(request, "probe"));
+                requireProposalBranch(branch);
+                JsonNode pr = findOpenPull(branch);
+                if (pr == null) {
+                    String body = json.createObjectNode()
+                            .put("title", "test(autonomy): GS2 governed mutation probe " + probe)
+                            .put("head", branch)
+                            .put("base", "main")
+                            .put("body", "Golden Slice 2 governed mutation proposal. Cognitive Worker used the Action Fabric to change only the approved Autonomy Closure gap-matrix sentinel. Human approval is required before merge; no merge action exists in the Worker catalog.")
+                            .toString();
+                    pr = sendJson("POST", "/repos/" + ALLOWED_REPOSITORY + "/pulls", body, 201);
+                }
+                int number = pr.path("number").asInt();
+                String htmlUrl = pr.path("html_url").asText();
+                if (number <= 0 || htmlUrl.isBlank()) throw new IllegalStateException("GitHub PR response incomplete");
+                if (pr.path("merged").asBoolean(false)) throw new SecurityException("Golden Slice 2 PR unexpectedly merged");
+                return ActionFabric.ActionObservation.success(actionRef(), "governed proposal PR ready",
+                        Map.of("prNumber", Integer.toString(number), "prUrl", htmlUrl),
+                        List.of("github-pr:" + htmlUrl, "github-pr-number:" + number,
+                                "github-pr-state:" + pr.path("state").asText(), "github-merge-performed:false"));
+            }
+        };
+    }
+
+    private abstract static class BaseAction implements ActionFabric.Action {
+        private final String ref;
+        private final ActionFabric.Consequence consequence;
+
+        BaseAction(String ref, ActionFabric.Consequence consequence) {
+            this.ref = ref;
+            this.consequence = consequence;
+        }
+        @Override public final String actionRef() { return ref; }
+        @Override public final ActionFabric.Consequence consequence() { return consequence; }
+        @Override public final Set<String> allowedWorkers() { return Set.of(WORKER_ID); }
+        @Override public final Set<String> acceptedAuthorizations() { return Set.of(AUTHORIZATION_REFERENCE); }
+    }
+
+    private abstract class BoundedAction extends BaseAction {
+        BoundedAction(String ref, ActionFabric.Consequence consequence) { super(ref, consequence); }
+
+        @Override
+        public final ActionFabric.ActionObservation invoke(ActionFabric.ActionRequest request) {
+            try {
+                return perform(request);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(actionRef() + " interrupted", interrupted);
+            } catch (Exception failure) {
+                throw new IllegalStateException(actionRef() + " failed: " + failure.getMessage(), failure);
+            }
+        }
+
+        protected abstract ActionFabric.ActionObservation perform(ActionFabric.ActionRequest request) throws Exception;
+    }
+
+    private static final class PullRequestBrain implements CognitiveWorkerRuntime.Brain {
+        private final String probe;
+        private final String branch;
+
+        private PullRequestBrain(String probe, String branch) {
+            this.probe = requireProbe(probe);
+            this.branch = branch;
+        }
+
+        @Override
+        public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+            Map<String, String> memory = context.memory();
+            if (!memory.containsKey("baseSha")) {
+                return new CognitiveWorkerRuntime.Thought(ACTION_READ_MAIN, Map.of(),
+                        "canonical base identity is required before any proposal mutation");
+            }
+            if (!"true".equals(memory.get("sourceValidated"))) {
+                return new CognitiveWorkerRuntime.Thought(ACTION_READ_SOURCE, Map.of(),
+                        "approved path and sentinel must be validated before branch creation");
+            }
+            if (!"true".equals(memory.get("branchReady"))) {
+                return new CognitiveWorkerRuntime.Thought(ACTION_ENSURE_BRANCH,
+                        Map.of("branch", branch, "baseSha", memory.get("baseSha")),
+                        "proposal effect requires an Objective-scoped branch anchored to observed main");
+            }
+            if (!"true".equals(memory.get("probeWritten"))) {
+                return new CognitiveWorkerRuntime.Thought(ACTION_WRITE_PROBE,
+                        Map.of("branch", branch, "probe", probe),
+                        "approved sentinel mutation has not yet been observed on the proposal branch");
+            }
+            return new CognitiveWorkerRuntime.Thought(ACTION_ENSURE_PR,
+                    Map.of("branch", branch, "probe", probe),
+                    "a reviewable unmerged Pull Request is required to complete the bounded mutation");
+        }
+
+        @Override
+        public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                          ActionFabric.ActionObservation observation) {
+            if (!observation.success()) {
+                return CognitiveWorkerRuntime.Reflection.failed(
+                        "tool observation failed at " + observation.actionRef() + ": " + observation.summary());
+            }
+            if (ACTION_ENSURE_PR.equals(observation.actionRef())) {
+                if (observation.outputs().getOrDefault("prUrl", "").isBlank()) {
+                    return CognitiveWorkerRuntime.Reflection.failed("PR action succeeded without reviewable PR URL");
+                }
+                return CognitiveWorkerRuntime.Reflection.complete("reviewable unmerged PR observed; mutation objective satisfied");
+            }
+            return CognitiveWorkerRuntime.Reflection.continueWith(
+                    "observed " + observation.actionRef() + " successfully; determine next required action");
         }
     }
 
@@ -182,14 +353,16 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
         return value;
     }
 
-    private void ensureBranch(String branch, String baseSha) throws Exception {
-        HttpResponse<String> existing = send("GET", "/repos/" + ALLOWED_REPOSITORY
-                + "/git/ref/heads/" + encodePath(branch), null);
-        if (existing.statusCode() == 200) return;
-        if (existing.statusCode() != 404) throw failure("read branch", existing);
-        String body = json.createObjectNode().put("ref", "refs/heads/" + branch)
-                .put("sha", baseSha).toString();
-        sendJson("POST", "/repos/" + ALLOWED_REPOSITORY + "/git/refs", body, 201);
+    private static void requireProposalBranch(String branch) {
+        if (branch == null || !branch.matches("autonomy/gs2-[0-9a-f]{16}")) {
+            throw new SecurityException("proposal branch outside bounded GS2 namespace");
+        }
+    }
+
+    private static String requiredInput(ActionFabric.ActionRequest request, String name) {
+        String value = request.inputs().get(name);
+        if (value == null || value.isBlank()) throw new IllegalArgumentException("action input required: " + name);
+        return value.trim();
     }
 
     private JsonNode findOpenPull(String branch) throws Exception {
@@ -216,7 +389,7 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
                 .timeout(Duration.ofSeconds(20))
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "metatron-workforce-autonomy-p10");
+                .header("User-Agent", "metatron-workforce-action-fabric-point4");
         if (!token.isBlank()) builder.header("Authorization", "Bearer " + token);
         if (body == null) builder.method(method, HttpRequest.BodyPublishers.noBody());
         else builder.header("Content-Type", "application/json")

@@ -29,7 +29,7 @@ public final class RepositoryAuditAutonomousCapability implements AutonomousExec
     }
 
     @Override public String capabilityDescription() {
-        return CAPABILITY + " — governed read-only GitHub repository audit; target must be owner/repo";
+        return CAPABILITY + " — governed Cognitive Worker GitHub audit; each external read is an attributed Action";
     }
 
     @Override
@@ -54,7 +54,9 @@ public final class RepositoryAuditAutonomousCapability implements AutonomousExec
                 request.authorizationReference(),
                 request.organizationContextId(),
                 repository,
-                request.assignmentReference());
+                request.assignmentReference(),
+                request.objectiveId(),
+                request.workSpec());
         boolean success = "COMPLETED".equals(receipt.work().status().name())
                 && "PASS".equals(receipt.workerResult().status());
         if (!request.assignmentReference().equals(receipt.work().assignmentRef())) {
@@ -63,14 +65,15 @@ public final class RepositoryAuditAutonomousCapability implements AutonomousExec
         List<String> evidence = new ArrayList<>(receipt.work().evidenceRefs());
         evidence.add("worker-result:" + receipt.workerResult().worker() + ":" + receipt.workerResult().status());
         evidence.add("work:" + receipt.work().workId());
+        evidence.add("execution-model:cognitive-action-fabric");
         return new CapabilityResult(
                 success,
                 request.allocatedWorkerId(),
                 request.assignmentReference(),
                 receipt.work().workId(),
                 evidence,
-                success ? "repository audit completed: " + repository
-                        : "repository audit failed: " + repository + " status=" + receipt.workerResult().status());
+                success ? "cognitive repository audit completed: " + repository
+                        : "cognitive repository audit failed: " + repository + " status=" + receipt.workerResult().status());
     }
 
     private static String requireRepositoryTarget(String target) {
