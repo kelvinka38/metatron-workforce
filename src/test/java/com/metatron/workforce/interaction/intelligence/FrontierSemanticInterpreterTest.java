@@ -8,6 +8,7 @@ import com.metatron.workforce.interaction.llm.LlmRequest;
 import com.metatron.workforce.interaction.llm.LlmResponse;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -104,6 +105,38 @@ final class FrontierSemanticInterpreterTest {
         NormalizedRequest normalized = interpreter.interpret("hello", "", "telegram");
         assertTrue(normalized.canReturnFastDirectly());
         assertEquals("Chào mày, cần tao xử gì?", normalized.directResponse());
+    }
+
+    @Test
+    void explicitFreshRequestIsIsolatedFromStaleActiveCaseSubject() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                assertTrue(request.userInput().contains("CURRENT HUMAN MESSAGE:\nGiá Bitcoin hiện tại"), request.userInput());
+                assertTrue(request.userInput().contains(
+                        "ACTIVE INTELLIGENCE CASE (runtime coordination only):\nNONE"), request.userInput());
+                assertFalse(request.userInput().contains("latest stable Python version"), request.userInput());
+                return semanticResponse(LlmProvider.GOOGLE, "provide the current Bitcoin price in USD and VND",
+                        "Bitcoin price", "ANALYZE", "REASONING", "", "");
+            }
+        };
+        FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
+                new LlmProviderRouter(List.of(google)), provider -> "semantic-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        Instant now = Instant.now();
+        IntelligenceCase stalePython = new IntelligenceCase(
+                "case-python", "conversation:human:human-primary", "human:human-primary",
+                "latest stable Python version", IntelligenceDepth.ANALYZE, IntelligenceCaseStatus.RESULT_READY,
+                List.of(), List.of("https://python.org/"), List.of(), List.of(), List.of(), List.of(), List.of(),
+                "Python result", "", List.of(), now, now);
+
+        NormalizedRequest normalized = interpreter.interpret(
+                "Giá Bitcoin hiện tại khoảng bao nhiêu USD và VND? Hãy dùng dữ liệu mới và nêu nguồn.",
+                "", "telegram", stalePython);
+
+        assertEquals("provide the current Bitcoin price in USD and VND", normalized.objective());
+        assertEquals(CaseContinuity.NEW, normalized.caseContinuity());
+        assertTrue(normalized.freshExternalDataRequired());
     }
 
     private static LlmResponse semanticResponse(LlmProvider provider, String objective, String target,
