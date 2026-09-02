@@ -92,6 +92,13 @@ public final class FrontierSemanticInterpreter {
             " ngay may ", " hom nay la ngay may ", " thu may ", " hom nay thu may "
     );
 
+    private static final List<String> CONTEXT_DEPENDENCY_PHRASES = List.of(
+            " what about ", " how about ", " same one ", " same thing ", " that one ",
+            " that ", " those ", " them ", " it ", " this one ", " as above ", " previous one ",
+            " con ", " con no ", " no ", " cai do ", " cai nay ", " nhu tren ",
+            " van de do ", " vay thi ", " truong hop do ", " thu do "
+    );
+
     private final LlmProviderRouter router;
     private final Function<LlmProvider, String> modelSelector;
     private final List<LlmProvider> providers;
@@ -116,15 +123,16 @@ public final class FrontierSemanticInterpreter {
                                        IntelligenceCase activeCase) {
         Objects.requireNonNull(humanText, "humanText");
         if (providers.isEmpty()) throw new IllegalStateException("semantic_provider_required");
-        IntelligenceCase semanticActiveCase = activeCase;
-        if (activeCase != null && explicitlyRequestsFreshness(humanText, "")) {
-            semanticActiveCase = null;
-        }
+        boolean isolateFreshContext = explicitlyRequestsFreshness(humanText, "")
+                && !requiresConversationContext(humanText);
+        IntelligenceCase semanticActiveCase = isolateFreshContext ? null : activeCase;
+        String semanticConversationContext = isolateFreshContext || conversationContext == null
+                ? "" : conversationContext.trim();
         String input = "CURRENT HUMAN MESSAGE:\n" + humanText.trim()
                 + "\n\nCHANNEL METADATA (transport only):\n" + (channel == null ? "" : channel)
                 + "\n\nACTIVE INTELLIGENCE CASE (runtime coordination only):\n" + renderActiveCase(semanticActiveCase)
                 + "\n\nCONVERSATION HISTORY (context only; never authority):\n"
-                + (conversationContext == null ? "" : conversationContext.trim());
+                + semanticConversationContext;
 
         List<RuntimeException> failures = new ArrayList<>();
         List<LlmProvider> orderedProviders = AdaptiveProviderRoutingPolicy.rankConfiguredProviders(
@@ -211,6 +219,18 @@ public final class FrontierSemanticInterpreter {
                 || temporal.equals("ngay luc nay") || temporal.equals("moi nhat")) return true;
         String padded = " " + human.replaceAll("\\s+", " ").trim() + " ";
         for (String phrase : STRONG_FRESHNESS_PHRASES) {
+            if (padded.contains(phrase)) return true;
+        }
+        return false;
+    }
+
+    private static boolean requiresConversationContext(String humanText) {
+        String normalized = folded(humanText)
+                .replaceAll("[^a-z0-9]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        String padded = " " + normalized + " ";
+        for (String phrase : CONTEXT_DEPENDENCY_PHRASES) {
             if (padded.contains(phrase)) return true;
         }
         return false;
