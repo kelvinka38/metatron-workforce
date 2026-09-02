@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.phase3.ActorRef;
 import com.metatron.workforce.phase3.AuthorizationContext;
 import com.metatron.workforce.phase3.WorkQueueItem;
@@ -78,16 +79,19 @@ final class GatewayDirectorNorthStarAcceptanceTest {
         AuthorizationRequest request = new AuthorizationRequest("WORKER-GW-DIRECTOR", "ROLE-GATEWAY-DIRECTOR",
                 "AUTHORITY-GATEWAY", "gateway:v2", "gateway.audit.read", "ORG-METATRON",
                 t0.plusSeconds(4), "WORK-GW-AUDIT");
+        ExecutionWorkSpec workSpec = gatewayAuditWork();
 
         RuntimeInstance runtime = new RuntimeInstance("RUNTIME-GW-DIRECTOR", "WORKER-GW-DIRECTOR", RuntimeState.READY);
         var managedExecution = coordinator.authorizeBindAndExecute(
-                "OBJ-GW-V2", "WORKER-GW-DIRECTOR", "ASSIGN-GW-AUDIT", "WORKPKG-GW-AUDIT",
+                "OBJ-GW-V2", "WORKER-GW-DIRECTOR", "ASSIGN-GW-AUDIT", "WORKPKG-GW-AUDIT", workSpec,
                 proposal, approval, request, runtime,
                 p -> ExecutionService.ExecutionResult.success(List.of("gateway-v1-state"), List.of("EVIDENCE-GW-AUDIT")),
                 "EXEC-GW-AUDIT", t0.plusSeconds(5), t0.plusSeconds(6));
 
         assertEquals("AUTH-GW-V2", managedExecution.handoff().authorizationId());
         assertEquals("WORKER-GW-DIRECTOR", managedExecution.runtimeContext().workerId());
+        assertSame(workSpec, managedExecution.runtimeContext().workSpec());
+        assertEquals("gateway-security-audit", managedExecution.runtimeContext().workSpec().stepId());
         assertEquals(ExecutionRecord.Status.SUCCEEDED, managedExecution.executionRecord().status());
 
         management.markBlocked("OBJ-GW-V2", "WORKER-GW-DIRECTOR", "one worker unavailable", t0.plusSeconds(7));
@@ -121,9 +125,24 @@ final class GatewayDirectorNorthStarAcceptanceTest {
         ApprovalDecision approval = new ApprovalDecision("D", "P", "A", true, t0, "AR", "approved");
         AuthorizationRequest request = new AuthorizationRequest("DIRECTOR", "ROLE", "AUTHORITY", "scope", "act", "ORG", t0, "W");
         RuntimeInstance runtime = new RuntimeInstance("R", "DIRECTOR", RuntimeState.READY);
+        ExecutionWorkSpec workSpec = new ExecutionWorkSpec(
+                "denied-step", "Denied operation", "scope", "act", List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("must be authorized"), List.of("authorization evidence"));
 
         assertThrows(SecurityException.class, () -> coordinator.authorizeBindAndExecute(
-                "OBJ-DENY", "DIRECTOR", "ASSIGN", "PKG", proposal, approval, request, runtime,
+                "OBJ-DENY", "DIRECTOR", "ASSIGN", "PKG", workSpec, proposal, approval, request, runtime,
                 p -> ExecutionService.ExecutionResult.success(List.of(), List.of()), "EXEC", t0, t0));
+    }
+
+    private static ExecutionWorkSpec gatewayAuditWork() {
+        return new ExecutionWorkSpec(
+                "gateway-security-audit",
+                "Audit Gateway V2 security behavior",
+                "gateway:v2",
+                "gateway.audit.read",
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Gateway V2 security state inspected"),
+                List.of("EVIDENCE-GW-AUDIT"));
     }
 }

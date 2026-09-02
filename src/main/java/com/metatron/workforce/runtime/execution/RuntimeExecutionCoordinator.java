@@ -1,5 +1,6 @@
 package com.metatron.workforce.runtime.execution;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.RuntimeExecutionContext;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimeState;
@@ -12,12 +13,14 @@ public final class RuntimeExecutionCoordinator {
             RuntimeInstance runtime,
             String executionId,
             String assignmentId,
-            String authorizationId) {
+            String authorizationId,
+            ExecutionWorkSpec workSpec) {
 
         Objects.requireNonNull(runtime);
         Objects.requireNonNull(executionId);
         Objects.requireNonNull(assignmentId);
         Objects.requireNonNull(authorizationId);
+        Objects.requireNonNull(workSpec, "workSpec");
 
         if (runtime.state() != RuntimeState.READY
                 && runtime.state() != RuntimeState.RUNNING) {
@@ -31,7 +34,8 @@ public final class RuntimeExecutionCoordinator {
                 runtime.workerId(),
                 executionId,
                 assignmentId,
-                authorizationId
+                authorizationId,
+                workSpec
         );
     }
 }

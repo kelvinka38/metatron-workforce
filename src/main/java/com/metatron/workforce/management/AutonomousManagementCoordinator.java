@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.phase3.ActorRef;
 import com.metatron.workforce.phase3.ExecutionHandoffRequest;
 import com.metatron.workforce.phase3.WorkQueueItem;
@@ -72,9 +73,11 @@ public final class AutonomousManagementCoordinator {
     }
 
     public ManagedExecution authorizeBindAndExecute(String objectiveId, String directorWorkerId,
-            String assignmentId, String workPackageId, WorkProposal proposal, ApprovalDecision approval,
+            String assignmentId, String workPackageId, ExecutionWorkSpec workSpec,
+            WorkProposal proposal, ApprovalDecision approval,
             AuthorizationRequest request, RuntimeInstance runtime, ExecutionService.Executor executor,
             String executionId, Instant startedAt, Instant completedAt) {
+        Objects.requireNonNull(workSpec, "workSpec");
         management.addAssignmentReference(objectiveId, directorWorkerId, assignmentId, startedAt);
 
         AuthorizationService.AuthorizationResult decision = authorization.authorize(proposal, approval, request);
@@ -84,7 +87,7 @@ public final class AutonomousManagementCoordinator {
                 "handoff:" + executionId, directorWorkerId, assignmentId,
                 decision.authorizationReference(), workPackageId, executionId, startedAt);
         RuntimeExecutionContext runtimeContext = runtimeExecution.start(
-                runtime, executionId, assignmentId, decision.authorizationReference());
+                runtime, executionId, assignmentId, decision.authorizationReference(), workSpec);
 
         ExecutionRecord record = execution.executeAuthorized(proposal, approval, request, authorization,
                 executor, executionId, startedAt, completedAt, null);

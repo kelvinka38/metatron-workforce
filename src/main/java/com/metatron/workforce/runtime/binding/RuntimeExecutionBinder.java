@@ -1,9 +1,10 @@
 package com.metatron.workforce.runtime.binding;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.runtime.RuntimeExecutionContext;
 import com.metatron.workforce.runtime.RuntimeInstance;
 
 import java.util.Objects;
-import com.metatron.workforce.runtime.RuntimeExecutionContext;
 
 public final class RuntimeExecutionBinder {
 
@@ -11,9 +12,11 @@ public final class RuntimeExecutionBinder {
             RuntimeInstance runtime,
             String executionId,
             String assignmentId,
-            String authorizationId) {
+            String authorizationId,
+            ExecutionWorkSpec workSpec) {
 
         Objects.requireNonNull(runtime);
+        Objects.requireNonNull(workSpec, "workSpec");
 
         if (runtime.state().name().equals("FAILED")
                 || runtime.state().name().equals("TERMINATED")) {
@@ -26,7 +29,8 @@ public final class RuntimeExecutionBinder {
                 runtime.workerId(),
                 executionId,
                 assignmentId,
-                authorizationId
+                authorizationId,
+                workSpec
         );
     }
 }
