@@ -2,6 +2,7 @@ package com.metatron.workforce.interaction.tools;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -29,11 +30,15 @@ public final class DefaultToolFabric {
         boolean hasPrimaryWebSearch = configured.stream().anyMatch(WebSearchToolAdapter.class::isInstance);
         boolean hasSemanticRecovery = configured.stream().anyMatch(SemanticQualifierWebSearchRecoveryAdapter.class::isInstance);
         boolean hasSubjectOnlyVersionRecovery = configured.stream().anyMatch(SubjectOnlyVersionWebSearchRecoveryAdapter.class::isInstance);
+        boolean hasCurrentEntityRecovery = configured.stream().anyMatch(CurrentEntityWebSearchRecoveryAdapter.class::isInstance);
         if (hasPrimaryWebSearch && !hasSemanticRecovery) {
             configured.add(new SemanticQualifierWebSearchRecoveryAdapter());
         }
         if (hasPrimaryWebSearch && !hasSubjectOnlyVersionRecovery) {
             configured.add(new SubjectOnlyVersionWebSearchRecoveryAdapter());
+        }
+        if (hasPrimaryWebSearch && !hasCurrentEntityRecovery) {
+            configured.add(new CurrentEntityWebSearchRecoveryAdapter());
         }
         this.adapters = List.copyOf(configured);
     }
@@ -45,6 +50,19 @@ public final class DefaultToolFabric {
                 .toList();
         if (candidates.isEmpty()) {
             throw new IllegalStateException("tool capability is not configured: " + request.capability());
+        }
+
+        if (WebSearchToolAdapter.CAPABILITY.equals(request.capability())) {
+            String query = fold(request.input());
+            if (qualifierSensitiveVersionQuery(query)) {
+                candidates = candidates.stream()
+                        .sorted(Comparator.comparingInt(DefaultToolFabric::versionCandidatePriority))
+                        .toList();
+            } else if (CurrentEntityWebSearchRecoveryAdapter.supports(request.input())) {
+                candidates = candidates.stream()
+                        .sorted(Comparator.comparingInt(DefaultToolFabric::currentEntityCandidatePriority))
+                        .toList();
+            }
         }
 
         List<String> failures = new ArrayList<>();
@@ -66,37 +84,49 @@ public final class DefaultToolFabric {
     }
 
     /**
-     * Tool transport success is not semantic evidence success. For qualifier-sensitive version queries,
-     * require source identity overlap and an answer-shaped version observation before the fabric admits
-     * a successful result. A nominally successful but off-topic primary result therefore falls through
-     * to bounded semantic recovery instead of contaminating Case evidence.
-     *
-     * <p>Subject identity MUST use the same multilingual semantic extraction as version recovery. The
-     * acquisition layer may preserve source qualifiers such as Vietnamese "trực tuyến" while optimizing
-     * a query. Treating those qualifier tokens as part of the product subject makes correct official
-     * evidence impossible to admit. The legacy tokenizer is retained only as a fallback for very short
-     * subjects that the recovery tokenizer intentionally ignores.</p>
+     * Tool transport success is not semantic evidence success. Current entity requirements and
+     * qualifier-sensitive version requirements must be backed by source identity, not by query text,
+     * provider answer text, or search metadata that merely repeats the request.
      */
     static boolean semanticEvidenceAdmissible(ToolRequest request, ToolResult result) {
         if (!WebSearchToolAdapter.CAPABILITY.equals(request.capability())) return true;
         String query = fold(request.input());
-        if (!qualifierSensitiveVersionQuery(query)) return true;
-        if (result.evidenceReferences().isEmpty()) return false;
 
-        Set<String> subject = SubjectOnlyVersionWebSearchRecoveryAdapter.subjectTokens(request.input());
-        if (subject.isEmpty()) subject = legacySubjectTokens(query);
-        if (subject.isEmpty()) return false;
+        if (qualifierSensitiveVersionQuery(query)) {
+            if (result.evidenceReferences().isEmpty()) return false;
+            Set<String> subject = SubjectOnlyVersionWebSearchRecoveryAdapter.subjectTokens(request.input());
+            if (subject.isEmpty()) subject = legacySubjectTokens(query);
+            if (subject.isEmpty()) return false;
 
-        String evidenceBody = result.output()
-                .replaceAll("(?im)^\\s*query=.*$", " ")
-                .replaceAll("(?im)^\\s*subject_tokens=.*$", " ")
-                .replaceAll("(?im)^\\s*recovery_subject=.*$", " ");
-        String corpus = fold(evidenceBody + " " + String.join(" ", result.evidenceReferences()));
-        Set<String> evidenceTokens = lexicalTokens(corpus);
-        int overlap = 0;
-        for (String token : subject) if (evidenceTokens.contains(token)) overlap++;
-        int required = subject.size() == 1 ? 1 : Math.min(2, subject.size());
-        return overlap >= required && VERSION_VALUE.matcher(corpus).find();
+            String corpus = fold(CurrentEntityWebSearchRecoveryAdapter.evidenceCorpus(result));
+            Set<String> evidenceTokens = lexicalTokens(corpus);
+            int overlap = 0;
+            for (String token : subject) if (evidenceTokens.contains(token)) overlap++;
+            int required = subject.size() == 1 ? 1 : Math.min(2, subject.size());
+            return overlap >= required && VERSION_VALUE.matcher(corpus).find();
+        }
+
+        if (CurrentEntityWebSearchRecoveryAdapter.supports(request.input())) {
+            if (result.evidenceReferences().isEmpty()) return false;
+            Set<String> subject = CurrentEntityWebSearchRecoveryAdapter.subjectTokens(request.input());
+            return CurrentEntityWebSearchRecoveryAdapter.subjectRelevant(
+                    subject, CurrentEntityWebSearchRecoveryAdapter.evidenceCorpus(result));
+        }
+
+        return true;
+    }
+
+    private static int versionCandidatePriority(ToolAdapter adapter) {
+        if (adapter instanceof SubjectOnlyVersionWebSearchRecoveryAdapter) return 0;
+        if (adapter instanceof SemanticQualifierWebSearchRecoveryAdapter) return 1;
+        if (adapter instanceof WebSearchToolAdapter) return 2;
+        return 3;
+    }
+
+    private static int currentEntityCandidatePriority(ToolAdapter adapter) {
+        if (adapter instanceof CurrentEntityWebSearchRecoveryAdapter) return 0;
+        if (adapter instanceof WebSearchToolAdapter) return 1;
+        return 2;
     }
 
     private static boolean qualifierSensitiveVersionQuery(String query) {
