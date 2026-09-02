@@ -70,6 +70,20 @@ public final class IntelligenceFabric {
         List<LlmResponse> responses = new ArrayList<>();
         List<RuntimeException> failures = new ArrayList<>();
         boolean hasInitialExternalEvidence = enrichment.webEvidence() != null && enrichment.webEvidence().success();
+        if (request.freshExternalDataRequired() && !hasInitialExternalEvidence) {
+            String reason = enrichment.webEvidence() == null
+                    ? "external_evidence_not_attempted"
+                    : enrichment.webEvidence().output();
+            LOG.warn("current_external_evidence_unavailable request_id={} reason={}",
+                    enrichedRequest.requestId(), reason);
+            return new IntelligenceResult(
+                    enrichedRequest.requestId(),
+                    "METATRON CURRENT INFORMATION BLOCKED\n"
+                            + "reason=CURRENT_EXTERNAL_EVIDENCE_UNAVAILABLE\n"
+                            + "objective=" + enrichedRequest.objective(),
+                    List.of(),
+                    enrichedRequest.evidenceReferences());
+        }
 
         for (LlmProvider provider : plan.providers()) {
             try {
