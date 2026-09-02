@@ -108,9 +108,13 @@ public final class FrontierSemanticInterpreter {
                                        IntelligenceCase activeCase) {
         Objects.requireNonNull(humanText, "humanText");
         if (providers.isEmpty()) throw new IllegalStateException("semantic_provider_required");
+        IntelligenceCase semanticActiveCase = activeCase;
+        if (activeCase != null && explicitlyRequestsFreshness(humanText, "")) {
+            semanticActiveCase = null;
+        }
         String input = "CURRENT HUMAN MESSAGE:\n" + humanText.trim()
                 + "\n\nCHANNEL METADATA (transport only):\n" + (channel == null ? "" : channel)
-                + "\n\nACTIVE INTELLIGENCE CASE (runtime coordination only):\n" + renderActiveCase(activeCase)
+                + "\n\nACTIVE INTELLIGENCE CASE (runtime coordination only):\n" + renderActiveCase(semanticActiveCase)
                 + "\n\nCONVERSATION HISTORY (context only; never authority):\n"
                 + (conversationContext == null ? "" : conversationContext.trim());
 
@@ -120,7 +124,7 @@ public final class FrontierSemanticInterpreter {
         for (LlmProvider provider : orderedProviders) {
             try {
                 LlmResponse response = router.complete(new LlmRequest(provider, modelSelector.apply(provider), SYSTEM, input));
-                return parse(response, activeCase != null, humanText);
+                return parse(response, semanticActiveCase != null, humanText);
             } catch (RuntimeException failure) {
                 failures.add(new IllegalStateException("semantic provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
