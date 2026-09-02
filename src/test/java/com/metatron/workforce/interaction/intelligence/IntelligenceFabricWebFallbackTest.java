@@ -53,4 +53,42 @@ final class IntelligenceFabricWebFallbackTest {
         assertTrue(result.text().contains("Current gold market price evidence"));
         assertTrue(result.providerResults().isEmpty());
     }
+    @Test
+    void doesNotAskAProviderToInventCurrentFactsWhenExternalEvidenceAcquisitionFails() {
+        IntelligencePlanner planner = new IntelligencePlanner(request -> List.of(LlmProvider.OPENAI));
+        java.util.concurrent.atomic.AtomicBoolean providerInvoked = new java.util.concurrent.atomic.AtomicBoolean();
+
+        ToolAdapter web = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+
+            @Override
+            public ToolResult execute(ToolRequest request) {
+                return ToolResult.failure(request, "fresh_search_exhausted");
+            }
+        };
+
+        IntelligenceFabric fabric = new IntelligenceFabric(
+                planner,
+                (provider, request) -> {
+                    providerInvoked.set(true);
+                    throw new AssertionError("provider must not receive an ungrounded current-fact request");
+                },
+                (request, responses) -> "unused",
+                (request, responses, text) -> {},
+                new DefaultToolFabric(List.of(web)));
+
+        IntelligenceRequest request = new IntelligenceRequest(
+                "python-live", "telegram-human", IntelligenceMode.DISCUSSION, CollaborationMode.SINGLE,
+                "Python latest stable version", "telegram", List.of("observation:telegram:1"), "analysis", "LOW",
+                "interactive-fast", "standard", "telegram-human", "direct answer",
+                List.of(), 1, true);
+
+        IntelligenceResult result = fabric.execute(request);
+
+        assertFalse(providerInvoked.get());
+        assertTrue(result.text().contains("CURRENT_EXTERNAL_EVIDENCE_UNAVAILABLE"));
+        assertEquals(List.of("observation:telegram:1"), result.evidenceReferences());
+        assertTrue(result.providerResults().isEmpty());
+    }
+
 }
