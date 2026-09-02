@@ -1,0 +1,7 @@
+Point 5 production acceptance must keep potentially unbounded runtime JSON payloads in files or stdin, never process argv.
+
+Required script contract:
+- objectives registry is written to $OUT/objectives-no-objective-<update>.json
+- Python receives the registry file path, not the registry JSON payload
+- Meeting receipt delivery emits POINT5_MEETING_RECEIPT_DELIVERED=PASS
+- Meeting no-objective verification emits POINT5_MEETING_NO_OBJECTIVE=PASS
