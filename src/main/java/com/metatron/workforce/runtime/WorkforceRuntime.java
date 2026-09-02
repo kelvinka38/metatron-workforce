@@ -1,5 +1,6 @@
 package com.metatron.workforce.runtime;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.binding.RuntimeExecutionBinder;
 
 import java.nio.file.Path;
@@ -54,8 +55,9 @@ public final class WorkforceRuntime {
             RuntimeInstance runtime,
             String executionId,
             String assignmentId,
-            String authorizationId) {
-        return binder.bind(runtime, executionId, assignmentId, authorizationId);
+            String authorizationId,
+            ExecutionWorkSpec workSpec) {
+        return binder.bind(runtime, executionId, assignmentId, authorizationId, workSpec);
     }
 
     public RuntimePersistenceRecord failRuntime(String runtimeId) {
