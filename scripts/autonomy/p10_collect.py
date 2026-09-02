@@ -4,7 +4,8 @@
 The collector does not decide ACCEPTED_L10; p10_ratify.py owns that verdict. This program refuses
 manifest construction unless both production Golden Slice artifact sets are exact-SHA consistent and
 the institutional invariant tests needed for non-destructive/unsafe production conditions actually
-executed with zero failures/errors on the same checked-out SHA.
+executed with zero failures/errors on the same checked-out SHA. Golden Slice 2 proves the general
+execution runtime; a bounded hardcoded PR proposer is explicitly insufficient for L10 scope.
 """
 from __future__ import annotations
 
@@ -77,6 +78,27 @@ def objective_view(root: Path, name: str, label: str) -> tuple[dict, list[str]]:
     return view, [f"artifact:{label}/{path.name}"]
 
 
+def validate_gs2_general_runtime(root: Path, target_sha: str, terminal: dict) -> list[str]:
+    blob = json.dumps(terminal, sort_keys=True)
+    if "execution.general.workspace" not in blob:
+        fail("GS2 missing execution.general.workspace capability binding")
+    proof_path = one(root, "gs2-general-runtime.txt")
+    proof = parse_kv(proof_path)
+    if proof.get("general_capability") != "execution.general.workspace":
+        fail("GS2 general capability proof mismatch")
+    if proof.get("repository") != "kelvinka38/metatron-workforce":
+        fail("GS2 did not execute against canonical Workforce repository")
+    if proof.get("source_commit_sha") != target_sha:
+        fail("GS2 materialized repository source is not exact target SHA")
+    for key in ("workspace_materialized", "cognitive_action_fabric", "test_action",
+                "independent_observation", "sandbox_isolated"):
+        if proof.get(key) != "PASS":
+            fail(f"GS2 general runtime proof missing {key}=PASS")
+    if not SHA_RE.fullmatch(proof.get("local_git_commit", "")):
+        fail("GS2 missing immutable local Git work-product commit")
+    return [f"artifact:gs12/{proof_path.name}"]
+
+
 def validate_gs12(root: Path, target_sha: str) -> dict[str, list[str]]:
     refs: dict[str, list[str]] = {}
     refs["deploy"] = exact_deployment(root, target_sha, "gs12")
@@ -96,18 +118,10 @@ def validate_gs12(root: Path, target_sha: str) -> dict[str, list[str]]:
         refs["gs1"].append(f"artifact:gs12/{p.name}")
 
     gs2, refs["gs2"] = objective_view(root, "gs2-terminal-view.json", "GS2")
-    if "repository.pr.propose" not in json.dumps(gs2, sort_keys=True):
-        fail("GS2 missing governed mutation capability")
-    pr_path = one(root, "gs2-pr.json")
-    files_path = one(root, "gs2-pr-files.json")
-    pr = json.loads(pr_path.read_text(encoding="utf-8"))
-    files = json.loads(files_path.read_text(encoding="utf-8"))
-    if pr.get("state") != "open" or pr.get("merged") is not False or pr.get("merged_at") is not None:
-        fail("GS2 PR did not preserve Founder merge boundary")
-    filenames = [f.get("filename") for f in files]
-    if filenames != ["docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md"]:
-        fail(f"GS2 mutation scope mismatch: {filenames}")
-    refs["gs2"] += [f"artifact:gs12/{pr_path.name}", f"artifact:gs12/{files_path.name}"]
+    refs["gs2"] += validate_gs2_general_runtime(root, target_sha, gs2)
+    for name in ("gs2-request.json", "gs2-response.json", "gs2-duplicate-response.json", "gs2-ingress.txt"):
+        p = one(root, name)
+        refs["gs2"].append(f"artifact:gs12/{p.name}")
     return refs
 
 
@@ -279,7 +293,7 @@ def build_manifest(target_sha: str, deployed_sha: str, gs12: Path, gs34: Path, t
         "deployed_sha": deployed_sha,
         "golden_slices": {
             "1": {"status": "PASS", "sha": target_sha, "evidence_refs": gs1},
-            "2": {"status": "PASS", "sha": target_sha, "evidence_refs": gs2},
+            "2": {"status": "PASS", "sha": target_sha, "scope": "GENERAL_EXECUTION_RUNTIME", "evidence_refs": gs2},
             "3": {"status": "PASS", "sha": target_sha, "evidence_refs": gs3a + gs3b + gs3c},
             "4": {"status": "PASS", "sha": target_sha, "evidence_refs": gs4},
         },
@@ -297,6 +311,7 @@ def self_test() -> int:
     assert len(REQUIRED_TESTS) >= 15
     condition_ids = set(range(1, 46))
     assert len(condition_ids) == 45
+    assert not SHA_RE.fullmatch("bounded-pr-is-not-general-runtime")
     print("P10_COLLECTOR_SELF_TEST=PASS")
     return 0
 
