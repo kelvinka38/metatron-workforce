@@ -25,9 +25,10 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
             "stable", "version", "versions", "release", "releases", "released", "build", "edition", "lts",
             "data", "source", "sources", "use", "using", "check", "answer", "information", "external", "reality",
             "please", "provide", "provides", "providing", "cite", "download", "downloads", "user", "users",
+            "determine", "online",
             "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "nhat", "neu", "nguon", "cho", "bao", "nhieu",
             "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi", "gi", "ai", "la",
-            "phien", "ban", "on", "dinh");
+            "phien", "ban", "on", "dinh", "loi", "xac", "truc", "tuyen");
 
     private final ToolAdapter delegate;
 
@@ -117,12 +118,8 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
 
     private static boolean supports(String query) {
         String folded = fold(query);
-        boolean versionIntent = folded.matches(".*\\b(version|versions|release|releases|lts)\\b.*")
-                || folded.contains("phien ban");
-        boolean freshnessIntent = folded.matches(".*\\b(stable|latest|current|currently|today|now)\\b.*")
-                || folded.contains("moi nhat")
-                || folded.contains("hien tai")
-                || folded.contains("on dinh");
+        boolean versionIntent = folded.matches(".*\\b(version|versions|release|releases|lts)\\b.*");
+        boolean freshnessIntent = folded.matches(".*\\b(stable|latest|current|currently|today|now)\\b.*");
         return versionIntent && freshnessIntent;
     }
 
@@ -136,10 +133,22 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
 
     private static String fold(String value) {
         if (value == null || value.isBlank()) return "";
-        return Normalizer.normalize(value, Normalizer.Form.NFD)
+        String folded = Normalizer.normalize(value, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .replace('đ', 'd')
                 .toLowerCase(Locale.ROOT)
+                .replaceAll("\\s+", " ")
+                .trim();
+        return folded
+                .replaceAll("\\bphien\\s+ban\\b", "version")
+                .replaceAll("\\bmoi\\s+nhat\\b", "latest")
+                .replaceAll("\\bhien\\s+tai\\b", "current")
+                .replaceAll("\\bon\\s+dinh\\b", "stable")
+                .replaceAll("\\bkiem\\s+tra\\b", "check")
+                .replaceAll("\\btra\\s+loi\\b", "answer")
+                .replaceAll("\\bnguon\\s+truc\\s+tuyen\\b", "source")
+                .replaceAll("\\btruc\\s+tuyen\\b", "online")
+                .replaceAll("\\bxac\\s+dinh\\b", "determine")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
