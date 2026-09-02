@@ -169,6 +169,7 @@ jobs:
           set -euo pipefail
           chmod +x gradlew
           python3 scripts/autonomy/p10_collect.py --self-test
+          python3 scripts/autonomy/p10_general_runtime_guard.py --self-test
           python3 scripts/autonomy/p10_ratify.py --self-test
           ./gradlew clean test --no-daemon --max-workers=1
           test -d build/test-results/test
@@ -185,6 +186,10 @@ jobs:
             --gs34 "$EVIDENCE_ROOT/gs34" \
             --test-results build/test-results/test \
             --output "$EVIDENCE_ROOT/manifest.json"
+          python3 scripts/autonomy/p10_general_runtime_guard.py \
+            --gs12 "$EVIDENCE_ROOT/gs12" \
+            --manifest "$EVIDENCE_ROOT/manifest.json" \
+            --target-sha "$TARGET_SHA"
           python3 scripts/autonomy/p10_ratify.py "$EVIDENCE_ROOT/manifest.json" \
             --output "$EVIDENCE_ROOT/verdict.json"
           python3 - "$EVIDENCE_ROOT/verdict.json" <<'PY'
@@ -192,9 +197,11 @@ jobs:
           d=json.load(open(sys.argv[1]))
           assert d.get('verdict')=='ACCEPTED_L10', d.get('errors')
           assert d.get('golden_slices_passed')==4
+          assert d.get('general_execution_runtime_passed') is True
           assert d.get('conditions_accounted')==45
           assert not d.get('unresolved_critical_contradictions')
           print('P10_GOLDEN_SLICES=4/4')
+          print('P10_GENERAL_EXECUTION_RUNTIME=PASS')
           print('P10_PRODUCTION_CONDITIONS=45/45')
           print('P10_UNRESOLVED_CRITICAL_CONTRADICTIONS=0')
           print('P10_FINAL_VERDICT=ACCEPTED_L10')
