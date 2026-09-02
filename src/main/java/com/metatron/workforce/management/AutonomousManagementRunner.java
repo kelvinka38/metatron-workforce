@@ -261,7 +261,15 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     boolean temporaryCapacityOnly = !decision.deferredReasons().isEmpty()
                             && decision.deferredReasons().values().stream()
                             .allMatch("finite-capacity-unavailable"::equals);
-                    if (!temporaryCapacityOnly) {
+                    boolean executionCapabilityGapOnly = !decision.deferredReasons().isEmpty()
+                            && decision.deferredReasons().values().stream()
+                            .allMatch(reason -> reason.startsWith("capability-unavailable:"));
+                    if (executionCapabilityGapOnly) {
+                        Map.Entry<String, String> firstGap = decision.deferredReasons().entrySet().stream()
+                                .sorted(Map.Entry.comparingByKey()).findFirst().orElseThrow();
+                        handleCapabilityPlanGap(objectiveId, firstGap.getKey(),
+                                firstGap.getValue().substring("capability-unavailable:".length()), lease);
+                    } else if (!temporaryCapacityOnly) {
                         management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
                                 "scheduler-admission-blocked:" + reasons, clock.instant());
                     }
@@ -290,10 +298,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             for (Future<NodeExecutionOutcome> future : futures) {
                 NodeExecutionOutcome outcome = await(future);
                 if (outcome.missingCapability()) {
-                    String owner = management.get(objectiveId).ownerWorkerId();
-                    management.assessCapacity(objectiveId, owner, outcome.requiredCapability(), 1.0, 0.0, clock.instant());
-                    management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
-                            "staffing-required:" + outcome.requiredCapability(), clock.instant());
+                    handleCapabilityPlanGap(objectiveId, outcome.stepId(), outcome.requiredCapability(), lease);
                     stop = true;
                     continue;
                 }
@@ -341,6 +346,32 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         }
         coordination.completeGraph(objectiveId, graph.graphVersion(), clock.instant());
         management.completeAutonomousObjective(objectiveId, runnerId, lease.token(), clock.instant());
+    }
+
+    private void handleCapabilityPlanGap(String objectiveId, String stepId, String requiredCapability,
+                                         ManagementLease lease) {
+        long priorReplans = management.history(objectiveId).stream()
+                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
+                .count();
+        String failure = "execution-capability-unavailable:step=" + stepId
+                + ":capability=" + requiredCapability
+                + ":available=" + capabilityCatalog();
+        management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), failure, clock.instant());
+        String owner = management.get(objectiveId).ownerWorkerId();
+        if (priorReplans < MAX_AUTONOMOUS_REPLANS) {
+            management.requestReplan(objectiveId, owner, failure, clock.instant());
+            LOG.warn("autonomy_capability_replan_requested objective_id={} step_id={} capability={} prior_replans={} available_capabilities={}",
+                    objectiveId, stepId, requiredCapability, priorReplans, capabilityCatalog());
+            return;
+        }
+        management.escalate(objectiveId, owner,
+                "bounded-autonomous-capability-recovery-exhausted:replans=" + priorReplans
+                        + ":step=" + stepId
+                        + ":capability=" + requiredCapability
+                        + ":available=" + capabilityCatalog(),
+                clock.instant());
+        LOG.error("autonomy_capability_recovery_escalated objective_id={} step_id={} capability={} replans={} available_capabilities={}",
+                objectiveId, stepId, requiredCapability, priorReplans, capabilityCatalog());
     }
 
     private void handleAutonomousReplan(String objectiveId, NodeExecutionOutcome outcome,
