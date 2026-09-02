@@ -60,6 +60,12 @@ class AutonomousManagementRunnerTest {
                 .anyMatch(message -> message.messageType().equals("ObjectiveAccepted")));
         assertTrue(replacementProcess.outbox().stream()
                 .anyMatch(message -> message.messageType().equals("ObjectiveCompleted")));
+        assertTrue(replacementProcess.outbox().stream()
+                .anyMatch(message -> message.messageType().equals("ObjectiveOutcomeReportReady")
+                        && message.payload().contains("status=COMPLETED")
+                        && message.payload().contains("evidence:restart-pass")));
+        assertTrue(replacementProcess.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPORT_READY));
     }
 
     @Test
