@@ -14,8 +14,11 @@ on:
 permissions:
   contents: read
 
+# One repository-wide production lane owns the single production runner.
+# A newer deploy supersedes any stale acceptance run; after that deploy succeeds,
+# only the Highway for the newly deployed exact SHA is admitted.
 concurrency:
-  group: metatron-production-acceptance-highway
+  group: metatron-production-lane
   cancel-in-progress: true
 
 jobs:
@@ -23,31 +26,28 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: capacity-phased-v8
+      HIGHWAY_REVISION: single-production-lane-v9
     steps:
       - uses: actions/checkout@v7
-      - name: Run capacity-phased production acceptance highway
+      - name: Run single-owner production acceptance highway
         shell: bash
         run: |
           set -euo pipefail
           echo "HIGHWAY_REVISION=$HIGHWAY_REVISION"
-          chmod +x scripts/production-acceptance-highway.sh scripts/highway-intelligence-lane.sh scripts/runtime-conformance-point2.sh
+          chmod +x \
+            scripts/production-acceptance-highway.sh \
+            scripts/highway-intelligence-lane.sh \
+            scripts/runtime-conformance-point2.sh \
+            scripts/runtime-conformance-point5.sh
           ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
           mkdir -p "$ROOT"
 
-          # One GitHub production orchestrator, but capacity-heavy phases are intentionally
-          # sequential on the 4GB production host. Core Highway retains its own four-way
-          # concurrency (gateway, observability, destructive A, destructive B). We do not
-          # concurrently add frontier/search traffic that competes for JVM/host capacity.
-          #
-          # Isolated JVM health can become UP a few seconds before the async chat admission
-          # path is fully materializing Objectives. Retry the whole isolated Core exactly once
-          # only for that proven transient shape: planning admission was acquired but fewer
-          # than two Objective IDs materialized. Do not retry crash, evidence, tool, terminal,
-          # exact-SHA, gateway, or observability failures.
+          # Capacity-heavy phases stay sequential on the 4GB production host.
+          # Core Highway retains its own bounded internal concurrency. No other
+          # post-deploy workflow is allowed to compete for the production runner.
           echo 'HIGHWAY_PHASE=CORE'
           CORE_RC=1
           CORE_ATTEMPT=0
@@ -97,13 +97,25 @@ jobs:
           cat "$ROOT/point2-root-routing.log" || true
           test "$POINT2_RC" = 0
 
+          echo 'HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5'
+          mkdir -p "$ROOT/point5"
+          set +e
+          POINT5_OUT_DIR="$ROOT/point5" scripts/runtime-conformance-point5.sh > "$ROOT/point5.log" 2>&1
+          POINT5_RC=$?
+          set -e
+          echo "$POINT5_RC" > "$ROOT/point5.rc"
+          cat "$ROOT/point5.log" || true
+          test "$POINT5_RC" = 0
+          grep -q 'RUNTIME_CONFORMANCE_POINT5=PASS' "$ROOT/point5.log"
+
           echo 'HIGHWAY_SCHEDULER_SINGLE_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_STALE_ACCEPTANCE_SUPERSESSION=PASS'
           echo 'HIGHWAY_CORE_INTERNAL_PARALLELISM=PASS'
           echo 'HIGHWAY_HOST_CAPACITY_PHASES=PASS'
           echo 'HIGHWAY_INTELLIGENCE_PRODUCT=PASS'
           echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
-          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2=PASS'
+          echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=PASS'
+          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2_AND_POINT5=PASS'
       - name: Upload highway evidence
         if: always()
         uses: actions/upload-artifact@v4

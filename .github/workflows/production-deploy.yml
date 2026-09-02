@@ -15,6 +15,9 @@ on:
       - '.github/workflows/production-deploy.yml'
       - '.github/workflows/production-acceptance-highway-v2.yml'
       - '.github/workflows/highway-conformance-ci.yml'
+      - '.github/workflows/runtime-conformance-point4-production-acceptance.yml'
+      - '.github/workflows/runtime-conformance-point4-read-production-acceptance.yml'
+      - '.github/workflows/runtime-conformance-point5-production-acceptance.yml'
   workflow_dispatch:
 
 permissions:
@@ -56,9 +59,11 @@ jobs:
     needs: test-and-build
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
+    # Repository-wide production lane. If a newer exact SHA is ready to deploy,
+    # it supersedes any stale Highway acceptance still exercising the old SHA.
     concurrency:
-      group: metatron-live-deploy
-      cancel-in-progress: false
+      group: metatron-production-lane
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
       - name: Download deployable JAR
