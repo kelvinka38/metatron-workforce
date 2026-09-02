@@ -36,6 +36,8 @@ if os.getuid() == 0:
     os.setuid(10001)
 
 ROOT.mkdir(parents=True, exist_ok=True)
+LOG_ROOT = Path("/tmp/metatron-sandbox-logs")
+LOG_ROOT.mkdir(parents=True, exist_ok=True)
 ALLOWED = {x.strip() for x in os.environ.get(
     "SANDBOX_ALLOWED_EXECUTABLES",
     "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw"
@@ -97,7 +99,9 @@ def run_process(payload):
     command = executable_command(workspace, executable, payload.get("args") or [])
     timeout = max(1, min(int(payload.get("timeoutSeconds", 60)), 300))
     max_output = max(1024, min(int(payload.get("maxOutputBytes", 512000)), 4_000_000))
-    log = workspace / ".metatron-last-process.log"
+    # Process output is sandbox transport state, not Objective work product. Keeping this log out of
+    # the workspace prevents Git baselines/Observation from treating command plumbing as a mutation.
+    log = LOG_ROOT / f"{workspace_key}.log"
     env = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME": str(workspace),
