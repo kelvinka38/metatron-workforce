@@ -82,26 +82,33 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private final Duration timeout;
     private final String endpoint;
     private final String publicKnowledgeEndpoint;
+    private final String publicKnowledgeArticleEndpoint;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public WebSearchToolAdapter() {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NORMAL).build(),
-                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT);
+                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout) {
-        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT);
+        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint) {
-        this(client, timeout, endpoint, "");
+        this(client, timeout, endpoint, "", WIKIPEDIA_ARTICLE);
     }
 
     WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint) {
+        this(client, timeout, endpoint, publicKnowledgeEndpoint, WIKIPEDIA_ARTICLE);
+    }
+
+    WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint,
+                         String publicKnowledgeArticleEndpoint) {
         this.client = Objects.requireNonNull(client, "client");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         this.publicKnowledgeEndpoint = publicKnowledgeEndpoint == null ? "" : publicKnowledgeEndpoint.trim();
+        this.publicKnowledgeArticleEndpoint = publicKnowledgeArticleEndpoint == null ? "" : publicKnowledgeArticleEndpoint.trim();
         if (endpoint.isBlank()) throw new IllegalArgumentException("endpoint must not be blank");
     }
 
@@ -563,7 +570,8 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                 long pageId = item.path("pageid").asLong(0L);
                 String modified = item.path("timestamp").asText("").trim();
                 if (title.isBlank() || pageId <= 0L) continue;
-                String url = WIKIPEDIA_ARTICLE + pageId;
+                if (publicKnowledgeArticleEndpoint.isBlank()) continue;
+                String url = publicKnowledgeArticleEndpoint + pageId;
                 String excerpt = fetchReadableExcerpt(url);
                 if (excerpt.isBlank() || !materiallyRelevant(query, excerpt)) continue;
                 output.append('[').append(index).append("] ").append(title).append('\n')
