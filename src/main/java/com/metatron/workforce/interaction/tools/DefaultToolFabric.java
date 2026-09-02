@@ -19,7 +19,7 @@ public final class DefaultToolFabric {
             "stable", "version", "versions", "release", "releases", "released", "build", "edition", "lts",
             "data", "source", "sources", "use", "using", "check", "answer", "information", "external",
             "please", "provide", "provides", "providing", "cite", "download", "downloads", "user", "users",
-            "what", "which", "is", "are", "of", "to", "a", "an");
+            "is", "are", "of", "to", "a", "an");
 
     private final List<ToolAdapter> adapters;
 
