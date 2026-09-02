@@ -101,6 +101,7 @@ public final class WorkerRuntimeProfileBindingService {
             return new ToolProfile(
                     runtimeProfileRef,
                     Set.of(
+                            "workspace.repository.materialize",
                             "workspace.file.read", "workspace.file.list", "workspace.file.write",
                             "workspace.process.run", "workspace.shell.run",
                             "workspace.git.status", "workspace.git.diff", "workspace.git.run",
