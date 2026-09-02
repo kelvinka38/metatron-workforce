@@ -13,24 +13,37 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Transport boundary for a runtime hosted outside the Workforce JVM.
  *
- * The transport carries execution attribution plus the actual executable work specification.
- * Authorization remains an upstream institutional concern and must already have been resolved.
+ * <p>The transport carries the fully governed execution command. Institutional authorization remains
+ * upstream; a transport credential only authenticates the runtime-to-runtime hop and never substitutes
+ * for Assignment/Authorization/Dispatch bindings inside the command.</p>
  */
 public final class RemoteRuntimeExecutor {
+    public static final String EXECUTION_TOKEN_HEADER = "X-Metatron-Runtime-Execution-Token";
+
     private final HttpClient client;
     private final ObjectMapper objectMapper;
+    private final String executionToken;
 
     public RemoteRuntimeExecutor() {
-        this(HttpClient.newHttpClient(), new ObjectMapper());
+        this(HttpClient.newHttpClient(), new ObjectMapper(), env("METATRON_RUNTIME_EXECUTION_TOKEN"));
     }
 
     public RemoteRuntimeExecutor(HttpClient client) {
-        this(client, new ObjectMapper());
+        this(client, new ObjectMapper(), env("METATRON_RUNTIME_EXECUTION_TOKEN"));
+    }
+
+    public RemoteRuntimeExecutor(HttpClient client, String executionToken) {
+        this(client, new ObjectMapper(), executionToken);
     }
 
     RemoteRuntimeExecutor(HttpClient client, ObjectMapper objectMapper) {
+        this(client, objectMapper, "");
+    }
+
+    RemoteRuntimeExecutor(HttpClient client, ObjectMapper objectMapper, String executionToken) {
         this.client = Objects.requireNonNull(client);
         this.objectMapper = Objects.requireNonNull(objectMapper);
+        this.executionToken = executionToken == null ? "" : executionToken.trim();
     }
 
     public CompletableFuture<HttpResponse<String>> executeAsync(
@@ -46,11 +59,16 @@ public final class RemoteRuntimeExecutor {
             throw new IllegalStateException("runtime execution command is not serializable", failure);
         }
 
-        HttpRequest request = HttpRequest.newBuilder(endpoint)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
+        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
+                .header("Content-Type", "application/json");
+        if (!executionToken.isBlank()) request.header(EXECUTION_TOKEN_HEADER, executionToken);
 
-        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        return client.sendAsync(request.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String env(String name) {
+        String value = System.getenv(name);
+        return value == null ? "" : value.trim();
     }
 }
