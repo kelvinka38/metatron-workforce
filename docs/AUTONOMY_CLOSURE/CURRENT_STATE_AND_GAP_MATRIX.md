@@ -58,7 +58,7 @@ SHA-256: `1aa44620296eb9bc159ecca81b9c2473370b1b69712d8ef1d601c0c39c69e369`
 
 The line below remains a production acceptance fixture inside the approved GS2 mutation scope. Canonical `main` MUST retain `UNSET`. A governed `repository.pr.propose` capability may replace it only on its Objective-scoped `autonomy/gs2-*` proposal branch, open a Pull Request for Human review, and MUST NOT merge that Pull Request or mutate another path.
 
-GS2_AUTONOMOUS_PROBE=UNSET
+GS2_AUTONOMOUS_PROBE=aaff4f6df7510ec2
 
 ## Remaining gaps
 
