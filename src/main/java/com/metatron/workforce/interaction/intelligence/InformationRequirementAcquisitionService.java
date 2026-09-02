@@ -307,8 +307,8 @@ public final class InformationRequirementAcquisitionService {
         String subject = canonical
                 .replaceAll("(?iu)\\b(?:version|stable|latest|current|currently|today|now|release)\\b", " ")
                 .replaceAll("(?iu)\\b(?:check|answer|please|cite|source|sources|data|information|external|fresh|user|users)\\b", " ")
+                .replaceAll("(?iu)(?<![\\p{L}\\p{N}_])(?:của|từ|và|là|gì|nguồn|người\\s+dùng|cho|hãy|đang|rồi)(?![\\p{L}\\p{N}_])", " ")
                 .replaceAll("(?iu)\\b(?:what|which|is|are|the|a|an|of|from|for|and|with|using|to)\\b", " ")
-                .replaceAll("(?iu)\\b(?:của|từ|và|là|gì|nguồn|người\\s+dùng|cho|hãy|đang|rồi)\\b", " ")
                 .replaceAll("[?!.;,]+", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
