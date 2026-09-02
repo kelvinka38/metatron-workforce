@@ -39,7 +39,8 @@ class AutonomousStaffingServiceTest {
         assertTrue(core.qualifications("worker:test").stream().anyMatch(q -> q.qualificationRef().equals("qualification:test")));
         assertEquals(2.0, core.availability("worker:test").orElseThrow().capacity(), 0.000001);
         assertTrue(result.evidenceReferences().stream().anyMatch(e -> e.equals("staffing:policy=test.capability")));
-        assertTrue(result.evidenceReferences().stream().anyMatch(e -> e.equals("runtime-profile:runtime-profile:test")));
+        assertTrue(result.evidenceReferences().stream().anyMatch(e -> e.equals("runtime-profile-bound:runtime-profile:test")));
+        assertTrue(result.evidenceReferences().stream().anyMatch(e -> e.contains("runtime-actions=[capability:test.capability]")));
         assertEquals(WorkforceCoreService.AssignmentStatus.COMPLETED, core.allAssignments().getFirst().status());
     }
 
