@@ -89,6 +89,27 @@ jobs:
           test "$(git -C "$WORKSPACE" rev-parse HEAD)" = "$SHA"
           test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
           set -a; source "$BASE/.env"; set +a
+
+          # Remote runtime execution is an internal effect boundary and must never start open.
+          # Generate one persistent host-local transport credential if the existing production
+          # environment has not provisioned one yet. Never echo the credential to Actions logs.
+          if [ -z "${METATRON_RUNTIME_EXECUTION_TOKEN:-}" ]; then
+            python3 - "$BASE/.env" <<'PY'
+          import os,secrets,sys
+          path=sys.argv[1]
+          with open(path,'r',encoding='utf-8') as f:
+              lines=f.read().splitlines()
+          lines=[line for line in lines if not line.startswith('METATRON_RUNTIME_EXECUTION_TOKEN=')]
+          lines.append('METATRON_RUNTIME_EXECUTION_TOKEN=' + secrets.token_urlsafe(48))
+          tmp=path+'.runtime-token.tmp'
+          with open(tmp,'w',encoding='utf-8') as f:
+              f.write('\n'.join(lines)+'\n')
+          os.chmod(tmp,0o600)
+          os.replace(tmp,path)
+          PY
+            set -a; source "$BASE/.env"; set +a
+          fi
+          test -n "${METATRON_RUNTIME_EXECUTION_TOKEN:-}"
           METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" docker compose -p "$PROJECT" -f "$COMPOSE" config >/dev/null
 
           PREVIOUS_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
@@ -133,6 +154,7 @@ jobs:
           DEPLOYED_IMAGE=$(docker inspect "$CID" --format '{{.Config.Image}}')
           test "$DEPLOYED_SHA" = "$SHA"
           test "$DEPLOYED_IMAGE" = "metatron-workforce:$SHA"
+          docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -q '^METATRON_RUNTIME_EXECUTION_TOKEN=.'
 
           echo '=== PUBLIC GATEWAY ==='
           curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 15 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'

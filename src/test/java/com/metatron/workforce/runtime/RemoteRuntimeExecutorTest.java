@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -17,9 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RemoteRuntimeExecutorTest {
 
     @Test
-    void executesAttributableCommandWithActualWorkAsynchronouslyOverHttp() throws Exception {
+    void executesFullyGovernedCommandWithAuthenticatedRuntimeTransport() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/execute", exchange -> {
+            assertEquals("runtime-transport-secret",
+                    exchange.getRequestHeaders().getFirst(RemoteRuntimeExecutor.EXECUTION_TOKEN_HEADER));
             byte[] body = exchange.getRequestBody().readAllBytes();
             String request = new String(body, StandardCharsets.UTF_8);
             assertTrue(request.contains("\"executionId\":\"exec-001\""));
@@ -32,6 +35,13 @@ class RemoteRuntimeExecutorTest {
             assertTrue(request.contains("\"requiredCapability\":\"repository.read\""));
             assertTrue(request.contains("\"acceptanceCriteria\":[\"repository inspected\"]"));
             assertTrue(request.contains("\"evidenceRequirements\":[\"source references\"]"));
+            assertTrue(request.contains("\"humanId\":\"human:founder\""));
+            assertTrue(request.contains("\"organizationContextId\":\"organization:metatron\""));
+            assertTrue(request.contains("\"objectiveId\":\"objective:audit\""));
+            assertTrue(request.contains("\"assignmentReference\":\"assignment:audit\""));
+            assertTrue(request.contains("\"authorizationReference\":\"authorization:audit\""));
+            assertTrue(request.contains("\"dispatchReference\":\"dispatch:audit\""));
+            assertTrue(request.contains("\"dispatchAttempt\":1"));
             byte[] response = "accepted".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(202, response.length);
             exchange.getResponseBody().write(response);
@@ -41,7 +51,8 @@ class RemoteRuntimeExecutorTest {
 
         try {
             URI endpoint = URI.create("http://localhost:" + server.getAddress().getPort() + "/execute");
-            RemoteRuntimeExecutor executor = new RemoteRuntimeExecutor();
+            RemoteRuntimeExecutor executor = new RemoteRuntimeExecutor(
+                    HttpClient.newHttpClient(), "runtime-transport-secret");
             ExecutionWorkSpec work = new ExecutionWorkSpec(
                     "step-audit",
                     "Audit the repository",
@@ -54,7 +65,10 @@ class RemoteRuntimeExecutorTest {
 
             var response = executor.executeAsync(
                             endpoint,
-                            new RuntimeExecutionCommand("exec-001", "worker-001", "runtime-001", work))
+                            new RuntimeExecutionCommand(
+                                    "exec-001", "worker-001", "runtime-001", work,
+                                    "human:founder", "organization:metatron", "objective:audit",
+                                    "assignment:audit", "authorization:audit", "dispatch:audit", 1))
                     .get(5, TimeUnit.SECONDS);
 
             assertEquals(202, response.statusCode());

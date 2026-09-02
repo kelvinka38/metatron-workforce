@@ -16,6 +16,7 @@ set +a
 
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
 test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+test -n "${METATRON_RUNTIME_EXECUTION_TOKEN:-}"
 
 CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
 test -n "$CID"
@@ -157,10 +158,14 @@ assert {x.get('role') for x in c}=={'Head of Strategy','Head of Finance','Head o
 assert all(str(x.get('text','')).strip() for x in c)
 assert all(str(x.get('providerReference','')).startswith('provider:') for x in c)
 assert str(m.get('recommendation','')).strip()
-assert m.get('actionItems'), 'FOLLOW_UP_MISSING'
+follow='meeting-follow-up:'+mid
+assert any('handoff_ref='+follow in str(x) for x in (m.get('actionItems') or [])), 'FOLLOW_UP_HANDOFF_MISSING'
+assert any(('meeting-handoff:'+follow) in str(x) and 'authority-created=false' in str(x)
+           for x in (m.get('evidenceRefs') or [])), 'FOLLOW_UP_HANDOFF_EVIDENCE_MISSING'
 print('POINT5_MEETING_DURABLE_LIFECYCLE=PASS')
 print('POINT5_MEETING_MULTI_ROLE_ATTRIBUTION=PASS')
 print('POINT5_MEETING_NO_AUTHORITY_ESCALATION=PASS')
+print('POINT5_MEETING_EXPLICIT_AUTHORIZED_HANDOFF=PASS')
 PY
 echo "POINT5_MEETING_ID=$MEETING_ID"
 echo 'POINT5_MEETING_SAME_CONVERSATION_DELIVERY=PASS'
@@ -242,6 +247,122 @@ echo 'POINT5_OBJECTIVE_REAL_TOOL_EVIDENCE=PASS'
 echo 'POINT5_OBJECTIVE_INDEPENDENT_OBSERVATION=PASS'
 echo 'POINT5_OBJECTIVE_SAME_CONVERSATION_DELIVERY=PASS'
 echo 'POINT5_REAL_OBJECTIVE_ROUTE=PASS'
+
+echo 'POINT5_PHASE=RUNTIME_ACTUAL_EFFECT_CONSUMER'
+WORKER_VIEW=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/core/workers/WORKER-REPOSITORY-AUDITOR)
+printf '%s\n' "$WORKER_VIEW" > "$OUT/runtime-worker-view.json"
+read -r PARTICIPATION_ID ORGANIZATION_REF < <(python3 - "$OUT/runtime-worker-view.json" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1],encoding='utf-8'))
+rows=[p for p in (v.get('participations') or []) if p.get('status')=='ACTIVE']
+assert rows, 'NO_ACTIVE_REPOSITORY_AUDITOR_PARTICIPATION'
+p=rows[0]
+print(p['participationId'],p['organizationRef'])
+PY
+)
+test -n "$PARTICIPATION_ID"
+test -n "$ORGANIZATION_REF"
+RUNTIME_OBJECTIVE="objective:runtime-consumer:${RUN_ID}"
+RUNTIME_ASSIGNMENT="assignment:runtime-consumer:${RUN_ID}"
+RUNTIME_STEP="runtime-consumer-audit-${RUN_ID}"
+RUNTIME_DISPATCH="${RUNTIME_OBJECTIVE}:graph:1:step:${RUNTIME_STEP}:attempt:1"
+
+python3 - "$RUNTIME_ASSIGNMENT" "$RUNTIME_OBJECTIVE" "$PARTICIPATION_ID" "$ORGANIZATION_REF" > "$OUT/runtime-assignment-request.json" <<'PY'
+import json,sys
+assignment,objective,participation,org=sys.argv[1:5]
+print(json.dumps({
+  'assignmentId':assignment,
+  'objectiveRef':objective,
+  'workerId':'WORKER-REPOSITORY-AUDITOR',
+  'participationId':participation,
+  'authorityRef':'policy:founder-readonly-repository-audit:v1',
+  'authorizationRef':'authorization:founder-readonly-repository-audit:v1',
+  'description':'Point5 production proof: governed remote runtime actual effect'
+}))
+PY
+curl -fsS --max-time 15 -X POST http://127.0.0.1:8080/workforce/core/assignments \
+  -H 'Content-Type: application/json' --data-binary @"$OUT/runtime-assignment-request.json" \
+  > "$OUT/runtime-assignment.json"
+python3 - "$OUT/runtime-assignment.json" "$RUNTIME_ASSIGNMENT" "$RUNTIME_OBJECTIVE" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1],encoding='utf-8'))
+assert v.get('assignmentId')==sys.argv[2]
+assert v.get('objectiveRef')==sys.argv[3]
+assert v.get('workerId')=='WORKER-REPOSITORY-AUDITOR'
+assert v.get('status')=='ACTIVE'
+assert v.get('authorizationRef')=='authorization:founder-readonly-repository-audit:v1'
+print('POINT5_RUNTIME_CANONICAL_ASSIGNMENT=PASS')
+PY
+
+python3 - "$RUN_ID" "$RUNTIME_OBJECTIVE" "$RUNTIME_ASSIGNMENT" "$RUNTIME_STEP" "$RUNTIME_DISPATCH" "$ORGANIZATION_REF" > "$OUT/runtime-execution-command.json" <<'PY'
+import json,sys
+run_id,objective,assignment,step,dispatch,org=sys.argv[1:7]
+print(json.dumps({
+  'executionId':'execution:runtime-consumer:'+run_id,
+  'workerId':'WORKER-REPOSITORY-AUDITOR',
+  'runtimeId':'runtime:production:'+run_id,
+  'workSpec':{
+    'stepId':step,
+    'objective':'Perform a real governed repository audit through the runtime command consumer',
+    'target':'kelvinka38/bios',
+    'requiredCapability':'repository.audit.read',
+    'dependsOn':[],
+    'consequence':'READ_ONLY',
+    'acceptanceCriteria':['repository audit completed'],
+    'evidenceRequirements':['real external repository evidence']
+  },
+  'humanId':'human:founder-runtime-acceptance',
+  'organizationContextId':org,
+  'objectiveId':objective,
+  'assignmentReference':assignment,
+  'authorizationReference':'authorization:founder-readonly-repository-audit:v1',
+  'dispatchReference':dispatch,
+  'dispatchAttempt':1
+}))
+PY
+RUNTIME_HTTP=$(curl -sS -o "$OUT/runtime-execution-result.json" -w '%{http_code}' --max-time 90 \
+  -X POST http://127.0.0.1:8080/workforce/runtime/execute \
+  -H "X-Metatron-Runtime-Execution-Token: $METATRON_RUNTIME_EXECUTION_TOKEN" \
+  -H 'Content-Type: application/json' --data-binary @"$OUT/runtime-execution-command.json")
+test "$RUNTIME_HTTP" = 200
+python3 - "$OUT/runtime-execution-result.json" "$RUNTIME_OBJECTIVE" "$RUNTIME_ASSIGNMENT" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1],encoding='utf-8'))
+assert v.get('success') is True, v
+assert v.get('objectiveId')==sys.argv[2]
+assert v.get('assignmentReference')==sys.argv[3]
+assert v.get('workerId')=='WORKER-REPOSITORY-AUDITOR'
+assert v.get('capabilityRef')=='repository.audit.read'
+assert v.get('authorizationReference')=='authorization:founder-readonly-repository-audit:v1'
+assert v.get('authorityReference')=='policy:founder-readonly-repository-audit:v1'
+refs=v.get('evidenceReferences') or []
+assert any(str(x).startswith('runtime-actual-effect:') and ':success=true' in str(x) for x in refs)
+assert any('execution-model:cognitive-action-fabric' in str(x) for x in refs)
+print('POINT5_RUNTIME_COMMAND_ACTUAL_EFFECT=PASS')
+print('POINT5_RUNTIME_EFFECT_ATTRIBUTION=PASS')
+PY
+RUNTIME_JOURNAL=$(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$RUNTIME_OBJECTIVE\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null | tail -1" || true)
+test -n "$RUNTIME_JOURNAL"
+docker exec "$CID" cat "$RUNTIME_JOURNAL" > "$OUT/runtime-action-journal.jsonl"
+python3 - "$OUT/runtime-action-journal.jsonl" <<'PY'
+import json,sys
+rows=[json.loads(x) for x in open(sys.argv[1],encoding='utf-8') if x.strip()]
+assert len(rows)>=4
+assert all(r.get('workerId')=='WORKER-REPOSITORY-AUDITOR' for r in rows)
+assert all(r.get('authorizationReference')=='authorization:founder-readonly-repository-audit:v1' for r in rows)
+assert all(r.get('actionSuccess') is True for r in rows)
+assert rows[-1].get('reflection')=='COMPLETE'
+print('POINT5_RUNTIME_EFFECT_REAL_ACTION_JOURNAL=PASS')
+PY
+curl -fsS --max-time 10 -X POST \
+  "http://127.0.0.1:8080/workforce/core/assignments/$RUNTIME_ASSIGNMENT/status/COMPLETED" \
+  > "$OUT/runtime-assignment-completed.json"
+python3 - "$OUT/runtime-assignment-completed.json" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1],encoding='utf-8'))
+assert v.get('status')=='COMPLETED'
+print('POINT5_RUNTIME_ASSIGNMENT_CLOSED=PASS')
+PY
 
 test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
 FINAL_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)

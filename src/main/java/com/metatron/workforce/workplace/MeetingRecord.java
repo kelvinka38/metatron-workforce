@@ -50,6 +50,14 @@ public record MeetingRecord(
         if (authorityCreated) throw new IllegalArgumentException("Meeting Room cannot create institutional authority");
     }
 
+    /**
+     * Durable reference for a later authorized Decision/Objective handoff. The reference is not a
+     * Decision, Authorization or execution instruction and therefore cannot create authority by itself.
+     */
+    public String followUpReference() {
+        return "meeting-follow-up:" + meetingId;
+    }
+
     public enum Status { PROPOSED, OPEN, ACTIVE, DECISION_PENDING, CLOSED, FOLLOW_UP }
 
     public record Contribution(String participant, String role, String text, String providerReference) {
