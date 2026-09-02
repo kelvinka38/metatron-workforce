@@ -2,8 +2,8 @@
 """Strict Workforce Autonomy P10 production-evidence ratifier.
 
 This program does not create evidence. It consumes an independently assembled exact-SHA evidence
-manifest and refuses ACCEPTED_L10 unless all four Golden Slices and all 45 production conditions
-are evidence-backed PASS with no unresolved contradiction.
+manifest and refuses ACCEPTED_L10 unless all four Golden Slices, all 45 production conditions, and
+the GS2 general execution runtime closure are evidence-backed PASS with no unresolved contradiction.
 """
 
 from __future__ import annotations
@@ -96,6 +96,31 @@ def ratify(manifest: dict) -> dict:
             _fail(errors, f"Golden Slice {slice_id} has no attributable evidence_refs")
         if row.get("sha") != target_sha:
             _fail(errors, f"Golden Slice {slice_id} is not bound to target_sha")
+        if slice_id == 2:
+            if row.get("scope") != "GENERAL_EXECUTION_RUNTIME":
+                _fail(errors, "Golden Slice 2 does not prove GENERAL_EXECUTION_RUNTIME scope")
+            if not isinstance(refs, list) or "artifact:gs12/gs2-general-runtime.txt" not in refs:
+                _fail(errors, "Golden Slice 2 missing general runtime proof artifact")
+
+    general_runtime = manifest.get("general_execution_runtime")
+    if not isinstance(general_runtime, dict):
+        _fail(errors, "general_execution_runtime proof is required")
+        general_runtime = {}
+    if general_runtime.get("status") != "PASS":
+        _fail(errors, "general_execution_runtime is not PASS")
+    if general_runtime.get("sha") != target_sha:
+        _fail(errors, "general_execution_runtime is not bound to target_sha")
+    if general_runtime.get("capability") != "execution.general.workspace":
+        _fail(errors, "general_execution_runtime capability mismatch")
+    if general_runtime.get("repository") != "kelvinka38/metatron-workforce":
+        _fail(errors, "general_execution_runtime repository mismatch")
+    if general_runtime.get("source_commit_sha") != target_sha:
+        _fail(errors, "general_execution_runtime source repository is not exact target SHA")
+    if not SHA_RE.fullmatch(str(general_runtime.get("local_git_commit", ""))):
+        _fail(errors, "general_execution_runtime local Git commit is missing")
+    runtime_refs = general_runtime.get("evidence_refs")
+    if not isinstance(runtime_refs, list) or "artifact:gs12/gs2-general-runtime.txt" not in runtime_refs:
+        _fail(errors, "general_execution_runtime has no strict proof reference")
 
     supplied = manifest.get("conditions")
     if not isinstance(supplied, list):
@@ -171,6 +196,9 @@ def ratify(manifest: dict) -> dict:
             if isinstance(slices.get(str(i), slices.get(i)), dict)
             and slices.get(str(i), slices.get(i)).get("status") == "PASS"
         ),
+        "general_execution_runtime_passed": general_runtime.get("status") == "PASS" and not any(
+            "general_execution_runtime" in error or "Golden Slice 2" in error for error in errors
+        ),
         "conditions_accounted": len(rows),
         "conditions_passed": passed_conditions,
         "conditions": normalized_rows,
@@ -182,12 +210,18 @@ def ratify(manifest: dict) -> dict:
 
 def self_test() -> int:
     sha = "a" * 40
+    local_sha = "c" * 40
     good = {
         "target_sha": sha,
         "deployed_sha": sha,
         "golden_slices": {
             str(i): {"status": "PASS", "sha": sha, "evidence_refs": [f"artifact:gs{i}"]}
             for i in range(1, 5)
+        },
+        "general_execution_runtime": {
+            "status": "PASS", "sha": sha, "capability": "execution.general.workspace",
+            "repository": "kelvinka38/metatron-workforce", "source_commit_sha": sha,
+            "local_git_commit": local_sha, "evidence_refs": ["artifact:gs12/gs2-general-runtime.txt"],
         },
         "conditions": [
             {"id": i, "status": "PASS", "sha": sha, "evidence_refs": [f"evidence:c{i}"],
@@ -196,9 +230,19 @@ def self_test() -> int:
         ],
         "unresolved_critical_contradictions": [],
     }
+    good["golden_slices"]["2"]["scope"] = "GENERAL_EXECUTION_RUNTIME"
+    good["golden_slices"]["2"]["evidence_refs"].append("artifact:gs12/gs2-general-runtime.txt")
     result = ratify(good)
     assert result["verdict"] == "ACCEPTED_L10", result
     assert result["conditions_passed"] == 45
+    assert result["general_execution_runtime_passed"] is True
+
+    broken = json.loads(json.dumps(good))
+    broken["golden_slices"]["2"].pop("scope")
+    assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
+    broken = json.loads(json.dumps(good))
+    broken["general_execution_runtime"]["source_commit_sha"] = "b" * 40
+    assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
     broken = json.loads(json.dumps(good))
     broken["conditions"][23]["status"] = "NOT_APPLICABLE"
     assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
