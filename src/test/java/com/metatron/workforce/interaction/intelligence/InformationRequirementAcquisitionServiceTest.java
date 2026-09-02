@@ -40,6 +40,11 @@ class InformationRequirementAcquisitionServiceTest {
                 InformationRequirementAcquisitionService.searchOptimizedExternalQuery(productionParaphrase));
         assertEquals("Python latest stable version",
                 InformationRequirementAcquisitionService.searchOptimizedExternalQuery(productionRequirement));
+        String failedProductionObjective = InformationRequirementAcquisitionService.canonicalExternalQuery(
+                "Xác định phiên bản ổn định (stable) mới nhất của Python hiện tại dựa trên nguồn dữ liệu hiện tại");
+
+        assertEquals("Python latest stable version",
+                InformationRequirementAcquisitionService.searchOptimizedExternalQuery(failedProductionObjective));
     }
 
     @Test
