@@ -61,7 +61,11 @@ public final class AutonomyCoordinationService {
         Integer active = activeGraphVersions.get(objectiveId);
         if (active != null) {
             DurableWorkGraph current = graph(objectiveId, active);
-            if (samePlan(current, plan) && current.status() == DurableWorkGraph.Status.ACTIVE) return current;
+            boolean failedPlan = current.nodes().values().stream()
+                    .anyMatch(node -> node.status() == DurableWorkGraph.NodeStatus.FAILED);
+            if (samePlan(current, plan)
+                    && current.status() == DurableWorkGraph.Status.ACTIVE
+                    && !failedPlan) return current;
             if (current.status() == DurableWorkGraph.Status.ACTIVE) {
                 graphs.put(key(objectiveId, active), new DurableWorkGraph(current.objectiveId(), current.graphVersion(),
                         DurableWorkGraph.Status.SUPERSEDED, current.nodes(), current.createdAt(), at));

@@ -255,6 +255,16 @@ public final class ManagementAutonomyService {
                 String.join(",", completed.evidenceReferences()), at);
         addOutboxUnpersisted("ObjectiveCompleted", objectiveId, objectiveId, objectiveId,
                 "objective=" + objectiveId + ";evidence=" + completed.evidenceReferences().size(), at);
+        String outcomeReport = "objective=" + objectiveId
+                + ";owner=" + objective.ownerWorkerId()
+                + ";status=" + objective.status()
+                + ";work=" + completed.completedStepIds().size() + "/" + completed.plannedWork().size()
+                + ";assignments=" + objective.assignmentRefs()
+                + ";evidence=" + completed.evidenceReferences();
+        appendUnpersisted(objectiveId, objective.ownerWorkerId(),
+                ManagementEvent.Type.REPORT_READY, outcomeReport, at);
+        addOutboxUnpersisted("ObjectiveOutcomeReportReady", objectiveId, objectiveId,
+                objectiveId + ":outcome-report", outcomeReport, at);
         persist();
         return objective;
     }
@@ -728,6 +738,7 @@ public final class ManagementAutonomyService {
             LOCAL_RECOVERY,
             ESCALATED,
             COMPLETED,
+            REPORT_READY,
             DELIVERED,
             OWNERSHIP_TRANSFERRED
         }
