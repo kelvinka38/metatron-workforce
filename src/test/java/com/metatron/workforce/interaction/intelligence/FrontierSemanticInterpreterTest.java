@@ -139,6 +139,47 @@ final class FrontierSemanticInterpreterTest {
         assertTrue(normalized.freshExternalDataRequired());
     }
 
+    @Test
+    void currentWeatherCannotBeMisroutedToCurrentTimeCapability() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                return semanticResponseWithCapability(LlmProvider.GOOGLE,
+                        "provide current weather in Ho Chi Minh City", "Ho Chi Minh City weather",
+                        "ANALYZE", "REASONING", "CURRENT_TIME");
+            }
+        };
+        FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
+                new LlmProviderRouter(List.of(google)), provider -> "semantic-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        NormalizedRequest normalized = interpreter.interpret(
+                "Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.",
+                "", "telegram");
+
+        assertEquals(DeterministicCapability.NONE, normalized.deterministicCapability());
+        assertTrue(normalized.freshExternalDataRequired());
+        assertEquals(IntelligenceMode.REASONING, normalized.mode());
+    }
+
+    @Test
+    void explicitCurrentTimeRequestKeepsCurrentTimeCapability() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                return semanticResponseWithCapability(LlmProvider.GOOGLE,
+                        "tell the current local time", "local time", "FAST", "DISCUSSION", "CURRENT_TIME");
+            }
+        };
+        FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
+                new LlmProviderRouter(List.of(google)), provider -> "semantic-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        NormalizedRequest normalized = interpreter.interpret("Bây giờ là mấy giờ?", "", "telegram");
+
+        assertEquals(DeterministicCapability.CURRENT_TIME, normalized.deterministicCapability());
+    }
+
     private static LlmResponse semanticResponse(LlmProvider provider, String objective, String target,
                                                 String depth, String mode, String directResponse,
                                                 String ambiguity) {
@@ -163,6 +204,33 @@ final class FrontierSemanticInterpreterTest {
                   "direct_response":"%s"
                 }
                 """.formatted(objective, target, depth, ambiguity, mode, directResponse);
+        return new LlmResponse(provider, "semantic-test", text, "semantic-ref");
+    }
+
+    private static LlmResponse semanticResponseWithCapability(LlmProvider provider, String objective,
+                                                              String target, String depth, String mode,
+                                                              String capability) {
+        String text = """
+                {
+                  "objective":"%s",
+                  "target":"%s",
+                  "constraints":["use evidence"],
+                  "requested_depth":"%s",
+                  "requested_output":"direct natural-language answer",
+                  "explicit_assumptions":[],
+                  "explicit_prohibitions":[],
+                  "temporal_context":"",
+                  "unresolved_semantic_ambiguity":"",
+                  "mode":"%s",
+                  "collaboration_mode":"SINGLE",
+                  "analytical_protocols":[],
+                  "deterministic_capability":"%s",
+                  "deterministic_computations":[],
+                  "fresh_external_data_required":false,
+                  "explicitly_requested_provider":null,
+                  "direct_response":""
+                }
+                """.formatted(objective, target, depth, mode, capability);
         return new LlmResponse(provider, "semantic-test", text, "semantic-ref");
     }
 }
