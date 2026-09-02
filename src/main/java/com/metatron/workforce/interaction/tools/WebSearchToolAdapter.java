@@ -53,7 +53,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
             "check", "answer", "information", "external", "reality", "please", "new", "fresh",
             "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "neu", "nguon", "cho", "bao", "nhieu",
-            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua");
+            "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi");
 
     private static final Pattern ITEM = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<%s>(?:<!\\[CDATA\\[(.*?)\\]\\]|(.*?))</%s>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
@@ -115,7 +115,16 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
         ToolResult grounded = searchGrounded(request, query);
         if (grounded.success()) return grounded;
-        return searchWeb(request, query);
+
+        ToolResult web = searchWeb(request, query);
+        if (web.success()) return web;
+
+        String compactQuery = compactSearchQuery(query);
+        if (!compactQuery.isBlank() && !compactQuery.equalsIgnoreCase(query)) {
+            ToolResult compactWeb = searchWeb(request, compactQuery);
+            if (compactWeb.success()) return compactWeb;
+        }
+        return web;
     }
 
     private ToolResult searchGrounded(ToolRequest request, String query) {
@@ -214,6 +223,12 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         for (String token : subject) if (evidence.contains(token)) overlap++;
         int required = Math.min(2, subject.size());
         return overlap >= required;
+    }
+
+    static String compactSearchQuery(String query) {
+        Set<String> tokens = subjectTokens(query);
+        if (tokens.isEmpty()) return query == null ? "" : query.trim();
+        return String.join(" ", tokens.stream().limit(8).toList());
     }
 
     private static Set<String> subjectTokens(String value) {
