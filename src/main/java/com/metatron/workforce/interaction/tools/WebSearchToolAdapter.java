@@ -357,21 +357,34 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             if (!ok(response)) return ToolResult.failure(request, "web_search_http_status:" + response.statusCode());
             List<Result> results = parseResults(response.body(), SEARCH_RESULT_LIMIT);
             if (results.isEmpty()) return ToolResult.failure(request, "web_search_no_results");
-            List<Result> relevant = results.stream()
-                    .filter(result -> materiallyRelevant(query, result.title() + " " + result.description()))
-                    .toList();
+
+            List<SearchEvidence> relevant = new ArrayList<>();
+            int fetched = 0;
+            for (Result result : results) {
+                String excerpt = "";
+                if (fetched < FETCH_RESULT_LIMIT) {
+                    excerpt = fetchReadableExcerpt(result.url());
+                    fetched++;
+                }
+                String candidateEvidence = result.title() + " " + result.description()
+                        + (excerpt.isBlank() ? "" : " " + excerpt);
+                if (materiallyRelevant(query, candidateEvidence)) {
+                    relevant.add(new SearchEvidence(result, excerpt));
+                }
+            }
             if (relevant.isEmpty()) return ToolResult.failure(request, "web_search_no_relevant_results");
+
             StringBuilder output = new StringBuilder("WEB SEARCH RESULTS\nquery=").append(query).append("\nretrieved_at=").append(Instant.now()).append('\n');
             List<String> evidence = new ArrayList<>();
             int index = 1;
-            for (Result result : relevant) {
+            for (SearchEvidence item : relevant) {
+                Result result = item.result();
                 output.append('[').append(index).append("] ").append(result.title()).append('\n')
                         .append("url=").append(result.url()).append('\n').append("snippet=").append(result.description()).append('\n');
-                if (index <= FETCH_RESULT_LIMIT) {
-                    String excerpt = fetchReadableExcerpt(result.url());
-                    if (!excerpt.isBlank()) output.append("source_excerpt=").append(excerpt).append('\n');
-                }
-                output.append('\n'); evidence.add(result.url()); index++;
+                if (!item.excerpt().isBlank()) output.append("source_excerpt=").append(item.excerpt()).append('\n');
+                output.append('\n');
+                evidence.add(result.url());
+                index++;
             }
             return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(), true, output.toString().trim(), List.copyOf(evidence));
         } catch (InterruptedException e) {
@@ -497,4 +510,5 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     }
     private record CurrencyPair(String base, String quote) {}
     private record Result(String title, String url, String description) {}
+    private record SearchEvidence(Result result, String excerpt) {}
 }
