@@ -217,7 +217,11 @@ public final class FrontierSemanticInterpreter {
     }
 
     private static boolean explicitlyRequestsCurrentTime(String humanText) {
-        String padded = " " + folded(humanText).replaceAll("\\s+", " ").trim() + " ";
+        String normalized = folded(humanText)
+                .replaceAll("[^a-z0-9]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        String padded = " " + normalized + " ";
         for (String phrase : EXPLICIT_CURRENT_TIME_PHRASES) {
             if (padded.contains(phrase)) return true;
         }
