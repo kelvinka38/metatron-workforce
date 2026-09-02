@@ -1,6 +1,7 @@
 package com.metatron.workforce.interaction.tools;
 
 import java.text.Normalizer;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -11,12 +12,14 @@ import java.util.Set;
  * Last-resort recovery for qualifier-sensitive version requirements.
  *
  * <p>The ordinary web adapter and semantic qualifier recovery are attempted first. If those paths
- * cannot produce admissible evidence, this adapter searches only the subject identity (for example
- * "python" instead of "Python latest stable version") through the already hardened
- * {@link WebSearchToolAdapter}. The returned evidence still has to contain both the subject and a
- * concrete version observation, and the surrounding {@link DefaultToolFabric} re-applies semantic
- * admission against the original request. This keeps the recovery domain-independent while avoiding
- * a single failing result URL aborting the whole version lookup.</p>
+ * cannot produce admissible evidence, this adapter derives only the subject identity and performs
+ * a bounded discovery sequence that prioritizes official release/download/version sources before
+ * falling back to a plain subject search. Every candidate is still executed through the hardened
+ * {@link WebSearchToolAdapter}; nominal tool success is not enough. Returned evidence must contain
+ * both the original subject and a concrete version observation, and the surrounding
+ * {@link DefaultToolFabric} re-applies semantic admission against the original request. This keeps
+ * recovery domain-independent while preventing tutorial/search-ranking noise from deciding a
+ * current-version requirement.</p>
  */
 public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAdapter {
     private static final Set<String> SUBJECT_STOP_WORDS = Set.of(
@@ -68,43 +71,63 @@ public final class SubjectOnlyVersionWebSearchRecoveryAdapter implements ToolAda
             return ToolResult.failure(request, "subject_only_version_recovery_subject_missing");
         }
 
-        ToolRequest delegatedRequest = new ToolRequest(
-                request.requestId(),
-                request.requester(),
-                request.capability(),
-                request.target(),
-                request.operation(),
-                subjectQuery,
-                request.authorityContext());
-        ToolResult delegated;
-        try {
-            delegated = Objects.requireNonNull(delegate.execute(delegatedRequest), "delegated result");
-        } catch (RuntimeException failure) {
-            return ToolResult.failure(request,
-                    "subject_only_version_recovery_failed:" + failure.getClass().getSimpleName());
-        }
-        if (!request.requestId().equals(delegated.requestId())
-                || !request.capability().equals(delegated.capability())) {
-            return ToolResult.failure(request, "subject_only_version_recovery_attribution_mismatch");
-        }
-        if (!delegated.success()) {
-            return ToolResult.failure(request, "subject_only_version_recovery_failed:" + delegated.output());
+        List<String> failures = new ArrayList<>();
+        for (String discoveryQuery : discoveryQueries(subjectQuery)) {
+            ToolRequest delegatedRequest = new ToolRequest(
+                    request.requestId(),
+                    request.requester(),
+                    request.capability(),
+                    request.target(),
+                    request.operation(),
+                    discoveryQuery,
+                    request.authorityContext());
+            ToolResult delegated;
+            try {
+                delegated = Objects.requireNonNull(delegate.execute(delegatedRequest), "delegated result");
+            } catch (RuntimeException failure) {
+                failures.add(discoveryQuery + ":exception=" + failure.getClass().getSimpleName());
+                continue;
+            }
+            if (!request.requestId().equals(delegated.requestId())
+                    || !request.capability().equals(delegated.capability())) {
+                return ToolResult.failure(request, "subject_only_version_recovery_attribution_mismatch");
+            }
+            if (!delegated.success()) {
+                failures.add(discoveryQuery + ":delegate=" + delegated.output());
+                continue;
+            }
+
+            String corpus = delegated.output() + " " + String.join(" ", delegated.evidenceReferences());
+            if (!SemanticQualifierWebSearchRecoveryAdapter.subjectRelevant(subject, corpus)) {
+                failures.add(discoveryQuery + ":subject_rejected");
+                continue;
+            }
+            if (!SemanticQualifierWebSearchRecoveryAdapter.answersVersionRequirement(corpus)) {
+                failures.add(discoveryQuery + ":answer_shape_rejected");
+                continue;
+            }
+
+            String output = "SUBJECT-FOCUSED VERSION WEB RECOVERY\n"
+                    + "recovery_subject=" + subjectQuery + "\n"
+                    + "discovery_query=" + discoveryQuery + "\n"
+                    + delegated.output();
+            return new ToolResult(
+                    request.requestId(), request.capability(), request.target(), request.operation(), true,
+                    output, List.copyOf(delegated.evidenceReferences()));
         }
 
-        String corpus = delegated.output() + " " + String.join(" ", delegated.evidenceReferences());
-        if (!SemanticQualifierWebSearchRecoveryAdapter.subjectRelevant(subject, corpus)) {
-            return ToolResult.failure(request, "subject_only_version_recovery_subject_rejected");
-        }
-        if (!SemanticQualifierWebSearchRecoveryAdapter.answersVersionRequirement(corpus)) {
-            return ToolResult.failure(request, "subject_only_version_recovery_answer_shape_rejected");
-        }
+        return ToolResult.failure(request,
+                "subject_only_version_recovery_exhausted:" + String.join(";", failures));
+    }
 
-        String output = "SUBJECT-ONLY VERSION WEB RECOVERY\n"
-                + "recovery_subject=" + subjectQuery + "\n"
-                + delegated.output();
-        return new ToolResult(
-                request.requestId(), request.capability(), request.target(), request.operation(), true,
-                output, List.copyOf(delegated.evidenceReferences()));
+    static List<String> discoveryQueries(String subjectQuery) {
+        String subject = subjectQuery == null ? "" : subjectQuery.trim();
+        if (subject.isBlank()) return List.of();
+        LinkedHashSet<String> queries = new LinkedHashSet<>();
+        queries.add(subject + " official latest stable version download release");
+        queries.add(subject + " official releases downloads version");
+        queries.add(subject);
+        return List.copyOf(queries);
     }
 
     static Set<String> subjectTokens(String query) {
