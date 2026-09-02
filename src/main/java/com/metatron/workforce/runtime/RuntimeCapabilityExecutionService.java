@@ -124,6 +124,25 @@ public final class RuntimeCapabilityExecutionService {
         if (!assignment.authorityRef().equals(authorityReference)) {
             throw new SecurityException("runtime-assignment-authority-mismatch");
         }
+        WorkforceCoreService.Worker worker;
+        try {
+            worker = core.worker(command.workerId());
+        } catch (RuntimeException missing) {
+            throw new SecurityException("runtime-worker-not-found", missing);
+        }
+        if (worker.status() != WorkforceCoreService.WorkerStatus.ACTIVE) {
+            throw new SecurityException("runtime-worker-not-active:" + worker.status());
+        }
+        WorkforceCoreService.Participation participation = core.participations(command.workerId()).stream()
+                .filter(candidate -> candidate.participationId().equals(assignment.participationId()))
+                .findFirst()
+                .orElseThrow(() -> new SecurityException("runtime-assignment-participation-not-found"));
+        if (participation.status() != WorkforceCoreService.ParticipationStatus.ACTIVE) {
+            throw new SecurityException("runtime-assignment-participation-not-active:" + participation.status());
+        }
+        if (!participation.organizationRef().equals(command.organizationContextId())) {
+            throw new SecurityException("runtime-assignment-organization-mismatch");
+        }
     }
 
     private static void verifyDispatchBinding(RuntimeExecutionCommand command) {
