@@ -38,7 +38,12 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
     private static final String BING_ENDPOINT = "https://www.bing.com/search?format=rss&q=";
     private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
-    private static final List<String> GROUNDED_MODELS = List.of("gemini-3.1-flash-lite", "gemini-2.5-flash");
+    private static final List<String> GROUNDED_MODELS = List.of(
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash");
     private static final String COINGECKO_BTC = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,vnd&include_last_updated_at=true";
     private static final String COINBASE_BTC = "https://api.coinbase.com/v2/prices/BTC-USD/spot";
     private static final String KRAKEN_BTC = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
@@ -125,10 +130,16 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
         String compactQuery = compactSearchQuery(query);
         if (!compactQuery.isBlank() && !compactQuery.equalsIgnoreCase(query)) {
+            ToolResult compactGrounded = searchGrounded(request, compactQuery);
+            if (compactGrounded.success()) return compactGrounded;
             ToolResult compactWeb = searchWeb(request, compactQuery);
             if (compactWeb.success()) return compactWeb;
+            return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output()
+                    + ";web=" + web.output()
+                    + ";compact_grounded=" + compactGrounded.output()
+                    + ";compact_web=" + compactWeb.output());
         }
-        return web;
+        return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output() + ";web=" + web.output());
     }
 
     private ToolResult searchGrounded(ToolRequest request, String query) {
@@ -139,9 +150,11 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         if (configured != null && !configured.isBlank()) models.add(configured.trim());
         models.addAll(GROUNDED_MODELS);
 
+        List<String> failures = new ArrayList<>();
         try {
             String prompt = "Answer this information requirement using current external reality. Search the web. "
-                    + "Return a direct factual answer useful to the Human. When the requirement asks for a current measurement, rate, condition, status, or other observable value, include the concrete current value or condition and its units/context. "
+                    + "Return a direct factual answer useful to the Human. Explicitly name the subject and answer type from the requirement so the result remains self-contained. "
+                    + "When the requirement asks for a current measurement, rate, condition, status, person, version, or other observable value, include the concrete current value or condition and its units/context. "
                     + "Use only facts supported by the search grounding. If the search results are off-topic, stale, or insufficient to answer the requirement directly, output exactly INSUFFICIENT_EVIDENCE. "
                     + "Requirement: " + query;
             String body = mapper.writeValueAsString(Map.of(
@@ -157,22 +170,42 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                         .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                         .build();
                 HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                if (!ok(response)) continue;
+                if (!ok(response)) {
+                    failures.add(model + ":http_" + response.statusCode());
+                    continue;
+                }
                 JsonNode root = mapper.readTree(response.body());
                 JsonNode candidate = root.path("candidates").path(0);
+                JsonNode groundingMetadata = candidate.path("groundingMetadata");
                 String answer = candidateText(candidate);
-                List<String> refs = groundingUrls(candidate.path("groundingMetadata"));
-                if (answer.isBlank() || refs.isEmpty() || looksLikeInsufficientAnswer(answer)
-                        || !materiallyRelevant(query, answer)) continue;
+                List<String> refs = groundingUrls(groundingMetadata);
+                String relevanceContext = answer + " " + groundingQueryText(groundingMetadata);
+                if (answer.isBlank()) {
+                    failures.add(model + ":empty_answer");
+                    continue;
+                }
+                if (refs.isEmpty()) {
+                    failures.add(model + ":no_grounding_urls");
+                    continue;
+                }
+                if (looksLikeInsufficientAnswer(answer)) {
+                    failures.add(model + ":insufficient_answer");
+                    continue;
+                }
+                if (!materiallyRelevant(query, relevanceContext)) {
+                    failures.add(model + ":relevance_rejected");
+                    continue;
+                }
                 String output = "GROUNDED WEB ANSWER\nquery=" + query
                         + "\nanswer=" + answer
+                        + "\nsearch_queries=" + groundingQueryText(groundingMetadata)
                         + "\nsource_urls=" + refs
                         + "\nretrieved_at=" + Instant.now()
                         + "\nprovider=google-search-grounding\nmodel=" + model;
                 return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
                         true, output, refs);
             }
-            return ToolResult.failure(request, "grounded_search_no_sufficient_grounded_answer");
+            return ToolResult.failure(request, "grounded_search_no_sufficient_grounded_answer:" + failures);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return ToolResult.failure(request, "grounded_search_interrupted");
@@ -204,6 +237,19 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             }
         }
         return List.copyOf(refs);
+    }
+
+    static String groundingQueryText(JsonNode groundingMetadata) {
+        JsonNode queries = groundingMetadata.path("webSearchQueries");
+        if (!queries.isArray()) return "";
+        StringBuilder out = new StringBuilder();
+        for (JsonNode query : queries) {
+            String value = query.asText("").trim();
+            if (value.isBlank()) continue;
+            if (!out.isEmpty()) out.append(' ');
+            out.append(value);
+        }
+        return out.toString().trim();
     }
 
     static boolean looksLikeInsufficientAnswer(String answer) {
