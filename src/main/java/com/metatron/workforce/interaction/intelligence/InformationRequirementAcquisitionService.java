@@ -281,6 +281,10 @@ public final class InformationRequirementAcquisitionService {
                 .replaceAll("(?iu)dữ\\s+liệu", "data")
                 .replaceAll("(?iu)kiểm\\s+tra", "check")
                 .replaceAll("(?iu)trả\\s+lời", "answer")
+                .replaceAll("(?iu)cung\\s+cấp", "provide")
+                .replaceAll("(?iu)thông\\s+tin", "information")
+                .replaceAll("(?iu)(?<!\\p{L})về(?!\\p{L})", "about")
+                .replaceAll("(?iu)chính\\s+thức", "official")
                 .replaceAll("(?iu)nêu\\s+nguồn", "cite source")
                 .replaceAll("(?iu)(?<!\\p{L})bằng\\s+cách(?!\\p{L})", "using")
                 .replaceAll("(?iu)(?<!\\p{L})tra\\s+cứu(?!\\p{L})", "check")
@@ -304,7 +308,7 @@ public final class InformationRequirementAcquisitionService {
 
         String subject = canonical
                 .replaceAll("(?iu)\\b(?:version|stable|latest|current|currently|today|now|release)\\b", " ")
-                .replaceAll("(?iu)\\b(?:check|answer|please|cite|source|sources|data|information|external|fresh|user|users)\\b", " ")
+                .replaceAll("(?iu)\\b(?:check|answer|please|cite|source|sources|data|information|external|fresh|user|users|provide|provides|providing|about|official|officially)\\b", " ")
                 .replaceAll("(?iu)(?<![\\p{L}\\p{N}_])(?:của|từ|và|là|gì|nguồn|người\\s+dùng|cho|hãy|đang|rồi)(?![\\p{L}\\p{N}_])", " ")
                 .replaceAll("(?iu)\\b(?:what|which|is|are|the|a|an|of|from|for|and|with|using|to)\\b", " ")
                 .replaceAll("[()?!.,;]+", " ")
