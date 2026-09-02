@@ -49,6 +49,22 @@ jobs:
             scripts/autonomy/p10_collect.py \
             scripts/autonomy/p10_general_runtime_guard.py \
             scripts/autonomy/p10_ratify.py
+      - name: Smoke-load sandbox runtime
+        run: |
+          set -euo pipefail
+          TOKEN_FILE="$RUNNER_TEMP/metatron-sandbox-ci-token"
+          WORKSPACE_ROOT="$RUNNER_TEMP/metatron-sandbox-ci-workspaces"
+          printf '%s' 'ci-sandbox-token' > "$TOKEN_FILE"
+          SANDBOX_TOKEN_FILE="$TOKEN_FILE" SANDBOX_WORKSPACE_ROOT="$WORKSPACE_ROOT" python3 - <<'PY'
+          import runpy
+          runtime=runpy.run_path('runtime-sandbox/server.py')
+          deny=runtime['SHELL_DENY']
+          assert deny.search('git status; rm -rf x')
+          assert deny.search('echo $(id)')
+          assert deny.search('git status\nwhoami')
+          assert not deny.search('git status --short')
+          print('SANDBOX_RUNTIME_IMPORT=PASS')
+          PY
       - name: Verify strict P10 evidence contracts
         run: |
           python3 scripts/autonomy/p10_collect.py --self-test
