@@ -28,8 +28,12 @@ public final class DefaultToolFabric {
         List<ToolAdapter> configured = new ArrayList<>(adapters);
         boolean hasPrimaryWebSearch = configured.stream().anyMatch(WebSearchToolAdapter.class::isInstance);
         boolean hasSemanticRecovery = configured.stream().anyMatch(SemanticQualifierWebSearchRecoveryAdapter.class::isInstance);
+        boolean hasSubjectOnlyVersionRecovery = configured.stream().anyMatch(SubjectOnlyVersionWebSearchRecoveryAdapter.class::isInstance);
         if (hasPrimaryWebSearch && !hasSemanticRecovery) {
             configured.add(new SemanticQualifierWebSearchRecoveryAdapter());
+        }
+        if (hasPrimaryWebSearch && !hasSubjectOnlyVersionRecovery) {
+            configured.add(new SubjectOnlyVersionWebSearchRecoveryAdapter());
         }
         this.adapters = List.copyOf(configured);
     }
@@ -65,7 +69,7 @@ public final class DefaultToolFabric {
      * Tool transport success is not semantic evidence success. For qualifier-sensitive version queries,
      * require source identity overlap and an answer-shaped version observation before the fabric admits
      * a successful result. A nominally successful but off-topic primary result therefore falls through
-     * to the bounded semantic recovery adapter instead of contaminating Case evidence.
+     * to bounded semantic recovery instead of contaminating Case evidence.
      */
     static boolean semanticEvidenceAdmissible(ToolRequest request, ToolResult result) {
         if (!WebSearchToolAdapter.CAPABILITY.equals(request.capability())) return true;
@@ -78,7 +82,8 @@ public final class DefaultToolFabric {
 
         String evidenceBody = result.output()
                 .replaceAll("(?im)^\\s*query=.*$", " ")
-                .replaceAll("(?im)^\\s*subject_tokens=.*$", " ");
+                .replaceAll("(?im)^\\s*subject_tokens=.*$", " ")
+                .replaceAll("(?im)^\\s*recovery_subject=.*$", " ");
         String corpus = fold(evidenceBody + " " + String.join(" ", result.evidenceReferences()));
         Set<String> evidenceTokens = lexicalTokens(corpus);
         int overlap = 0;
