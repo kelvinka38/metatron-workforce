@@ -96,6 +96,16 @@ class WebSearchToolAdapterTest {
     }
 
     @Test
+    void groundedSearchQueriesContributeToRelevanceContext() throws Exception {
+        var metadata = new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                "{\"webSearchQueries\":[\"latest stable Python version\",\"Python releases\"]}");
+        assertEquals("latest stable Python version Python releases",
+                WebSearchToolAdapter.groundingQueryText(metadata));
+        assertTrue(WebSearchToolAdapter.materiallyRelevant(
+                "version stable Python", "Python 3.14.2 " + WebSearchToolAdapter.groundingQueryText(metadata)));
+    }
+
+    @Test
     void rejectsOffTopicRssResultsAsRequirementEvidence() throws Exception {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/search", exchange -> {
