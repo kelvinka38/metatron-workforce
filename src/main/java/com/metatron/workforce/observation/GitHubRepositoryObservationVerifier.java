@@ -23,12 +23,15 @@ import java.util.regex.Pattern;
 
 /**
  * Authoritative Observation adapter for repository Autonomy Closure work.
- * It performs a fresh GitHub read rather than treating execution success as Observation truth.
+ * It performs fresh GitHub reads rather than treating execution success as Observation truth.
  */
 @Component
 public final class GitHubRepositoryObservationVerifier implements ObservationVerifier {
     private static final Pattern REPOSITORY = Pattern.compile("(?i)(?:https?://github\\.com/)?([a-z0-9_.-]+)/([a-z0-9_.-]+)");
     private static final Pattern PR_EVIDENCE = Pattern.compile("github-pr:https://github\\.com/([^/]+/[^/]+)/pull/(\\d+)");
+    private static final Pattern PROBE_EVIDENCE = Pattern.compile("github-gs2-probe:([0-9a-f]{16})");
+    private static final String UNSET_SENTINEL = "GS2_AUTONOMOUS_PROBE=UNSET";
+    private static final String PROBE_PREFIX = "GS2_AUTONOMOUS_PROBE=";
 
     private final HttpClient http;
     private final ObjectMapper json;
@@ -111,26 +114,30 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         if (!RepositoryPullRequestAutonomousCapability.ALLOWED_REPOSITORY.equalsIgnoreCase(pull.repository())) {
             throw new SecurityException("PR evidence outside approved repository");
         }
+        String probe = probeEvidence(executionEvidenceReferences);
+
         JsonNode pr = get("/repos/" + pull.repository() + "/pulls/" + pull.number());
         boolean open = "open".equalsIgnoreCase(pr.path("state").asText());
         boolean unmerged = !pr.path("merged").asBoolean(false) && pr.path("merged_at").isNull();
         String base = pr.at("/base/ref").asText();
         String head = pr.at("/head/ref").asText();
+
         JsonNode files = get("/repos/" + pull.repository() + "/pulls/" + pull.number() + "/files?per_page=100");
         boolean onlyAllowedFile = files.isArray() && files.size() == 1
                 && RepositoryPullRequestAutonomousCapability.ALLOWED_PATH.equals(files.get(0).path("filename").asText());
 
-        JsonNode contentNode = get("/repos/" + pull.repository() + "/contents/"
-                + encodePath(RepositoryPullRequestAutonomousCapability.ALLOWED_PATH) + "?ref=" + encode(head));
-        String encoded = contentNode.path("content").asText().replace("\n", "");
-        String content = encoded.isBlank() ? "" : new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
-        boolean repaired = content.contains("Persistent autonomous runner with wake/reconcile")
-                && content.contains("Durable versioned DAG")
-                && content.contains("L9 controls implemented/deployed")
-                && !content.contains("Missing persistent self-driving runner");
+        String mainContent = contentAt(pull.repository(), RepositoryPullRequestAutonomousCapability.ALLOWED_PATH, "main");
+        String headContent = contentAt(pull.repository(), RepositoryPullRequestAutonomousCapability.ALLOWED_PATH, head);
+        boolean canonicalMainFixture = occurrences(mainContent, UNSET_SENTINEL) == 1;
+        String expectedHead = canonicalMainFixture && probe != null
+                ? mainContent.replace(UNSET_SENTINEL, PROBE_PREFIX + probe) : "";
+        boolean exactBoundedRepair = !expectedHead.isBlank() && expectedHead.equals(headContent);
+
         boolean noMergeClaim = executionEvidenceReferences.stream().anyMatch("github-merge-performed:false"::equals);
+        boolean branchCorrelated = executionEvidenceReferences.stream().anyMatch(("github-branch:" + head)::equals);
         boolean pass = open && unmerged && "main".equals(base) && head.startsWith("autonomy/gs2-")
-                && onlyAllowedFile && repaired && noMergeClaim;
+                && onlyAllowedFile && canonicalMainFixture && exactBoundedRepair
+                && noMergeClaim && branchCorrelated;
 
         List<String> evidence = List.of(
                 "github-pr-observation:https://github.com/" + pull.repository() + "/pull/" + pull.number(),
@@ -140,26 +147,46 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
                 "github-pr-observation-head:" + head,
                 "github-pr-observation-files:" + files.size(),
                 "github-pr-observation-allowed-path-only:" + onlyAllowedFile,
-                "github-pr-observation-gap-matrix-repaired:" + repaired,
+                "github-pr-observation-main-fixture-intact:" + canonicalMainFixture,
+                "github-pr-observation-exact-bounded-repair:" + exactBoundedRepair,
+                "github-pr-observation-probe-correlated:" + (probe != null),
+                "github-pr-observation-branch-correlated:" + branchCorrelated,
                 "github-pr-observation-fresh-api-read:true");
         return new ObservationReport(
                 "observation:github-pr:" + pull.number() + ":" + requirement.requirementId(),
                 requirement.requirementId(), requirement.objectiveId(), requirement.target(),
-                pass ? "controlled defect repaired in open unmerged PR; Founder merge boundary preserved"
-                        : "PR mutation does not satisfy bounded Golden Slice 2 constraints",
+                pass ? "fresh GitHub state proves the approved sentinel-only repair in an open unmerged PR; Founder merge boundary preserved"
+                        : "PR mutation does not satisfy the current bounded Golden Slice 2 contract",
                 "authoritative-github-api-read", at, at, evidence,
                 0.99,
                 ObservationReport.Quality.HIGH,
                 pass ? "" : "open=" + open + ",unmerged=" + unmerged + ",base=" + base
-                        + ",head=" + head + ",allowedFile=" + onlyAllowedFile + ",repaired=" + repaired
-                        + ",noMergeClaim=" + noMergeClaim,
+                        + ",head=" + head + ",allowedFile=" + onlyAllowedFile
+                        + ",canonicalMainFixture=" + canonicalMainFixture
+                        + ",exactBoundedRepair=" + exactBoundedRepair + ",probe=" + probe
+                        + ",noMergeClaim=" + noMergeClaim + ",branchCorrelated=" + branchCorrelated,
                 pass ? ObservationReport.CriterionResult.PASS : ObservationReport.CriterionResult.FAIL);
+    }
+
+    private String contentAt(String repository, String path, String ref) throws Exception {
+        JsonNode contentNode = get("/repos/" + repository + "/contents/" + encodePath(path) + "?ref=" + encode(ref));
+        String encoded = contentNode.path("content").asText().replace("\n", "");
+        if (encoded.isBlank()) throw new IllegalStateException("GitHub content missing for " + path + "@" + ref);
+        return new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
     }
 
     private PullEvidence pullEvidence(List<String> evidence) {
         for (String value : evidence) {
             Matcher matcher = PR_EVIDENCE.matcher(value == null ? "" : value.trim());
             if (matcher.matches()) return new PullEvidence(matcher.group(1), Integer.parseInt(matcher.group(2)));
+        }
+        return null;
+    }
+
+    private String probeEvidence(List<String> evidence) {
+        for (String value : evidence) {
+            Matcher matcher = PROBE_EVIDENCE.matcher(value == null ? "" : value.trim());
+            if (matcher.matches()) return matcher.group(1);
         }
         return null;
     }
@@ -181,6 +208,16 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         Matcher matcher = REPOSITORY.matcher(target.trim());
         if (!matcher.find()) return null;
         return matcher.group(1) + "/" + matcher.group(2).replaceAll("\\.git$", "");
+    }
+
+    private static int occurrences(String value, String needle) {
+        int count = 0;
+        int from = 0;
+        while ((from = value.indexOf(needle, from)) >= 0) {
+            count++;
+            from += needle.length();
+        }
+        return count;
     }
 
     private static String encode(String value) {
