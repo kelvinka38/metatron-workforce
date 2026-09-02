@@ -54,6 +54,39 @@ class DefaultToolFabricTest {
     }
 
     @Test
+    void multilingualSourceQualifierIsNotMistakenForVersionSubjectIdentity() {
+        ToolAdapter relevant = adapter(request -> new ToolResult(
+                request.requestId(), request.capability(), request.target(), request.operation(), true,
+                "query=Python official latest stable version download release\n"
+                        + "Python 3.14.7 is the current stable release available for download.",
+                List.of("https://www.python.org/downloads/")));
+        DefaultToolFabric fabric = new DefaultToolFabric(List.of(relevant));
+        ToolRequest request = new ToolRequest("web-vn", "intelligence", WebSearchToolAdapter.CAPABILITY,
+                "internet:web-search", "search", "Python trực tuyến latest stable version", List.of());
+
+        ToolResult result = fabric.execute(request);
+
+        assertTrue(result.success(), result.output());
+        assertEquals(List.of("https://www.python.org/downloads/"), result.evidenceReferences());
+    }
+
+    @Test
+    void shortVersionSubjectStillUsesLegacyFallback() {
+        ToolAdapter relevant = adapter(request -> new ToolResult(
+                request.requestId(), request.capability(), request.target(), request.operation(), true,
+                "Go 1.25.1 is the current stable release.",
+                List.of("https://go.dev/dl/")));
+        DefaultToolFabric fabric = new DefaultToolFabric(List.of(relevant));
+        ToolRequest request = new ToolRequest("web-go", "intelligence", WebSearchToolAdapter.CAPABILITY,
+                "internet:web-search", "search", "Go latest stable version", List.of());
+
+        ToolResult result = fabric.execute(request);
+
+        assertTrue(result.success(), result.output());
+        assertEquals(List.of("https://go.dev/dl/"), result.evidenceReferences());
+    }
+
+    @Test
     void qualifierSensitiveVersionQueryFailsClosedWhenEverySuccessfulResultIsOffTopic() {
         ToolAdapter irrelevantOne = adapter(request -> new ToolResult(
                 request.requestId(), request.capability(), request.target(), request.operation(), true,
