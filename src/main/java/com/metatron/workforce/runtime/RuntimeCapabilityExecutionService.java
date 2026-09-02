@@ -1,5 +1,6 @@
 package com.metatron.workforce.runtime;
 
+import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.management.AutonomousExecutionCapability;
 import org.springframework.stereotype.Service;
 
@@ -14,15 +15,18 @@ import java.util.Objects;
  *
  * <p>This service is deliberately downstream of institutional admission. It does not allocate a Worker,
  * mint an Assignment, create Authorization or invent a Dispatch. It requires those bindings to already
- * be present on the command, re-checks them against the selected capability, then invokes the real
- * capability adapter and verifies returned attribution before reporting the effect.</p>
+ * exist, re-checks them against canonical Workforce Core plus the selected capability, then invokes the
+ * real capability adapter and verifies returned attribution before reporting the effect.</p>
  */
 @Service
 public final class RuntimeCapabilityExecutionService {
     private final Map<String, AutonomousExecutionCapability> capabilities;
+    private final WorkforceCoreService core;
 
-    public RuntimeCapabilityExecutionService(List<AutonomousExecutionCapability> capabilities) {
+    public RuntimeCapabilityExecutionService(List<AutonomousExecutionCapability> capabilities,
+                                             WorkforceCoreService core) {
         Objects.requireNonNull(capabilities, "capabilities");
+        this.core = Objects.requireNonNull(core, "core");
         Map<String, AutonomousExecutionCapability> indexed = new LinkedHashMap<>();
         for (AutonomousExecutionCapability capability : capabilities) {
             Objects.requireNonNull(capability, "capability");
@@ -54,6 +58,8 @@ public final class RuntimeCapabilityExecutionService {
             throw new SecurityException("runtime-authorization-mismatch:capability=" + capabilityRef);
         }
         String authorityReference = require(capability.authorityReference(), "capability.authorityReference");
+        verifyAssignmentBinding(command, authorityReference);
+        verifyDispatchBinding(command);
 
         AutonomousExecutionCapability.CapabilityRequest request = new AutonomousExecutionCapability.CapabilityRequest(
                 command.humanId(),
@@ -96,6 +102,43 @@ public final class RuntimeCapabilityExecutionService {
 
     public List<String> capabilityCatalog() {
         return capabilities.keySet().stream().sorted().toList();
+    }
+
+    private void verifyAssignmentBinding(RuntimeExecutionCommand command, String authorityReference) {
+        WorkforceCoreService.Assignment assignment = core.allAssignments().stream()
+                .filter(candidate -> candidate.assignmentId().equals(command.assignmentReference()))
+                .findFirst()
+                .orElseThrow(() -> new SecurityException("runtime-assignment-not-found:" + command.assignmentReference()));
+        if (assignment.status() != WorkforceCoreService.AssignmentStatus.ACTIVE) {
+            throw new SecurityException("runtime-assignment-not-active:" + assignment.status());
+        }
+        if (!assignment.objectiveRef().equals(command.objectiveId())) {
+            throw new SecurityException("runtime-assignment-objective-mismatch");
+        }
+        if (!assignment.workerId().equals(command.workerId())) {
+            throw new SecurityException("runtime-assignment-worker-mismatch");
+        }
+        if (!assignment.authorizationRef().equals(command.authorizationReference())) {
+            throw new SecurityException("runtime-assignment-authorization-mismatch");
+        }
+        if (!assignment.authorityRef().equals(authorityReference)) {
+            throw new SecurityException("runtime-assignment-authority-mismatch");
+        }
+    }
+
+    private static void verifyDispatchBinding(RuntimeExecutionCommand command) {
+        String prefix = command.objectiveId() + ":graph:";
+        String suffix = ":step:" + command.workSpec().stepId() + ":attempt:" + command.dispatchAttempt();
+        String dispatch = command.dispatchReference();
+        if (!dispatch.startsWith(prefix) || !dispatch.endsWith(suffix)) {
+            throw new SecurityException("runtime-dispatch-attribution-mismatch");
+        }
+        String graphVersion = dispatch.substring(prefix.length(), dispatch.length() - suffix.length());
+        try {
+            if (Integer.parseInt(graphVersion) < 1) throw new NumberFormatException("graph version must be positive");
+        } catch (NumberFormatException invalid) {
+            throw new SecurityException("runtime-dispatch-graph-version-invalid");
+        }
     }
 
     private static String require(String value, String field) {
