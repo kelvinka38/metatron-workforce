@@ -6,7 +6,9 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -47,12 +49,15 @@ public final class WorkCardRenderer {
                 .max(Comparator.naturalOrder()).orElse(work.updatedAt());
         boolean fresh = Duration.between(last, Instant.now()).compareTo(Duration.ofSeconds(90)) <= 0;
         Set<String> completed = Set.copyOf(work.completedStepIds());
+        Map<String, String> performers = performersByStep(work.evidenceReferences());
         int total = work.plannedWork().size();
         int done = completed.size();
         int percent = total == 0 ? (work.terminal() ? 100 : 0) : (int)Math.floor(done * 100.0 / total);
         String status = humanStatus(work, history, fresh);
         String reportsTo = "human:" + work.humanId();
-        String staffing = objective.assignmentRefs().isEmpty() ? "UNASSIGNED / staffing not evidenced" : objective.assignmentRefs().size() + " assignment ref(s)";
+        String staffing = performers.isEmpty()
+                ? (objective.assignmentRefs().isEmpty() ? "UNASSIGNED / staffing not evidenced" : objective.assignmentRefs().size() + " assignment ref(s), performer pending execution evidence")
+                : performers.values().stream().distinct().count() + " evidenced worker(s)";
 
         StringBuilder out = new StringBuilder();
         out.append("📋 METATRON · WORK ORDER\n\n");
@@ -80,7 +85,7 @@ public final class WorkCardRenderer {
                 else state = "○";
                 out.append(' ').append(n++).append(". ").append(state).append(' ').append(compactStep(step.objective())).append('\n');
                 out.append("    Role: ").append(step.requiredCapability()).append('\n');
-                out.append("    Owner: ").append(objective.assignmentRefs().isEmpty() ? "UNASSIGNED" : "see assignment evidence").append('\n');
+                out.append("    Performer: ").append(performers.getOrDefault(step.stepId(), "UNASSIGNED / not yet evidenced")).append('\n');
                 out.append("    Depends: ").append(step.dependsOn().isEmpty() ? "none" : String.join(", ", step.dependsOn())).append('\n');
                 out.append("    DoD: ").append(step.acceptanceCriteria().isEmpty() ? "NOT DEFINED" : compactList(step.acceptanceCriteria())).append('\n');
             }
@@ -95,6 +100,24 @@ public final class WorkCardRenderer {
         }
         out.append("\n📊 Monitor: /workforce/monitor");
         return out.toString();
+    }
+
+    /** Resolve performer only from durable execution attribution; never infer a worker from role/capability. */
+    static Map<String, String> performersByStep(List<String> evidenceReferences) {
+        Map<String, String> performers = new LinkedHashMap<>();
+        for (String ref : evidenceReferences == null ? List.<String>of() : evidenceReferences) {
+            if (ref == null || !ref.startsWith("autonomous-step:")) continue;
+            int capabilityMarker = ref.indexOf(":capability=");
+            int workerMarker = ref.indexOf(":worker=");
+            if (capabilityMarker <= "autonomous-step:".length() || workerMarker < 0) continue;
+            String stepId = ref.substring("autonomous-step:".length(), capabilityMarker).trim();
+            int workerStart = workerMarker + ":worker=".length();
+            int workerEnd = ref.indexOf(":dispatch=", workerStart);
+            if (workerEnd < 0) workerEnd = ref.length();
+            String workerId = ref.substring(workerStart, workerEnd).trim();
+            if (!stepId.isBlank() && !workerId.isBlank()) performers.put(stepId, workerId);
+        }
+        return Map.copyOf(performers);
     }
 
     private static String humanStatus(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean fresh) {
