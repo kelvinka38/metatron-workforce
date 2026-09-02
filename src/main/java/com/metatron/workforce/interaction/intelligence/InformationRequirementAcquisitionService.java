@@ -250,7 +250,7 @@ public final class InformationRequirementAcquisitionService {
                 || requirementQuestion.equalsIgnoreCase(LEGACY_GENERIC_CURRENT_QUERY)
                 ? normalized.objective().trim()
                 : requirementQuestion;
-        query = canonicalExternalQuery(query);
+        query = searchOptimizedExternalQuery(canonicalExternalQuery(query));
         if (query.isBlank()) {
             return ToolResult.failure(new ToolRequest(
                     "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
@@ -289,6 +289,31 @@ public final class InformationRequirementAcquisitionService {
                 .replaceAll("(?iu)nêu\\s+nguồn", "cite source")
                 .replaceAll("\\s+", " ")
                 .trim();
+    }
+
+    /**
+     * Converts verbose multilingual current-version requirements into a bounded search-engine query
+     * before the first external call. This is answer-type generic (any versioned subject) and keeps
+     * the subject dynamic; it never embeds a product name or a version value.
+     */
+    static String searchOptimizedExternalQuery(String value) {
+        if (value == null || value.isBlank()) return "";
+        String canonical = value.trim().replaceAll("\\s+", " ");
+        String lower = canonical.toLowerCase(Locale.ROOT);
+        if (!lower.matches(".*\\bversion\\b.*")) return canonical;
+        if (!(lower.matches(".*\\bstable\\b.*") || lower.matches(".*\\blatest\\b.*")
+                || lower.matches(".*\\bcurrent\\b.*"))) return canonical;
+
+        String subject = canonical
+                .replaceAll("(?iu)\\b(?:version|stable|latest|current|currently|today|now|release)\\b", " ")
+                .replaceAll("(?iu)\\b(?:check|answer|please|cite|source|sources|data|information|external|fresh|user|users)\\b", " ")
+                .replaceAll("(?iu)\\b(?:what|which|is|are|the|a|an|of|from|for|and|with|using|to)\\b", " ")
+                .replaceAll("(?iu)\\b(?:của|từ|và|là|gì|nguồn|người\\s+dùng|cho|hãy|đang|rồi)\\b", " ")
+                .replaceAll("[?!.;,]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (subject.isBlank()) return canonical;
+        return subject + " latest stable version";
     }
 
     private static boolean requiresFreshExternal(NormalizedRequest normalized, InformationRequirement requirement) {
