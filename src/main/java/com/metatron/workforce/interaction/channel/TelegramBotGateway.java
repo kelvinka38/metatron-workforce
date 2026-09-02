@@ -8,6 +8,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,12 @@ public final class TelegramBotGateway implements ChannelGateway {
     static final String AUTO_CONTROL = "🤖 Auto";
     static final String MODE_CONTROL = "🎛 Mode";
     static final String MONITOR_CONTROL = "📊 Monitor task";
+    /**
+     * Telegram sendMessage accepts at most 4096 characters. Stay below the hard limit so
+     * multi-byte/supplementary Unicode, future presentation changes, and upstream counting
+     * differences cannot turn a valid institutional response into a transport dead letter.
+     */
+    static final int SAFE_MESSAGE_CODE_POINTS = 3800;
 
     private final String botToken;
     private final HttpClient httpClient;
@@ -48,11 +55,62 @@ public final class TelegramBotGateway implements ChannelGateway {
     public String send(ChannelMessage message) {
         Objects.requireNonNull(message, "message");
         if (!"telegram".equals(message.channel())) throw new IllegalArgumentException("telegram_message_required");
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("chat_id", message.senderId());
-        payload.put("text", message.text());
-        payload.put("reply_markup", depthControlReplyMarkup());
-        return invoke("sendMessage", payload).raw();
+
+        List<String> chunks = splitMessageText(message.text());
+        ApiResult finalResult = null;
+        for (int index = 0; index < chunks.size(); index++) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("chat_id", message.senderId());
+            payload.put("text", chunks.get(index));
+            // The keyboard is persistent. Attach it once, on the final chunk, rather than
+            // redundantly to every fragment of one logical institutional response.
+            if (index == chunks.size() - 1) payload.put("reply_markup", depthControlReplyMarkup());
+            finalResult = invoke("sendMessage", payload);
+        }
+        if (finalResult == null) throw new IllegalStateException("telegram_send_failed:no_message_chunks");
+        // Preserve the pre-chunking ChannelGateway contract: callers receive one successful
+        // Telegram API response string and only after the complete logical message was delivered.
+        return finalResult.raw();
+    }
+
+    /**
+     * Splits one logical response into bounded Telegram messages without dropping or rewriting
+     * institutional content. Chunk boundaries prefer paragraphs/whitespace and never split a
+     * supplementary Unicode code point. Concatenating all returned chunks reproduces the input.
+     */
+    static List<String> splitMessageText(String text) {
+        Objects.requireNonNull(text, "text");
+        if (text.isEmpty()) return List.of(text);
+
+        List<String> chunks = new ArrayList<>();
+        int start = 0;
+        while (start < text.length()) {
+            int remainingCodePoints = text.codePointCount(start, text.length());
+            if (remainingCodePoints <= SAFE_MESSAGE_CODE_POINTS) {
+                chunks.add(text.substring(start));
+                break;
+            }
+
+            int hardEnd = text.offsetByCodePoints(start, SAFE_MESSAGE_CODE_POINTS);
+            int preferredWindow = SAFE_MESSAGE_CODE_POINTS / 4;
+            int preferredStart = text.offsetByCodePoints(start, SAFE_MESSAGE_CODE_POINTS - preferredWindow);
+            int end = preferredBoundary(text, preferredStart, hardEnd);
+            if (end <= start) end = hardEnd;
+
+            chunks.add(text.substring(start, end));
+            start = end;
+        }
+        return List.copyOf(chunks);
+    }
+
+    private static int preferredBoundary(String text, int preferredStart, int hardEnd) {
+        for (int i = hardEnd - 1; i >= preferredStart; i--) {
+            if (text.charAt(i) == '\n') return i + 1;
+        }
+        for (int i = hardEnd - 1; i >= preferredStart; i--) {
+            if (Character.isWhitespace(text.charAt(i))) return i + 1;
+        }
+        return hardEnd;
     }
 
     /** Sends one Human-facing Work Card and returns Telegram's message id for future live edits. */
