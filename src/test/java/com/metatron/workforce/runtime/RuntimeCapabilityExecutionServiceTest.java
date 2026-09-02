@@ -1,5 +1,6 @@
 package com.metatron.workforce.runtime;
 
+import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.management.AutonomousExecutionCapability;
 import org.junit.jupiter.api.Test;
@@ -17,25 +18,29 @@ class RuntimeCapabilityExecutionServiceTest {
     private static final String WORKER = "worker:runtime-effect";
     private static final String AUTHORIZATION = "authorization:runtime-effect:v1";
     private static final String AUTHORITY = "authority:runtime-effect:v1";
+    private static final String OBJECTIVE = "objective:runtime-effect";
+    private static final String ASSIGNMENT = "assignment:runtime-effect";
+    private static final String DISPATCH = OBJECTIVE + ":graph:1:step:step-effect:attempt:2";
 
     @Test
     void governedRuntimeCommandConsumesWorkAndCreatesRealAttributedEffect() {
         AtomicInteger effects = new AtomicInteger();
         AtomicReference<AutonomousExecutionCapability.CapabilityRequest> received = new AtomicReference<>();
         AutonomousExecutionCapability capability = capability(effects, received);
-        RuntimeCapabilityExecutionService service = new RuntimeCapabilityExecutionService(List.of(capability));
+        RuntimeCapabilityExecutionService service = new RuntimeCapabilityExecutionService(
+                List.of(capability), governedCore());
 
-        RuntimeExecutionResult result = service.execute(command(AUTHORIZATION, WORKER));
+        RuntimeExecutionResult result = service.execute(command(AUTHORIZATION, WORKER, ASSIGNMENT, DISPATCH));
 
         assertEquals(1, effects.get());
         AutonomousExecutionCapability.CapabilityRequest request = received.get();
         assertEquals("human:founder", request.humanId());
         assertEquals("organization:metatron", request.organizationContextId());
-        assertEquals("objective:runtime-effect", request.objectiveId());
+        assertEquals(OBJECTIVE, request.objectiveId());
         assertEquals(WORKER, request.allocatedWorkerId());
-        assertEquals("assignment:runtime-effect", request.assignmentReference());
+        assertEquals(ASSIGNMENT, request.assignmentReference());
         assertEquals(AUTHORIZATION, request.authorizationReference());
-        assertEquals("dispatch:runtime-effect", request.dispatchReference());
+        assertEquals(DISPATCH, request.dispatchReference());
         assertEquals(2, request.dispatchAttempt());
         assertTrue(request.dispatchBound());
         assertEquals("runtime:effect-01", result.runtimeId());
@@ -50,7 +55,7 @@ class RuntimeCapabilityExecutionServiceTest {
     void transportOnlyEnvelopeCannotCreateEffectWithoutGovernedBindings() {
         AtomicInteger effects = new AtomicInteger();
         RuntimeCapabilityExecutionService service = new RuntimeCapabilityExecutionService(
-                List.of(capability(effects, new AtomicReference<>())));
+                List.of(capability(effects, new AtomicReference<>())), governedCore());
         RuntimeExecutionCommand transportOnly = new RuntimeExecutionCommand(
                 "execution", WORKER, "runtime", work());
 
@@ -59,13 +64,19 @@ class RuntimeCapabilityExecutionServiceTest {
     }
 
     @Test
-    void wrongAuthorizationWorkerOrCapabilityFailsClosedBeforeEffect() {
+    void fabricatedAssignmentWrongAuthorizationWorkerCapabilityOrDispatchFailsClosedBeforeEffect() {
         AtomicInteger effects = new AtomicInteger();
         RuntimeCapabilityExecutionService service = new RuntimeCapabilityExecutionService(
-                List.of(capability(effects, new AtomicReference<>())));
+                List.of(capability(effects, new AtomicReference<>())), governedCore());
 
-        assertThrows(SecurityException.class, () -> service.execute(command("authorization:wrong", WORKER)));
-        assertThrows(SecurityException.class, () -> service.execute(command(AUTHORIZATION, "worker:wrong")));
+        assertThrows(SecurityException.class, () -> service.execute(
+                command("authorization:wrong", WORKER, ASSIGNMENT, DISPATCH)));
+        assertThrows(SecurityException.class, () -> service.execute(
+                command(AUTHORIZATION, "worker:wrong", ASSIGNMENT, DISPATCH)));
+        assertThrows(SecurityException.class, () -> service.execute(
+                command(AUTHORIZATION, WORKER, "assignment:fabricated", DISPATCH)));
+        assertThrows(SecurityException.class, () -> service.execute(
+                command(AUTHORIZATION, WORKER, ASSIGNMENT, "dispatch:fabricated")));
 
         ExecutionWorkSpec unavailable = new ExecutionWorkSpec(
                 "step-missing", "missing", "fixture", "capability.missing", List.of(),
@@ -73,7 +84,7 @@ class RuntimeCapabilityExecutionServiceTest {
         RuntimeExecutionCommand missing = new RuntimeExecutionCommand(
                 "execution:missing", WORKER, "runtime:missing", unavailable,
                 "human:founder", "organization:metatron", "objective:missing",
-                "assignment:runtime-effect", AUTHORIZATION, "dispatch:missing", 1);
+                ASSIGNMENT, AUTHORIZATION, "objective:missing:graph:1:step:step-missing:attempt:1", 1);
         assertThrows(IllegalArgumentException.class, () -> service.execute(missing));
         assertEquals(0, effects.get());
     }
@@ -97,11 +108,24 @@ class RuntimeCapabilityExecutionServiceTest {
         };
     }
 
-    private static RuntimeExecutionCommand command(String authorization, String worker) {
+    private static WorkforceCoreService governedCore() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:runtime-effect", WorkforceCoreService.ParticipantType.AI,
+                "test:runtime-effect");
+        core.admitWorker(WORKER, "participant:runtime-effect");
+        core.participate("participation:runtime-effect", WORKER, "organization:metatron",
+                "position:executor", "role:executor");
+        core.assign(ASSIGNMENT, OBJECTIVE, WORKER, "participation:runtime-effect",
+                AUTHORITY, AUTHORIZATION, "governed runtime actual effect");
+        return core;
+    }
+
+    private static RuntimeExecutionCommand command(
+            String authorization, String worker, String assignment, String dispatch) {
         return new RuntimeExecutionCommand(
                 "execution:runtime-effect", worker, "runtime:effect-01", work(),
-                "human:founder", "organization:metatron", "objective:runtime-effect",
-                "assignment:runtime-effect", authorization, "dispatch:runtime-effect", 2);
+                "human:founder", "organization:metatron", OBJECTIVE,
+                assignment, authorization, dispatch, 2);
     }
 
     private static ExecutionWorkSpec work() {
