@@ -22,7 +22,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
             Map.entry("workspace.repository.materialize", Map.of(
                     "inputs", Map.of("repository", "required owner/name", "ref", "optional branch/tag/SHA; default main"),
-                    "purpose", "materialize an immutable private/public GitHub repository snapshot into this Objective workspace and create a local Git baseline")),
+                    "purpose", "materialize an immutable private/public GitHub repository snapshot into this Objective workspace and create a local Git baseline; safe same-provenance retries reuse the existing materialization")),
             Map.entry("workspace.file.read", Map.of(
                     "inputs", Map.of("path", "required workspace-relative path"),
                     "purpose", "read one UTF-8 workspace file")),
@@ -39,7 +39,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "inputs", Map.of("command", "required constrained command; no pipes, redirects, chaining or substitution"),
                     "purpose", "run one constrained allowlisted command in the isolated Objective sandbox")),
             Map.entry("workspace.git.status", Map.of(
-                    "inputs", Map.of(), "purpose", "inspect local Git status")),
+                    "inputs", Map.of(), "purpose", "read-only inspection of local Git status, immutable HEAD SHA and bounded recent commit log")),
             Map.entry("workspace.git.diff", Map.of(
                     "inputs", Map.of(), "purpose", "inspect uncommitted local Git diff")),
             Map.entry("workspace.git.run", Map.of(
@@ -70,6 +70,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
         CognitiveWorkerRuntime.Thought requiredPrecondition = repositoryMaterializationPrecondition(context);
         if (requiredPrecondition != null) return requiredPrecondition;
+        CognitiveWorkerRuntime.Thought gitInspection = readOnlyGitInspectionPrecondition(context);
+        if (gitInspection != null) return gitInspection;
 
         String system = """
                 You are the action-selection brain for a governed Metatron Cognitive Worker.
@@ -111,16 +113,37 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "Repository-backed Work requires a local immutable baseline before Git/build/test actions");
     }
 
+    static CognitiveWorkerRuntime.Thought readOnlyGitInspectionPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!context.availableActions().contains("workspace.git.status")) return null;
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) return null;
+        boolean alreadyInspected = context.history().stream().anyMatch(cycle ->
+                "workspace.git.status".equals(cycle.thought().actionRef()) && cycle.observation().success());
+        if (alreadyInspected) return null;
+        boolean materialized = context.history().stream().anyMatch(cycle ->
+                "workspace.repository.materialize".equals(cycle.thought().actionRef()) && cycle.observation().success());
+        if (requiresRepositoryMaterialization(context) && !materialized) return null;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        boolean requiresIdentity = text.contains("git rev-parse")
+                || text.contains("git log")
+                || text.contains("head sha")
+                || text.contains("head commit")
+                || text.contains("commit identity")
+                || text.contains("commit sha");
+        if (!requiresIdentity) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.git.status", Map.of(),
+                "READ_ONLY Work requires immutable local Git HEAD/history evidence; use governed read-only inspection");
+    }
+
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) {
             return false;
         }
-        String text = (context.workSpec().objective() + " "
-                + context.workSpec().target() + " "
-                + String.join(" ", context.workSpec().acceptanceCriteria()) + " "
-                + String.join(" ", context.workSpec().evidenceRequirements()))
-                .toLowerCase(java.util.Locale.ROOT);
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("materializ")
                 || text.contains("snapshot")
                 || text.contains("checkout")
@@ -129,12 +152,15 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || EXACT_GIT_SHA.matcher(text).find();
     }
 
-    private static String exactRef(CognitiveWorkerRuntime.CognitiveContext context) {
-        String text = context.workSpec().objective() + " "
+    private static String workText(CognitiveWorkerRuntime.CognitiveContext context) {
+        return context.workSpec().objective() + " "
                 + context.workSpec().target() + " "
                 + String.join(" ", context.workSpec().acceptanceCriteria()) + " "
                 + String.join(" ", context.workSpec().evidenceRequirements());
-        Matcher matcher = EXACT_GIT_SHA.matcher(text);
+    }
+
+    private static String exactRef(CognitiveWorkerRuntime.CognitiveContext context) {
+        Matcher matcher = EXACT_GIT_SHA.matcher(workText(context));
         return matcher.find() ? matcher.group().toLowerCase(java.util.Locale.ROOT) : "";
     }
 
