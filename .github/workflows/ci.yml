@@ -67,11 +67,16 @@ jobs:
           child=runtime['child_environment'](Path('/tmp/metatron-ci-workspace'))
           assert child['JAVA_HOME']
           assert child['PATH'].startswith(child['JAVA_HOME'] + '/bin:')
+          assert '-Dorg.gradle.workers.max=1' in child['GRADLE_OPTS']
+          assert '-Xmx256m' in child['GRADLE_OPTS']
+          assert '-Xmx256m' in child['MAVEN_OPTS']
+          assert child['GRADLE_USER_HOME'].startswith(str(Path('/tmp/metatron-ci-workspace')))
           assert 'SANDBOX_TOKEN' not in child
           assert 'GITHUB_TOKEN' not in child
           assert 'OPENAI_API_KEY' not in child
           print('SANDBOX_RUNTIME_IMPORT=PASS')
           print('SANDBOX_JAVA_ENVIRONMENT=PASS')
+          print('SANDBOX_BUILD_RESOURCE_ENVELOPE=PASS')
           print('SANDBOX_CHILD_CREDENTIAL_ISOLATION=PASS')
           PY
       - name: Verify strict P10 evidence contracts
