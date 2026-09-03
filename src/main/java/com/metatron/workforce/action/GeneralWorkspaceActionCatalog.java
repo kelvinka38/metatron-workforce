@@ -61,7 +61,9 @@ public final class GeneralWorkspaceActionCatalog {
 
     private ActionFabric.Action repositoryMaterialize(String worker, String auth, String objectiveId,
                                                        ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        return action("workspace.repository.materialize", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+        // Materialization changes only the isolated Objective scratch workspace. It does not mutate the
+        // governed source repository or any external target, so it must remain available to READ_ONLY Work.
+        return action("workspace.repository.materialize", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             String repository = input(request, "repository");
             String ref = request.inputs().getOrDefault("ref", "main");
             RepositoryWorkspaceMaterializationService.MaterializedRepository materialized =
