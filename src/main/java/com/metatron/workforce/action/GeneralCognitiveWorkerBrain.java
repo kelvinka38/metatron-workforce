@@ -79,6 +79,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 Select exactly one next action that advances the actual Work using current observations.
                 Do not invent action names or input keys. Follow the supplied actionContracts exactly.
                 If the Work targets a repository and the workspace has not yet been materialized, use workspace.repository.materialize before any Git, build, test or repository-file action.
+                Repository materialization creates a local baseline commit. The authoritative source snapshot identity is sourceCommitSha from materialization provenance; localBaselineCommitSha and later local HEAD identify the mutable Objective workspace and need not equal sourceCommitSha.
                 Do not claim completion in this response.
                 Inputs must be concrete strings. For list arguments use a JSON array encoded as a string in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
@@ -101,8 +102,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                         && cycle.observation().success());
         if (alreadyMaterialized) return null;
 
-        String repository = context.workSpec().target().trim();
-        if (!OWNER_REPOSITORY.matcher(repository).matches()) return null;
+        String repository = repositoryFromTarget(context.workSpec().target());
+        if (repository.isBlank()) return null;
         Map<String, String> inputs = new LinkedHashMap<>();
         inputs.put("repository", repository);
         String exactRef = exactRef(context);
@@ -164,9 +165,70 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return matcher.find() ? matcher.group().toLowerCase(java.util.Locale.ROOT) : "";
     }
 
+    private static String repositoryFromTarget(String target) {
+        String repository = target == null ? "" : target.trim();
+        int at = repository.indexOf('@');
+        if (at > 0) repository = repository.substring(0, at);
+        return OWNER_REPOSITORY.matcher(repository).matches() ? repository : "";
+    }
+
+    private static boolean exactSourceMaterializationWork(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) return false;
+        if (!"execution.general.workspace".equals(context.workSpec().requiredCapability())) return false;
+        if (exactRef(context).isBlank()) return false;
+        String objective = context.workSpec().objective().toLowerCase(java.util.Locale.ROOT);
+        return objective.contains("materializ") || objective.contains("snapshot") || objective.contains("checkout");
+    }
+
+    static CognitiveWorkerRuntime.Reflection exactSourceMaterializationReflection(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            ActionFabric.ActionObservation observation) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(observation, "observation");
+        if (!"workspace.repository.materialize".equals(observation.actionRef()) || !observation.success()) return null;
+        if (!exactSourceMaterializationWork(context)) return null;
+
+        String expectedSha = exactRef(context);
+        String expectedRepository = repositoryFromTarget(context.workSpec().target());
+        String actualSha = observation.outputs().getOrDefault("sourceCommitSha", "").trim().toLowerCase(java.util.Locale.ROOT);
+        String actualRepository = observation.outputs().getOrDefault("repository", "").trim();
+        String workspaceRef = observation.outputs().getOrDefault("workspaceRef", "").trim();
+        String localBaseline = observation.outputs().getOrDefault("localBaselineCommitSha", "").trim();
+        int materializedFiles;
+        try {
+            materializedFiles = Integer.parseInt(observation.outputs().getOrDefault("materializedFiles", "0"));
+        } catch (NumberFormatException invalid) {
+            materializedFiles = 0;
+        }
+
+        if (!expectedSha.equals(actualSha)) {
+            return CognitiveWorkerRuntime.Reflection.failed(
+                    "Materialized source identity mismatch: expected sourceCommitSha=" + expectedSha
+                            + " observed=" + actualSha);
+        }
+        if (!expectedRepository.isBlank() && !expectedRepository.equals(actualRepository)) {
+            return CognitiveWorkerRuntime.Reflection.failed(
+                    "Materialized repository mismatch: expected=" + expectedRepository
+                            + " observed=" + actualRepository);
+        }
+        if (!workspaceRef.startsWith("objective-workspace:") || materializedFiles < 1) {
+            return CognitiveWorkerRuntime.Reflection.failed(
+                    "Materialization evidence is incomplete: workspaceRef/files do not prove an accessible source snapshot");
+        }
+        return CognitiveWorkerRuntime.Reflection.complete(
+                "Exact source snapshot proven by materialization provenance: sourceCommitSha=" + expectedSha
+                        + "; localBaselineCommitSha=" + localBaseline
+                        + " is isolated workspace identity and is intentionally distinct from source identity");
+    }
+
     @Override
     public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
                                                       ActionFabric.ActionObservation observation) {
+        CognitiveWorkerRuntime.Reflection canonicalMaterialization =
+                exactSourceMaterializationReflection(context, observation);
+        if (canonicalMaterialization != null) return canonicalMaterialization;
+
         String system = """
                 You are the reflection brain for a governed Metatron Cognitive Worker.
                 Decide from the actual Work, acceptance criteria, evidence requirements and observed action result.
@@ -174,6 +236,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 CONTINUE if another governed action can advance or verify the Work.
                 FAILED only when the observed state makes bounded recovery impossible.
                 Never treat a successful intermediate action as completion of unrelated acceptance criteria.
+                Repository source identity is proven by workspace.repository.materialize output sourceCommitSha. localBaselineCommitSha and workspace.git.status headSha are local Objective-workspace identities and may intentionally differ from sourceCommitSha.
                 Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"short evidence-based reason"}.
                 """;
         String user = contextPrompt(context) + "\nLATEST_OBSERVATION=" + write(Map.of(
