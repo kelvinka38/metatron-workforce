@@ -3,8 +3,11 @@ package com.metatron.workforce.interaction.intelligence;
 import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -15,6 +18,8 @@ import java.util.Set;
  */
 public final class GeneralActionComposingExecutionPlanProposalService implements ExecutionPlanProposalService {
     public static final String GENERAL_RUNTIME_MARKER = "general-action-runtime:" + GeneralWorkspaceAutonomousCapability.CAPABILITY;
+    private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
+    private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
 
     private static final Set<String> COMPOSABLE_TOKENS = Set.of(
             "repository", "repo", "file", "filesystem", "workspace", "shell", "process",
@@ -30,6 +35,8 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
     public List<ExecutionWorkSpec> propose(String caseId, NormalizedRequest request, List<String> availableCapabilities) {
         List<ExecutionWorkSpec> plan = delegate.propose(caseId, request, availableCapabilities);
         if (plan == null || plan.isEmpty()) return plan;
+        plan = removeInvalidCrossRepositoryAuditJoins(plan);
+        if (plan.isEmpty()) return plan;
         Set<String> available = Set.copyOf(availableCapabilities == null ? List.of() : availableCapabilities);
         if (!available.contains(GeneralWorkspaceAutonomousCapability.CAPABILITY)) return plan;
         List<ExecutionWorkSpec> composed = new ArrayList<>(plan.size());
@@ -53,6 +60,55 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                     step.dependsOn(), step.consequence(), acceptance, evidence));
         }
         return List.copyOf(composed);
+    }
+
+    /**
+     * A cross-repository analysis is a typed join over repository audit evidence. Frontier planning
+     * may propose the capability with syntactically valid but semantically unrelated dependencies;
+     * such a join must not be allowed into the Work Graph. When an invalid join is removed, any
+     * downstream dependency is transparently rewired to the join's original prerequisites.
+     */
+    static List<ExecutionWorkSpec> removeInvalidCrossRepositoryAuditJoins(List<ExecutionWorkSpec> plan) {
+        Map<String, ExecutionWorkSpec> byId = new LinkedHashMap<>();
+        for (ExecutionWorkSpec step : plan) byId.put(step.stepId(), step);
+
+        Map<String, List<String>> removed = new LinkedHashMap<>();
+        for (ExecutionWorkSpec step : plan) {
+            if (!CROSS_REPOSITORY_AUDIT_ANALYSIS.equals(step.requiredCapability())) continue;
+            boolean valid = step.dependsOn().size() >= 2 && step.dependsOn().stream().allMatch(dependency -> {
+                ExecutionWorkSpec source = byId.get(dependency);
+                return source != null && REPOSITORY_AUDIT_READ.equals(source.requiredCapability());
+            });
+            if (!valid) removed.put(step.stepId(), step.dependsOn());
+        }
+        if (removed.isEmpty()) return plan;
+
+        List<ExecutionWorkSpec> sanitized = new ArrayList<>();
+        for (ExecutionWorkSpec step : plan) {
+            if (removed.containsKey(step.stepId())) continue;
+            LinkedHashSet<String> dependencies = new LinkedHashSet<>();
+            for (String dependency : step.dependsOn()) {
+                expandRemovedDependency(dependency, removed, dependencies, new LinkedHashSet<>());
+            }
+            sanitized.add(new ExecutionWorkSpec(
+                    step.stepId(), step.objective(), step.target(), step.requiredCapability(),
+                    List.copyOf(dependencies), step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
+        }
+        return List.copyOf(sanitized);
+    }
+
+    private static void expandRemovedDependency(String dependency,
+                                                Map<String, List<String>> removed,
+                                                LinkedHashSet<String> output,
+                                                Set<String> visiting) {
+        List<String> replacement = removed.get(dependency);
+        if (replacement == null) {
+            output.add(dependency);
+            return;
+        }
+        if (!visiting.add(dependency)) throw new IllegalStateException("cyclic invalid cross-repository join: " + dependency);
+        for (String nested : replacement) expandRemovedDependency(nested, removed, output, visiting);
+        visiting.remove(dependency);
     }
 
     private static ExecutionWorkSpec markDirectGeneral(ExecutionWorkSpec step) {
