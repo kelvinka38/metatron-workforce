@@ -19,6 +19,12 @@ on:
       - '.github/workflows/runtime-conformance-point4-production-acceptance.yml'
       - '.github/workflows/runtime-conformance-point4-read-production-acceptance.yml'
       - '.github/workflows/runtime-conformance-point5-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-after-deploy.yml'
+      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml'
+      - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
+      - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
   workflow_dispatch:
 
 permissions:
