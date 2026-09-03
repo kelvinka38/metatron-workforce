@@ -7,7 +7,10 @@ import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
+import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -64,19 +67,37 @@ public final class GeneralWorkspaceActionCatalog {
         // Materialization changes only the isolated Objective scratch workspace. It does not mutate the
         // governed source repository or any external target, so it must remain available to READ_ONLY Work.
         return action("workspace.repository.materialize", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
-            String repository = input(request, "repository");
-            String ref = request.inputs().getOrDefault("ref", "main");
+            String repository = input(request, "repository").trim();
+            String ref = request.inputs().getOrDefault("ref", "main").trim();
             RepositoryWorkspaceMaterializationService.MaterializedRepository materialized =
-                    repositories.materialize(worker, objectiveId, repository, ref);
+                    existingMaterialization(workspaces, workspace, repository, ref);
+            boolean reused = materialized != null;
+            if (!reused) {
+                materialized = repositories.materialize(worker, objectiveId, repository, ref);
+            }
 
-            runOrThrow(worker, objectiveId, "git", List.of("init", "-q"), "git init");
-            runOrThrow(worker, objectiveId, "git", List.of("config", "user.name", "Metatron Workforce"), "git user.name");
-            runOrThrow(worker, objectiveId, "git", List.of("config", "user.email", "workforce@metatron.local"), "git user.email");
-            runOrThrow(worker, objectiveId, "git", List.of("add", "-A"), "git baseline add");
-            runOrThrow(worker, objectiveId, "git", List.of("commit", "-q", "-m", "metatron materialized baseline"), "git baseline commit");
-            WorkerExecutionSandboxService.SandboxResult head = runOrThrow(
-                    worker, objectiveId, "git", List.of("rev-parse", "HEAD"), "git baseline head");
-            String localHead = head.output().trim();
+            String localHead = "";
+            if (reused) {
+                WorkerExecutionSandboxService.SandboxResult existingHead =
+                        sandbox.run(worker, objectiveId, "git", List.of("rev-parse", "HEAD"));
+                if (existingHead.success() && existingHead.output().trim().matches("[0-9a-f]{40}")) {
+                    localHead = existingHead.output().trim();
+                }
+            }
+
+            // A first materialization, or a prior interrupted materialization that never completed the
+            // local baseline commit, establishes the baseline. A normal retry reuses the existing HEAD
+            // and never commits current Work product as a new baseline.
+            if (localHead.isBlank()) {
+                runOrThrow(worker, objectiveId, "git", List.of("init", "-q"), "git init");
+                runOrThrow(worker, objectiveId, "git", List.of("config", "user.name", "Metatron Workforce"), "git user.name");
+                runOrThrow(worker, objectiveId, "git", List.of("config", "user.email", "workforce@metatron.local"), "git user.email");
+                runOrThrow(worker, objectiveId, "git", List.of("add", "-A"), "git baseline add");
+                runOrThrow(worker, objectiveId, "git", List.of("commit", "-q", "-m", "metatron materialized baseline"), "git baseline commit");
+                WorkerExecutionSandboxService.SandboxResult head = runOrThrow(
+                        worker, objectiveId, "git", List.of("rev-parse", "HEAD"), "git baseline head");
+                localHead = head.output().trim();
+            }
             if (!localHead.matches("[0-9a-f]{40}")) throw new IllegalStateException("local materialized baseline missing Git SHA");
 
             Map<String, String> outputs = new LinkedHashMap<>();
@@ -87,11 +108,69 @@ public final class GeneralWorkspaceActionCatalog {
             outputs.put("materializedFiles", Integer.toString(materialized.files()));
             outputs.put("materializedBytes", Long.toString(materialized.bytes()));
             outputs.put("workspaceRef", workspace.workspaceRef());
-            return observation(request.actionRef(), true, "private repository materialized into isolated Objective workspace",
+            outputs.put("reused", Boolean.toString(reused));
+            String evidencePrefix = reused ? "repository-materialization-reused:" : "repository-materialized:";
+            return observation(request.actionRef(), true,
+                    reused ? "existing immutable repository materialization reused" : "private repository materialized into isolated Objective workspace",
                     outputs, List.of(
-                            "repository-materialized:" + materialized.repository() + "@" + materialized.resolvedCommitSha(),
+                            evidencePrefix + materialized.repository() + "@" + materialized.resolvedCommitSha(),
                             "objective-workspace:" + workspace.workspaceKey() + ":baseline=" + localHead));
         });
+    }
+
+    /** Same Objective + same repository/ref may safely retry materialization without destroying Work product. */
+    static RepositoryWorkspaceMaterializationService.MaterializedRepository existingMaterialization(
+            ObjectiveWorkspaceService workspaces,
+            ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+            String repository,
+            String ref) {
+        Path provenance = workspaces.resolve(workspace, ".metatron-repository");
+        if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS)) return null;
+        Map<String, String> fields = keyValueLines(workspaces.read(workspace, ".metatron-repository"));
+        String existingRepository = fields.getOrDefault("repository", "");
+        String existingRef = fields.getOrDefault("requestedRef", "");
+        String existingSha = fields.getOrDefault("commitSha", "");
+        String requestedRef = ref == null || ref.isBlank() ? "main" : ref.trim();
+        if (!repository.trim().equals(existingRepository)
+                || !(requestedRef.equals(existingRef) || requestedRef.equals(existingSha))) {
+            throw new IllegalStateException("objective workspace repository materialization conflict");
+        }
+        if (!existingSha.matches("[0-9a-f]{40}")) {
+            throw new IllegalStateException("objective workspace repository provenance is invalid");
+        }
+        WorkspaceStats stats = workspaceStats(workspace);
+        return new RepositoryWorkspaceMaterializationService.MaterializedRepository(
+                existingRepository, existingRef, existingSha, workspace.workspaceRef(), stats.files(), stats.bytes());
+    }
+
+    private static WorkspaceStats workspaceStats(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        int files = 0;
+        long bytes = 0;
+        try (var stream = Files.walk(workspace.path())) {
+            for (Path path : stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> !Files.isSymbolicLink(path)).toList()) {
+                String relative = workspace.path().relativize(path).toString().replace('\\', '/');
+                if (relative.equals(".metatron-workspace") || relative.equals(".metatron-repository")
+                        || relative.equals(".git") || relative.startsWith(".git/")) continue;
+                files++;
+                bytes += Files.size(path);
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("cannot inspect existing materialized workspace", failure);
+        }
+        if (files < 1 || bytes < 1) throw new IllegalStateException("existing repository materialization has no source content");
+        return new WorkspaceStats(files, bytes);
+    }
+
+    private static Map<String, String> keyValueLines(String body) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        if (body != null) {
+            for (String line : body.lines().toList()) {
+                int split = line.indexOf('=');
+                if (split > 0) fields.put(line.substring(0, split).trim(), line.substring(split + 1).trim());
+            }
+        }
+        return fields;
     }
 
     private WorkerExecutionSandboxService.SandboxResult runOrThrow(String worker, String objectiveId,
@@ -149,9 +228,25 @@ public final class GeneralWorkspaceActionCatalog {
     }
 
     private ActionFabric.Action gitStatus(String worker, String auth, String objectiveId) {
-        return action("workspace.git.status", ActionFabric.Consequence.READ_ONLY, worker, auth,
-                request -> sandboxObservation(request.actionRef(),
-                        sandbox.run(worker, objectiveId, "git", List.of("status", "--short", "--branch"))));
+        return action("workspace.git.status", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
+            WorkerExecutionSandboxService.SandboxResult status = runOrThrow(
+                    worker, objectiveId, "git", List.of("status", "--short", "--branch"), "git status");
+            WorkerExecutionSandboxService.SandboxResult head = runOrThrow(
+                    worker, objectiveId, "git", List.of("rev-parse", "HEAD"), "git rev-parse HEAD");
+            WorkerExecutionSandboxService.SandboxResult log = runOrThrow(
+                    worker, objectiveId, "git", List.of("log", "-n", "20", "--pretty=format:%H%x09%s"), "git log");
+            String headSha = head.output().trim();
+            if (!headSha.matches("[0-9a-f]{40}")) throw new IllegalStateException("git HEAD is not an immutable SHA");
+            Map<String, String> outputs = new LinkedHashMap<>();
+            outputs.put("status", status.output());
+            outputs.put("headSha", headSha);
+            outputs.put("recentLog", log.output());
+            outputs.put("workspaceKey", status.workspaceKey());
+            return observation(request.actionRef(), true, "local Git status, HEAD and recent history inspected",
+                    outputs, List.of(
+                            "worker-sandbox:workspace=" + status.workspaceKey() + ":git-read-only-inspection",
+                            "objective-git-head:" + headSha));
+        });
     }
 
     private ActionFabric.Action gitDiff(String worker, String auth, String objectiveId) {
@@ -277,4 +372,5 @@ public final class GeneralWorkspaceActionCatalog {
     }
 
     private record BuildCommand(String executable, List<String> args) {}
+    private record WorkspaceStats(int files, long bytes) {}
 }
