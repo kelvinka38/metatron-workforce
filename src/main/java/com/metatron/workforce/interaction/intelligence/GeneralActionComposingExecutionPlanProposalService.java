@@ -20,6 +20,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
     public static final String GENERAL_RUNTIME_MARKER = "general-action-runtime:" + GeneralWorkspaceAutonomousCapability.CAPABILITY;
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
+    private static final String RECOVERY_PROBE_READ = "autonomy.recovery.probe.read";
 
     private static final Set<String> COMPOSABLE_TOKENS = Set.of(
             "repository", "repo", "file", "filesystem", "workspace", "shell", "process",
@@ -35,6 +36,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
     public List<ExecutionWorkSpec> propose(String caseId, NormalizedRequest request, List<String> availableCapabilities) {
         List<ExecutionWorkSpec> plan = delegate.propose(caseId, request, availableCapabilities);
         if (plan == null || plan.isEmpty()) return plan;
+        plan = collapseExplicitRecoveryComposite(request, availableCapabilities, plan);
         plan = removeInvalidCrossRepositoryAuditJoins(plan);
         if (plan.isEmpty()) return plan;
         Set<String> available = Set.copyOf(availableCapabilities == null ? List.of() : availableCapabilities);
@@ -60,6 +62,36 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                     step.dependsOn(), step.consequence(), acceptance, evidence));
         }
         return List.copyOf(composed);
+    }
+
+    /**
+     * The bounded recovery probe is itself a composite capability whose result is independently
+     * verified by Observation. If the Human explicitly requests that exact capability against its
+     * recovery target, additional planner-created reporting/workspace steps are scope expansion and
+     * must not enter the Work Graph.
+     */
+    static List<ExecutionWorkSpec> collapseExplicitRecoveryComposite(
+            NormalizedRequest request,
+            List<String> availableCapabilities,
+            List<ExecutionWorkSpec> plan) {
+        if (request == null || plan == null || plan.isEmpty()) return plan;
+        boolean available = availableCapabilities != null && availableCapabilities.stream()
+                .filter(Objects::nonNull).map(String::trim)
+                .anyMatch(value -> value.equals(RECOVERY_PROBE_READ)
+                        || value.startsWith(RECOVERY_PROBE_READ + " ")
+                        || value.startsWith(RECOVERY_PROBE_READ + "|"));
+        if (!available) return plan;
+        String semantic = (request.objective() + " " + request.target()).toLowerCase(Locale.ROOT);
+        if (!semantic.contains(RECOVERY_PROBE_READ) || !request.target().startsWith("p10-recovery://")) return plan;
+        List<ExecutionWorkSpec> probes = plan.stream()
+                .filter(step -> RECOVERY_PROBE_READ.equals(step.requiredCapability()))
+                .toList();
+        if (probes.size() != 1) return plan;
+        ExecutionWorkSpec probe = probes.getFirst();
+        if (probe.consequence() != ExecutionWorkSpec.Consequence.READ_ONLY) return plan;
+        return List.of(new ExecutionWorkSpec(
+                probe.stepId(), probe.objective(), probe.target(), probe.requiredCapability(), List.of(),
+                probe.consequence(), probe.acceptanceCriteria(), probe.evidenceRequirements()));
     }
 
     /**

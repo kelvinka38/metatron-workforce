@@ -183,18 +183,11 @@ public final class TelegramWebhookController {
             TelegramIngressReceiptStore.Receipt receipt = receiptStore.receive(updateId, telegramUserId, chatId, text);
             receipt = receiptStore.admit(updateId);
 
-            if (requiresObjectiveBeforeAck(text)) {
-                processReceipt(receipt.updateId());
-                TelegramIngressReceiptStore.Receipt accepted = receiptStore.find(receipt.updateId());
-                if (accepted == null || accepted.objectiveId() == null || accepted.objectiveId().isBlank()) {
-                    throw new IllegalStateException("telegram_objective_not_accepted_before_ack");
-                }
-                receipt = accepted;
-                LOG.info("telegram_objective_persisted_before_ack update_id={} objective_id={} durable_status={}",
-                        receipt.updateId(), receipt.objectiveId(), receipt.status());
-            } else {
-                scheduleReceipt(receipt.updateId());
-            }
+            // Provider delivery lifetime must never own Objective lifetime. Once the authenticated
+            // update is durably RECEIVED/ADMITTED, detach institutional processing from this HTTP
+            // request. Objective creation, planning and execution can take arbitrarily longer than
+            // Telegram/Cloudflare ingress budgets and are recovered from the durable receipt store.
+            scheduleReceipt(receipt.updateId());
 
             long ackMs = (System.nanoTime() - webhookStarted) / 1_000_000L;
             LOG.info("telegram_webhook_ack update_id={} chat={} ack_ms={} durable_status={} objective_id={} queue_depth={} active_threads={}",

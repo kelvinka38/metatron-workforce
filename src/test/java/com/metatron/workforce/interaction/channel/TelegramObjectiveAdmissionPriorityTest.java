@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TelegramObjectiveAdmissionPriorityTest {
     @Test
-    void explicitObjectiveDelegationRequiresCanonicalAcceptanceBeforeProviderAck() {
+    void explicitObjectiveDelegationIsRecognizedButMustNotOwnProviderAckLifetime() {
         assertTrue(TelegramWebhookController.requiresObjectiveBeforeAck(
                 "Take ownership of one Objective: perform a governed read-only institutional audit."));
         assertTrue(TelegramWebhookController.requiresObjectiveBeforeAck(
