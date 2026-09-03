@@ -6,12 +6,19 @@ import com.metatron.workforce.action.CognitiveWorkerRuntime;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrain;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrainFactory;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /** General code/file/process/Git/build/test execution composed from governed Action Fabric actions. */
@@ -22,6 +29,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     public static final String AUTHORITY_REFERENCE = "policy:founder-general-engineering-workspace:v1";
     public static final String AUTHORIZATION_REFERENCE = "authorization:founder-general-engineering-workspace:v1";
     private static final int MAX_COGNITIVE_CYCLES = 48;
+    static final String MEMORY_WORKSPACE_MATERIALIZED = "workspaceMaterialized";
 
     private final GeneralWorkspaceActionCatalog actions;
     private final GeneralCognitiveWorkerBrainFactory brains;
@@ -68,9 +76,13 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
 
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(
                 request.objectiveId(), request.allocatedWorkerId());
-        ActionFabric fabric = new ActionFabric(actions.actions(
-                request.allocatedWorkerId(), request.authorizationReference(), request.objectiveId()));
+        Map<String, String> objectiveMemory = objectiveWorkspaceMemory(workspaces, workspace);
+        List<ActionFabric.Action> governedActions = actionsForWork(
+                actions.actions(request.allocatedWorkerId(), request.authorizationReference(), request.objectiveId()),
+                request.workSpec(), objectiveMemory);
+        ActionFabric fabric = new ActionFabric(governedActions);
         GeneralCognitiveWorkerBrain brain = brains.create();
+        CognitiveWorkerRuntime.Brain contextualBrain = withObjectiveWorkspaceMemory(brain, objectiveMemory);
         CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(
                 fabric, ActionJournal.runtimeEvidenceJournal(), MAX_COGNITIVE_CYCLES);
         CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
@@ -80,14 +92,18 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 request.objectiveId(),
                 request.workSpec(),
                 request.idempotencyKey(),
-                brain);
+                contextualBrain);
 
         List<String> evidence = new ArrayList<>(outcome.evidenceReferences());
         evidence.addAll(brain.evidenceReferences());
         evidence.add("general-action-composition:capability=" + request.workSpec().requiredCapability()
                 + ":workspace=" + workspace.workspaceRef()
                 + ":profile=" + binding.profile().profileRef());
-        evidence.add("general-action-catalog:" + binding.profile().actionRefs().stream().sorted().toList());
+        evidence.add("general-action-catalog:" + governedActions.stream().map(ActionFabric.Action::actionRef).sorted().toList());
+        evidence.add("general-workspace-continuity:materialized="
+                + objectiveMemory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false")
+                + ":repository=" + objectiveMemory.getOrDefault("repository", "none")
+                + ":source=" + objectiveMemory.getOrDefault("sourceCommitSha", "none"));
         return new CapabilityResult(
                 outcome.success(),
                 request.allocatedWorkerId(),
@@ -95,5 +111,85 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 workspace.workspaceRef(),
                 evidence,
                 outcome.summary());
+    }
+
+    static Map<String, String> objectiveWorkspaceMemory(ObjectiveWorkspaceService workspaces,
+                                                        ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        Objects.requireNonNull(workspaces, "workspaces");
+        Objects.requireNonNull(workspace, "workspace");
+        Map<String, String> memory = new LinkedHashMap<>();
+        memory.put("workspaceRef", workspace.workspaceRef());
+        memory.put("workspaceKey", workspace.workspaceKey());
+        memory.put(MEMORY_WORKSPACE_MATERIALIZED, "false");
+
+        Path provenance = workspaces.resolve(workspace, ".metatron-repository");
+        if (!Files.exists(provenance, LinkOption.NOFOLLOW_LINKS)) return Map.copyOf(memory);
+        if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalStateException("objective workspace repository provenance is not a regular file");
+        }
+
+        Map<String, String> fields = new LinkedHashMap<>();
+        for (String line : workspaces.read(workspace, ".metatron-repository").lines().toList()) {
+            int split = line.indexOf('=');
+            if (split > 0) fields.put(line.substring(0, split).trim(), line.substring(split + 1).trim());
+        }
+        String repository = fields.getOrDefault("repository", "");
+        String requestedRef = fields.getOrDefault("requestedRef", "");
+        String sourceCommitSha = fields.getOrDefault("commitSha", "");
+        if (repository.isBlank() || !repository.contains("/") || requestedRef.isBlank()
+                || !sourceCommitSha.matches("[0-9a-fA-F]{40}")) {
+            throw new IllegalStateException("objective workspace repository provenance is invalid");
+        }
+        memory.put(MEMORY_WORKSPACE_MATERIALIZED, "true");
+        memory.put("repository", repository);
+        memory.put("requestedRef", requestedRef);
+        memory.put("sourceCommitSha", sourceCommitSha.toLowerCase(Locale.ROOT));
+        return Map.copyOf(memory);
+    }
+
+    static List<ActionFabric.Action> actionsForWork(List<ActionFabric.Action> candidates,
+                                                    ExecutionWorkSpec workSpec,
+                                                    Map<String, String> objectiveMemory) {
+        Objects.requireNonNull(candidates, "candidates");
+        Objects.requireNonNull(workSpec, "workSpec");
+        Map<String, String> memory = objectiveMemory == null ? Map.of() : objectiveMemory;
+        boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
+        if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(candidates);
+        return candidates.stream()
+                .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
+                .toList();
+    }
+
+    static boolean requiresRepositoryMaterialization(ExecutionWorkSpec workSpec) {
+        String objective = workSpec.objective().toLowerCase(Locale.ROOT);
+        return objective.contains("materializ") || objective.contains("snapshot") || objective.contains("checkout");
+    }
+
+    static CognitiveWorkerRuntime.Brain withObjectiveWorkspaceMemory(CognitiveWorkerRuntime.Brain delegate,
+                                                                     Map<String, String> objectiveMemory) {
+        Objects.requireNonNull(delegate, "delegate");
+        Map<String, String> persistent = objectiveMemory == null ? Map.of() : Map.copyOf(objectiveMemory);
+        return new CognitiveWorkerRuntime.Brain() {
+            @Override
+            public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                return delegate.think(withMemory(context, persistent));
+            }
+
+            @Override
+            public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                              ActionFabric.ActionObservation observation) {
+                return delegate.reflect(withMemory(context, persistent), observation);
+            }
+        };
+    }
+
+    private static CognitiveWorkerRuntime.CognitiveContext withMemory(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                      Map<String, String> persistent) {
+        Map<String, String> merged = new LinkedHashMap<>(persistent);
+        merged.putAll(context.memory());
+        return new CognitiveWorkerRuntime.CognitiveContext(
+                context.workerId(), context.assignmentReference(), context.authorizationReference(),
+                context.objectiveId(), context.workSpec(), context.idempotencyKey(),
+                context.availableActions(), context.history(), Map.copyOf(merged));
     }
 }
