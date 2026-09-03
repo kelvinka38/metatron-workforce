@@ -170,7 +170,9 @@ public final class GeneralWorkspaceActionCatalog {
 
     private ActionFabric.Action build(String worker, String auth, String objectiveId,
                                       ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        return action("workspace.build.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+        // Build outputs are confined to the Objective scratch workspace. Building verifies the source
+        // but does not mutate the governed external target, so READ_ONLY Work must be able to invoke it.
+        return action("workspace.build.run", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             BuildCommand command = buildCommand(workspace, request.inputs().getOrDefault("tasksJson", "[]"), false);
             return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, command.executable(), command.args()));
         });
@@ -178,7 +180,8 @@ public final class GeneralWorkspaceActionCatalog {
 
     private ActionFabric.Action test(String worker, String auth, String objectiveId,
                                      ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        return action("workspace.test.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+        // Test outputs are likewise local verification artifacts rather than mutations of the governed target.
+        return action("workspace.test.run", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             BuildCommand command = buildCommand(workspace, request.inputs().getOrDefault("tasksJson", "[]"), true);
             return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, command.executable(), command.args()));
         });
