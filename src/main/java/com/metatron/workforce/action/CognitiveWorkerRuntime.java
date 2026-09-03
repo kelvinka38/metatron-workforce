@@ -5,9 +5,11 @@ import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Bounded Cognitive Worker runtime: think -> act -> observe -> reflect.
@@ -162,6 +164,19 @@ public final class CognitiveWorkerRuntime {
             CognitiveContext afterAction = new CognitiveContext(workerId, assignmentReference, authorizationReference,
                     objectiveId, workSpec, idempotencyKey, catalog, history, memory);
             Reflection reflection = Objects.requireNonNull(brain.reflect(afterAction, observation), "brain reflection");
+            if (reflection.decision() == Decision.COMPLETE) {
+                if (!observation.success()) {
+                    throw new IllegalStateException("brain-cannot-complete-after-failed-observation");
+                }
+                Set<String> unresolvedFailures = unresolvedFailedActions(history, observation);
+                if (!unresolvedFailures.isEmpty()) {
+                    String unresolved = String.join(",", unresolvedFailures);
+                    evidence.add("cognitive-completion-rejected:unresolved-failed-actions=" + unresolved);
+                    reflection = Reflection.continueWith(
+                            "completion rejected until failed actions are successfully retried: " + unresolved);
+                }
+            }
+
             Cycle cycle = new Cycle(cycleNumber, thought, observation, reflection);
             history.add(cycle);
             evidence.addAll(observation.evidenceReferences());
@@ -174,9 +189,6 @@ public final class CognitiveWorkerRuntime {
 
             terminalSummary = reflection.summary();
             if (reflection.decision() == Decision.COMPLETE) {
-                if (!observation.success()) {
-                    throw new IllegalStateException("brain-cannot-complete-after-failed-observation");
-                }
                 success = true;
                 break;
             }
@@ -196,6 +208,24 @@ public final class CognitiveWorkerRuntime {
                 + ":actions=" + history.size()
                 + ":success=" + success);
         return new Outcome(success, history, memory, evidence, terminalSummary, Instant.now());
+    }
+
+    /**
+     * A failed tool effect stays unresolved until the same governed action is successfully observed.
+     * A later unrelated success must never erase a failed prerequisite and create false completion.
+     */
+    static Set<String> unresolvedFailedActions(List<Cycle> history, ActionFabric.ActionObservation latest) {
+        LinkedHashSet<String> unresolved = new LinkedHashSet<>();
+        if (history != null) {
+            for (Cycle cycle : history) applyObservationState(unresolved, cycle.observation());
+        }
+        if (latest != null) applyObservationState(unresolved, latest);
+        return Set.copyOf(unresolved);
+    }
+
+    private static void applyObservationState(Set<String> unresolved, ActionFabric.ActionObservation observation) {
+        if (observation.success()) unresolved.remove(observation.actionRef());
+        else unresolved.add(observation.actionRef());
     }
 
     private static String require(String value, String field) {
