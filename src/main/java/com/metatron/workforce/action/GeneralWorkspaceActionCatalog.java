@@ -61,7 +61,9 @@ public final class GeneralWorkspaceActionCatalog {
 
     private ActionFabric.Action repositoryMaterialize(String worker, String auth, String objectiveId,
                                                        ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        return action("workspace.repository.materialize", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+        // Materialization reads an immutable remote snapshot and prepares only the isolated Objective workspace.
+        // It must remain available to READ_ONLY repository work; external/remote state is never mutated here.
+        return action("workspace.repository.materialize", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             String repository = input(request, "repository");
             String ref = request.inputs().getOrDefault("ref", "main");
             RepositoryWorkspaceMaterializationService.MaterializedRepository materialized =
