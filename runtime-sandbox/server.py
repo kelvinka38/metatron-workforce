@@ -98,6 +98,13 @@ def child_environment(workspace: Path):
     # runtime capability required by Gradle/Maven wrappers in the Temurin JDK sandbox image.
     java_home = os.environ.get("JAVA_HOME", DEFAULT_JAVA_HOME).strip() or DEFAULT_JAVA_HOME
     java_bin = str(Path(java_home) / "bin")
+    # Build tools frequently create a coordinator JVM plus a test/compiler JVM. Bound both the
+    # coordinator and its parallelism explicitly so a repository build cannot consume the whole
+    # sandbox cgroup or disappear under OOM pressure. These are runtime controls, never credentials.
+    gradle_opts = (
+        "-Dorg.gradle.jvmargs=-Xms32m\\ -Xmx256m\\ -XX:MaxMetaspaceSize=160m\\ -Dfile.encoding=UTF-8 "
+        "-Dorg.gradle.workers.max=1 -Dorg.gradle.parallel=false -Dorg.gradle.daemon=false"
+    )
     return {
         "JAVA_HOME": java_home,
         "PATH": java_bin + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -106,7 +113,11 @@ def child_environment(workspace: Path):
         "LC_ALL": "C.UTF-8",
         "GIT_TERMINAL_PROMPT": "0",
         "GRADLE_USER_HOME": str(workspace / ".gradle"),
-        "MAVEN_OPTS": "-Dmaven.repo.local=" + str(workspace / ".m2/repository"),
+        "GRADLE_OPTS": gradle_opts,
+        "MAVEN_OPTS": (
+            "-Xms32m -Xmx256m -XX:MaxMetaspaceSize=160m "
+            "-Dmaven.repo.local=" + str(workspace / ".m2/repository")
+        ),
     }
 
 

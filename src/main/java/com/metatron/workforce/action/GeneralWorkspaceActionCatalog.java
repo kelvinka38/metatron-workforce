@@ -289,12 +289,17 @@ public final class GeneralWorkspaceActionCatalog {
         if (Files.exists(workspaces.resolve(workspace, "gradlew"))) {
             List<String> args = new ArrayList<>();
             args.add("--no-daemon");
+            args.add("--max-workers=1");
             args.addAll(tasks.isEmpty() ? List.of(test ? "test" : "build") : tasks);
             return new BuildCommand("./gradlew", args);
         }
         if (Files.exists(workspaces.resolve(workspace, "build.gradle"))
                 || Files.exists(workspaces.resolve(workspace, "build.gradle.kts"))) {
-            return new BuildCommand("gradle", tasks.isEmpty() ? List.of(test ? "test" : "build") : tasks);
+            List<String> args = new ArrayList<>();
+            args.add("--no-daemon");
+            args.add("--max-workers=1");
+            args.addAll(tasks.isEmpty() ? List.of(test ? "test" : "build") : tasks);
+            return new BuildCommand("gradle", args);
         }
         if (Files.exists(workspaces.resolve(workspace, "mvnw"))) {
             return new BuildCommand("./mvnw", tasks.isEmpty() ? List.of(test ? "test" : "verify") : tasks);
