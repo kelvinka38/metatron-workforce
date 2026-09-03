@@ -379,7 +379,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         long priorReplans = management.history(objectiveId).stream()
                 .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
                 .count();
-        String failure = "bounded-read-only-recovery-exhausted:step=" + outcome.stepId()
+        String failure = "bounded-autonomous-replan-required:step=" + outcome.stepId()
                 + ":attempt=" + outcome.dispatchAttempt() + ":failure=" + outcome.failure();
         management.blockAutonomousObjective(
                 objectiveId, runnerId, lease.token(), failure, clock.instant());
@@ -491,18 +491,13 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     }
 
     private static boolean recoverableReadOnly(ExecutionWorkSpec step, String failure, int attempt) {
-        return attempt < MAX_READ_ONLY_DISPATCH_ATTEMPTS
+        return step.consequence() == ExecutionWorkSpec.Consequence.READ_ONLY
+                && attempt < MAX_READ_ONLY_DISPATCH_ATTEMPTS
                 && autonomousReplanEligible(step, failure);
     }
 
     private static boolean autonomousReplanEligible(ExecutionWorkSpec step, String failure) {
-        if (step.consequence() != ExecutionWorkSpec.Consequence.READ_ONLY) return false;
-        String value = failure == null ? "" : failure;
-        return !value.startsWith("authorization-failure:")
-                && !value.startsWith("data-failure:")
-                && !value.startsWith("autonomy-safety-gate:")
-                && !value.contains("staffing-gap:")
-                && !value.contains("capacity-unavailable:");
+        return AutonomousRecoveryPolicy.autonomousReplanEligible(step, failure);
     }
 
     private static NodeExecutionOutcome await(Future<NodeExecutionOutcome> future) {
