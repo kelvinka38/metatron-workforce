@@ -12,7 +12,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeneralWorkspaceActionCatalogReadOnlyMaterializationTest {
@@ -20,7 +22,7 @@ class GeneralWorkspaceActionCatalogReadOnlyMaterializationTest {
     Path tempDir;
 
     @Test
-    void repositoryMaterializationRemainsAvailableToReadOnlyRepositoryWork() {
+    void readOnlyRepositoryWorkCanMaterializeBuildAndTestButNotMutateSourceWorkspace() {
         String worker = "WORKER-GENERAL-READONLY";
         String authorization = "authorization:test:general-readonly";
         String objective = "objective:test:general-readonly";
@@ -47,8 +49,16 @@ class GeneralWorkspaceActionCatalogReadOnlyMaterializationTest {
         GeneralWorkspaceActionCatalog catalog = new GeneralWorkspaceActionCatalog(
                 workspaces, sandbox, profiles, repositories, json);
         ActionFabric fabric = new ActionFabric(catalog.actions(worker, authorization, objective));
+        List<String> readOnlyCatalog = fabric.catalogFor(worker, authorization, false);
 
-        assertTrue(fabric.catalogFor(worker, authorization, false)
-                .contains("workspace.repository.materialize"));
+        assertTrue(readOnlyCatalog.contains("workspace.repository.materialize"));
+        assertTrue(readOnlyCatalog.contains("workspace.build.run"));
+        assertTrue(readOnlyCatalog.contains("workspace.test.run"));
+        assertTrue(readOnlyCatalog.contains("workspace.file.read"));
+        assertTrue(readOnlyCatalog.contains("workspace.git.status"));
+        assertFalse(readOnlyCatalog.contains("workspace.file.write"));
+        assertFalse(readOnlyCatalog.contains("workspace.process.run"));
+        assertFalse(readOnlyCatalog.contains("workspace.shell.run"));
+        assertFalse(readOnlyCatalog.contains("workspace.git.run"));
     }
 }
