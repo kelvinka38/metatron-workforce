@@ -45,6 +45,7 @@ ALLOWED = {x.strip() for x in os.environ.get(
 WORKSPACE_RE = re.compile(r"^[0-9a-f]{32}$")
 SHELL_DENY = re.compile(r"[;&|><`$\n\r]|\$\(")
 MAX_REQUEST = 128_000
+DEFAULT_JAVA_HOME = "/opt/java/openjdk"
 
 
 def workspace_for(key: str) -> Path:
@@ -91,6 +92,24 @@ def executable_command(workspace: Path, executable: str, args):
     return [executable] + args
 
 
+def child_environment(workspace: Path):
+    # Deliberately do not inherit the server environment: it can contain transport/runtime
+    # configuration that must never reach Worker child processes. JAVA_HOME is the one bounded
+    # runtime capability required by Gradle/Maven wrappers in the Temurin JDK sandbox image.
+    java_home = os.environ.get("JAVA_HOME", DEFAULT_JAVA_HOME).strip() or DEFAULT_JAVA_HOME
+    java_bin = str(Path(java_home) / "bin")
+    return {
+        "JAVA_HOME": java_home,
+        "PATH": java_bin + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME": str(workspace),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GRADLE_USER_HOME": str(workspace / ".gradle"),
+        "MAVEN_OPTS": "-Dmaven.repo.local=" + str(workspace / ".m2/repository"),
+    }
+
+
 def run_process(payload):
     started = time.monotonic()
     workspace_key = str(payload.get("workspaceKey", ""))
@@ -102,15 +121,7 @@ def run_process(payload):
     # Process output is sandbox transport state, not Objective work product. Keeping this log out of
     # the workspace prevents Git baselines/Observation from treating command plumbing as a mutation.
     log = LOG_ROOT / f"{workspace_key}.log"
-    env = {
-        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "HOME": str(workspace),
-        "LANG": "C.UTF-8",
-        "LC_ALL": "C.UTF-8",
-        "GIT_TERMINAL_PROMPT": "0",
-        "GRADLE_USER_HOME": str(workspace / ".gradle"),
-        "MAVEN_OPTS": "-Dmaven.repo.local=" + str(workspace / ".m2/repository"),
-    }
+    env = child_environment(workspace)
     timed_out = False
     with log.open("wb") as stream:
         process = subprocess.Popen(

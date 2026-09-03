@@ -57,13 +57,22 @@ jobs:
           printf '%s' 'ci-sandbox-token' > "$TOKEN_FILE"
           SANDBOX_TOKEN_FILE="$TOKEN_FILE" SANDBOX_WORKSPACE_ROOT="$WORKSPACE_ROOT" python3 - <<'PY'
           import runpy
+          from pathlib import Path
           runtime=runpy.run_path('runtime-sandbox/server.py')
           deny=runtime['SHELL_DENY']
           assert deny.search('git status; rm -rf x')
           assert deny.search('echo $(id)')
           assert deny.search('git status\nwhoami')
           assert not deny.search('git status --short')
+          child=runtime['child_environment'](Path('/tmp/metatron-ci-workspace'))
+          assert child['JAVA_HOME']
+          assert child['PATH'].startswith(child['JAVA_HOME'] + '/bin:')
+          assert 'SANDBOX_TOKEN' not in child
+          assert 'GITHUB_TOKEN' not in child
+          assert 'OPENAI_API_KEY' not in child
           print('SANDBOX_RUNTIME_IMPORT=PASS')
+          print('SANDBOX_JAVA_ENVIRONMENT=PASS')
+          print('SANDBOX_CHILD_CREDENTIAL_ISOLATION=PASS')
           PY
       - name: Verify strict P10 evidence contracts
         run: |
