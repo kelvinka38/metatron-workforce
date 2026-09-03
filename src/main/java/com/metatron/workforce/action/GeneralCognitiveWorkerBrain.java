@@ -12,9 +12,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Provider-backed general Cognitive Worker brain. Action authority remains entirely in ActionFabric. */
 public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime.Brain {
+    private static final Pattern OWNER_REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+    private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
             Map.entry("workspace.repository.materialize", Map.of(
                     "inputs", Map.of("repository", "required owner/name", "ref", "optional branch/tag/SHA; default main"),
@@ -64,11 +68,15 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     @Override
     public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+        CognitiveWorkerRuntime.Thought requiredPrecondition = repositoryMaterializationPrecondition(context);
+        if (requiredPrecondition != null) return requiredPrecondition;
+
         String system = """
                 You are the action-selection brain for a governed Metatron Cognitive Worker.
                 You have no authority to execute outside the supplied action catalog.
                 Select exactly one next action that advances the actual Work using current observations.
                 Do not invent action names or input keys. Follow the supplied actionContracts exactly.
+                If the Work targets a repository and the workspace has not yet been materialized, use workspace.repository.materialize before any Git, build, test or repository-file action.
                 Do not claim completion in this response.
                 Inputs must be concrete strings. For list arguments use a JSON array encoded as a string in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
@@ -79,6 +87,55 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         String rationale = text(parsed.get("rationale"), "rationale");
         Map<String, String> inputs = stringMap(parsed.get("inputs"));
         return new CognitiveWorkerRuntime.Thought(actionRef, inputs, rationale);
+    }
+
+    static CognitiveWorkerRuntime.Thought repositoryMaterializationPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!context.availableActions().contains("workspace.repository.materialize")) return null;
+        if (!requiresRepositoryMaterialization(context)) return null;
+        boolean alreadyMaterialized = context.history().stream().anyMatch(cycle ->
+                "workspace.repository.materialize".equals(cycle.thought().actionRef())
+                        && cycle.observation().success());
+        if (alreadyMaterialized) return null;
+
+        String repository = context.workSpec().target().trim();
+        if (!OWNER_REPOSITORY.matcher(repository).matches()) return null;
+        Map<String, String> inputs = new LinkedHashMap<>();
+        inputs.put("repository", repository);
+        String exactRef = exactRef(context);
+        if (!exactRef.isBlank()) inputs.put("ref", exactRef);
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.repository.materialize",
+                Map.copyOf(inputs),
+                "Repository-backed Work requires a local immutable baseline before Git/build/test actions");
+    }
+
+    private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) {
+            return false;
+        }
+        String text = (context.workSpec().objective() + " "
+                + context.workSpec().target() + " "
+                + String.join(" ", context.workSpec().acceptanceCriteria()) + " "
+                + String.join(" ", context.workSpec().evidenceRequirements()))
+                .toLowerCase(java.util.Locale.ROOT);
+        return text.contains("materializ")
+                || text.contains("snapshot")
+                || text.contains("checkout")
+                || text.contains("source tree")
+                || text.contains("git rev-parse")
+                || EXACT_GIT_SHA.matcher(text).find();
+    }
+
+    private static String exactRef(CognitiveWorkerRuntime.CognitiveContext context) {
+        String text = context.workSpec().objective() + " "
+                + context.workSpec().target() + " "
+                + String.join(" ", context.workSpec().acceptanceCriteria()) + " "
+                + String.join(" ", context.workSpec().evidenceRequirements());
+        Matcher matcher = EXACT_GIT_SHA.matcher(text);
+        return matcher.find() ? matcher.group().toLowerCase(java.util.Locale.ROOT) : "";
     }
 
     @Override
