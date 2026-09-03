@@ -171,6 +171,13 @@ public final class MetatronIntelligenceResponder {
                     .orElse(null);
             NormalizedRequest normalized = IntelligenceDepthApplication.apply(
                     semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
+            if (activeCase != null && normalized.caseContinuity() == CaseContinuity.NEW) {
+                // The contextual pass is allowed to decide continuity, but once it declares a NEW bounded Case,
+                // stale Case/history content must not influence the Objective itself. Re-normalize from the
+                // current Human message only. With no active Case present, the interpreter forces continuity NEW.
+                normalized = IntelligenceDepthApplication.apply(
+                        semanticInterpreter.interpret(text, "", channel, (IntelligenceCase) null), depthContract);
+            }
             route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
             if (!normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {

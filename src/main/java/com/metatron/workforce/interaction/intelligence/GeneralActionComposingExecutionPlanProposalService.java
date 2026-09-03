@@ -21,6 +21,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
     private static final String RECOVERY_PROBE_READ = "autonomy.recovery.probe.read";
+    private static final String UNAVAILABLE_PREFIX = "unavailable:";
 
     private static final Set<String> COMPOSABLE_TOKENS = Set.of(
             "repository", "repo", "file", "filesystem", "workspace", "shell", "process",
@@ -156,7 +157,10 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
     }
 
     static boolean composable(ExecutionWorkSpec step) {
-        String capability = step.requiredCapability().toLowerCase(Locale.ROOT);
+        String capability = step.requiredCapability().toLowerCase(Locale.ROOT).trim();
+        if (capability.startsWith(UNAVAILABLE_PREFIX)) {
+            capability = capability.substring(UNAVAILABLE_PREFIX.length()).trim();
+        }
         for (String token : COMPOSABLE_TOKENS) {
             if (capability.equals(token)
                     || capability.startsWith(token + ".")

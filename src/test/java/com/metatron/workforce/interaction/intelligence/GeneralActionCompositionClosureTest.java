@@ -29,6 +29,28 @@ class GeneralActionCompositionClosureTest {
     }
 
     @Test
+    void plannerUnavailablePrefixStillComposesGeneralRepositoryActions() {
+        List<ExecutionWorkSpec> originals = List.of(
+                step("step-write", "UNAVAILABLE:repository.content.write"),
+                step("step-test", "UNAVAILABLE:repository.test.run"),
+                step("step-commit", "UNAVAILABLE:repository.commit.local"));
+        ExecutionPlanProposalService raw = (caseId, request, capabilities) -> originals;
+        ExecutionPlanProposalService composed = new GeneralActionComposingExecutionPlanProposalService(raw);
+
+        List<ExecutionWorkSpec> result = composed.propose(
+                "case-unavailable", null, List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY));
+
+        assertEquals(3, result.size());
+        assertTrue(result.stream().allMatch(step ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(step.requiredCapability())));
+        for (int i = 0; i < originals.size(); i++) {
+            String requested = originals.get(i).requiredCapability();
+            assertTrue(result.get(i).evidenceRequirements().contains("requested-capability:" + requested));
+            assertTrue(result.get(i).evidenceRequirements().contains("general-action-composition:" + requested));
+        }
+    }
+
+    @Test
     void unrelatedMissingCapabilityIsNotSilentlyComposed() {
         ExecutionWorkSpec original = new ExecutionWorkSpec(
                 "step-2", "send external payment", "payment",
@@ -42,5 +64,12 @@ class GeneralActionCompositionClosureTest {
 
         assertEquals("finance.payment.execute", result.requiredCapability());
         assertEquals(original, result);
+    }
+
+    private static ExecutionWorkSpec step(String id, String capability) {
+        return new ExecutionWorkSpec(
+                id, "general repository work", "kelvinka38/metatron-workforce",
+                capability, List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("work completed"), List.of("runtime evidence"));
     }
 }
