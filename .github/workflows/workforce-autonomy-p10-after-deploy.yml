@@ -48,10 +48,12 @@ jobs:
           find_successful_run() {
             local workflow="$1"
             local workflow_name="$2"
-            api_get "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=100"               | python3 - "$TARGET_SHA" "$workflow_name" <<'PY'
+            local response="/tmp/successful-runs-${workflow##*/}.json"
+            api_get "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?per_page=100" > "$response"
+            python3 - "$response" "$TARGET_SHA" "$workflow_name" <<'PY'
           import json,sys
-          target,name=sys.argv[1:3]
-          data=json.load(sys.stdin)
+          path,target,name=sys.argv[1:4]
+          data=json.load(open(path))
           rows=[
               r for r in data.get('workflow_runs',[])
               if r.get('head_sha')==target
@@ -168,8 +170,18 @@ jobs:
           RATIFICATION_RUN_ID=$(dispatch_or_reuse             'workforce-autonomy-p10-45-condition-ratification.yml'             'Workforce Autonomy P10 45 Condition Ratification'             "$ratify_payload")
           wait_success "$RATIFICATION_RUN_ID" P10_45_CONDITION_RATIFICATION
 
+          gateway_director_payload=$(python3 - "$TARGET_SHA" <<'PY'
+          import json,sys
+          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1]}}))
+          PY
+          )
+          GATEWAY_DIRECTOR_RUN_ID=$(dispatch_or_reuse             'gateway-director-live-acceptance.yml'             'Gateway Director Live Acceptance'             "$gateway_director_payload")
+          wait_success "$GATEWAY_DIRECTOR_RUN_ID" GATEWAY_DIRECTOR_LIVE_ACCEPTANCE
+
           echo "P10_EXACT_SHA=$TARGET_SHA"
           echo "P10_GS12_RUN_ID=$GS12_RUN_ID"
           echo "P10_GS34_RUN_ID=$GS34_RUN_ID"
           echo "P10_RATIFICATION_RUN_ID=$RATIFICATION_RUN_ID"
+          echo "GATEWAY_DIRECTOR_LIVE_RUN_ID=$GATEWAY_DIRECTOR_RUN_ID"
           echo 'P10_EXACT_SHA_SERIAL_CONTROLLER=PASS'
+          echo 'WORKFORCE_AUTONOMY_AND_GATEWAY_DIRECTOR_PRODUCT=PASS'
