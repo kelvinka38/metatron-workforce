@@ -9,32 +9,21 @@ import com.metatron.workforce.interaction.llm.LlmResponse;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ExecutionWorkPlannerCrossRepositoryAuditJoinTest {
     @Test
-    void materializesRepositoryAuditFanOutBeforeStandaloneCrossRepositoryJoin() {
+    void boundedCrossRepositoryAuditUsesCanonicalPlanBeforeFrontierProvider() {
+        AtomicInteger calls = new AtomicInteger();
         LlmProviderClient google = new LlmProviderClient() {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
 
             @Override public LlmResponse complete(LlmRequest request) {
-                assertTrue(request.systemContext().contains("cross-repository-audit-analysis"));
-                assertTrue(request.systemContext().contains("For a multi-repository audit, create one `repository.audit.read` step per repository"));
-                assertTrue(request.systemContext().contains("Never use `cross-repository-audit-analysis` for a single-repository audit"));
-                return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
-                        {"execution_work_plan":[{
-                          "step_id":"step-1",
-                          "objective":"Perform a governed read-only institutional audit of all four repositories in parallel with risk and improvement analysis.",
-                          "target":"kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, kelvinka38/bios",
-                          "required_capability":"cross-repository-audit-analysis",
-                          "depends_on":[],
-                          "consequence":"READ_ONLY",
-                          "acceptance_criteria":["Audit findings, risk analyses, and improvement recommendations are generated for all four specified repositories without any repository mutations."],
-                          "evidence_requirements":["Cross-repository audit report output containing repository analysis records for all four repositories."]
-                        }]}
-                        """, "planner-ref");
+                calls.incrementAndGet();
+                throw new IllegalStateException("bounded canonical audit must not depend on frontier planning");
             }
         };
 
@@ -47,6 +36,7 @@ final class ExecutionWorkPlannerCrossRepositoryAuditJoinTest {
                 crossRepositoryAuditRequest(),
                 List.of("repository.audit.read", "cross-repository-audit-analysis"));
 
+        assertEquals(0, calls.get());
         assertEquals(5, plan.size());
         assertEquals(List.of(
                 "kelvinka38/universal",
@@ -60,18 +50,17 @@ final class ExecutionWorkPlannerCrossRepositoryAuditJoinTest {
                         && step.consequence() == ExecutionWorkSpec.Consequence.READ_ONLY
                         && step.verifiable()));
 
-        ExecutionWorkSpec join = plan.get(4);
-        assertEquals("step-1", join.stepId());
+        ExecutionWorkSpec join = plan.getLast();
+        assertEquals("cross-repository-audit-analysis", join.stepId());
         assertEquals("cross-repository-audit-analysis", join.requiredCapability());
         assertEquals(List.of(
-                "step-1-audit-1",
-                "step-1-audit-2",
-                "step-1-audit-3",
-                "step-1-audit-4"), join.dependsOn());
-        assertTrue(join.acceptanceCriteria().getFirst().contains("all four specified repositories"));
+                "repository-audit-read-1",
+                "repository-audit-read-2",
+                "repository-audit-read-3",
+                "repository-audit-read-4"), join.dependsOn());
+        assertTrue(join.acceptanceCriteria().getFirst().contains("zero mutation"));
         assertTrue(join.verifiable());
     }
-
 
     @Test
     void boundedCrossRepositoryAuditFallsBackWhenPlannerProviderFails() {
