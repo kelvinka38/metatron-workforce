@@ -3,6 +3,9 @@ package com.metatron.workforce.management;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.observation.GatewayDirectorAppointmentObservationVerifier;
+import com.metatron.workforce.observation.ObservationReport;
+import com.metatron.workforce.observation.ObservationRequirement;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.junit.jupiter.api.Test;
 
@@ -68,5 +71,22 @@ class GatewayDirectorStaffingIntegrationTest {
                 ref.contains("staffing:policy=" + GatewayDirectorAppointmentCapability.CAPABILITY)));
         assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
                 ref.contains("additional-capabilities=[gateway.audit.read]")));
+
+        GatewayDirectorAppointmentObservationVerifier verifier =
+                new GatewayDirectorAppointmentObservationVerifier(core, profiles);
+        ObservationRequirement requirement = new ObservationRequirement(
+                "requirement:gateway-director",
+                "objective:gateway-director",
+                "appoint-gateway-director",
+                "criterion:gateway-director-role",
+                GatewayDirectorAppointmentCapability.ROLE_REF,
+                "Gateway Director Worker is ACTIVE with ROLE-HEAD-OF-GATEWAY participation",
+                List.of(GatewayDirectorAppointmentObservationVerifier.MARKER),
+                Instant.parse("2026-09-04T13:00:01Z"));
+        ObservationReport report = verifier.observe(
+                requirement, result.evidenceReferences(), Instant.parse("2026-09-04T13:00:02Z")).orElseThrow();
+
+        assertEquals(ObservationReport.CriterionResult.PASS, report.criterionResult());
+        assertEquals("independent-workforce-core-and-runtime-profile-read", report.method());
     }
 }
