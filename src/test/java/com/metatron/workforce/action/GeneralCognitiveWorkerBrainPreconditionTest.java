@@ -84,6 +84,39 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
         assertNull(GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context));
     }
 
+
+    @Test
+    void explicitExactShaFileWriteExecutesAndReflectsWithoutProvider() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "general-file-write",
+                "Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md with a short proof containing exact source SHA "
+                        + SHA + ". Exact UTF-8 content: source_sha=" + SHA,
+                "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                "execution.general.workspace",
+                List.of("general-snapshot"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("proof file exists and contains exact source SHA " + SHA),
+                List.of("successful workspace.file.write"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.write"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.governedExactShaFileWritePrecondition(context);
+
+        assertEquals("workspace.file.write", thought.actionRef());
+        assertEquals("docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md", thought.inputs().get("path"));
+        assertEquals("source_sha=" + SHA + "\n", thought.inputs().get("content"));
+
+        CognitiveWorkerRuntime.Reflection reflection =
+                GeneralCognitiveWorkerBrain.governedRequiredActionReflection(
+                        context,
+                        ActionFabric.ActionObservation.success(
+                                "workspace.file.write", "written", Map.of(), List.of("file-evidence")));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, reflection.decision());
+    }
+
     @Test
     void explicitTestRequirementForcesGovernedTestAfterMaterialization() {
         ExecutionWorkSpec work = exactSnapshotAndTestWork();
