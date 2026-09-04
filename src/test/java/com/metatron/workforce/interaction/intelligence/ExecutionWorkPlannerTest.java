@@ -241,6 +241,89 @@ final class ExecutionWorkPlannerTest {
         assertTrue(plan.get(1).objective().contains("source_sha=3e86d4e2876a90c580383d5c1de48360b5049b3b"));
     }
 
+
+    @Test
+    void productionNormalizedGeneralEngineeringRequestStillCompilesDuringProviderOutage() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                throw new IllegalStateException("simulated provider outage");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        String sha = "0028477b750724568db5ec20cb1f70ead133ba6c";
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Materialize engineering objective against specific commit, generate autonomy proof document, execute repository test suite, and commit work product locally.",
+                "kelvinka38/metatron-workforce",
+                List.of(
+                        "Use commit " + sha,
+                        "Target file: docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                        "Proof content must include exact source SHA",
+                        "Repository test suite must pass",
+                        "Only stage the proof file",
+                        "Create exactly one local Git commit",
+                        "Do not push or open pull request",
+                        "Do not modify remote repository state"),
+                IntelligenceDepth.DEEP,
+                "Final confirmation of local commit hash and verification report.",
+                List.of("Repository is accessible", "Test action is available via governed interface",
+                        "Local workspace supports Git operations"),
+                List.of("No remote pushes", "No pull request creation", "No remote state modification"),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.AUDIT, AnalyticalProtocolType.IMPROVEMENT),
+                DeterministicCapability.NONE, List.of(), List.of(), true, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-production-normalized-gs2", normalized, List.of("execution.general.workspace"));
+
+        assertEquals(4, plan.size());
+        assertEquals(List.of("general-snapshot", "general-file-write", "general-test", "general-local-commit"),
+                plan.stream().map(ExecutionWorkSpec::stepId).toList());
+        assertEquals("docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md", plan.get(1).target());
+        assertTrue(plan.get(1).objective().contains("source_sha=" + sha));
+    }
+
+
+    @Test
+    void gatewayDirectorAppointmentBindsWithoutFrontierPlanning() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("canonical appointment must not require frontier planning");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Create a Workforce Worker and appoint it as the Gateway Director / Head of Gateway",
+                "ROLE-HEAD-OF-GATEWAY",
+                List.of("persistent institutional Worker", "use governed Workforce staffing"),
+                IntelligenceDepth.ANALYZE,
+                "appointment confirmation with Worker, role and runtime evidence",
+                List.of(), List.of(), "", "", IntelligenceMode.EXECUTION,
+                CollaborationMode.SINGLE, List.of(), DeterministicCapability.NONE,
+                List.of(), List.of(), false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-gateway-director-appointment",
+                normalized,
+                List.of("workforce.staffing.gateway-director"));
+
+        assertEquals(0, calls.get());
+        assertEquals(1, plan.size());
+        ExecutionWorkSpec step = plan.getFirst();
+        assertEquals("workforce.staffing.gateway-director", step.requiredCapability());
+        assertEquals("ROLE-HEAD-OF-GATEWAY", step.target());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, step.consequence());
+        assertTrue(step.verifiable());
+    }
+
     @Test
     void providerlessPlannerStillFailsClosedOutsideBoundedAuditShape() {
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(

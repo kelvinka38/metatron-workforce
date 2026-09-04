@@ -120,6 +120,9 @@ public final class AutonomousStaffingService {
         }
 
         core.attestCapability(spec.workerId(), capability.capabilityRef(), spec.capabilityLevel(), spec.capabilityEvidenceRef());
+        for (AutonomousStaffingPolicy.CapabilityGrant grant : policy.additionalCapabilities()) {
+            core.attestCapability(spec.workerId(), grant.capabilityRef(), grant.level(), grant.evidenceRef());
+        }
         core.attestQualification(spec.workerId(), spec.qualificationRef(), spec.qualificationEvidenceRef(), null);
         core.setAvailability(spec.workerId(), true, spec.capacity());
         WorkerRuntimeProfileBindingService.Binding runtimeBinding = runtimeProfiles.bind(
@@ -140,6 +143,8 @@ public final class AutonomousStaffingService {
                 "worker:" + spec.workerId(),
                 "participation:" + spec.participationId(),
                 "capability-evidence:" + spec.capabilityEvidenceRef(),
+                "additional-capabilities=" + policy.additionalCapabilities().stream()
+                        .map(AutonomousStaffingPolicy.CapabilityGrant::capabilityRef).sorted().toList(),
                 "qualification-evidence:" + spec.qualificationEvidenceRef(),
                 "authority-envelope:" + spec.authorityEnvelopeRef(),
                 "runtime-profile-bound:" + runtimeBinding.profile().profileRef(),

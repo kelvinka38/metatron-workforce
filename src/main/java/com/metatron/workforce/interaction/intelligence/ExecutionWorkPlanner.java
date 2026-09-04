@@ -21,6 +21,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
     private static final String GENERAL_WORKSPACE = "execution.general.workspace";
+    private static final String GATEWAY_DIRECTOR_APPOINTMENT = "workforce.staffing.gateway-director";
     private static final java.util.regex.Pattern EXACT_GIT_SHA =
             java.util.regex.Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
     private static final java.util.regex.Pattern WORKSPACE_FILE_PATH =
@@ -100,6 +101,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicSingleRepositoryPlan);
             return deterministicSingleRepositoryPlan;
         }
+        List<ExecutionWorkSpec> deterministicGatewayDirectorAppointment = deterministicGatewayDirectorAppointment(
+                normalized, availableExecutionCapabilities);
+        if (!deterministicGatewayDirectorAppointment.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicGatewayDirectorAppointment);
+            return deterministicGatewayDirectorAppointment;
+        }
+
         List<ExecutionWorkSpec> deterministicCrossRepositoryFallback = deterministicCrossRepositoryAudit(
                 normalized, availableExecutionCapabilities);
         if (!deterministicCrossRepositoryFallback.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
@@ -397,6 +405,40 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     }
 
 
+
+    private static List<ExecutionWorkSpec> deterministicGatewayDirectorAppointment(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, GATEWAY_DIRECTOR_APPOINTMENT)) return List.of();
+        String semantic = (normalized.objective() + " " + normalized.target() + " "
+                + normalized.constraints() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean gatewayDirector = semantic.contains("gateway director")
+                || semantic.contains("gateway head")
+                || semantic.contains("head of gateway")
+                || semantic.contains("role-head-of-gateway");
+        boolean appointment = semantic.contains("appoint") || semantic.contains("create")
+                || semantic.contains("form") || semantic.contains("staff");
+        if (!gatewayDirector || !appointment) return List.of();
+
+        return List.of(new ExecutionWorkSpec(
+                "appoint-gateway-director",
+                "Form and appoint the canonical Gateway Director / Head of Gateway Worker through governed Workforce staffing",
+                "ROLE-HEAD-OF-GATEWAY",
+                GATEWAY_DIRECTOR_APPOINTMENT,
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of(
+                        "Gateway Director Worker is ACTIVE with ROLE-HEAD-OF-GATEWAY participation",
+                        "Gateway Director has the approved gateway.audit.read capability",
+                        "Gateway Director has a durable usable runtime/tool profile binding"),
+                List.of(
+                        "observation-capability:workforce.staffing.gateway-director",
+                        "staffing policy and Worker formation evidence",
+                        "active Gateway Director role/position participation evidence",
+                        "gateway.audit.read capability attestation",
+                        "runtime-profile-bound evidence")));
+    }
+
     private static List<ExecutionWorkSpec> deterministicCrossRepositoryAudit(
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities) {
@@ -474,22 +516,37 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             }
         }
         if (workspacePath.isBlank()) return List.of();
+        String boundedWorkspacePath = workspacePath;
+
+        List<String> constraints = normalized.constraints().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).toList();
+        List<String> prohibitions = normalized.explicitProhibitions().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).toList();
+        String requestedOutput = normalized.requestedOutput().toLowerCase(Locale.ROOT);
 
         boolean materialize = semantic.contains("materializ") || semantic.contains("snapshot") || semantic.contains("checkout");
-        boolean writeOneFile = (semantic.contains("create or replace only") || semantic.contains("write only")
-                || semantic.contains("create only")) && semantic.contains(workspacePath.toLowerCase(Locale.ROOT));
-        boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha);
+        boolean targetFileBounded = constraints.stream().anyMatch(value ->
+                value.contains("target file") && value.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT)));
+        boolean proofFileIntent = semantic.contains("proof") && semantic.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT));
+        boolean explicitFileBounded = (semantic.contains("create or replace only")
+                || semantic.contains("write only") || semantic.contains("create only"))
+                && semantic.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT));
+        boolean writeOneFile = (targetFileBounded && proofFileIntent) || explicitFileBounded;
+        boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha)
+                && constraints.stream().anyMatch(value -> value.contains("proof") && value.contains("exact source sha"));
         boolean test = semantic.contains("test suite") || semantic.contains("test action")
-                || semantic.contains("tests pass") || semantic.contains("run test");
-        boolean stage = semantic.contains("stage only") || semantic.contains("git add");
+                || semantic.contains("tests pass") || semantic.contains("test suite must pass")
+                || semantic.contains("run test");
+        boolean stage = semantic.contains("stage only") || semantic.contains("only stage")
+                || constraints.stream().anyMatch(value -> value.contains("stage") && value.contains("only"));
         boolean localCommit = semantic.contains("local git commit") || semantic.contains("local commit")
-                || semantic.contains("create one local") || semantic.contains("commit the proof file locally");
-        boolean verify = semantic.contains("verify") || semantic.contains("independent observation");
-        boolean remoteMutationForbidden = (semantic.contains("do not push") || semantic.contains("without pushing"))
-                && (semantic.contains("do not open a pull request") || semantic.contains("without opening pr")
-                || semantic.contains("without opening a pull request"))
-                && (semantic.contains("do not modify any remote repository state")
-                || semantic.contains("without modifying remote repository state"));
+                || semantic.contains("create one local") || semantic.contains("exactly one local git commit")
+                || semantic.contains("commit work product locally");
+        boolean verify = semantic.contains("verify") || semantic.contains("verification")
+                || semantic.contains("independent observation") || requestedOutput.contains("verification");
+        boolean remoteMutationForbidden = prohibitions.stream().anyMatch(value -> value.contains("push"))
+                && prohibitions.stream().anyMatch(value -> value.contains("pull request"))
+                && prohibitions.stream().anyMatch(value -> value.contains("remote") && value.contains("state"));
 
         if (!materialize || !writeOneFile || !exactShaProof || !test || !stage
                 || !localCommit || !verify || !remoteMutationForbidden) return List.of();

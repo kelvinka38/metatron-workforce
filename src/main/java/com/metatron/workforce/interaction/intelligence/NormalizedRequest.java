@@ -5,7 +5,7 @@ import com.metatron.workforce.interaction.llm.LlmProvider;
 import java.util.List;
 import java.util.Objects;
 
-/** Frontier-model-produced semantic normalization of one Human utterance, optionally enriched by downstream planning. */
+/** Semantic normalization of one Human utterance, produced by a frontier model or a bounded governed control fallback, optionally enriched by downstream planning. */
 public record NormalizedRequest(
         String objective,
         String target,
@@ -122,7 +122,6 @@ public record NormalizedRequest(
         Objects.requireNonNull(deterministicCapability, "deterministicCapability");
         Objects.requireNonNull(deterministicComputations, "deterministicComputations");
         Objects.requireNonNull(executionWorkPlan, "executionWorkPlan");
-        Objects.requireNonNull(semanticProvider, "semanticProvider");
         Objects.requireNonNull(caseContinuity, "caseContinuity");
         Objects.requireNonNull(directResponse, "directResponse");
         constraints = List.copyOf(constraints);

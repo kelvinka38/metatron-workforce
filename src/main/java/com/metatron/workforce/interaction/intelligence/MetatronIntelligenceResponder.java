@@ -169,16 +169,30 @@ public final class MetatronIntelligenceResponder {
             IntelligenceCase activeCase = caseStore.findActive(conversationId)
                     .filter(item -> item.status() != IntelligenceCaseStatus.RESOLVED)
                     .orElse(null);
-            NormalizedRequest normalized = IntelligenceDepthApplication.apply(
-                    semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
-            if (activeCase != null && normalized.caseContinuity() == CaseContinuity.NEW) {
+            NormalizedRequest normalized;
+            boolean boundedFounderControlFallback = false;
+            try {
+                normalized = IntelligenceDepthApplication.apply(
+                        semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
+            } catch (RuntimeException semanticFailure) {
+                var fallback = BoundedFounderControlInterpreter.interpret(humanId, text);
+                if (fallback.isEmpty()) throw semanticFailure;
+                normalized = IntelligenceDepthApplication.apply(fallback.orElseThrow(), depthContract);
+                boundedFounderControlFallback = true;
+                LOG.warn("semantic_provider_exhausted_bounded_founder_control human_id={} channel={} reason={}",
+                        humanId, channel, semanticFailure.getMessage());
+            }
+            if (!boundedFounderControlFallback
+                    && activeCase != null && normalized.caseContinuity() == CaseContinuity.NEW) {
                 // The contextual pass is allowed to decide continuity, but once it declares a NEW bounded Case,
                 // stale Case/history content must not influence the Objective itself. Re-normalize from the
                 // current Human message only. With no active Case present, the interpreter forces continuity NEW.
                 normalized = IntelligenceDepthApplication.apply(
                         semanticInterpreter.interpret(text, "", channel, (IntelligenceCase) null), depthContract);
             }
-            route = "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
+            route = boundedFounderControlFallback
+                    ? "deterministic-founder-control-fallback"
+                    : "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
             if (!normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
                 route = "frontier-semantic-fast";
