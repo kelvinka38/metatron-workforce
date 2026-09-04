@@ -528,7 +528,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         boolean targetFileBounded = constraints.stream().anyMatch(value ->
                 value.contains("target file") && value.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT)));
         boolean proofFileIntent = semantic.contains("proof") && semantic.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT));
-        boolean writeOneFile = targetFileBounded && proofFileIntent;
+        boolean explicitFileBounded = (semantic.contains("create or replace only")
+                || semantic.contains("write only") || semantic.contains("create only"))
+                && semantic.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT));
+        boolean writeOneFile = (targetFileBounded && proofFileIntent) || explicitFileBounded;
         boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha)
                 && constraints.stream().anyMatch(value -> value.contains("proof") && value.contains("exact source sha"));
         boolean test = semantic.contains("test suite") || semantic.contains("test action")
