@@ -475,21 +475,32 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
         if (workspacePath.isBlank()) return List.of();
 
+        List<String> constraints = normalized.constraints().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).toList();
+        List<String> prohibitions = normalized.explicitProhibitions().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).toList();
+        String requestedOutput = normalized.requestedOutput().toLowerCase(Locale.ROOT);
+
         boolean materialize = semantic.contains("materializ") || semantic.contains("snapshot") || semantic.contains("checkout");
-        boolean writeOneFile = (semantic.contains("create or replace only") || semantic.contains("write only")
-                || semantic.contains("create only")) && semantic.contains(workspacePath.toLowerCase(Locale.ROOT));
-        boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha);
+        boolean targetFileBounded = constraints.stream().anyMatch(value ->
+                value.contains("target file") && value.contains(workspacePath.toLowerCase(Locale.ROOT)));
+        boolean proofFileIntent = semantic.contains("proof") && semantic.contains(workspacePath.toLowerCase(Locale.ROOT));
+        boolean writeOneFile = targetFileBounded && proofFileIntent;
+        boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha)
+                && constraints.stream().anyMatch(value -> value.contains("proof") && value.contains("exact source sha"));
         boolean test = semantic.contains("test suite") || semantic.contains("test action")
-                || semantic.contains("tests pass") || semantic.contains("run test");
-        boolean stage = semantic.contains("stage only") || semantic.contains("git add");
+                || semantic.contains("tests pass") || semantic.contains("test suite must pass")
+                || semantic.contains("run test");
+        boolean stage = semantic.contains("stage only") || semantic.contains("only stage")
+                || constraints.stream().anyMatch(value -> value.contains("stage") && value.contains("only"));
         boolean localCommit = semantic.contains("local git commit") || semantic.contains("local commit")
-                || semantic.contains("create one local") || semantic.contains("commit the proof file locally");
-        boolean verify = semantic.contains("verify") || semantic.contains("independent observation");
-        boolean remoteMutationForbidden = (semantic.contains("do not push") || semantic.contains("without pushing"))
-                && (semantic.contains("do not open a pull request") || semantic.contains("without opening pr")
-                || semantic.contains("without opening a pull request"))
-                && (semantic.contains("do not modify any remote repository state")
-                || semantic.contains("without modifying remote repository state"));
+                || semantic.contains("create one local") || semantic.contains("exactly one local git commit")
+                || semantic.contains("commit work product locally");
+        boolean verify = semantic.contains("verify") || semantic.contains("verification")
+                || semantic.contains("independent observation") || requestedOutput.contains("verification");
+        boolean remoteMutationForbidden = prohibitions.stream().anyMatch(value -> value.contains("push"))
+                && prohibitions.stream().anyMatch(value -> value.contains("pull request"))
+                && prohibitions.stream().anyMatch(value -> value.contains("remote") && value.contains("state"));
 
         if (!materialize || !writeOneFile || !exactShaProof || !test || !stage
                 || !localCommit || !verify || !remoteMutationForbidden) return List.of();
