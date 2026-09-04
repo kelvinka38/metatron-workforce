@@ -526,8 +526,8 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
 
         boolean materialize = semantic.contains("materializ") || semantic.contains("snapshot") || semantic.contains("checkout");
         boolean targetFileBounded = constraints.stream().anyMatch(value ->
-                value.contains("target file") && value.contains(workspacePath.toLowerCase(Locale.ROOT)));
-        boolean proofFileIntent = semantic.contains("proof") && semantic.contains(workspacePath.toLowerCase(Locale.ROOT));
+                value.contains("target file") && value.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT)));
+        boolean proofFileIntent = semantic.contains("proof") && semantic.contains(boundedWorkspacePath.toLowerCase(Locale.ROOT));
         boolean writeOneFile = targetFileBounded && proofFileIntent;
         boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha)
                 && constraints.stream().anyMatch(value -> value.contains("proof") && value.contains("exact source sha"));
