@@ -25,6 +25,10 @@ jobs:
     environment: production
     timeout-minutes: 45
     steps:
+      - name: Checkout exact acceptance source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
       - name: Run strict autonomous production slices
         shell: bash
         env:
@@ -189,7 +193,7 @@ jobs:
             for action_file in "${ACTION_FILES[@]}"; do
               docker cp "$CID:$action_file" "$ACTION_ROOT/$(basename "$action_file")"
             done
-            python3 "$BASE/scripts/autonomy/p10_action_journal.py" \
+            python3 "$GITHUB_WORKSPACE/scripts/autonomy/p10_action_journal.py" \
               --root "$ACTION_ROOT" \
               --objective-id "$oid" \
               --output "$EVIDENCE/gs2-action-journal.jsonl"
