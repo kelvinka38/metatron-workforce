@@ -71,6 +71,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
         CognitiveWorkerRuntime.Thought requiredPrecondition = repositoryMaterializationPrecondition(context);
         if (requiredPrecondition != null) return requiredPrecondition;
+        CognitiveWorkerRuntime.Thought requiredFileWrite = governedExactShaFileWritePrecondition(context);
+        if (requiredFileWrite != null) return requiredFileWrite;
         CognitiveWorkerRuntime.Thought requiredTest = governedTestPrecondition(context);
         if (requiredTest != null) return requiredTest;
         CognitiveWorkerRuntime.Thought requiredGit = governedGitPrecondition(context);
@@ -142,6 +144,35 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return new CognitiveWorkerRuntime.Thought(
                 "workspace.git.status", Map.of(),
                 "READ_ONLY Work requires immutable local Git HEAD/history evidence; use governed read-only inspection");
+    }
+
+
+    static CognitiveWorkerRuntime.Thought governedExactShaFileWritePrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!context.availableActions().contains("workspace.file.write")) return null;
+        if (!requiresExactShaFileWrite(context)) return null;
+        if (successfulAction(context, "workspace.file.write")) return null;
+
+        String path = governedStagePath(context.workSpec().target());
+        String sourceSha = exactRef(context);
+        if (path.isBlank() || sourceSha.isBlank()) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.file.write",
+                Map.of("path", path, "content", "source_sha=" + sourceSha + "\n"),
+                "Work explicitly specifies one bounded file proof with exact source SHA; execute it through the governed workspace write action");
+    }
+
+    private static boolean requiresExactShaFileWrite(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        String path = governedStagePath(context.workSpec().target());
+        if (path.isBlank()) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return !exactRef(context).isBlank()
+                && (text.contains("create or replace only") || text.contains("write only"))
+                && text.contains("exact utf-8 content:")
+                && text.contains("source_sha=");
     }
 
     static CognitiveWorkerRuntime.Thought governedTestPrecondition(
@@ -400,6 +431,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(observation, "observation");
         if (!observation.success()) return null;
+        if (requiresExactShaFileWrite(context) && "workspace.file.write".equals(observation.actionRef())) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Governed workspace file write succeeded with the explicit exact-SHA proof content");
+        }
         if (requiresGovernedTest(context) && "workspace.test.run".equals(observation.actionRef())) {
             return CognitiveWorkerRuntime.Reflection.complete(
                     "Governed test action succeeded; all explicit action requirements are now evaluated");
