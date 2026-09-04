@@ -240,12 +240,12 @@ jobs:
             [[ "$WORKSPACE_KEY" =~ ^[0-9a-f]{32}$ ]]
             [[ "$BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-            LOCAL_HEAD=$(docker exec "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" rev-parse HEAD | tr -d '\r\n')
+            LOCAL_HEAD=$(docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" rev-parse HEAD | tr -d '\r\n')
             [[ "$LOCAL_HEAD" =~ ^[0-9a-f]{40}$ ]]
             test "$LOCAL_HEAD" != "$BASELINE_SHA"
-            CHANGED_PATHS=$(docker exec "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" diff-tree --no-commit-id --name-only -r HEAD | sed '/^$/d')
+            CHANGED_PATHS=$(docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" diff-tree --no-commit-id --name-only -r HEAD | sed '/^$/d')
             test "$CHANGED_PATHS" = "$proof_path"
-            docker exec "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" show "HEAD:$proof_path" | grep -F "$TARGET_SHA" >/dev/null
+            docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" show "HEAD:$proof_path" | grep -F "$TARGET_SHA" >/dev/null
 
             docker exec "$CID" cat /var/lib/metatron-workforce/observation-state.json > "$EVIDENCE/gs2-observation-state.json"
             OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
