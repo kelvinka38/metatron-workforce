@@ -182,9 +182,17 @@ jobs:
           print('GS2_GENERAL_CAPABILITY_BINDING=PASS')
           PY
 
-            ACTION_FILE=$(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$oid\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null | head -1" || true)
-            test -n "$ACTION_FILE"
-            docker exec "$CID" sh -c "cat '$ACTION_FILE'" > "$EVIDENCE/gs2-action-journal.jsonl"
+            ACTION_ROOT="$EVIDENCE/gs2-action-journals"
+            mkdir -p "$ACTION_ROOT"
+            mapfile -t ACTION_FILES < <(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$oid\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null" || true)
+            test "${#ACTION_FILES[@]}" -gt 0
+            for action_file in "${ACTION_FILES[@]}"; do
+              docker cp "$CID:$action_file" "$ACTION_ROOT/$(basename "$action_file")"
+            done
+            python3 "$BASE/scripts/autonomy/p10_action_journal.py" \
+              --root "$ACTION_ROOT" \
+              --objective-id "$oid" \
+              --output "$EVIDENCE/gs2-action-journal.jsonl"
 
             TARGET_SHA="$TARGET_SHA" PROOF_PATH="$proof_path" EVIDENCE="$EVIDENCE" python3 - <<'PY'
           import json,os

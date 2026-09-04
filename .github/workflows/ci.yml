@@ -46,6 +46,7 @@ jobs:
         run: |
           python3 -m py_compile \
             runtime-sandbox/server.py \
+            scripts/autonomy/p10_action_journal.py \
             scripts/autonomy/p10_collect.py \
             scripts/autonomy/p10_general_runtime_guard.py \
             scripts/autonomy/p10_ratify.py
@@ -81,6 +82,7 @@ jobs:
           PY
       - name: Verify strict P10 evidence contracts
         run: |
+          python3 scripts/autonomy/p10_action_journal.py --self-test
           python3 scripts/autonomy/p10_collect.py --self-test
           python3 scripts/autonomy/p10_general_runtime_guard.py --self-test
           python3 scripts/autonomy/p10_ratify.py --self-test

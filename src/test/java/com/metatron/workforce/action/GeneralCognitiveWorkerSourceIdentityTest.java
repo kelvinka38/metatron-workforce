@@ -57,6 +57,36 @@ class GeneralCognitiveWorkerSourceIdentityTest {
         assertEquals(CognitiveWorkerRuntime.Decision.FAILED, reflection.decision());
     }
 
+    @Test
+    void exactMaterializationCannotCompleteWhenTheWorkAlsoRequiresTests() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step_1",
+                "Materialize snapshot at commit " + SHA + " and run the test suite",
+                "kelvinka38/metatron-workforce@" + SHA,
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Repository snapshot is accessible and tests pass"),
+                List.of("workspace.test.run success"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.test.run"), List.of(), Map.of());
+        ActionFabric.ActionObservation observation = new ActionFabric.ActionObservation(
+                "workspace.repository.materialize", true, "repository materialized",
+                Map.of(
+                        "repository", "kelvinka38/metatron-workforce",
+                        "sourceCommitSha", SHA,
+                        "localBaselineCommitSha", BASELINE,
+                        "materializedFiles", "321",
+                        "workspaceRef", "objective-workspace:0123456789abcdef0123456789abcdef"),
+                List.of(), Instant.now());
+
+        CognitiveWorkerRuntime.Reflection reflection =
+                GeneralCognitiveWorkerBrain.exactSourceMaterializationReflection(context, observation);
+
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, reflection.decision());
+    }
+
     private static ExecutionWorkSpec exactMaterializationWork() {
         return new ExecutionWorkSpec(
                 "step_1",
