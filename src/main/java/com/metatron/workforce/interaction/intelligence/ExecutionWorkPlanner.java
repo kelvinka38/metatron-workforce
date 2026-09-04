@@ -516,6 +516,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             }
         }
         if (workspacePath.isBlank()) return List.of();
+        String boundedWorkspacePath = workspacePath;
 
         List<String> constraints = normalized.constraints().stream()
                 .map(value -> value.toLowerCase(Locale.ROOT)).toList();
