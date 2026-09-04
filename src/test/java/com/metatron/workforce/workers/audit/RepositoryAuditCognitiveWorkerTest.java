@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -58,6 +59,74 @@ class RepositoryAuditCognitiveWorkerTest {
                 "OBJ-1|STEP-AUDIT|WORKER-REPOSITORY-AUDITOR|ASSIGN-1|AUTH-READ|")));
         assertTrue(journal.getLast().endsWith("|COMPLETE"));
         assertTrue(journal.subList(0, journal.size() - 1).stream().allMatch(row -> row.endsWith("|CONTINUE")));
+    }
+
+    @Test
+    void oneUnavailableContentFileIsRecordedWithoutDiscardingSubstantiveAudit() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/repos/kelvinka38/bios", exchange -> respond(exchange, 200, "{\"default_branch\":\"main\"}"));
+        server.createContext("/repos/kelvinka38/bios/commits/main", exchange -> respond(exchange, 200,
+                "{\"sha\":\"0123456789abcdef0123456789abcdef01234567\"}"));
+        server.createContext("/repos/kelvinka38/bios/git/trees/0123456789abcdef0123456789abcdef01234567",
+                exchange -> respond(exchange, 200,
+                        "{\"tree\":[{\"path\":\"BIOS_SOT.md\"},{\"path\":\"missing.md\"},{\"path\":\"src/Main.java\"}]}"));
+        server.createContext("/repos/kelvinka38/bios/contents/BIOS_SOT.md", exchange -> respond(exchange, 200,
+                "# BIOS SOURCE OF TRUTH\ncanonical"));
+        server.createContext("/repos/kelvinka38/bios/contents/missing.md", exchange -> respond(exchange, 429,
+                "rate limited"));
+        server.createContext("/repos/kelvinka38/bios/contents/src/Main.java", exchange -> respond(exchange, 200,
+                "class Main {}"));
+        server.start();
+
+        RepositoryAuditCognitiveWorker worker = new RepositoryAuditCognitiveWorker(
+                HttpClient.newHttpClient(), base(), "secret-token", "AUTH-READ", ActionJournal.noop());
+        ExecutionWorkSpec spec = new ExecutionWorkSpec(
+                "STEP-AUDIT", "Audit kelvinka38/bios", "kelvinka38/bios", "repository.audit.read",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY);
+
+        WorkerResult result = worker.execute("OBJ-PARTIAL", "WORK-PARTIAL", "ASSIGN-PARTIAL", "kelvinka38/bios", spec);
+
+        assertEquals("PASS", result.status());
+        assertTrue(result.evidence().contains("contentFilesRead=2"));
+        assertTrue(result.evidence().contains("contentFilesSkipped=1"));
+        assertTrue(result.evidence().contains("UNREADABLE_CONTENT_FILES=1"));
+        assertTrue(result.evidence().contains("skippedPaths=missing.md"));
+        assertTrue(result.evidence().contains("verdict=PASS"));
+    }
+
+    @Test
+    void representativeAuditCapsContentReadsToTwentyFourFiles() throws Exception {
+        AtomicInteger contentCalls = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/repos/kelvinka38/bios", exchange -> respond(exchange, 200, "{\"default_branch\":\"main\"}"));
+        server.createContext("/repos/kelvinka38/bios/commits/main", exchange -> respond(exchange, 200,
+                "{\"sha\":\"0123456789abcdef0123456789abcdef01234567\"}"));
+        StringBuilder tree = new StringBuilder("{\"tree\":[");
+        for (int i = 1; i <= 40; i++) {
+            if (i > 1) tree.append(',');
+            tree.append("{\"path\":\"docs/file-").append(i).append(".md\"}");
+        }
+        tree.append("]}");
+        server.createContext("/repos/kelvinka38/bios/git/trees/0123456789abcdef0123456789abcdef01234567",
+                exchange -> respond(exchange, 200, tree.toString()));
+        server.createContext("/repos/kelvinka38/bios/contents/", exchange -> {
+            contentCalls.incrementAndGet();
+            respond(exchange, 200, "# bounded audit content");
+        });
+        server.start();
+
+        RepositoryAuditCognitiveWorker worker = new RepositoryAuditCognitiveWorker(
+                HttpClient.newHttpClient(), base(), "secret-token", "AUTH-READ", ActionJournal.noop());
+        ExecutionWorkSpec spec = new ExecutionWorkSpec(
+                "STEP-AUDIT", "Audit kelvinka38/bios", "kelvinka38/bios", "repository.audit.read",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY);
+
+        WorkerResult result = worker.execute("OBJ-BOUNDED", "WORK-BOUNDED", "ASSIGN-BOUNDED", "kelvinka38/bios", spec);
+
+        assertEquals("PASS", result.status());
+        assertEquals(24, contentCalls.get());
+        assertTrue(result.evidence().contains("contentFilesRead=24"));
+        assertTrue(result.evidence().contains("cognitiveActionCount=27"));
     }
 
     @Test
