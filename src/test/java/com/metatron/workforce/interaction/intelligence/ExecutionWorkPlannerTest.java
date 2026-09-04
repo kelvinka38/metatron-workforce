@@ -286,6 +286,44 @@ final class ExecutionWorkPlannerTest {
         assertTrue(plan.get(1).objective().contains("source_sha=" + sha));
     }
 
+
+    @Test
+    void gatewayDirectorAppointmentBindsWithoutFrontierPlanning() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("canonical appointment must not require frontier planning");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Create a Workforce Worker and appoint it as the Gateway Director / Head of Gateway",
+                "ROLE-HEAD-OF-GATEWAY",
+                List.of("persistent institutional Worker", "use governed Workforce staffing"),
+                IntelligenceDepth.ANALYZE,
+                "appointment confirmation with Worker, role and runtime evidence",
+                List.of(), List.of(), "", "", IntelligenceMode.EXECUTION,
+                CollaborationMode.SINGLE, List.of(), DeterministicCapability.NONE,
+                List.of(), List.of(), false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-gateway-director-appointment",
+                normalized,
+                List.of("workforce.staffing.gateway-director"));
+
+        assertEquals(0, calls.get());
+        assertEquals(1, plan.size());
+        ExecutionWorkSpec step = plan.getFirst();
+        assertEquals("workforce.staffing.gateway-director", step.requiredCapability());
+        assertEquals("ROLE-HEAD-OF-GATEWAY", step.target());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, step.consequence());
+        assertTrue(step.verifiable());
+    }
+
     @Test
     void providerlessPlannerStillFailsClosedOutsideBoundedAuditShape() {
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
