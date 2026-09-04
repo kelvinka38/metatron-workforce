@@ -95,6 +95,31 @@ class RepositoryAuditCognitiveWorkerTest {
     }
 
     @Test
+    void noReadableContentStillFailsClosed() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/repos/kelvinka38/bios", exchange -> respond(exchange, 200, "{\"default_branch\":\"main\"}"));
+        server.createContext("/repos/kelvinka38/bios/commits/main", exchange -> respond(exchange, 200,
+                "{\"sha\":\"0123456789abcdef0123456789abcdef01234567\"}"));
+        server.createContext("/repos/kelvinka38/bios/git/trees/0123456789abcdef0123456789abcdef01234567",
+                exchange -> respond(exchange, 200, "{\"tree\":[{\"path\":\"README.md\"}]}"));
+        server.createContext("/repos/kelvinka38/bios/contents/README.md", exchange -> respond(exchange, 429,
+                "rate limited"));
+        server.start();
+
+        RepositoryAuditCognitiveWorker worker = new RepositoryAuditCognitiveWorker(
+                HttpClient.newHttpClient(), base(), "secret-token", "AUTH-READ", ActionJournal.noop());
+        ExecutionWorkSpec spec = new ExecutionWorkSpec(
+                "STEP-AUDIT", "Audit kelvinka38/bios", "kelvinka38/bios", "repository.audit.read",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY);
+
+        WorkerResult result = worker.execute("OBJ-NONE", "WORK-NONE", "ASSIGN-NONE", "kelvinka38/bios", spec);
+
+        assertEquals("FAILED", result.status());
+        assertTrue(result.evidence().contains("cognitive audit did not establish readable repository content"));
+        assertTrue(result.evidence().contains("verdict=FAILED"));
+    }
+
+    @Test
     void representativeAuditCapsContentReadsToTwentyFourFiles() throws Exception {
         AtomicInteger contentCalls = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress(0), 0);
