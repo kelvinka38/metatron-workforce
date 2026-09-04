@@ -18,6 +18,7 @@ import java.util.Objects;
 @Component
 public final class GatewayDirectorAppointmentCapability implements AutonomousExecutionCapability {
     public static final String CAPABILITY = "workforce.staffing.gateway-director";
+    public static final String FOUNDER_HUMAN_ID = "human-primary";
     public static final String WORKER_ID = "WORKER-GATEWAY-DIRECTOR";
     public static final String ROLE_REF = "ROLE-HEAD-OF-GATEWAY";
     public static final String POSITION_REF = "position:gateway-director";
@@ -46,6 +47,9 @@ public final class GatewayDirectorAppointmentCapability implements AutonomousExe
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
         Objects.requireNonNull(request, "request");
+        if (!FOUNDER_HUMAN_ID.equals(request.humanId())) {
+            throw new SecurityException("Founder identity required for Gateway Director appointment");
+        }
         if (!request.allocated()) throw new SecurityException("governed Gateway Director allocation required");
         if (!WORKER_ID.equals(request.allocatedWorkerId())) {
             throw new SecurityException("Gateway Director worker mismatch");
