@@ -2,6 +2,7 @@ package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -11,6 +12,22 @@ import java.util.Objects;
 public interface AutonomousStaffingPolicy {
     String capabilityRef();
     FormationSpec formationSpec();
+
+    /** Additional governed capabilities attested as part of this approved formation contract. */
+    default List<CapabilityGrant> additionalCapabilities() { return List.of(); }
+
+    record CapabilityGrant(String capabilityRef, double level, String evidenceRef) {
+        public CapabilityGrant {
+            require(capabilityRef, "capabilityRef");
+            require(evidenceRef, "evidenceRef");
+            if (!Double.isFinite(level) || level <= 0) {
+                throw new IllegalArgumentException("capability grant level must be positive");
+            }
+        }
+        private static void require(String value, String field) {
+            if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " required");
+        }
+    }
 
     record FormationSpec(
             boolean formationPermitted,
