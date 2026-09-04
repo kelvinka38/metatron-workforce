@@ -70,6 +70,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
         CognitiveWorkerRuntime.Thought requiredPrecondition = repositoryMaterializationPrecondition(context);
         if (requiredPrecondition != null) return requiredPrecondition;
+        CognitiveWorkerRuntime.Thought requiredTest = governedTestPrecondition(context);
+        if (requiredTest != null) return requiredTest;
         CognitiveWorkerRuntime.Thought gitInspection = readOnlyGitInspectionPrecondition(context);
         if (gitInspection != null) return gitInspection;
 
@@ -139,6 +141,20 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "READ_ONLY Work requires immutable local Git HEAD/history evidence; use governed read-only inspection");
     }
 
+    static CognitiveWorkerRuntime.Thought governedTestPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!context.availableActions().contains("workspace.test.run")) return null;
+        if (!requiresGovernedTest(context)) return null;
+        if (successfulAction(context, "workspace.test.run")) return null;
+        if (requiresRepositoryMaterialization(context)
+                && context.availableActions().contains("workspace.repository.materialize")
+                && !successfulAction(context, "workspace.repository.materialize")) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.test.run", Map.of(),
+                "Work explicitly requires the governed repository test suite to pass before completion");
+    }
+
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) {
@@ -158,6 +174,21 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 + context.workSpec().target() + " "
                 + String.join(" ", context.workSpec().acceptanceCriteria()) + " "
                 + String.join(" ", context.workSpec().evidenceRequirements());
+    }
+
+    private static boolean requiresGovernedTest(CognitiveWorkerRuntime.CognitiveContext context) {
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("test suite")
+                || text.contains("run test")
+                || text.contains("execute test")
+                || text.contains("tests pass")
+                || text.contains("test action")
+                || text.contains("workspace.test.run");
+    }
+
+    private static boolean successfulAction(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
+        return context.history().stream().anyMatch(cycle ->
+                actionRef.equals(cycle.thought().actionRef()) && cycle.observation().success());
     }
 
     private static String exactRef(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -216,6 +247,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             return CognitiveWorkerRuntime.Reflection.failed(
                     "Materialization evidence is incomplete: workspaceRef/files do not prove an accessible source snapshot");
         }
+        if (requiresGovernedTest(context)) {
+            return CognitiveWorkerRuntime.Reflection.continueWith(
+                    "Exact source snapshot proven by materialization provenance; governed test execution remains required");
+        }
         return CognitiveWorkerRuntime.Reflection.complete(
                 "Exact source snapshot proven by materialization provenance: sourceCommitSha=" + expectedSha
                         + "; localBaselineCommitSha=" + localBaseline
@@ -249,12 +284,29 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Map<String, Object> parsed = parseObject(response.text());
         String decision = text(parsed.get("decision"), "decision").toUpperCase(java.util.Locale.ROOT);
         String summary = text(parsed.get("summary"), "summary");
-        return switch (decision) {
+        CognitiveWorkerRuntime.Reflection proposed = switch (decision) {
             case "CONTINUE" -> CognitiveWorkerRuntime.Reflection.continueWith(summary);
             case "COMPLETE" -> CognitiveWorkerRuntime.Reflection.complete(summary);
             case "FAILED" -> CognitiveWorkerRuntime.Reflection.failed(summary);
             default -> throw new IllegalStateException("invalid cognitive reflection decision: " + decision);
         };
+        return enforceRequiredActionCompletion(context, observation, proposed);
+    }
+
+    static CognitiveWorkerRuntime.Reflection enforceRequiredActionCompletion(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            ActionFabric.ActionObservation observation,
+            CognitiveWorkerRuntime.Reflection proposed) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(observation, "observation");
+        Objects.requireNonNull(proposed, "proposed");
+        if (proposed.decision() != CognitiveWorkerRuntime.Decision.COMPLETE || !requiresGovernedTest(context)) {
+            return proposed;
+        }
+        boolean latestTestPassed = "workspace.test.run".equals(observation.actionRef()) && observation.success();
+        if (latestTestPassed || successfulAction(context, "workspace.test.run")) return proposed;
+        return CognitiveWorkerRuntime.Reflection.continueWith(
+                "completion rejected: Work explicitly requires a successful governed test action");
     }
 
     public List<String> evidenceReferences() {

@@ -84,6 +84,75 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
         assertNull(GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context));
     }
 
+    @Test
+    void explicitTestRequirementForcesGovernedTestAfterMaterialization() {
+        ExecutionWorkSpec work = exactSnapshotAndTestWork();
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize", Map.of("repository", "kelvinka38/metatron-workforce"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.test.run"), List.of(materialized), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = GeneralCognitiveWorkerBrain.governedTestPrecondition(context);
+
+        assertEquals("workspace.test.run", thought.actionRef());
+        assertEquals(Map.of(), thought.inputs());
+    }
+
+    @Test
+    void successfulGovernedTestIsNotRepeatedAndPermitsCompletion() {
+        ExecutionWorkSpec work = exactSnapshotAndTestWork();
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize", Map.of("repository", "kelvinka38/metatron-workforce"));
+        CognitiveWorkerRuntime.Cycle tested = successfulCycle(2, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.test.run"),
+                List.of(materialized, tested), Map.of());
+
+        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(context));
+        CognitiveWorkerRuntime.Reflection completion = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                context,
+                ActionFabric.ActionObservation.success("workspace.git.status", "verified", Map.of(), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("done"));
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, completion.decision());
+    }
+
+    @Test
+    void providerCannotCompleteExplicitTestWorkWithoutSuccessfulTestObservation() {
+        ExecutionWorkSpec work = exactSnapshotAndTestWork();
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.test.run"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Reflection guarded = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                context,
+                ActionFabric.ActionObservation.success("workspace.repository.materialize", "materialized", Map.of(), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("done"));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, guarded.decision());
+    }
+
+    private static CognitiveWorkerRuntime.Cycle successfulCycle(int number, String actionRef, Map<String, String> inputs) {
+        return new CognitiveWorkerRuntime.Cycle(
+                number,
+                new CognitiveWorkerRuntime.Thought(actionRef, inputs, "required action"),
+                ActionFabric.ActionObservation.success(actionRef, "success", Map.of(), List.of()),
+                CognitiveWorkerRuntime.Reflection.continueWith("continue"));
+    }
+
+    private static ExecutionWorkSpec exactSnapshotAndTestWork() {
+        return new ExecutionWorkSpec(
+                "checkout_and_test",
+                "Materialize repository snapshot at specific commit " + SHA + " and run the test suite",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Workspace contains source tree for commit " + SHA + " and tests pass"),
+                List.of("governed workspace.test.run evidence"));
+    }
+
     private static ExecutionWorkSpec exactSnapshotWork() {
         return new ExecutionWorkSpec(
                 "checkout_target_snapshot",
