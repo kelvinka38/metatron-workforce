@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime.Brain {
     private static final Pattern OWNER_REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
     private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
+    private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
             Map.entry("workspace.repository.materialize", Map.of(
                     "inputs", Map.of("repository", "required owner/name", "ref", "optional branch/tag/SHA; default main"),
@@ -72,6 +73,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (requiredPrecondition != null) return requiredPrecondition;
         CognitiveWorkerRuntime.Thought requiredTest = governedTestPrecondition(context);
         if (requiredTest != null) return requiredTest;
+        CognitiveWorkerRuntime.Thought requiredGit = governedGitPrecondition(context);
+        if (requiredGit != null) return requiredGit;
         CognitiveWorkerRuntime.Thought gitInspection = readOnlyGitInspectionPrecondition(context);
         if (gitInspection != null) return gitInspection;
 
@@ -155,6 +158,39 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "Work explicitly requires the governed repository test suite to pass before completion");
     }
 
+    static CognitiveWorkerRuntime.Thought governedGitPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!context.availableActions().contains("workspace.git.run")) return null;
+        if (requiresGitAdd(context) && !successfulGitSubcommand(context, "add")) {
+            String path = governedStagePath(context.workSpec().target());
+            if (!path.isBlank()) {
+                return new CognitiveWorkerRuntime.Thought(
+                        "workspace.git.run",
+                        Map.of("argsJson", writeActionArgs(List.of("add", path))),
+                        "Work explicitly requires staging the governed target before local commit");
+            }
+        }
+        if (requiresGitCommit(context)
+                && (!requiresGitAdd(context) || successfulGitSubcommand(context, "add"))
+                && !successfulGitSubcommand(context, "commit")) {
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.git.run",
+                    Map.of("argsJson", writeActionArgs(List.of(
+                            "commit", "-m", "Complete governed Objective work step"))),
+                    "Work explicitly requires one immutable local Git commit");
+        }
+        if (requiresGitVerification(context)
+                && context.availableActions().contains("workspace.git.status")
+                && successfulGitSubcommand(context, "commit")
+                && !successfulAction(context, "workspace.git.status")) {
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.git.status", Map.of(),
+                    "Inspect immutable local HEAD and changed paths after the required commit");
+        }
+        return null;
+    }
+
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) {
@@ -189,6 +225,67 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static boolean successfulAction(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
         return context.history().stream().anyMatch(cycle ->
                 actionRef.equals(cycle.thought().actionRef()) && cycle.observation().success());
+    }
+
+    private static boolean requiresGitAdd(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("stage ") || text.contains("staged ") || text.contains("git add");
+    }
+
+    private static boolean requiresGitCommit(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("local git commit")
+                || text.contains("local commit")
+                || text.contains("create one commit")
+                || text.contains("create a commit")
+                || text.contains("commit exists")
+                || text.contains("commit the ")
+                || text.contains("commit message");
+    }
+
+    private static boolean requiresGitVerification(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (!requiresGitCommit(context)) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("git show")
+                || text.contains("verify")
+                || text.contains("commit exists")
+                || text.contains("exactly the change");
+    }
+
+    private static String governedStagePath(String target) {
+        String path = target == null ? "" : target.trim();
+        if (path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("..")
+                || OWNER_REPOSITORY.matcher(path).matches()) return "";
+        return path;
+    }
+
+    private static boolean successfulGitSubcommand(CognitiveWorkerRuntime.CognitiveContext context, String subcommand) {
+        return context.history().stream().anyMatch(cycle ->
+                cycle.observation().success() && gitSubcommand(cycle.thought(), subcommand));
+    }
+
+    private static boolean gitSubcommand(CognitiveWorkerRuntime.Thought thought, String subcommand) {
+        if (!"workspace.git.run".equals(thought.actionRef())) return false;
+        try {
+            List<String> args = ACTION_INPUT_JSON.readValue(
+                    thought.inputs().getOrDefault("argsJson", "[]"),
+                    new TypeReference<List<String>>() {});
+            return !args.isEmpty() && subcommand.equals(args.getFirst());
+        } catch (Exception invalid) {
+            return false;
+        }
+    }
+
+    private static String writeActionArgs(List<String> args) {
+        try {
+            return ACTION_INPUT_JSON.writeValueAsString(args);
+        } catch (Exception impossible) {
+            throw new IllegalStateException("cannot serialize governed action arguments", impossible);
+        }
     }
 
     private static String exactRef(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -263,6 +360,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         CognitiveWorkerRuntime.Reflection canonicalMaterialization =
                 exactSourceMaterializationReflection(context, observation);
         if (canonicalMaterialization != null) return canonicalMaterialization;
+        CognitiveWorkerRuntime.Reflection requiredAction = governedRequiredActionReflection(context, observation);
+        if (requiredAction != null) {
+            return enforceRequiredActionCompletion(context, observation, requiredAction);
+        }
 
         String system = """
                 You are the reflection brain for a governed Metatron Cognitive Worker.
@@ -293,6 +394,37 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return enforceRequiredActionCompletion(context, observation, proposed);
     }
 
+    static CognitiveWorkerRuntime.Reflection governedRequiredActionReflection(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            ActionFabric.ActionObservation observation) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(observation, "observation");
+        if (!observation.success()) return null;
+        if (requiresGovernedTest(context) && "workspace.test.run".equals(observation.actionRef())) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Governed test action succeeded; all explicit action requirements are now evaluated");
+        }
+        if ("workspace.git.run".equals(observation.actionRef())) {
+            if (requiresGitAdd(context) && !successfulGitSubcommand(context, "add")) {
+                return CognitiveWorkerRuntime.Reflection.continueWith(
+                        "Governed staging succeeded; the required local commit remains");
+            }
+            if (requiresGitCommit(context) && !successfulGitSubcommand(context, "commit")) {
+                return requiresGitVerification(context)
+                        ? CognitiveWorkerRuntime.Reflection.continueWith(
+                                "Governed local commit succeeded; immutable Git verification remains")
+                        : CognitiveWorkerRuntime.Reflection.complete("Governed local commit succeeded");
+            }
+        }
+        if (requiresGitVerification(context)
+                && successfulGitSubcommand(context, "commit")
+                && "workspace.git.status".equals(observation.actionRef())) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Immutable local Git HEAD and recent history were inspected after commit");
+        }
+        return null;
+    }
+
     static CognitiveWorkerRuntime.Reflection enforceRequiredActionCompletion(
             CognitiveWorkerRuntime.CognitiveContext context,
             ActionFabric.ActionObservation observation,
@@ -300,13 +432,31 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(observation, "observation");
         Objects.requireNonNull(proposed, "proposed");
-        if (proposed.decision() != CognitiveWorkerRuntime.Decision.COMPLETE || !requiresGovernedTest(context)) {
-            return proposed;
-        }
+        if (proposed.decision() != CognitiveWorkerRuntime.Decision.COMPLETE) return proposed;
+        List<String> missing = new ArrayList<>();
         boolean latestTestPassed = "workspace.test.run".equals(observation.actionRef()) && observation.success();
-        if (latestTestPassed || successfulAction(context, "workspace.test.run")) return proposed;
+        if (requiresGovernedTest(context)
+                && !latestTestPassed
+                && !successfulAction(context, "workspace.test.run")) {
+            missing.add("successful workspace.test.run");
+        }
+        if (requiresGitAdd(context)
+                && !successfulGitSubcommand(context, "add")) {
+            missing.add("successful workspace.git.run add");
+        }
+        if (requiresGitCommit(context)
+                && !successfulGitSubcommand(context, "commit")) {
+            missing.add("successful workspace.git.run commit");
+        }
+        boolean latestGitStatusPassed = "workspace.git.status".equals(observation.actionRef()) && observation.success();
+        if (requiresGitVerification(context)
+                && !latestGitStatusPassed
+                && !successfulAction(context, "workspace.git.status")) {
+            missing.add("successful workspace.git.status verification");
+        }
+        if (missing.isEmpty()) return proposed;
         return CognitiveWorkerRuntime.Reflection.continueWith(
-                "completion rejected: Work explicitly requires a successful governed test action");
+                "completion rejected: Work still requires " + String.join(", ", missing));
     }
 
     public List<String> evidenceReferences() {
