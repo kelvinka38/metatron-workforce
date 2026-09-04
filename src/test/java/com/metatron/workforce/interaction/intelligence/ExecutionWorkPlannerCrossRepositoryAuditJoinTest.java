@@ -72,6 +72,48 @@ final class ExecutionWorkPlannerCrossRepositoryAuditJoinTest {
         assertTrue(join.verifiable());
     }
 
+
+    @Test
+    void boundedCrossRepositoryAuditFallsBackWhenPlannerProviderFails() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+
+            @Override public LlmResponse complete(LlmRequest request) {
+                throw new IllegalStateException("simulated planner provider outage");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-gs1-provider-outage",
+                crossRepositoryAuditRequest(),
+                List.of("repository.audit.read", "cross-repository-audit-analysis"));
+
+        assertEquals(5, plan.size());
+        assertEquals(List.of(
+                "kelvinka38/universal",
+                "kelvinka38/metatron-institution",
+                "kelvinka38/metatron-workforce",
+                "kelvinka38/bios"),
+                plan.subList(0, 4).stream().map(ExecutionWorkSpec::target).toList());
+        assertTrue(plan.subList(0, 4).stream().allMatch(step ->
+                step.requiredCapability().equals("repository.audit.read")
+                        && step.dependsOn().isEmpty()
+                        && step.consequence() == ExecutionWorkSpec.Consequence.READ_ONLY
+                        && step.verifiable()));
+
+        ExecutionWorkSpec join = plan.getLast();
+        assertEquals("cross-repository-audit-analysis", join.requiredCapability());
+        assertEquals(List.of(
+                "repository-audit-read-1",
+                "repository-audit-read-2",
+                "repository-audit-read-3",
+                "repository-audit-read-4"), join.dependsOn());
+        assertTrue(join.verifiable());
+    }
+
     private static NormalizedRequest crossRepositoryAuditRequest() {
         return new NormalizedRequest(
                 "Perform a governed read-only institutional audit of kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and kelvinka38/bios with independent planning, parallel execution, result joining, observation verification, autonomous recovery, and evidence-backed completion delivery without mutations.",

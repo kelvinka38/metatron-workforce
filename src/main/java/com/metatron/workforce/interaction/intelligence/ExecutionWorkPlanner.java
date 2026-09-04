@@ -89,16 +89,22 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         // Capability binding is deterministic when one governed bounded capability already exactly
         // covers the normalized work. Invoking frontier providers first adds latency/capacity failure
         // without adding decomposition value and can incorrectly BLOCK otherwise executable work.
-        List<ExecutionWorkSpec> deterministicPlan = deterministicSingleRepositoryAudit(
+        List<ExecutionWorkSpec> deterministicSingleRepositoryPlan = deterministicSingleRepositoryAudit(
                 normalized, availableExecutionCapabilities);
-        if (!deterministicPlan.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
-            validate(deterministicPlan);
-            return deterministicPlan;
+        if (!deterministicSingleRepositoryPlan.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicSingleRepositoryPlan);
+            return deterministicSingleRepositoryPlan;
         }
+        List<ExecutionWorkSpec> deterministicCrossRepositoryFallback = deterministicCrossRepositoryAudit(
+                normalized, availableExecutionCapabilities);
         if (providers.isEmpty()) {
-            if (!deterministicPlan.isEmpty()) {
-                validate(deterministicPlan);
-                return deterministicPlan;
+            if (!deterministicSingleRepositoryPlan.isEmpty()) {
+                validate(deterministicSingleRepositoryPlan);
+                return deterministicSingleRepositoryPlan;
+            }
+            if (!deterministicCrossRepositoryFallback.isEmpty()) {
+                validate(deterministicCrossRepositoryFallback);
+                return deterministicCrossRepositoryFallback;
             }
             throw new IllegalStateException("execution_planning_provider_required");
         }
@@ -132,9 +138,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 failures.add(new IllegalStateException("execution planning provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
         }
-        if (!deterministicPlan.isEmpty()) {
-            validate(deterministicPlan);
-            return deterministicPlan;
+        if (!deterministicSingleRepositoryPlan.isEmpty()) {
+            validate(deterministicSingleRepositoryPlan);
+            return deterministicSingleRepositoryPlan;
+        }
+        if (!deterministicCrossRepositoryFallback.isEmpty()) {
+            validate(deterministicCrossRepositoryFallback);
+            return deterministicCrossRepositoryFallback;
         }
         IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
@@ -365,6 +375,57 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                         + " and produces evidence sufficient for Observation"),
                 List.of("durable repository.audit.read execution evidence for " + repository
                         + " including externally attributable repository evidence")));
+    }
+
+
+    private static List<ExecutionWorkSpec> deterministicCrossRepositoryAudit(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, REPOSITORY_AUDIT_READ)
+                || !hasCapability(availableExecutionCapabilities, CROSS_REPOSITORY_AUDIT_ANALYSIS)) {
+            return List.of();
+        }
+        List<String> repositories = requestedRepositoryTargets(normalized.target());
+        if (repositories.size() < 2) return List.of();
+
+        String semantic = (normalized.objective() + " " + normalized.constraints() + " "
+                + normalized.explicitProhibitions() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean auditIntent = semantic.contains("audit");
+        boolean readOnly = semantic.contains("read-only") || semantic.contains("read only")
+                || semantic.contains("do not mutate") || semantic.contains("without mutation")
+                || semantic.contains("without mutating");
+        boolean mutationIntent = semantic.contains("pull request") || semantic.contains(" deploy")
+                || semantic.contains(" delete") || semantic.contains(" merge") || semantic.contains(" commit")
+                || semantic.contains(" push") || semantic.contains(" write") || semantic.contains(" modify")
+                || semantic.contains(" update file") || semantic.contains(" change file") || semantic.contains(" fix code");
+        if (!auditIntent || !readOnly || mutationIntent) return List.of();
+
+        List<ExecutionWorkSpec> plan = new ArrayList<>();
+        List<String> dependencies = new ArrayList<>();
+        for (int i = 0; i < repositories.size(); i++) {
+            String repository = repositories.get(i);
+            String stepId = "repository-audit-read-" + (i + 1);
+            dependencies.add(stepId);
+            plan.add(new ExecutionWorkSpec(
+                    stepId,
+                    "Perform governed read-only repository audit for " + repository,
+                    repository,
+                    REPOSITORY_AUDIT_READ,
+                    List.of(),
+                    ExecutionWorkSpec.Consequence.READ_ONLY,
+                    List.of("governed read-only repository audit completes for " + repository),
+                    List.of("durable repository.audit.read execution evidence for " + repository)));
+        }
+        plan.add(new ExecutionWorkSpec(
+                "cross-repository-audit-analysis",
+                normalized.objective(),
+                normalized.target(),
+                CROSS_REPOSITORY_AUDIT_ANALYSIS,
+                List.copyOf(dependencies),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("all requested repository audits are joined, contradiction candidates are analyzed, and zero mutation is verified"),
+                List.of("durable cross-repository analysis evidence referencing every prerequisite repository audit")));
+        return List.copyOf(plan);
     }
 
     private static boolean hasCapability(List<String> capabilities, String required) {
