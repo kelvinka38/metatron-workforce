@@ -102,6 +102,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
         List<ExecutionWorkSpec> deterministicCrossRepositoryFallback = deterministicCrossRepositoryAudit(
                 normalized, availableExecutionCapabilities);
+        if (!deterministicCrossRepositoryFallback.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicCrossRepositoryFallback);
+            return deterministicCrossRepositoryFallback;
+        }
         List<ExecutionWorkSpec> deterministicGeneralEngineeringFallback = deterministicGeneralEngineeringWork(
                 normalized, availableExecutionCapabilities);
         if (providers.isEmpty()) {
