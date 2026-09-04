@@ -1,0 +1,196 @@
+name: Gateway Director Live Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metatron-gateway-director-live-acceptance
+  cancel-in-progress: false
+
+jobs:
+  accept-live-gateway-director:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - name: Prove exact Founder Telegram appointment creates a real Gateway Director Worker
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}'             | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+
+          UPDATE_ID=$(date +%s%N | cut -c1-18)
+          BODY=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$UPDATE_ID" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update=int(sys.argv[2])
+          text='Hey, create for me a workforce, role gateway head'
+          print(json.dumps({
+              "update_id": update,
+              "message": {
+                  "message_id": update % 2000000000,
+                  "from": {"id": uid, "is_bot": False, "first_name": "Founder"},
+                  "chat": {"id": uid, "type": "private"},
+                  "date": 0,
+                  "text": text
+              }
+          }))
+          PY
+          )
+
+          HTTP_STATUS=$(curl -sS -o /tmp/gateway-director-telegram-response.json -w '%{http_code}'             --proto '=https' --tlsv1.2 --max-time 20             -X POST https://gate.metatron.vn/telegram/webhook             -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"             -H 'Content-Type: application/json'             --data-binary "$BODY")
+          echo "GATEWAY_DIRECTOR_TELEGRAM_HTTP=$HTTP_STATUS"
+          test "$HTTP_STATUS" = 200
+
+          OBJECTIVE_ID=''
+          for _ in $(seq 1 120); do
+            curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives               > /tmp/gateway-director-objectives.json || true
+            if python3 - /tmp/gateway-director-objectives.json "$UPDATE_ID"               > /tmp/gateway-director-objective-id.txt <<'PY'
+          import json,sys
+          path,update=sys.argv[1],sys.argv[2]
+          try:
+              data=json.load(open(path))
+          except Exception:
+              raise SystemExit(1)
+          needle=f"telegram:update:{update}"
+          found=[]
+          for item in data if isinstance(data,list) else []:
+              if needle not in json.dumps(item,sort_keys=True):
+                  continue
+              objective=item.get('objective') or {}
+              oid=objective.get('objectiveId') or objective.get('objective_id')
+              if oid:
+                  found.append(oid)
+          found=list(dict.fromkeys(found))
+          if len(found)!=1:
+              raise SystemExit(1)
+          print(found[0])
+          PY
+            then
+              OBJECTIVE_ID=$(cat /tmp/gateway-director-objective-id.txt)
+              break
+            fi
+            sleep 2
+          done
+          test -n "$OBJECTIVE_ID"
+          echo "GATEWAY_DIRECTOR_OBJECTIVE_ID=$OBJECTIVE_ID"
+
+          TERMINAL=''
+          for _ in $(seq 1 240); do
+            curl -fsS --max-time 5               "http://127.0.0.1:8080/workforce/management/objectives/$OBJECTIVE_ID"               > /tmp/gateway-director-objective.json || true
+            TERMINAL=$(python3 - /tmp/gateway-director-objective.json <<'PY'
+          import json,sys
+          try:
+              d=json.load(open(sys.argv[1]))
+              print((d.get('objective') or {}).get('status',''))
+          except Exception:
+              print('')
+          PY
+            )
+            case "$TERMINAL" in
+              COMPLETED|DELIVERED) break ;;
+              BLOCKED|ESCALATED|CANCELLED)
+                echo "GATEWAY_DIRECTOR_BAD_TERMINAL=$TERMINAL" >&2
+                cat /tmp/gateway-director-objective.json >&2 || true
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          case "$TERMINAL" in COMPLETED|DELIVERED) ;; *) echo "GATEWAY_DIRECTOR_TERMINAL_TIMEOUT" >&2; exit 1 ;; esac
+          echo "GATEWAY_DIRECTOR_TERMINAL=$TERMINAL"
+
+          curl -fsS --max-time 10             http://127.0.0.1:8080/workforce/core/workers/WORKER-GATEWAY-DIRECTOR             > /tmp/gateway-director-worker.json
+          docker exec "$CID" cat /var/lib/metatron-workforce/runtime-profile-bindings.tsv             > /tmp/gateway-director-runtime-bindings.tsv
+          docker exec "$CID" cat /var/lib/metatron-workforce/observation-state.json             > /tmp/gateway-director-observation.json
+
+          OBJECTIVE_ID="$OBJECTIVE_ID" python3 - <<'PY'
+          import json,os
+          oid=os.environ['OBJECTIVE_ID']
+
+          view=json.load(open('/tmp/gateway-director-objective.json'))
+          objective=view.get('objective') or {}
+          assert objective.get('objectiveId')==oid, objective
+          assert objective.get('status') in ('COMPLETED','DELIVERED'), objective.get('status')
+          blob=json.dumps(view,sort_keys=True)
+          for marker in (
+              'workforce.staffing.gateway-director',
+              'ROLE-HEAD-OF-GATEWAY',
+              'WORKER-GATEWAY-DIRECTOR',
+              'runtime-profile:general-engineering-worker:v1'):
+              assert marker in blob, f'missing_objective_evidence:{marker}'
+
+          worker=json.load(open('/tmp/gateway-director-worker.json'))
+          w=worker.get('worker') or {}
+          assert w.get('workerId')=='WORKER-GATEWAY-DIRECTOR', w
+          assert w.get('status')=='ACTIVE', w
+          participations=worker.get('participations') or []
+          assert any(
+              p.get('status')=='ACTIVE'
+              and p.get('roleRef')=='ROLE-HEAD-OF-GATEWAY'
+              and p.get('positionRef')=='position:gateway-director'
+              for p in participations), participations
+          capabilities=worker.get('capabilities') or []
+          refs={c.get('capabilityRef') for c in capabilities if float(c.get('level') or 0)>=1.0}
+          assert 'workforce.staffing.gateway-director' in refs, refs
+          assert 'gateway.audit.read' in refs, refs
+          availability=worker.get('availability') or {}
+          assert availability.get('available') is True, availability
+          assert float(availability.get('capacity') or 0)>0, availability
+
+          bindings=open('/tmp/gateway-director-runtime-bindings.tsv',encoding='utf-8').read()
+          rows=[r.split('\t') for r in bindings.splitlines() if r and not r.startswith('#')]
+          assert any(
+              len(r)==4
+              and r[0]=='WORKER-GATEWAY-DIRECTOR'
+              and r[1]=='workforce.staffing.gateway-director'
+              and r[2]=='runtime-profile:general-engineering-worker:v1'
+              for r in rows), rows
+
+          observation=json.load(open('/tmp/gateway-director-observation.json'))
+          reports=(observation.get('reportsByRequirement') or {}).values()
+          selected=[r for r in reports if r.get('objectiveId')==oid]
+          assert selected, 'missing_gateway_director_observation'
+          assert all(r.get('criterionResult')=='PASS' for r in selected), selected
+          assert any(r.get('method')=='independent-workforce-core-and-runtime-profile-read' for r in selected), selected
+
+          print('GATEWAY_DIRECTOR_OBJECTIVE_COMPLETION=PASS')
+          print('GATEWAY_DIRECTOR_WORKER_ACTIVE=PASS')
+          print('GATEWAY_DIRECTOR_ROLE_POSITION=PASS')
+          print('GATEWAY_DIRECTOR_CAPABILITY_BUNDLE=PASS')
+          print('GATEWAY_DIRECTOR_RUNTIME_PROFILE=PASS')
+          print('GATEWAY_DIRECTOR_INDEPENDENT_OBSERVATION=PASS')
+          PY
+
+          for _ in $(seq 1 60); do
+            if docker exec "$CID" sh -c               "grep -A 10 -B 6 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"; then
+              echo 'GATEWAY_DIRECTOR_TELEGRAM_DELIVERY=PASS'
+              break
+            fi
+            sleep 2
+          done
+          docker exec "$CID" sh -c             "grep -A 10 -B 6 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"
+
+          echo "GATEWAY_DIRECTOR_EXACT_SHA=$TARGET_SHA"
+          echo 'GATEWAY_DIRECTOR_LIVE_ACCEPTANCE=PASS'
