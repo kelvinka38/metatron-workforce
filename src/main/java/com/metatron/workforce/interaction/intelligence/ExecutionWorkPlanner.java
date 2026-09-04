@@ -21,6 +21,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
     private static final String GENERAL_WORKSPACE = "execution.general.workspace";
+    private static final String GATEWAY_DIRECTOR_APPOINTMENT = "workforce.staffing.gateway-director";
     private static final java.util.regex.Pattern EXACT_GIT_SHA =
             java.util.regex.Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
     private static final java.util.regex.Pattern WORKSPACE_FILE_PATH =
@@ -100,6 +101,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicSingleRepositoryPlan);
             return deterministicSingleRepositoryPlan;
         }
+        List<ExecutionWorkSpec> deterministicGatewayDirectorAppointment = deterministicGatewayDirectorAppointment(
+                normalized, availableExecutionCapabilities);
+        if (!deterministicGatewayDirectorAppointment.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicGatewayDirectorAppointment);
+            return deterministicGatewayDirectorAppointment;
+        }
+
         List<ExecutionWorkSpec> deterministicCrossRepositoryFallback = deterministicCrossRepositoryAudit(
                 normalized, availableExecutionCapabilities);
         if (!deterministicCrossRepositoryFallback.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
@@ -396,6 +404,39 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                         + " including externally attributable repository evidence")));
     }
 
+
+
+    private static List<ExecutionWorkSpec> deterministicGatewayDirectorAppointment(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, GATEWAY_DIRECTOR_APPOINTMENT)) return List.of();
+        String semantic = (normalized.objective() + " " + normalized.target() + " "
+                + normalized.constraints() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean gatewayDirector = semantic.contains("gateway director")
+                || semantic.contains("gateway head")
+                || semantic.contains("head of gateway")
+                || semantic.contains("role-head-of-gateway");
+        boolean appointment = semantic.contains("appoint") || semantic.contains("create")
+                || semantic.contains("form") || semantic.contains("staff");
+        if (!gatewayDirector || !appointment) return List.of();
+
+        return List.of(new ExecutionWorkSpec(
+                "appoint-gateway-director",
+                "Form and appoint the canonical Gateway Director / Head of Gateway Worker through governed Workforce staffing",
+                "ROLE-HEAD-OF-GATEWAY",
+                GATEWAY_DIRECTOR_APPOINTMENT,
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of(
+                        "Gateway Director Worker is ACTIVE with ROLE-HEAD-OF-GATEWAY participation",
+                        "Gateway Director has the approved gateway.audit.read capability",
+                        "Gateway Director has a durable usable runtime/tool profile binding"),
+                List.of(
+                        "staffing policy and Worker formation evidence",
+                        "active Gateway Director role/position participation evidence",
+                        "gateway.audit.read capability attestation",
+                        "runtime-profile-bound evidence")));
+    }
 
     private static List<ExecutionWorkSpec> deterministicCrossRepositoryAudit(
             NormalizedRequest normalized,
