@@ -34,7 +34,12 @@ final class RepositoryAuditCognitiveWorker {
     private static final Pattern SHA = Pattern.compile("\\\"sha\\\"\\s*:\\s*\\\"([0-9a-f]{40})\\\"");
     private static final Pattern TREE_PATH = Pattern.compile("\\\"path\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
     private static final String PATH_SEPARATOR = "\u001f";
-    private static final int MAX_FILES = 80;
+    /**
+     * Repository audits are representative, evidence-backed inspections rather than full mirrors.
+     * Keep the external GitHub call budget low enough that a four-repository parallel Objective does
+     * not exhaust one shared credential or amplify a transient provider limit through whole-audit retries.
+     */
+    private static final int MAX_FILES = 24;
     private static final int MAX_BYTES = 2_000_000;
 
     private final GatewayEgressClient egress;
@@ -91,6 +96,7 @@ final class RepositoryAuditCognitiveWorker {
                     + "commitSha=" + outcome.memory().getOrDefault("commitSha", "") + "\n"
                     + "repositoryFilesObserved=" + stats.repositoryFilesObserved + "\n"
                     + "contentFilesRead=" + stats.contentFilesRead + "\n"
+                    + "contentFilesSkipped=" + stats.unreadableContentFiles + "\n"
                     + "contentBytesRead=" + stats.contentBytesRead + "\n"
                     + "sotSignals=" + stats.sotSignals + "\n"
                     + "documentFilesRead=" + stats.documentFilesRead + "\n"
@@ -100,6 +106,7 @@ final class RepositoryAuditCognitiveWorker {
                     + "cognitiveActionCount=" + outcome.cycles().size() + "\n"
                     + "findings=" + findings + "\n"
                     + "observedPaths=" + String.join(",", stats.observedPaths) + "\n"
+                    + "skippedPaths=" + String.join(",", stats.skippedPaths) + "\n"
                     + "observedAt=" + outcome.completedAt() + "\n"
                     + "verdict=PASS\n";
             return new WorkerResult("RepositoryAuditWorker", "PASS", evidence, outcome.completedAt());
@@ -163,13 +170,22 @@ final class RepositoryAuditCognitiveWorker {
                 if (!auditable(path.toLowerCase())) throw new SecurityException("non-auditable path selected");
                 GatewayEgressClient.EgressResponse response = get("/repos/" + repository + "/contents/"
                         + encodePath(path) + "?ref=" + commitSha, "application/vnd.github.raw+json");
-                requireHttp(response, 200, "repository content " + path);
+                if (response.statusCode() != 200) {
+                    return success(actionRef(), "repository content unavailable; recorded and skipped: "
+                                    + path + " HTTP " + response.statusCode(),
+                            unreadableOutputs(path, response.statusCode()), response);
+                }
                 String body = response.body();
                 int bytes = body.getBytes(StandardCharsets.UTF_8).length;
-                if (bytes > MAX_BYTES) throw new IllegalStateException("single repository file exceeds audit byte budget");
+                if (bytes > MAX_BYTES) {
+                    return success(actionRef(), "repository content exceeds bounded audit byte budget; recorded and skipped: " + path,
+                            unreadableOutputs(path, response.statusCode()), response);
+                }
                 String lower = path.toLowerCase();
                 Map<String, String> outputs = Map.of(
                         "path", path,
+                        "readable", "true",
+                        "httpStatus", Integer.toString(response.statusCode()),
                         "bytes", Integer.toString(bytes),
                         "sot", bool(lower.contains("sot") || body.contains("SOURCE OF TRUTH") || body.contains("Source of Truth")),
                         "docs", bool(lower.endsWith(".md") || lower.endsWith(".txt")),
@@ -250,8 +266,18 @@ final class RepositoryAuditCognitiveWorker {
         for (CognitiveWorkerRuntime.Cycle cycle : outcome.cycles()) {
             if (!ACTION_CONTENT.equals(cycle.thought().actionRef()) || !cycle.observation().success()) continue;
             Map<String, String> out = cycle.observation().outputs();
+            String path = out.get("path");
+            if ("false".equalsIgnoreCase(out.get("readable"))) {
+                stats.unreadableContentFiles++;
+                if (path != null && !path.isBlank()) stats.skippedPaths.add(path);
+                continue;
+            }
             int bytes = parseInt(out.get("bytes"));
-            if (stats.contentBytesRead + bytes > MAX_BYTES) break;
+            if (stats.contentBytesRead + bytes > MAX_BYTES) {
+                stats.unreadableContentFiles++;
+                if (path != null && !path.isBlank()) stats.skippedPaths.add(path);
+                continue;
+            }
             stats.contentFilesRead++;
             stats.contentBytesRead += bytes;
             stats.sotSignals += truth(out.get("sot"));
@@ -260,7 +286,6 @@ final class RepositoryAuditCognitiveWorker {
             stats.testFilesRead += truth(out.get("tests"));
             stats.todo += parseInt(out.get("todo"));
             stats.conflict += parseInt(out.get("conflict"));
-            String path = out.get("path");
             if (path != null && !path.isBlank()) stats.observedPaths.add(path);
         }
         stats.gatewayCrossings = (int) outcome.cycles().stream()
@@ -293,7 +318,24 @@ final class RepositoryAuditCognitiveWorker {
         if (stats.conflict > 0) values.add("MERGE_CONFLICT_MARKERS=" + stats.conflict);
         if (stats.todo > 0) values.add("TODO_FIXME_MARKERS=" + stats.todo);
         if (stats.sotSignals == 0) values.add("NO_SOT_MARKER_IN_AUDITED_CONTENT");
+        if (stats.unreadableContentFiles > 0) {
+            values.add("UNREADABLE_CONTENT_FILES=" + stats.unreadableContentFiles);
+        }
         return values.isEmpty() ? "NONE" : String.join(" | ", values);
+    }
+
+    private static Map<String, String> unreadableOutputs(String path, int statusCode) {
+        return Map.of(
+                "path", path,
+                "readable", "false",
+                "httpStatus", Integer.toString(statusCode),
+                "bytes", "0",
+                "sot", "false",
+                "docs", "false",
+                "source", "false",
+                "tests", "false",
+                "todo", "0",
+                "conflict", "0");
     }
 
     private static List<String> paths(String json) {
@@ -391,6 +433,7 @@ final class RepositoryAuditCognitiveWorker {
     private static final class AuditStats {
         int repositoryFilesObserved;
         int contentFilesRead;
+        int unreadableContentFiles;
         int contentBytesRead;
         int sotSignals;
         int documentFilesRead;
@@ -400,5 +443,6 @@ final class RepositoryAuditCognitiveWorker {
         int conflict;
         int gatewayCrossings;
         final List<String> observedPaths = new ArrayList<>();
+        final List<String> skippedPaths = new ArrayList<>();
     }
 }
