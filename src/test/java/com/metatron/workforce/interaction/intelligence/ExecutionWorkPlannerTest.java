@@ -205,6 +205,42 @@ final class ExecutionWorkPlannerTest {
                 "planner input must remain bounded, actual=" + inputChars.get());
     }
 
+
+    @Test
+    void explicitGeneralEngineeringWorkCompilesAfterAllPlanningProvidersFail() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("simulated provider outage");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-general-provider-outage",
+                normalizedGeneralEngineeringExecution(),
+                List.of("execution.general.workspace"));
+
+        assertEquals(1, calls.get());
+        assertEquals(4, plan.size());
+        assertEquals(List.of("general-snapshot", "general-file-write", "general-test", "general-local-commit"),
+                plan.stream().map(ExecutionWorkSpec::stepId).toList());
+        assertTrue(plan.stream().allMatch(step -> step.requiredCapability().equals("execution.general.workspace")));
+        assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, plan.get(0).consequence());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, plan.get(1).consequence());
+        assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, plan.get(2).consequence());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, plan.get(3).consequence());
+        assertEquals(List.of("general-snapshot"), plan.get(1).dependsOn());
+        assertEquals(List.of("general-file-write"), plan.get(2).dependsOn());
+        assertEquals(List.of("general-test"), plan.get(3).dependsOn());
+        assertEquals("docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md", plan.get(1).target());
+        assertTrue(plan.get(1).objective().contains("source_sha=3e86d4e2876a90c580383d5c1de48360b5049b3b"));
+    }
+
     @Test
     void providerlessPlannerStillFailsClosedOutsideBoundedAuditShape() {
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
@@ -244,6 +280,35 @@ final class ExecutionWorkPlannerTest {
                 "current", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
                 List.of(AnalyticalProtocolType.AUDIT), DeterministicCapability.NONE, List.of(), List.of(),
                 false, explicitlyRequestedProvider, LlmProvider.GOOGLE, "");
+    }
+
+
+    private static NormalizedRequest normalizedGeneralEngineeringExecution() {
+        String sha = "3e86d4e2876a90c580383d5c1de48360b5049b3b";
+        return new NormalizedRequest(
+                "Take ownership of one governed general engineering Objective against kelvinka38/metatron-workforce at exact source commit "
+                        + sha + ". Materialize that exact repository snapshot into the Objective workspace. "
+                        + "Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md with a short proof containing exact source SHA "
+                        + sha + ". Run the repository test suite through the governed test action and require it to pass. "
+                        + "Stage only that proof file and create one local Git commit as the immutable work product. "
+                        + "Verify the result through independent Observation. Do not push, do not open a pull request, "
+                        + "do not modify any remote repository state.",
+                "kelvinka38/metatron-workforce",
+                List.of(
+                        "exact source commit " + sha,
+                        "create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                        "proof must contain exact source SHA " + sha,
+                        "run repository test suite through governed test action and require it to pass",
+                        "stage only that proof file and create one local Git commit",
+                        "verify result through independent observation",
+                        "do not push",
+                        "do not open a pull request",
+                        "do not modify any remote repository state"),
+                IntelligenceDepth.DEEP, "direct natural-language answer", List.of(),
+                List.of("do not push", "do not open a pull request", "do not modify any remote repository state"),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.IMPROVEMENT, AnalyticalProtocolType.RISK),
+                DeterministicCapability.NONE, List.of(), List.of(), true, null, LlmProvider.GOOGLE, "");
     }
 
     private static NormalizedRequest normalizedProviderExecution(LlmProvider explicitlyRequestedProvider) {
