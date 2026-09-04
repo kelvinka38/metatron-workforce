@@ -432,6 +432,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                         "Gateway Director has the approved gateway.audit.read capability",
                         "Gateway Director has a durable usable runtime/tool profile binding"),
                 List.of(
+                        "observation-capability:workforce.staffing.gateway-director",
                         "staffing policy and Worker formation evidence",
                         "active Gateway Director role/position participation evidence",
                         "gateway.audit.read capability attestation",
