@@ -20,6 +20,11 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String REPOSITORY_PR_PROPOSE = "repository.pr.propose";
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
+    private static final String GENERAL_WORKSPACE = "execution.general.workspace";
+    private static final java.util.regex.Pattern EXACT_GIT_SHA =
+            java.util.regex.Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
+    private static final java.util.regex.Pattern WORKSPACE_FILE_PATH =
+            java.util.regex.Pattern.compile("(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.-])");
     static final int MAX_PLANNER_INPUT_CHARS = 24_000;
     private static final int MAX_CAPABILITY_ENTRIES = 128;
     private static final int MAX_CAPABILITY_ENTRY_CHARS = 256;
@@ -97,6 +102,8 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
         List<ExecutionWorkSpec> deterministicCrossRepositoryFallback = deterministicCrossRepositoryAudit(
                 normalized, availableExecutionCapabilities);
+        List<ExecutionWorkSpec> deterministicGeneralEngineeringFallback = deterministicGeneralEngineeringWork(
+                normalized, availableExecutionCapabilities);
         if (providers.isEmpty()) {
             if (!deterministicSingleRepositoryPlan.isEmpty()) {
                 validate(deterministicSingleRepositoryPlan);
@@ -105,6 +112,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             if (!deterministicCrossRepositoryFallback.isEmpty()) {
                 validate(deterministicCrossRepositoryFallback);
                 return deterministicCrossRepositoryFallback;
+            }
+            if (!deterministicGeneralEngineeringFallback.isEmpty()) {
+                validate(deterministicGeneralEngineeringFallback);
+                return deterministicGeneralEngineeringFallback;
             }
             throw new IllegalStateException("execution_planning_provider_required");
         }
@@ -145,6 +156,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         if (!deterministicCrossRepositoryFallback.isEmpty()) {
             validate(deterministicCrossRepositoryFallback);
             return deterministicCrossRepositoryFallback;
+        }
+        if (!deterministicGeneralEngineeringFallback.isEmpty()) {
+            validate(deterministicGeneralEngineeringFallback);
+            return deterministicGeneralEngineeringFallback;
         }
         IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
@@ -426,6 +441,100 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 List.of("all requested repository audits are joined, contradiction candidates are analyzed, and zero mutation is verified"),
                 List.of("durable cross-repository analysis evidence referencing every prerequisite repository audit")));
         return List.copyOf(plan);
+    }
+
+
+    private static List<ExecutionWorkSpec> deterministicGeneralEngineeringWork(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (normalized.explicitlyRequestedProvider() != null) return List.of();
+        if (!hasCapability(availableExecutionCapabilities, GENERAL_WORKSPACE)) return List.of();
+
+        List<String> repositories = requestedRepositoryTargets(normalized.target());
+        if (repositories.size() != 1) return List.of();
+
+        String original = normalized.objective() + " " + normalized.constraints() + " "
+                + normalized.explicitProhibitions() + " " + normalized.requestedOutput();
+        String semantic = original.toLowerCase(Locale.ROOT);
+        java.util.regex.Matcher shaMatcher = EXACT_GIT_SHA.matcher(original);
+        if (!shaMatcher.find()) return List.of();
+        String sourceSha = shaMatcher.group().toLowerCase(Locale.ROOT);
+
+        java.util.regex.Matcher pathMatcher = WORKSPACE_FILE_PATH.matcher(original);
+        String workspacePath = "";
+        while (pathMatcher.find()) {
+            String candidate = pathMatcher.group(1);
+            if (!candidate.toLowerCase(Locale.ROOT).startsWith("kelvinka38/")) {
+                workspacePath = candidate;
+                break;
+            }
+        }
+        if (workspacePath.isBlank()) return List.of();
+
+        boolean materialize = semantic.contains("materializ") || semantic.contains("snapshot") || semantic.contains("checkout");
+        boolean writeOneFile = (semantic.contains("create or replace only") || semantic.contains("write only")
+                || semantic.contains("create only")) && semantic.contains(workspacePath.toLowerCase(Locale.ROOT));
+        boolean exactShaProof = semantic.contains("proof") && semantic.contains(sourceSha);
+        boolean test = semantic.contains("test suite") || semantic.contains("test action")
+                || semantic.contains("tests pass") || semantic.contains("run test");
+        boolean stage = semantic.contains("stage only") || semantic.contains("git add");
+        boolean localCommit = semantic.contains("local git commit") || semantic.contains("local commit")
+                || semantic.contains("create one local") || semantic.contains("commit the proof file locally");
+        boolean verify = semantic.contains("verify") || semantic.contains("independent observation");
+        boolean remoteMutationForbidden = (semantic.contains("do not push") || semantic.contains("without pushing"))
+                && (semantic.contains("do not open a pull request") || semantic.contains("without opening pr")
+                || semantic.contains("without opening a pull request"))
+                && (semantic.contains("do not modify any remote repository state")
+                || semantic.contains("without modifying remote repository state"));
+
+        if (!materialize || !writeOneFile || !exactShaProof || !test || !stage
+                || !localCommit || !verify || !remoteMutationForbidden) return List.of();
+
+        String repository = repositories.getFirst();
+        String proofContent = "source_sha=" + sourceSha + "\n";
+        ExecutionWorkSpec snapshot = new ExecutionWorkSpec(
+                "general-snapshot",
+                "Materialize exact repository snapshot " + repository + " at source commit " + sourceSha,
+                repository,
+                GENERAL_WORKSPACE,
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Objective workspace contains the exact repository source snapshot " + sourceSha),
+                List.of("workspace.repository.materialize sourceCommitSha=" + sourceSha));
+
+        ExecutionWorkSpec write = new ExecutionWorkSpec(
+                "general-file-write",
+                "Create or replace only " + workspacePath + " with a short proof containing exact source SHA "
+                        + sourceSha + ". Exact UTF-8 content: " + proofContent.trim(),
+                workspacePath,
+                GENERAL_WORKSPACE,
+                List.of(snapshot.stepId()),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of(workspacePath + " exists in the Objective workspace and contains exact source SHA " + sourceSha),
+                List.of("successful workspace.file.write for " + workspacePath));
+
+        ExecutionWorkSpec tests = new ExecutionWorkSpec(
+                "general-test",
+                "Run the repository test suite through the governed test action and require it to pass",
+                repository,
+                GENERAL_WORKSPACE,
+                List.of(write.stepId()),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("repository test suite passes through workspace.test.run"),
+                List.of("successful workspace.test.run evidence"));
+
+        ExecutionWorkSpec commit = new ExecutionWorkSpec(
+                "general-local-commit",
+                "Stage only " + workspacePath + " and create one local Git commit as the immutable work product; "
+                        + "verify the commit and do not push or modify remote repository state",
+                workspacePath,
+                GENERAL_WORKSPACE,
+                List.of(tests.stepId()),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("one local Git commit exists containing exactly " + workspacePath),
+                List.of("successful workspace.git.run add", "successful workspace.git.run commit",
+                        "workspace.git.status verification"));
+        return List.of(snapshot, write, tests, commit);
     }
 
     private static boolean hasCapability(List<String> capabilities, String required) {
