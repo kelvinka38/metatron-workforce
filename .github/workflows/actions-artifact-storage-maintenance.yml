@@ -1,8 +1,6 @@
 name: Actions Artifact Storage Maintenance
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
   schedule:
     - cron: '17 2 * * 0'
@@ -26,172 +24,89 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          DEPLOYED_SHA="$(python3 - "$GITHUB_API_URL" "$GITHUB_REPOSITORY" <<'PY'
-import json, os, sys, urllib.request
-api, repo = sys.argv[1:]
-token = os.environ["GH_TOKEN"]
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-}
-req = urllib.request.Request(f"{api}/repos/{repo}/actions/runs?status=success&per_page=100", headers=headers)
-with urllib.request.urlopen(req, timeout=30) as r:
-    data = json.load(r)
-for run in data.get("workflow_runs", []):
-    if run.get("name") == "Highway Production Deploy" and run.get("conclusion") == "success":
-        sha = run.get("head_sha", "")
-        if len(sha) == 40:
-            print(sha)
-            break
-else:
-    raise SystemExit("NO_SUCCESSFUL_HIGHWAY_PRODUCTION_DEPLOY")
-PY
-          )"
+          
+          DEPLOYED_SHA="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?status=success&per_page=100" --jq '.workflow_runs[] | select(.name=="Highway Production Deploy" and .conclusion=="success") | .head_sha' | head -n 1)"
           [[ "$DEPLOYED_SHA" =~ ^[0-9a-f]{40}$ ]]
           echo "DEPLOYED_SHA=$DEPLOYED_SHA"
-
-          python3 - "$GITHUB_API_URL" "$GITHUB_REPOSITORY" "$DEPLOYED_SHA" <<'PY'
-          import datetime as dt
-          import json
-          import os
-          import re
-          import sys
-          import urllib.error
-          import urllib.request
-
-          api, repo, deployed_sha = sys.argv[1:]
-          token = os.environ["GH_TOKEN"]
-          headers = {
-              "Authorization": f"Bearer {token}",
-              "Accept": "application/vnd.github+json",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-
-          def request_json(url):
-              req = urllib.request.Request(url, headers=headers)
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  return json.load(r)
-
-          def delete_artifact(artifact_id):
-              req = urllib.request.Request(
-                  f"{api}/repos/{repo}/actions/artifacts/{artifact_id}",
-                  headers=headers,
-                  method="DELETE",
-              )
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  if r.status not in (204,):
-                      raise RuntimeError(f"DELETE_FAILED id={artifact_id} status={r.status}")
-
-          artifacts = []
-          page = 1
-          while True:
-              data = request_json(f"{api}/repos/{repo}/actions/artifacts?per_page=100&page={page}")
-              rows = data.get("artifacts", [])
-              artifacts.extend(a for a in rows if not a.get("expired"))
-              if len(rows) < 100:
-                  break
-              page += 1
-
-          now = dt.datetime.now(dt.timezone.utc)
-
-          def parse_time(value):
-              return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-          def family(name):
-              value = re.sub(r"-[0-9a-f]{40}$", "", name)
-              value = re.sub(r"-[0-9]+$", "", value)
-              return value
-
-          critical_prefixes = (
-              "metatron-workforce-",
-              "production-acceptance-highway-",
-              "gateway-final-live-acceptance-",
-              "g12-production-readiness-evidence-",
-              "workforce-p10-production-evidence-",
-              "workforce-p10-gs34-production-evidence-",
-              "workforce-p10-final-evidence-",
-              "workforce-p10-accepted-l10-evidence-",
-          )
-
-          artifacts.sort(key=lambda a: a.get("created_at", ""), reverse=True)
-
-          keep = set()
-          seen_family = set()
-          seen_deployed_family = set()
-
-          # Always keep the newest artifact in every family.
-          for a in artifacts:
-              fam = family(a.get("name", ""))
-              if fam not in seen_family:
-                  keep.add(a["id"])
-                  seen_family.add(fam)
-
-          # Also keep the newest artifact in every family for the exact deployed SHA.
-          for a in artifacts:
-              run = a.get("workflow_run") or {}
-              if run.get("head_sha") != deployed_sha:
-                  continue
-              fam = family(a.get("name", ""))
-              if fam not in seen_deployed_family:
-                  keep.add(a["id"])
-                  seen_deployed_family.add(fam)
-
-          before_bytes = sum(int(a.get("size_in_bytes") or 0) for a in artifacts)
-          deleted_bytes = 0
-          deleted = []
-          retained = []
-
-          for a in artifacts:
-              aid = a["id"]
-              name = a.get("name", "")
-              size = int(a.get("size_in_bytes") or 0)
-              created = parse_time(a["created_at"])
-              age_hours = (now - created).total_seconds() / 3600
-              run = a.get("workflow_run") or {}
-              sha = run.get("head_sha") or ""
-              is_critical = name.startswith(critical_prefixes)
-
-              reason = None
-              if aid in keep:
-                  reason = "protected-latest"
-              elif age_hours < 6:
-                  reason = "race-safety-under-6h"
-              elif is_critical:
-                  # Critical acceptance/deploy families keep newest overall and
-                  # newest for the exact deployed SHA; older duplicates are superseded.
-                  reason = None
-              elif sha == deployed_sha:
-                  # Unknown artifact families tied to live production are retained.
-                  reason = "unknown-family-live-sha"
-              elif age_hours < 24 * 14:
-                  # Unknown recent artifacts are retained for two weeks.
-                  reason = "unknown-family-under-14d"
-
-              if reason:
-                  retained.append((aid, name, size, reason, sha))
-                  continue
-
-              try:
-                  delete_artifact(aid)
-              except urllib.error.HTTPError as e:
-                  if e.code == 404:
-                      # Concurrent expiry/deletion is equivalent to success.
-                      pass
-                  else:
-                      raise
-              deleted_bytes += size
-              deleted.append((aid, name, size, sha))
-              print(f"DELETED id={aid} bytes={size} sha={sha} name={name}")
-
-          after_estimate = max(0, before_bytes - deleted_bytes)
-          print(f"CLEANUP_ARTIFACTS_BEFORE={len(artifacts)}")
-          print(f"CLEANUP_BYTES_BEFORE={before_bytes}")
-          print(f"CLEANUP_ARTIFACTS_DELETED={len(deleted)}")
-          print(f"CLEANUP_BYTES_DELETED={deleted_bytes}")
-          print(f"CLEANUP_BYTES_AFTER_ESTIMATE={after_estimate}")
-          print(f"CLEANUP_ARTIFACTS_RETAINED={len(retained)}")
-          print(f"CLEANUP_DEPLOYED_SHA={deployed_sha}")
-          print("ACTIONS_ARTIFACT_CLEANUP=PASS")
-          PY
+          
+          ARTIFACTS="$(mktemp)"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired==false) | [.id,.name,.size_in_bytes,.created_at,(.workflow_run.head_sha // "")] | @tsv' \
+            | sort -t $'\t' -k4,4r > "$ARTIFACTS"
+          
+          declare -A SEEN_FAMILY=()
+          declare -A SEEN_DEPLOYED_FAMILY=()
+          
+          before_bytes=0
+          deleted_bytes=0
+          deleted_count=0
+          retained_count=0
+          artifact_count=0
+          now_epoch="$(date +%s)"
+          
+          while IFS=$'\t' read -r id name size created sha; do
+            [[ -n "$id" ]] || continue
+            artifact_count=$((artifact_count + 1))
+            before_bytes=$((before_bytes + size))
+          
+            family="$(printf '%s' "$name" | sed -E 's/-[0-9a-f]{40}$//; s/-[0-9]+$//')"
+            keep=false
+            reason=""
+          
+            if [[ -z "${SEEN_FAMILY[$family]+x}" ]]; then
+              SEEN_FAMILY[$family]=1
+              keep=true
+              reason="latest-family"
+            fi
+          
+            if [[ "$sha" == "$DEPLOYED_SHA" && -z "${SEEN_DEPLOYED_FAMILY[$family]+x}" ]]; then
+              SEEN_DEPLOYED_FAMILY[$family]=1
+              keep=true
+              reason="latest-live-sha-family"
+            fi
+          
+            created_epoch="$(date -d "$created" +%s)"
+            age_hours=$(( (now_epoch - created_epoch) / 3600 ))
+            if (( age_hours < 6 )); then
+              keep=true
+              reason="race-safety-under-6h"
+            fi
+          
+            critical=false
+            case "$name" in
+              metatron-workforce-*|production-acceptance-highway-*|gateway-final-live-acceptance-*|g12-production-readiness-evidence-*|workforce-p10-production-evidence-*|workforce-p10-gs34-production-evidence-*|workforce-p10-final-evidence-*|workforce-p10-accepted-l10-evidence-*)
+                critical=true
+                ;;
+            esac
+          
+            if [[ "$critical" == false ]]; then
+              if [[ "$sha" == "$DEPLOYED_SHA" ]]; then
+                keep=true
+                reason="unknown-family-live-sha"
+              elif (( age_hours < 336 )); then
+                keep=true
+                reason="unknown-family-under-14d"
+              fi
+            fi
+          
+            if [[ "$keep" == true ]]; then
+              retained_count=$((retained_count + 1))
+              echo "KEEP id=$id bytes=$size sha=$sha reason=$reason name=$name"
+              continue
+            fi
+          
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            deleted_bytes=$((deleted_bytes + size))
+            deleted_count=$((deleted_count + 1))
+            echo "DELETED id=$id bytes=$size sha=$sha name=$name"
+          done < "$ARTIFACTS"
+          
+          after_estimate=$((before_bytes - deleted_bytes))
+          echo "CLEANUP_ARTIFACTS_BEFORE=$artifact_count"
+          echo "CLEANUP_BYTES_BEFORE=$before_bytes"
+          echo "CLEANUP_ARTIFACTS_DELETED=$deleted_count"
+          echo "CLEANUP_BYTES_DELETED=$deleted_bytes"
+          echo "CLEANUP_BYTES_AFTER_ESTIMATE=$after_estimate"
+          echo "CLEANUP_ARTIFACTS_RETAINED=$retained_count"
+          echo "CLEANUP_DEPLOYED_SHA=$DEPLOYED_SHA"
+          echo "ACTIONS_ARTIFACT_CLEANUP=PASS"
