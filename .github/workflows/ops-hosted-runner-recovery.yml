@@ -1,0 +1,103 @@
+name: Recover Production Runner From Hosted Control
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-hosted-runner-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    environment: production
+    env:
+      METATRON_GITHUB_TOKEN: ${{ secrets.METATRON_GITHUB_TOKEN }}
+      HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+    steps:
+      - name: Inspect and conditionally recover production runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${METATRON_GITHUB_TOKEN:-}"
+          test -n "${HETZNER_API_TOKEN:-}"
+          python3 - <<'PY'
+          import json, os, time, urllib.request, urllib.error
+
+          gh=os.environ['METATRON_GITHUB_TOKEN']
+          hz=os.environ['HETZNER_API_TOKEN']
+          runner_name='metatron-prod-01'
+          server_name='ubuntu-4gb-sin-2'
+
+          def request_json(url, token, method='GET', body=None, github=False):
+              headers={'Accept':'application/json'}
+              if github:
+                  headers.update({
+                      'Authorization':'Bearer '+token,
+                      'X-GitHub-Api-Version':'2022-11-28',
+                      'User-Agent':'metatron-hosted-runner-recovery'
+                  })
+              else:
+                  headers['Authorization']='Bearer '+token
+              data=None if body is None else json.dumps(body).encode()
+              if data is not None: headers['Content-Type']='application/json'
+              req=urllib.request.Request(url,data=data,method=method,headers=headers)
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  raw=r.read().decode()
+                  return json.loads(raw) if raw else {}
+
+          def runner_state():
+              data=request_json(
+                  'https://api.github.com/repos/kelvinka38/metatron-workforce/actions/runners?per_page=100',
+                  gh, github=True)
+              matches=[r for r in data.get('runners',[]) if r.get('name')==runner_name]
+              if len(matches)!=1:
+                  print('PRODUCTION_RUNNER_DISCOVERY=FAIL count='+str(len(matches)))
+                  return None
+              r=matches[0]
+              print('PRODUCTION_RUNNER_STATUS='+str(r.get('status')))
+              print('PRODUCTION_RUNNER_BUSY='+str(bool(r.get('busy'))).lower())
+              return r
+
+          def server():
+              data=request_json('https://api.hetzner.cloud/v1/servers?name='+server_name,hz)
+              matches=[s for s in data.get('servers',[]) if s.get('name')==server_name]
+              if len(matches)!=1:
+                  raise SystemExit('HETZNER_SERVER_DISCOVERY_FAILED count='+str(len(matches)))
+              s=matches[0]
+              print('HETZNER_SERVER_STATUS='+str(s.get('status')))
+              print('HETZNER_SERVER_NAME='+str(s.get('name')))
+              return s
+
+          before=runner_state()
+          srv=server()
+          if before is not None and before.get('status')=='online':
+              print('PRODUCTION_RUNNER_RECOVERY=NOT_REQUIRED')
+              raise SystemExit(0)
+
+          sid=srv['id']
+          if srv.get('status')=='off':
+              action='poweron'
+          else:
+              action='reboot'
+          print('PRODUCTION_RUNNER_RECOVERY_ACTION='+action.upper())
+          request_json(f'https://api.hetzner.cloud/v1/servers/{sid}/actions/{action}',hz,method='POST',body={})
+
+          online=None
+          for _ in range(60):
+              time.sleep(5)
+              try:
+                  current=runner_state()
+              except Exception as e:
+                  print('RUNNER_POLL_TRANSIENT='+type(e).__name__)
+                  continue
+              if current is not None and current.get('status')=='online':
+                  online=current
+                  break
+          if online is None:
+              raise SystemExit('PRODUCTION_RUNNER_RECOVERY=FAILED_NOT_ONLINE')
+          print('PRODUCTION_RUNNER_RECOVERY=PASS')
+          PY
