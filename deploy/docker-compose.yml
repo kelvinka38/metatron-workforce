@@ -143,7 +143,7 @@ services:
       workforce:
       gateway:
         aliases:
-          - ${METATRON_WORKFORCE_GATEWAY_ALIAS:-workforce}
+          - ${METATRON_WORKFORCE_GATEWAY_ALIAS:-workforce-production}
 
 volumes:
   workforce-state:
