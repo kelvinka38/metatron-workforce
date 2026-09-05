@@ -19,7 +19,7 @@ jobs:
     environment: production
     timeout-minutes: 12
     env:
-      EXPECTED_WORKFORCE_SHA: 308b83ac7028a4be7f695f4a6b7e860bbcb4703e
+      EXPECTED_WORKFORCE_SHA: e269d2315e6701318322231fbe8f8acb87ade993
     steps:
       - name: Execute real Mother and Baby research through BIOS to Workforce
         shell: bash
