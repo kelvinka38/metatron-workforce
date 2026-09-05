@@ -7,6 +7,7 @@ import com.metatron.workforce.adapter.telegram.TelegramIdentityResolver;
 import com.metatron.workforce.interaction.ChannelInteractionIngressService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
+import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
 import com.metatron.workforce.management.WorkCardRenderer;
 import com.metatron.workforce.phase3.ActorRef;
 import org.springframework.beans.factory.annotation.Value;
@@ -318,10 +319,7 @@ public final class TelegramWebhookController {
     }
 
     static boolean requiresObjectiveBeforeAck(String text) {
-        String normalized = normalize(text);
-        return normalized.startsWith("take ownership of one objective:")
-                || normalized.startsWith("take ownership of one governed mutation objective ")
-                || normalized.startsWith("take ownership of one governed mutation objective:");
+        return CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(text);
     }
 
     static String validateAnswer(String inbound, String answer) {
