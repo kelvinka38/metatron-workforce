@@ -50,6 +50,7 @@ jobs:
                 BIOS_RATE_LIMIT: "${BIOS_RATE_LIMIT:-120}"
                 BIOS_RATE_WINDOW_SECONDS: "${BIOS_RATE_WINDOW_SECONDS:-60}"
                 BIOS_COMMIT_SHA: "${BIOS_COMMIT_SHA}"
+                BIOS_WORKFORCE_URL: "http://workforce-production:8080"
               volumes:
                 - bios-data:/data
               expose:
@@ -99,6 +100,10 @@ jobs:
           test "$(docker inspect "$CID" --format '{{.Config.Image}}')" = "$IMAGE"
           test "$(docker inspect "$CID" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
           docker inspect "$CID" --format '{{json .NetworkSettings.Networks}}' | grep -q 'metatron-gateway-online'
+
+          ROUTE_HTTP=$(docker exec "$CID" python -c "import urllib.request; print(urllib.request.urlopen('http://workforce-production:8080/actuator/health',timeout=5).status)" || true)
+          echo "BIOS_TO_CANONICAL_WORKFORCE_HTTP=$ROUTE_HTTP"
+          test "$ROUTE_HTTP" = 200
 
           HEALTH_HTTP=$(curl -sS -o /tmp/bios-reconcile-health.json -w '%{http_code}' --max-time 10 http://127.0.0.1:18080/health)
           READY_HTTP=$(curl -sS -o /tmp/bios-reconcile-ready.json -w '%{http_code}' --max-time 10 -H "X-BIOS-API-Key: $BIOS_API_KEY" http://127.0.0.1:18080/health/ready)
