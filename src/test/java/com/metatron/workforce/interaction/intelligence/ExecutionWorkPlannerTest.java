@@ -298,12 +298,12 @@ final class ExecutionWorkPlannerTest {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
             @Override public LlmResponse complete(LlmRequest request) {
                 calls.incrementAndGet();
-                return new LlmResponse("planner-test", """
+                return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
                         {"execution_work_plan":[
                           {"step_id":"step-1","objective":"materialize","target":"kelvinka38/metatron-workforce","required_capability":"execution.general.workspace","depends_on":[],"consequence":"MUTATING","acceptance_criteria":["materialized"],"evidence_requirements":["general-action-runtime:execution.general.workspace"]},
                           {"step_id":"step-2","objective":"write","target":"docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md","required_capability":"UNAVAILABLE:local-file-write","depends_on":["step-1"],"consequence":"MUTATING","acceptance_criteria":["written"],"evidence_requirements":["file evidence"]}
                         ]}
-                        """, List.of());
+                        """, "planner-request");
             }
         };
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
