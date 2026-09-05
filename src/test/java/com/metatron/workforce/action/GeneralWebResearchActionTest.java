@@ -55,9 +55,14 @@ class GeneralWebResearchActionTest {
 
     @Test
     void actionRejectsBlankResearchQuery() {
+        ToolAdapter unused = new ToolAdapter() {
+            @Override public String capability() { return WebSearchToolAdapter.CAPABILITY; }
+            @Override public ToolResult execute(ToolRequest request) {
+                return ToolResult.failure(request, "unused");
+            }
+        };
         GeneralWebResearchAction action = new GeneralWebResearchAction(
-                "WORKER-GENERAL-ENGINEERING", "authorization:test",
-                request -> ToolResult.failure(request, "unused"));
+                "WORKER-GENERAL-ENGINEERING", "authorization:test", unused);
         ActionFabric fabric = new ActionFabric(List.of(action));
 
         ActionFabric.ActionObservation observation = fabric.execute(new ActionFabric.ActionRequest(
