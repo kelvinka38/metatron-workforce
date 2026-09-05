@@ -402,12 +402,21 @@ jobs:
             "$GS3A_OID" "$GS3B_OID" "$GS3C_OID" "$GS4_OID" > "$EVIDENCE/objectives.txt"
           CID=$(current_cid); docker logs --since 50m "$CID" > "$EVIDENCE/workforce.log" 2>&1 || true
           tar -C "$EVIDENCE" -czf "/tmp/workforce-p10-gs34-${GITHUB_RUN_ID}.tgz" .
+
+          DURABLE="$HOME/.metatron/acceptance-evidence/p10/$TARGET_SHA/gs34-$GITHUB_RUN_ID"
+          rm -rf "$DURABLE"
+          mkdir -p "$DURABLE"
+          cp -a "$EVIDENCE/." "$DURABLE/"
+          printf 'kind=gs34\ntarget_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
+
           echo 'P10_GOLDEN_SLICE_3=PASS'
           echo 'P10_GOLDEN_SLICE_4=PASS'
           echo 'P10_L10_VERDICT=NOT_YET_CLAIMED_45_CONDITION_GATE_REMAINS'
+          echo "P10_GS34_DURABLE_EVIDENCE=$DURABLE"
 
       - name: Upload GS3 GS4 production evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: workforce-p10-gs34-production-evidence-${{ github.run_id }}
