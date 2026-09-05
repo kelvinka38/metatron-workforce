@@ -132,3 +132,4 @@ jobs:
           name: gateway-final-live-acceptance-${{ github.run_id }}
           path: /tmp/gateway-final
           if-no-files-found: error
+          retention-days: 14
