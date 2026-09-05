@@ -6,6 +6,7 @@ import com.metatron.workforce.action.CognitiveWorkerRuntime;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrain;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrainFactory;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
+import com.metatron.workforce.action.GeneralWebResearchAction;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -156,11 +157,36 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         Objects.requireNonNull(candidates, "candidates");
         Objects.requireNonNull(workSpec, "workSpec");
         Map<String, String> memory = objectiveMemory == null ? Map.of() : objectiveMemory;
+        if (requiresExternalResearch(workSpec)) {
+            return candidates.stream()
+                    .filter(action -> GeneralWebResearchAction.ACTION_REF.equals(action.actionRef()))
+                    .toList();
+        }
         boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
         if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(candidates);
         return candidates.stream()
                 .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
                 .toList();
+    }
+
+    static boolean requiresExternalResearch(ExecutionWorkSpec workSpec) {
+        String semantic = (workSpec.objective() + " " + workSpec.target() + " "
+                + workSpec.acceptanceCriteria() + " " + workSpec.evidenceRequirements())
+                .toLowerCase(Locale.ROOT);
+        boolean explicit = workSpec.evidenceRequirements().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .anyMatch(value -> value.contains("research-action:research.web.search")
+                        || value.contains("requested-capability:") && value.contains("research"));
+        if (explicit) return true;
+        boolean researchIntent = semantic.contains("research") || semantic.contains("paper")
+                || semantic.contains("publication") || semantic.contains("report")
+                || semantic.contains("standard") || semantic.contains("regulator")
+                || semantic.contains("regulatory");
+        boolean externalEvidence = semantic.contains("source") || semantic.contains("evidence")
+                || semantic.contains("external") || semantic.contains("web")
+                || semantic.contains("internet") || semantic.contains("recent")
+                || semantic.contains("current") || semantic.contains("new ");
+        return researchIntent && externalEvidence;
     }
 
     static boolean requiresRepositoryMaterialization(ExecutionWorkSpec workSpec) {
