@@ -44,6 +44,7 @@ class ObjectiveWorkspaceAndProfileClosureTest {
         WorkerRuntimeProfileBindingService.Binding binding = restarted.requireBinding("WORKER-GENERAL-ENGINEERING");
         assertEquals(WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE, binding.profile().profileRef());
         assertTrue(binding.profile().writableWorkspace());
+        assertTrue(binding.profile().actionRefs().contains("research.web.search"));
         assertTrue(binding.profile().actionRefs().contains("workspace.repository.materialize"));
         assertTrue(binding.profile().actionRefs().contains("workspace.file.write"));
         assertTrue(binding.profile().actionRefs().contains("workspace.git.run"));
