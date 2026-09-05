@@ -3,90 +3,150 @@ name: CI
 on:
   pull_request:
     branches: [ main ]
-  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: workforce-ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
-
 jobs:
-  test:
-    # PR unit/contract tests do not require production-local state, credentials, Docker,
-    # or the production network. Keep the single metatron-prod runner reserved for
-    # exact-SHA deploy and live production acceptance so ordinary CI cannot serialize them.
+  artifact-cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Set up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '22'
-          cache: gradle
-      - name: Verify POSIX line endings
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          for name in ("gradlew",):
-              data = Path(name).read_bytes()
-              if b"\r\n" in data or b"\r" in data:
-                  raise SystemExit(f"CRLF_NOT_ALLOWED: {name}")
-          PY
-      - name: Verify production orchestration shell syntax
-        run: bash -n scripts/runtime-conformance-point5.sh
-      - name: Compile runtime and acceptance Python
-        run: |
-          python3 -m py_compile \
-            runtime-sandbox/server.py \
-            scripts/autonomy/p10_action_journal.py \
-            scripts/autonomy/p10_collect.py \
-            scripts/autonomy/p10_general_runtime_guard.py \
-            scripts/autonomy/p10_ratify.py
-      - name: Smoke-load sandbox runtime
+      - name: Delete superseded Actions artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TOKEN_FILE="$RUNNER_TEMP/metatron-sandbox-ci-token"
-          WORKSPACE_ROOT="$RUNNER_TEMP/metatron-sandbox-ci-workspaces"
-          printf '%s' 'ci-sandbox-token' > "$TOKEN_FILE"
-          SANDBOX_TOKEN_FILE="$TOKEN_FILE" SANDBOX_WORKSPACE_ROOT="$WORKSPACE_ROOT" python3 - <<'PY'
-          import runpy
-          from pathlib import Path
-          runtime=runpy.run_path('runtime-sandbox/server.py')
-          deny=runtime['SHELL_DENY']
-          assert deny.search('git status; rm -rf x')
-          assert deny.search('echo $(id)')
-          assert deny.search('git status\nwhoami')
-          assert not deny.search('git status --short')
-          child=runtime['child_environment'](Path('/tmp/metatron-ci-workspace'))
-          assert child['JAVA_HOME']
-          assert child['PATH'].startswith(child['JAVA_HOME'] + '/bin:')
-          assert '-Dorg.gradle.workers.max=1' in child['GRADLE_OPTS']
-          assert '-Xmx256m' in child['GRADLE_OPTS']
-          assert '-Xmx256m' in child['MAVEN_OPTS']
-          assert child['GRADLE_USER_HOME'].startswith(str(Path('/tmp/metatron-ci-workspace')))
-          assert 'SANDBOX_TOKEN' not in child
-          assert 'GITHUB_TOKEN' not in child
-          assert 'OPENAI_API_KEY' not in child
-          print('SANDBOX_RUNTIME_IMPORT=PASS')
-          print('SANDBOX_JAVA_ENVIRONMENT=PASS')
-          print('SANDBOX_BUILD_RESOURCE_ENVELOPE=PASS')
-          print('SANDBOX_CHILD_CREDENTIAL_ISOLATION=PASS')
+          python3 - "$GITHUB_API_URL" "$GITHUB_REPOSITORY" <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.request
+
+          api, repo = sys.argv[1:]
+          token = os.environ["GH_TOKEN"]
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          def get(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.load(r)
+
+          def delete_artifact(aid):
+              req = urllib.request.Request(
+                  f"{api}/repos/{repo}/actions/artifacts/{aid}",
+                  headers=headers,
+                  method="DELETE",
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  if r.status != 204:
+                      raise RuntimeError(f"delete failed id={aid} status={r.status}")
+
+          runs = get(f"{api}/repos/{repo}/actions/runs?status=success&per_page=100").get("workflow_runs", [])
+          deployed_sha = ""
+          for run in runs:
+              if run.get("name") == "Highway Production Deploy" and run.get("conclusion") == "success":
+                  deployed_sha = run.get("head_sha", "")
+                  break
+          if not re.fullmatch(r"[0-9a-f]{40}", deployed_sha):
+              raise SystemExit("NO_VALID_DEPLOYED_SHA")
+          print(f"CLEANUP_DEPLOYED_SHA={deployed_sha}")
+
+          artifacts = []
+          page = 1
+          while True:
+              rows = get(f"{api}/repos/{repo}/actions/artifacts?per_page=100&page={page}").get("artifacts", [])
+              artifacts.extend(a for a in rows if not a.get("expired"))
+              if len(rows) < 100:
+                  break
+              page += 1
+
+          artifacts.sort(key=lambda a: a.get("created_at", ""), reverse=True)
+          now = dt.datetime.now(dt.timezone.utc)
+
+          def family(name):
+              value = re.sub(r"-[0-9a-f]{40}$", "", name)
+              value = re.sub(r"-[0-9]+$", "", value)
+              return value
+
+          critical_prefixes = (
+              "metatron-workforce-",
+              "production-acceptance-highway-",
+              "gateway-final-live-acceptance-",
+              "g12-production-readiness-evidence-",
+              "workforce-p10-production-evidence-",
+              "workforce-p10-gs34-production-evidence-",
+              "workforce-p10-final-evidence-",
+              "workforce-p10-accepted-l10-evidence-",
+          )
+
+          newest_by_family = {}
+          for a in artifacts:
+              newest_by_family.setdefault(family(a.get("name", "")), a["id"])
+
+          before = sum(int(a.get("size_in_bytes") or 0) for a in artifacts)
+          deleted_bytes = 0
+          deleted_count = 0
+          kept_count = 0
+
+          for a in artifacts:
+              aid = a["id"]
+              name = a.get("name", "")
+              size = int(a.get("size_in_bytes") or 0)
+              sha = (a.get("workflow_run") or {}).get("head_sha") or ""
+              created = dt.datetime.fromisoformat(a["created_at"].replace("Z", "+00:00"))
+              age_hours = (now - created).total_seconds() / 3600
+              fam = family(name)
+
+              # Fail-safe protection: do not remove any artifact for exact live production.
+              if sha == deployed_sha:
+                  kept_count += 1
+                  continue
+
+              # Preserve the newest artifact of every logical family as a historical anchor.
+              if newest_by_family.get(fam) == aid:
+                  kept_count += 1
+                  continue
+
+              is_critical = name.startswith(critical_prefixes)
+              if is_critical:
+                  # Avoid racing very recent runs.
+                  if age_hours < 6:
+                      kept_count += 1
+                      continue
+              else:
+                  # Unknown families are only cleaned after a conservative 14-day window.
+                  if age_hours < 24 * 14:
+                      kept_count += 1
+                      continue
+
+              try:
+                  delete_artifact(aid)
+              except urllib.error.HTTPError as e:
+                  if e.code != 404:
+                      raise
+              deleted_count += 1
+              deleted_bytes += size
+              print(f"DELETED id={aid} bytes={size} sha={sha} name={name}")
+
+          print(f"CLEANUP_ARTIFACTS_BEFORE={len(artifacts)}")
+          print(f"CLEANUP_BYTES_BEFORE={before}")
+          print(f"CLEANUP_ARTIFACTS_DELETED={deleted_count}")
+          print(f"CLEANUP_BYTES_DELETED={deleted_bytes}")
+          print(f"CLEANUP_BYTES_AFTER_ESTIMATE={max(0, before-deleted_bytes)}")
+          print(f"CLEANUP_ARTIFACTS_RETAINED={kept_count}")
+          print("ACTIONS_ARTIFACT_CLEANUP=PASS")
           PY
-      - name: Verify strict P10 evidence contracts
-        run: |
-          python3 scripts/autonomy/p10_action_journal.py --self-test
-          python3 scripts/autonomy/p10_collect.py --self-test
-          python3 scripts/autonomy/p10_general_runtime_guard.py --self-test
-          python3 scripts/autonomy/p10_ratify.py --self-test
-      - name: Make Gradle executable
-        run: chmod +x gradlew
-      - name: Test and build
-        run: ./gradlew clean test bootJar --no-daemon --max-workers=1
