@@ -207,7 +207,7 @@ final class ExecutionWorkPlannerTest {
 
 
     @Test
-    void explicitGeneralEngineeringWorkCompilesAfterAllPlanningProvidersFail() {
+    void explicitGeneralEngineeringWorkBindsBeforePlanningProviders() {
         AtomicInteger calls = new AtomicInteger();
         LlmProviderClient google = new LlmProviderClient() {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
@@ -225,7 +225,8 @@ final class ExecutionWorkPlannerTest {
                 normalizedGeneralEngineeringExecution(),
                 List.of("execution.general.workspace"));
 
-        assertEquals(1, calls.get());
+        assertEquals(0, calls.get());
+        assertEquals(0, calls.get());
         assertEquals(4, plan.size());
         assertEquals(List.of("general-snapshot", "general-file-write", "general-test", "general-local-commit"),
                 plan.stream().map(ExecutionWorkSpec::stepId).toList());
@@ -243,11 +244,13 @@ final class ExecutionWorkPlannerTest {
 
 
     @Test
-    void productionNormalizedGeneralEngineeringRequestStillCompilesDuringProviderOutage() {
+    void productionNormalizedGeneralEngineeringRequestBindsBeforeProviderPlanning() {
+        AtomicInteger calls = new AtomicInteger();
         LlmProviderClient google = new LlmProviderClient() {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
             @Override public LlmResponse complete(LlmRequest request) {
-                throw new IllegalStateException("simulated provider outage");
+                calls.incrementAndGet();
+                throw new IllegalStateException("bounded general engineering must not depend on provider planning");
             }
         };
         ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
@@ -286,6 +289,67 @@ final class ExecutionWorkPlannerTest {
         assertTrue(plan.get(1).objective().contains("source_sha=" + sha));
     }
 
+
+
+    @Test
+    void latestProductionGs2NormalizedShapeAlsoPrebindsGeneralWorkspace() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                return new LlmResponse("planner-test", """
+                        {"execution_work_plan":[
+                          {"step_id":"step-1","objective":"materialize","target":"kelvinka38/metatron-workforce","required_capability":"execution.general.workspace","depends_on":[],"consequence":"MUTATING","acceptance_criteria":["materialized"],"evidence_requirements":["general-action-runtime:execution.general.workspace"]},
+                          {"step_id":"step-2","objective":"write","target":"docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md","required_capability":"UNAVAILABLE:local-file-write","depends_on":["step-1"],"consequence":"MUTATING","acceptance_criteria":["written"],"evidence_requirements":["file evidence"]}
+                        ]}
+                        """, List.of());
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        String sha = "8d8f3cab78dbfa114db874798d9807ab442187b6";
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Take ownership of a governed general engineering Objective on kelvinka38/metatron-workforce at commit "
+                        + sha + ", materialize the snapshot, create docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md "
+                        + "with the source SHA, run the test suite, stage and commit the file locally, and verify via Observation "
+                        + "without pushing or modifying remote state.",
+                "kelvinka38/metatron-workforce",
+                List.of(
+                        "Use exact source commit " + sha,
+                        "Materialize exact repository snapshot into the Objective workspace",
+                        "Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                        "Include exact source SHA in the proof file",
+                        "Run repository test suite through governed test action and require it to pass",
+                        "Stage only the proof file",
+                        "Create one local Git commit as the immutable work product",
+                        "Verify result through independent Observation",
+                        "Do not push",
+                        "Do not open a pull request",
+                        "Do not modify any remote repository state"),
+                IntelligenceDepth.DEEP,
+                "durable immutable local git commit and verification proof",
+                List.of(),
+                List.of(
+                        "Do not push",
+                        "Do not open a pull request",
+                        "Do not modify any remote repository state",
+                        "Do not modify any files other than docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md"),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.AUDIT, AnalyticalProtocolType.RISK, AnalyticalProtocolType.PERFORMANCE),
+                DeterministicCapability.NONE, List.of(), List.of(), false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-latest-production-gs2", normalized, List.of("execution.general.workspace"));
+
+        assertEquals(0, calls.get());
+        assertEquals(List.of("general-snapshot", "general-file-write", "general-test", "general-local-commit"),
+                plan.stream().map(ExecutionWorkSpec::stepId).toList());
+        assertTrue(plan.stream().allMatch(step -> step.requiredCapability().equals("execution.general.workspace")));
+        assertTrue(plan.stream().noneMatch(step -> step.requiredCapability().startsWith("UNAVAILABLE:")));
+    }
 
     @Test
     void gatewayDirectorAppointmentBindsWithoutFrontierPlanning() {
