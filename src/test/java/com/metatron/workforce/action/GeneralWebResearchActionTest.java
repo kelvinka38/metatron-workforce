@@ -65,7 +65,7 @@ class GeneralWebResearchActionTest {
                 "WORKER-GENERAL-ENGINEERING", "authorization:test", unused);
         ActionFabric fabric = new ActionFabric(List.of(action));
 
-        ActionFabric.ActionObservation observation = fabric.execute(new ActionFabric.ActionRequest(
+        assertThrows(IllegalArgumentException.class, () -> fabric.execute(new ActionFabric.ActionRequest(
                 GeneralWebResearchAction.ACTION_REF,
                 "WORKER-GENERAL-ENGINEERING",
                 "assignment:test",
@@ -74,9 +74,6 @@ class GeneralWebResearchActionTest {
                 "research-step",
                 "idempotency:test",
                 false,
-                Map.of()));
-
-        assertFalse(observation.success());
-        assertTrue(observation.summary().contains("IllegalArgumentException"));
+                Map.of())));
     }
 }
