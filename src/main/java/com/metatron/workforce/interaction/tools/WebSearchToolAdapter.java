@@ -660,6 +660,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         int fetched = 0;
         for (String ref : refs) {
             if (fetched >= FETCH_RESULT_LIMIT) break;
+            if (!sourceAllowedForQuery(query, ref)) continue;
             String excerpt = fetchReadableExcerpt(ref);
             fetched++;
             if (!excerpt.isBlank() && materiallyRelevant(query, excerpt)) {
