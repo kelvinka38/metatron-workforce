@@ -183,4 +183,4 @@ jobs:
           name: workforce-p10-final-evidence-${{ github.run_id }}
           path: /tmp/p10-final-${{ github.run_id }}/
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 30
