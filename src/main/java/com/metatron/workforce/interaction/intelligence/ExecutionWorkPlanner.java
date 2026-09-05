@@ -120,6 +120,12 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicGeneralEngineeringFallback);
             return deterministicGeneralEngineeringFallback;
         }
+        List<ExecutionWorkSpec> deterministicExternalResearchFallback = deterministicExternalResearchWork(
+                normalized, availableExecutionCapabilities);
+        if (!deterministicExternalResearchFallback.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicExternalResearchFallback);
+            return deterministicExternalResearchFallback;
+        }
         if (providers.isEmpty()) {
             if (!deterministicSingleRepositoryPlan.isEmpty()) {
                 validate(deterministicSingleRepositoryPlan);
@@ -132,6 +138,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             if (!deterministicGeneralEngineeringFallback.isEmpty()) {
                 validate(deterministicGeneralEngineeringFallback);
                 return deterministicGeneralEngineeringFallback;
+            }
+            if (!deterministicExternalResearchFallback.isEmpty()) {
+                validate(deterministicExternalResearchFallback);
+                return deterministicExternalResearchFallback;
             }
             throw new IllegalStateException("execution_planning_provider_required");
         }
@@ -176,6 +186,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         if (!deterministicGeneralEngineeringFallback.isEmpty()) {
             validate(deterministicGeneralEngineeringFallback);
             return deterministicGeneralEngineeringFallback;
+        }
+        if (!deterministicExternalResearchFallback.isEmpty()) {
+            validate(deterministicExternalResearchFallback);
+            return deterministicExternalResearchFallback;
         }
         IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
         failures.forEach(all::addSuppressed);
@@ -491,6 +505,47 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 List.of("all requested repository audits are joined, contradiction candidates are analyzed, and zero mutation is verified"),
                 List.of("durable cross-repository analysis evidence referencing every prerequisite repository audit")));
         return List.copyOf(plan);
+    }
+
+
+    private static List<ExecutionWorkSpec> deterministicExternalResearchWork(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, GENERAL_WORKSPACE)) return List.of();
+        if (!requestedRepositoryTargets(normalized.target()).isEmpty()) return List.of();
+
+        String semantic = (normalized.objective() + " " + normalized.target() + " "
+                + normalized.constraints() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean researchIntent = semantic.contains("research")
+                || semantic.contains("paper") || semantic.contains("publication")
+                || semantic.contains("report") || semantic.contains("standard")
+                || semantic.contains("regulator") || semantic.contains("regulatory")
+                || semantic.contains("evidence") || semantic.contains("source");
+        boolean externalReality = normalized.freshExternalDataRequired()
+                || semantic.contains("new ") || semantic.contains("recent")
+                || semantic.contains("current") || semantic.contains("external")
+                || semantic.contains("web") || semantic.contains("internet")
+                || semantic.contains("source");
+        if (!researchIntent || !externalReality) return List.of();
+
+        List<String> acceptance = new ArrayList<>();
+        acceptance.add("External research deliverable satisfies the normalized Objective: " + normalized.objective());
+        if (!normalized.requestedOutput().isBlank()) {
+            acceptance.add("Requested output is produced: " + normalized.requestedOutput());
+        }
+        List<String> evidence = List.of(
+                "research-action:research.web.search",
+                "externally attributable source URLs support each material finding",
+                "general-work-output contains the completed research deliverable");
+        return List.of(new ExecutionWorkSpec(
+                "general-external-research",
+                normalized.objective(),
+                normalized.target(),
+                GENERAL_WORKSPACE,
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                acceptance,
+                evidence));
     }
 
 
