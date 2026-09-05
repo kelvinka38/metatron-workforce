@@ -303,13 +303,22 @@ jobs:
           docker logs --since 60m "$CID" > "$EVIDENCE/workforce.log" 2>&1 || true
           docker logs --since 60m "$SANDBOX_CID" > "$EVIDENCE/workforce-sandbox.log" 2>&1 || true
           tar -C "$EVIDENCE" -czf "/tmp/workforce-p10-${GITHUB_RUN_ID}.tgz" .
+
+          DURABLE="$HOME/.metatron/acceptance-evidence/p10/$TARGET_SHA/gs12-$GITHUB_RUN_ID"
+          rm -rf "$DURABLE"
+          mkdir -p "$DURABLE"
+          cp -a "$EVIDENCE/." "$DURABLE/"
+          printf 'kind=gs12\ntarget_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
+
           echo 'P10_GOLDEN_SLICE_1=PASS'
           echo 'P10_GOLDEN_SLICE_2_GENERAL_EXECUTION_RUNTIME=PASS'
           echo 'P10_GS2_REMOTE_MUTATION=NONE'
           echo 'P10_L10_VERDICT=NOT_YET_CLAIMED_GS3_GS4_AND_45_GATE_REMAIN'
+          echo "P10_DURABLE_EVIDENCE=$DURABLE"
 
       - name: Upload P10 evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: workforce-p10-production-evidence-${{ github.run_id }}
