@@ -14,7 +14,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     env:
-      OBJECTIVE_ID: objective_5bc55fe07a104710b1ba694f348d7c8d
+      OBJECTIVE_ID: objective_43caf8a918ad4f4fb800cfb213f45292
     steps:
       - name: Inspect live Workforce objective lookup failure
         shell: bash
