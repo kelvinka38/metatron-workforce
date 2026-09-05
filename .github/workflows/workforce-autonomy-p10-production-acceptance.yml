@@ -326,4 +326,4 @@ jobs:
             /tmp/workforce-p10-${{ github.run_id }}/
             /tmp/workforce-p10-${{ github.run_id }}.tgz
           if-no-files-found: warn
-          retention-days: 90
+          retention-days: 14
