@@ -21,6 +21,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
+            Map.entry(GeneralWebResearchAction.ACTION_REF, Map.of(
+                    "inputs", Map.of("query", "required external research/search requirement"),
+                    "purpose", "retrieve current external evidence through the governed web search ToolFabric; read-only and source-attributed")),
             Map.entry("workspace.repository.materialize", Map.of(
                     "inputs", Map.of("repository", "required owner/name", "ref", "optional branch/tag/SHA; default main"),
                     "purpose", "materialize an immutable private/public GitHub repository snapshot into this Objective workspace and create a local Git baseline; safe same-provenance retries reuse the existing materialization")),
@@ -69,6 +72,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     @Override
     public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+        CognitiveWorkerRuntime.Thought researchPrecondition = researchSearchPrecondition(context);
+        if (researchPrecondition != null) return researchPrecondition;
         CognitiveWorkerRuntime.Thought requiredPrecondition = repositoryMaterializationPrecondition(context);
         if (requiredPrecondition != null) return requiredPrecondition;
         CognitiveWorkerRuntime.Thought requiredFileWrite = governedExactShaFileWritePrecondition(context);
@@ -97,6 +102,31 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         String rationale = text(parsed.get("rationale"), "rationale");
         Map<String, String> inputs = stringMap(parsed.get("inputs"));
         return new CognitiveWorkerRuntime.Thought(actionRef, inputs, rationale);
+    }
+
+    static CognitiveWorkerRuntime.Thought researchSearchPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!context.availableActions().contains(GeneralWebResearchAction.ACTION_REF)) return null;
+        if (!requiresExternalResearch(context)) return null;
+        if (successfulAction(context, GeneralWebResearchAction.ACTION_REF)) return null;
+
+        StringBuilder query = new StringBuilder(context.workSpec().objective());
+        if (!context.workSpec().target().isBlank()) {
+            query.append("\nTarget: ").append(context.workSpec().target());
+        }
+        if (!context.workSpec().acceptanceCriteria().isEmpty()) {
+            query.append("\nAcceptance: ").append(String.join("; ", context.workSpec().acceptanceCriteria()));
+        }
+        if (!context.workSpec().evidenceRequirements().isEmpty()) {
+            query.append("\nEvidence requirements: ").append(String.join("; ", context.workSpec().evidenceRequirements()));
+        }
+        String bounded = query.toString();
+        if (bounded.length() > 8_000) bounded = bounded.substring(0, 8_000);
+        return new CognitiveWorkerRuntime.Thought(
+                GeneralWebResearchAction.ACTION_REF,
+                Map.of("query", bounded),
+                "External research Work requires attributable current evidence before synthesis or completion");
     }
 
     static CognitiveWorkerRuntime.Thought repositoryMaterializationPrecondition(
@@ -234,6 +264,25 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("source tree")
                 || text.contains("git rev-parse")
                 || EXACT_GIT_SHA.matcher(text).find();
+    }
+
+    private static boolean requiresExternalResearch(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (!context.availableActions().contains(GeneralWebResearchAction.ACTION_REF)) return false;
+        boolean explicitMarker = context.workSpec().evidenceRequirements().stream()
+                .map(value -> value.toLowerCase(java.util.Locale.ROOT))
+                .anyMatch(value -> value.contains("research.web.search")
+                        || value.contains("requested-capability:") && value.contains("research"));
+        if (explicitMarker) return true;
+        String semantic = workText(context).toLowerCase(java.util.Locale.ROOT);
+        boolean researchIntent = semantic.contains("research") || semantic.contains("paper")
+                || semantic.contains("publication") || semantic.contains("report")
+                || semantic.contains("standard") || semantic.contains("regulator")
+                || semantic.contains("regulatory");
+        boolean externalEvidence = semantic.contains("source") || semantic.contains("evidence")
+                || semantic.contains("external") || semantic.contains("web")
+                || semantic.contains("internet") || semantic.contains("recent")
+                || semantic.contains("current") || semantic.contains("new ");
+        return researchIntent && externalEvidence;
     }
 
     private static String workText(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -404,7 +453,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 FAILED only when the observed state makes bounded recovery impossible.
                 Never treat a successful intermediate action as completion of unrelated acceptance criteria.
                 Repository source identity is proven by workspace.repository.materialize output sourceCommitSha. localBaselineCommitSha and workspace.git.status headSha are local Objective-workspace identities and may intentionally differ from sourceCommitSha.
-                Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"short evidence-based reason"}.
+                For external research/synthesis Work, a COMPLETE summary is the durable Work output, not a status sentence. It MUST contain the requested substantive deliverable, preserve source URLs or canonical identifiers from observations, distinguish evidence from inference, and explicitly state uncertainty. When the Work asks for a Top-N shortlist, enumerate the requested items unless the observed evidence supports an explicit fewer-qualified-items conclusion.
+                Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"evidence-based result or next-step reason"}.
                 """;
         String user = contextPrompt(context) + "\nLATEST_OBSERVATION=" + write(Map.of(
                 "actionRef", observation.actionRef(),
@@ -469,6 +519,13 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(proposed, "proposed");
         if (proposed.decision() != CognitiveWorkerRuntime.Decision.COMPLETE) return proposed;
         List<String> missing = new ArrayList<>();
+        boolean latestResearchPassed = GeneralWebResearchAction.ACTION_REF.equals(observation.actionRef())
+                && observation.success();
+        if (requiresExternalResearch(context)
+                && !latestResearchPassed
+                && !successfulAction(context, GeneralWebResearchAction.ACTION_REF)) {
+            missing.add("successful " + GeneralWebResearchAction.ACTION_REF);
+        }
         boolean latestTestPassed = "workspace.test.run".equals(observation.actionRef()) && observation.success();
         if (requiresGovernedTest(context)
                 && !latestTestPassed
