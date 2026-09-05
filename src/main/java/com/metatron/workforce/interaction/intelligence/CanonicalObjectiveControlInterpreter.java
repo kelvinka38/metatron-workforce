@@ -17,11 +17,13 @@ import java.util.regex.Pattern;
  */
 public final class CanonicalObjectiveControlInterpreter {
     private static final String PREFIX_OBJECTIVE = "take ownership of one objective:";
-    private static final String PREFIX_MUTATION = "take ownership of one governed mutation objective";
+    private static final Pattern GOVERNED_OBJECTIVE = Pattern.compile(
+            "^take ownership of one governed(?: [a-z0-9-]+){1,8} objective(?::|\\s).*");
+    private static final String NAME = "[A-Za-z0-9_.-]*[A-Za-z0-9_-]";
     private static final Pattern SCOPED_REPOSITORY = Pattern.compile(
-            "(?i)\\b(?:against|of|repository|repositories)\\s+(?:https://github\\.com/)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)");
+            "(?i)\\b(?:against|of|repository|repositories)\\s+(?:https://github\\.com/)?(" + NAME + "/" + NAME + ")(?:\\.git)?(?=$|[,.;:)\\s])");
     private static final Pattern REPOSITORY = Pattern.compile(
-            "(?i)(?:https://github\\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:\\.git)?");
+            "(?i)(?:https://github\\.com/)?(" + NAME + ")/(" + NAME + ")(?:\\.git)?(?=$|[,.;:)\\s])");
     private static final Pattern DO_NOT = Pattern.compile("(?i)\\bdo\\s+not\\s+([^.;]+)");
 
     private CanonicalObjectiveControlInterpreter() {}
@@ -30,8 +32,7 @@ public final class CanonicalObjectiveControlInterpreter {
         if (humanText == null) return false;
         String normalized = humanText.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
         return normalized.startsWith(PREFIX_OBJECTIVE)
-                || normalized.startsWith(PREFIX_MUTATION + ":")
-                || normalized.startsWith(PREFIX_MUTATION + " ");
+                || GOVERNED_OBJECTIVE.matcher(normalized).matches();
     }
 
     public static Optional<NormalizedRequest> interpret(String humanText) {
