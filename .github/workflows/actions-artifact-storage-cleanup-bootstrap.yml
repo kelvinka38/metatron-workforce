@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           
-          DEPLOYED_SHA="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?status=success&per_page=100" --jq '.workflow_runs[] | select(.name=="Highway Production Deploy" and .conclusion=="success") | .head_sha' | head -n 1)"
+          DEPLOYED_SHA="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?status=success&per_page=100" --jq '[.workflow_runs[] | select(.name=="Highway Production Deploy" and .conclusion=="success")][0].head_sha')"
           [[ "$DEPLOYED_SHA" =~ ^[0-9a-f]{40}$ ]]
           echo "DEPLOYED_SHA=$DEPLOYED_SHA"
           
