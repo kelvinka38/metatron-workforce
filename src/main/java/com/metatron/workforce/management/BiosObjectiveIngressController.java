@@ -55,10 +55,13 @@ public final class BiosObjectiveIngressController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "evidenceRequirements required");
         }
 
+        String requestedOutput = "Evidence-backed terminal Objective outcome"
+                + "\nAcceptance criteria: " + String.join("; ", command.acceptanceCriteria())
+                + "\nEvidence requirements: " + String.join("; ", command.evidenceRequirements());
         NormalizedRequest request = new NormalizedRequest(
                 command.desiredOutcome(), command.target() == null ? "" : command.target(),
                 command.constraints() == null ? List.of() : command.constraints(), IntelligenceDepth.ANALYZE,
-                "Evidence-backed terminal Objective outcome", List.of(),
+                requestedOutput, List.of(),
                 command.prohibitions() == null ? List.of() : command.prohibitions(), "", "",
                 IntelligenceMode.EXECUTION, CollaborationMode.SINGLE, List.of(),
                 DeterministicCapability.NONE, List.of(), List.of(), false, null, LlmProvider.OPENAI, "");
