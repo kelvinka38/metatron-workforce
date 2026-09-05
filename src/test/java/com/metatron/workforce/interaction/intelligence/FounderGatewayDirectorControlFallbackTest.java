@@ -58,6 +58,54 @@ final class FounderGatewayDirectorControlFallbackTest {
         assertNull(request.semanticProvider());
     }
 
+
+    @Test
+    void canonicalFounderControlPreemptsConfiguredSemanticProvider() {
+        AtomicReference<NormalizedRequest> captured = new AtomicReference<>();
+        ExecutionObjectiveHandoff handoff = new ExecutionObjectiveHandoff() {
+            @Override
+            public HandoffReceipt submit(
+                    String humanId,
+                    String organizationContextId,
+                    String caseId,
+                    String conversationId,
+                    String externalMessageReference,
+                    String channel,
+                    NormalizedRequest request) {
+                captured.set(request);
+                return new HandoffReceipt(
+                        true,
+                        "objective:gateway-director-preempt",
+                        "worker-head",
+                        "queue:gateway-director-preempt",
+                        "ACCEPTED",
+                        "NOT_YET_ADMITTED",
+                        "accepted");
+            }
+        };
+
+        MetatronIntelligenceResponder responder = new MetatronIntelligenceResponder(
+                "configured-but-must-not-be-called", "", "", "OPENAI",
+                "gpt-4.1-mini", "", "", new ObjectMapper(),
+                "", "", new InMemoryIntelligenceCaseStore(), handoff);
+
+        String answer = responder.respond(
+                "human-primary",
+                "Hey, create for me a workforce, role gateway head",
+                "telegram:update:preempt",
+                "telegram",
+                "conversation:human:human-primary",
+                "organization:metatron",
+                "");
+
+        assertTrue(answer.startsWith("METATRON WORK ACCEPTED"));
+        assertTrue(answer.contains("objective_id=objective:gateway-director-preempt"));
+        NormalizedRequest request = captured.get();
+        assertEquals(IntelligenceMode.EXECUTION, request.mode());
+        assertEquals("ROLE-HEAD-OF-GATEWAY", request.target());
+        assertNull(request.semanticProvider());
+    }
+
     @Test
     void sameProviderFreeControlPhraseIsNotAvailableToNonFounderIdentity() {
         MetatronIntelligenceResponder responder = new MetatronIntelligenceResponder(
