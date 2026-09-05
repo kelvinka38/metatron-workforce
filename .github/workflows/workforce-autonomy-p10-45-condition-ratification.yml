@@ -143,24 +143,43 @@ jobs:
           set -euo pipefail
           E=/tmp/p10-ratification-${GITHUB_RUN_ID}
           mkdir -p "$E/gs12" "$E/gs34"
-          download_artifact() {
-            local run_id="$1" expected_prefix="$2" dest="$3"
-            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
-              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" > "$E/artifacts-$run_id.json"
-            artifact_id=$(python3 - "$E/artifacts-$run_id.json" "$expected_prefix" <<'PY'
+          load_evidence() {
+            local run_id="$1" expected_prefix="$2" dest="$3" kind="$4"
+            local listing="$E/artifacts-$run_id.json"
+            local artifact_id=''
+            if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" > "$listing"; then
+              artifact_id=$(python3 - "$listing" "$expected_prefix" <<'PY'
           import json,sys
           data=json.load(open(sys.argv[1])); prefix=sys.argv[2]
           rows=[a for a in data.get('artifacts',[]) if not a.get('expired') and str(a.get('name','')).startswith(prefix)]
-          if len(rows)!=1: raise SystemExit(f'EXPECTED_ONE_ARTIFACT prefix={prefix} found={len(rows)}')
-          print(rows[0]['id'])
+          if len(rows)==1:
+              print(rows[0]['id'])
           PY
-            )
-            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
-              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" -o "$E/$run_id.zip"
-            python3 -m zipfile -e "$E/$run_id.zip" "$dest"
+              )
+            fi
+            if [ -n "$artifact_id" ]; then
+              if curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" -o "$E/$run_id.zip" \
+                && python3 -m zipfile -e "$E/$run_id.zip" "$dest"; then
+                echo "P10_EVIDENCE_SOURCE kind=$kind run_id=$run_id source=github-artifact"
+                return 0
+              fi
+              rm -rf "$dest"
+              mkdir -p "$dest"
+            fi
+
+            local durable="$HOME/.metatron/acceptance-evidence/p10/$TARGET_SHA/$kind-$run_id"
+            test -d "$durable"
+            test -f "$durable/_index.txt"
+            grep -Fx "kind=$kind" "$durable/_index.txt" >/dev/null
+            grep -Fx "target_sha=$TARGET_SHA" "$durable/_index.txt" >/dev/null
+            grep -Fx "run_id=$run_id" "$durable/_index.txt" >/dev/null
+            cp -a "$durable/." "$dest/"
+            echo "P10_EVIDENCE_SOURCE kind=$kind run_id=$run_id source=production-runner-durable-store"
           }
-          download_artifact "$GS12_RUN_ID" 'workforce-p10-production-evidence-' "$E/gs12"
-          download_artifact "$GS34_RUN_ID" 'workforce-p10-gs34-production-evidence-' "$E/gs34"
+          load_evidence "$GS12_RUN_ID" 'workforce-p10-production-evidence-' "$E/gs12" gs12
+          load_evidence "$GS34_RUN_ID" 'workforce-p10-gs34-production-evidence-' "$E/gs34" gs34
           echo "EVIDENCE_ROOT=$E" >> "$GITHUB_ENV"
 
       - name: Execute exact-SHA institutional invariant suite
@@ -207,8 +226,17 @@ jobs:
           print('P10_FINAL_VERDICT=ACCEPTED_L10')
           PY
 
+          DURABLE="$HOME/.metatron/acceptance-evidence/p10/$TARGET_SHA/ratification-$GITHUB_RUN_ID"
+          rm -rf "$DURABLE"
+          mkdir -p "$DURABLE"
+          cp -a "$EVIDENCE_ROOT/." "$DURABLE/"
+          cp -a build/test-results/test "$DURABLE/test-results"
+          printf 'kind=ratification\ntarget_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
+          echo "P10_RATIFICATION_DURABLE_EVIDENCE=$DURABLE"
+
       - name: Upload final P10 ratification evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: workforce-p10-accepted-l10-evidence-${{ github.run_id }}

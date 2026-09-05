@@ -154,8 +154,23 @@ jobs:
           echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
           echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=PASS'
           echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2_AND_POINT5=PASS'
+      - name: Persist highway evidence locally
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
+          DURABLE="$HOME/.metatron/acceptance-evidence/highway/$TARGET_SHA/$GITHUB_RUN_ID"
+          rm -rf "$DURABLE"
+          mkdir -p "$DURABLE"
+          if [ -d "$ROOT" ]; then cp -a "$ROOT/." "$DURABLE/"; fi
+          printf 'target_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
+          echo "HIGHWAY_DURABLE_EVIDENCE=$DURABLE"
+
       - name: Upload highway evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: production-acceptance-highway-${{ github.run_id }}
