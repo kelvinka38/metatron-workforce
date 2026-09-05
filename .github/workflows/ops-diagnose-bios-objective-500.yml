@@ -1,0 +1,51 @@
+name: Diagnose BIOS Objective 500
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-diagnose-bios-objective-500.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    env:
+      OBJECTIVE_ID: objective_f63706b177694898a33b9d436184860b
+    steps:
+      - name: Inspect live Workforce objective lookup failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== WORKFORCE HEALTH ==='
+          curl -sS -i http://127.0.0.1:8080/actuator/health | tail -20 || true
+
+          echo '=== LIST OBJECTIVES ==='
+          curl -sS -o /tmp/objectives.json -w 'HTTP=%{http_code}\n' http://127.0.0.1:8080/workforce/management/objectives || true
+          python3 - <<'PY'
+          import json
+          try:
+              data=json.load(open('/tmp/objectives.json'))
+          except Exception as e:
+              print('OBJECTIVE_LIST_JSON_ERROR='+type(e).__name__)
+              raise SystemExit(0)
+          print('OBJECTIVE_LIST_COUNT='+str(len(data) if isinstance(data,list) else -1))
+          for item in data if isinstance(data,list) else []:
+              obj=(item or {}).get('objective') or {}
+              oid=obj.get('objectiveId')
+              if oid:
+                  print('OBJECTIVE_ID='+oid+' STATUS='+str(obj.get('status'))+' OWNER='+str(obj.get('ownerWorkerId')))
+          PY
+
+          echo '=== TARGET OBJECTIVE ==='
+          curl -sS -o /tmp/objective-target.txt -w 'HTTP=%{http_code}\n' "http://127.0.0.1:8080/workforce/management/objectives/$OBJECTIVE_ID" || true
+          head -c 4000 /tmp/objective-target.txt || true
+          echo
+
+          echo '=== WORKFORCE LOGS FILTERED ==='
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          docker logs --since 15m "$CID" 2>&1 | grep -E "$OBJECTIVE_ID|Exception|ERROR|IllegalArgument|objective" | tail -300 || true
