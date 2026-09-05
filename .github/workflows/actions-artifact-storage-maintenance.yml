@@ -95,10 +95,20 @@ jobs:
               continue
             fi
           
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
-            deleted_bytes=$((deleted_bytes + size))
-            deleted_count=$((deleted_count + 1))
-            echo "DELETED id=$id bytes=$size sha=$sha name=$name"
+            err_file="$(mktemp)"
+            if gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id" 2>"$err_file"; then
+              deleted_bytes=$((deleted_bytes + size))
+              deleted_count=$((deleted_count + 1))
+              echo "DELETED id=$id bytes=$size sha=$sha name=$name"
+            elif grep -q 'HTTP 404' "$err_file"; then
+              deleted_bytes=$((deleted_bytes + size))
+              deleted_count=$((deleted_count + 1))
+              echo "ALREADY_DELETED id=$id bytes=$size sha=$sha name=$name"
+            else
+              cat "$err_file" >&2
+              exit 1
+            fi
+            rm -f "$err_file"
           done < "$ARTIFACTS"
           
           after_estimate=$((before_bytes - deleted_bytes))
