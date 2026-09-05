@@ -105,4 +105,4 @@ jobs:
           name: g12-production-readiness-evidence-${{ env.TARGET_SHA }}
           path: build/g12-evidence
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14
