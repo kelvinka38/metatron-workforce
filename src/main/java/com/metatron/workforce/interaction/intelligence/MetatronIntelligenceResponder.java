@@ -170,27 +170,26 @@ public final class MetatronIntelligenceResponder {
                     .filter(item -> item.status() != IntelligenceCaseStatus.RESOLVED)
                     .orElse(null);
             NormalizedRequest normalized;
-            boolean boundedFounderControlFallback = false;
+            boolean deterministicControl = false;
+            String deterministicControlRoute = "";
 
+            var explicitObjectiveControl = CanonicalObjectiveControlInterpreter.interpret(text);
             var boundedFounderControl = BoundedFounderControlInterpreter.interpret(humanId, text);
-            if (boundedFounderControl.isPresent()) {
+            if (explicitObjectiveControl.isPresent()) {
+                normalized = IntelligenceDepthApplication.apply(explicitObjectiveControl.orElseThrow(), depthContract);
+                deterministicControl = true;
+                deterministicControlRoute = "deterministic-explicit-objective-control";
+                LOG.info("explicit_objective_control_preempted_semantic human_id={} channel={}", humanId, channel);
+            } else if (boundedFounderControl.isPresent()) {
                 normalized = IntelligenceDepthApplication.apply(boundedFounderControl.orElseThrow(), depthContract);
-                boundedFounderControlFallback = true;
+                deterministicControl = true;
+                deterministicControlRoute = "deterministic-founder-control";
                 LOG.info("bounded_founder_control_preempted_semantic human_id={} channel={}", humanId, channel);
             } else {
-                try {
-                    normalized = IntelligenceDepthApplication.apply(
-                            semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
-                } catch (RuntimeException semanticFailure) {
-                    var fallback = BoundedFounderControlInterpreter.interpret(humanId, text);
-                    if (fallback.isEmpty()) throw semanticFailure;
-                    normalized = IntelligenceDepthApplication.apply(fallback.orElseThrow(), depthContract);
-                    boundedFounderControlFallback = true;
-                    LOG.warn("semantic_provider_exhausted_bounded_founder_control human_id={} channel={} reason={}",
-                            humanId, channel, semanticFailure.getMessage());
-                }
+                normalized = IntelligenceDepthApplication.apply(
+                        semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
             }
-            if (!boundedFounderControlFallback
+            if (!deterministicControl
                     && activeCase != null && normalized.caseContinuity() == CaseContinuity.NEW) {
                 // The contextual pass is allowed to decide continuity, but once it declares a NEW bounded Case,
                 // stale Case/history content must not influence the Objective itself. Re-normalize from the
@@ -198,8 +197,8 @@ public final class MetatronIntelligenceResponder {
                 normalized = IntelligenceDepthApplication.apply(
                         semanticInterpreter.interpret(text, "", channel, (IntelligenceCase) null), depthContract);
             }
-            route = boundedFounderControlFallback
-                    ? "deterministic-founder-control-fallback"
+            route = deterministicControl
+                    ? deterministicControlRoute
                     : "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
             if (!normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
