@@ -41,6 +41,9 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
     public Optional<ObservationReport> observe(ObservationRequirement requirement,
                                                List<String> executionEvidenceReferences,
                                                Instant at) {
+        if (researchRequirement(requirement)) {
+            return Optional.of(observeResearch(requirement, executionEvidenceReferences, at));
+        }
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(
                 requirement.objectiveId(), GeneralWorkspaceAutonomousCapability.WORKER_ID);
         List<String> paths = workspaces.list(workspace, "").stream()
@@ -152,6 +155,54 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                 "Durable Objective workspace contains independently observable work product",
                 "independent-workspace-state-inspection", evidence,
                 ObservationReport.Quality.MEDIUM, ObservationReport.CriterionResult.PASS));
+    }
+
+    private static boolean researchRequirement(ObservationRequirement requirement) {
+        String requested = requestedCapability(requirement.evidenceRequirements()).toLowerCase(Locale.ROOT);
+        if (requested.contains("research") || requested.contains("web.search")
+                || requested.contains("internet.search")) return true;
+        return requirement.evidenceRequirements().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .anyMatch(value -> value.contains("research-action:research.web.search"));
+    }
+
+    private static ObservationReport observeResearch(ObservationRequirement requirement,
+                                                     List<String> executionEvidenceReferences,
+                                                     Instant at) {
+        List<String> refs = executionEvidenceReferences == null ? List.of() : executionEvidenceReferences;
+        List<String> sources = refs.stream()
+                .filter(value -> value != null && (value.startsWith("https://") || value.startsWith("http://")))
+                .distinct()
+                .toList();
+        String output = refs.stream()
+                .filter(value -> value != null && value.startsWith("general-work-output:"))
+                .map(value -> value.substring("general-work-output:".length()).trim())
+                .filter(value -> !value.isBlank())
+                .findFirst().orElse("");
+
+        List<String> evidence = new ArrayList<>();
+        evidence.add("observation-research-source-count:" + sources.size());
+        sources.stream().limit(20).forEach(source -> evidence.add("observation-research-source:" + source));
+        evidence.add("observation-research-output-present:" + !output.isBlank()
+                + ":chars=" + output.length());
+
+        if (sources.isEmpty()) {
+            return report(requirement, at,
+                    "Research Work produced no externally attributable source reference",
+                    "independent-research-evidence-inspection", evidence,
+                    ObservationReport.Quality.HIGH, ObservationReport.CriterionResult.FAIL);
+        }
+        if (output.isBlank()) {
+            return report(requirement, at,
+                    "Research sources exist but the substantive Work output was not preserved",
+                    "independent-research-output-inspection", evidence,
+                    ObservationReport.Quality.HIGH, ObservationReport.CriterionResult.FAIL);
+        }
+        return report(requirement, at,
+                "Research Work preserves substantive output with " + sources.size()
+                        + " externally attributable source reference(s)",
+                "independent-research-evidence-inspection", evidence,
+                ObservationReport.Quality.HIGH, ObservationReport.CriterionResult.PASS);
     }
 
     private VerificationCommand detectVerification(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,

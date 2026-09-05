@@ -25,7 +25,9 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
 
     private static final Set<String> COMPOSABLE_TOKENS = Set.of(
             "repository", "repo", "file", "filesystem", "workspace", "shell", "process",
-            "git", "build", "test", "code", "source", "patch", "artifact", "compile");
+            "git", "build", "test", "code", "source", "patch", "artifact", "compile",
+            "research", "web", "internet", "search", "evidence", "publication", "paper",
+            "report", "standard", "regulator", "regulatory");
 
     private final ExecutionPlanProposalService delegate;
 

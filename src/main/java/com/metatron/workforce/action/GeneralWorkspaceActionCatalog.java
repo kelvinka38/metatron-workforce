@@ -42,6 +42,7 @@ public final class GeneralWorkspaceActionCatalog {
         WorkerRuntimeProfileBindingService.ToolProfile profile = profiles.requireBinding(workerId).profile();
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(objectiveId, workerId);
         List<ActionFabric.Action> actions = new ArrayList<>();
+        add(profile, actions, new GeneralWebResearchAction(workerId, authorizationReference));
         add(profile, actions, repositoryMaterialize(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, fileRead(workerId, authorizationReference, workspace));
         add(profile, actions, fileList(workerId, authorizationReference, workspace));
