@@ -31,20 +31,58 @@ jobs:
           CORR="mb-live-$(date +%s)"
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          test -r /opt/metatron/bios/.env
-          set -a; source /opt/metatron/bios/.env; set +a
-          test -n "${BIOS_API_KEY:-}"
+          BIOS_ENV=''
+          if [ -r /opt/metatron/bios/.env ]; then
+            BIOS_ENV=/opt/metatron/bios/.env
+          elif [ -r "$HOME/.metatron/bios/.env" ]; then
+            BIOS_ENV="$HOME/.metatron/bios/.env"
+          fi
+          if [ -z "$BIOS_ENV" ]; then
+            echo 'BIOS_ENV=ABSENT'
+            echo "HOME=$HOME"
+            ls -ld /opt/metatron /opt/metatron/bios "$HOME/.metatron" "$HOME/.metatron/bios" 2>/dev/null || true
+            exit 1
+          fi
+          echo "BIOS_ENV_SOURCE=$BIOS_ENV"
+          set -a; source "$BIOS_ENV"; set +a
+          if [ -z "${BIOS_API_KEY:-}" ]; then
+            echo 'BIOS_API_KEY=ABSENT'
+            exit 1
+          fi
+          echo 'BIOS_API_KEY=PRESENT'
 
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
+          if [ -z "$CID" ]; then
+            echo 'WORKFORCE_CONTAINER=ABSENT'
+            docker ps -a --format '{{.Names}} {{.Status}}' | grep -E 'workforce|bios' || true
+            exit 1
+          fi
+          echo "WORKFORCE_CONTAINER=$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$EXPECTED_WORKFORCE_SHA"
-          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+          echo "WORKFORCE_DEPLOYED_SHA=${DEPLOYED_SHA:-ABSENT}"
+          if [ "$DEPLOYED_SHA" != "$EXPECTED_WORKFORCE_SHA" ]; then
+            echo "WORKFORCE_SHA_MISMATCH expected=$EXPECTED_WORKFORCE_SHA actual=${DEPLOYED_SHA:-ABSENT}"
+            exit 1
+          fi
+          WORKFORCE_HEALTH=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+          echo "WORKFORCE_CONTAINER_HEALTH=$WORKFORCE_HEALTH"
+          test "$WORKFORCE_HEALTH" = healthy
           echo "WORKFORCE_EXACT_SHA=$DEPLOYED_SHA"
 
-          curl -fsS "$BIOS_BASE/health" >/tmp/mb-bios-health.json
-          curl -fsS -H "X-BIOS-API-Key: $BIOS_API_KEY" "$BIOS_BASE/health/ready" >/tmp/mb-bios-ready.json
-          curl -fsS "$WF_BASE/actuator/health" >/tmp/mb-workforce-health.json
+          BIOS_HTTP=$(curl -sS -o /tmp/mb-bios-health.json -w '%{http_code}' --connect-timeout 3 --max-time 10 "$BIOS_BASE/health" || true)
+          echo "BIOS_HEALTH_HTTP=$BIOS_HTTP"
+          test "$BIOS_HTTP" = 200
+          cat /tmp/mb-bios-health.json; echo
+
+          BIOS_READY_HTTP=$(curl -sS -o /tmp/mb-bios-ready.json -w '%{http_code}' --connect-timeout 3 --max-time 10 -H "X-BIOS-API-Key: $BIOS_API_KEY" "$BIOS_BASE/health/ready" || true)
+          echo "BIOS_READY_HTTP=$BIOS_READY_HTTP"
+          test "$BIOS_READY_HTTP" = 200
+          cat /tmp/mb-bios-ready.json; echo
+
+          WF_HEALTH_HTTP=$(curl -sS -o /tmp/mb-workforce-health.json -w '%{http_code}' --connect-timeout 3 --max-time 10 "$WF_BASE/actuator/health" || true)
+          echo "WORKFORCE_HEALTH_HTTP=$WF_HEALTH_HTTP"
+          test "$WF_HEALTH_HTTP" = 200
+          cat /tmp/mb-workforce-health.json; echo
           echo 'BIOS_AND_WORKFORCE_INFRA_HEALTH=PASS'
 
           envelope () {
