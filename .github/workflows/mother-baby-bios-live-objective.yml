@@ -19,7 +19,7 @@ jobs:
     environment: production
     timeout-minutes: 12
     env:
-      EXPECTED_WORKFORCE_SHA: a491fe6f7a58b8810d6ba83553219aa396210976
+      EXPECTED_WORKFORCE_SHA: 308b83ac7028a4be7f695f4a6b7e860bbcb4703e
     steps:
       - name: Execute real Mother and Baby research through BIOS to Workforce
         shell: bash
@@ -178,29 +178,50 @@ jobs:
           JSON
           envelope "admit-$CORR" /tmp/mb-admit-payload.json >/tmp/mb-admit-request.json
           curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/admit"             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/mb-admit-request.json >/tmp/mb-admit-response.json
-          python3 - <<'PY'
-          import json
+          WORKFORCE_OBJECTIVE_ID=$(python3 - "$OBJECTIVE_ID" <<'PY'
+          import json,sys
+          expected=sys.argv[1]
           d=json.load(open('/tmp/mb-admit-response.json'))
           assert d['status']=='OK',d
           wf=d['payload']['workforce']
           assert wf.get('accepted') is True,wf
-          print('BIOS_TO_WORKFORCE_ADMISSION=PASS')
+          actual=str(wf.get('objectiveId') or '')
+          assert actual==expected,(expected,actual,wf)
+          print(actual)
+          PY
+          )
+          echo 'BIOS_TO_WORKFORCE_ADMISSION=PASS'
+          echo "WORKFORCE_OBJECTIVE_ID=$WORKFORCE_OBJECTIVE_ID"
+          python3 - <<'PY'
+          import json
+          wf=json.load(open('/tmp/mb-admit-response.json'))['payload']['workforce']
           print('WORKFORCE_OWNER='+str(wf.get('ownerWorker')))
           print('WORKFORCE_ADMITTED_STATUS='+str(wf.get('objectiveStatus')))
           PY
 
           TERMINAL=''
+          LOOKUP_FAILURES=0
           for i in $(seq 1 180); do
-            curl -fsS "$WF_BASE/workforce/management/objectives/$OBJECTIVE_ID" >/tmp/mb-workforce-view.json || true
+            LOOKUP_HTTP=$(curl -sS -o /tmp/mb-workforce-view.json -w '%{http_code}' "$WF_BASE/workforce/management/objectives/$WORKFORCE_OBJECTIVE_ID" || true)
+            if [ "$LOOKUP_HTTP" != 200 ]; then
+              LOOKUP_FAILURES=$((LOOKUP_FAILURES + 1))
+              echo "WORKFORCE_OBJECTIVE_LOOKUP_HTTP=$LOOKUP_HTTP ATTEMPT=$i"
+              if [ "$LOOKUP_FAILURES" -ge 5 ]; then
+                head -c 2000 /tmp/mb-workforce-view.json || true
+                echo
+                exit 1
+              fi
+              sleep 2
+              continue
+            fi
+            LOOKUP_FAILURES=0
             TERMINAL=$(python3 - <<'PY'
           import json
-          try:
-              d=json.load(open('/tmp/mb-workforce-view.json'))
-              print((d.get('objective') or {}).get('status',''))
-          except Exception:
-              print('')
+          d=json.load(open('/tmp/mb-workforce-view.json'))
+          print((d.get('objective') or {}).get('status',''))
           PY
             )
+            echo "WORKFORCE_OBJECTIVE_STATUS=$TERMINAL ATTEMPT=$i"
             case "$TERMINAL" in
               COMPLETED|DELIVERED|BLOCKED|ESCALATED|CANCELLED|FAILED) break ;;
             esac
