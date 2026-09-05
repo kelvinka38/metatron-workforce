@@ -20,7 +20,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for RUN_ID in 33958839799 33958839849 33958845900; do
+          for RUN_ID in 33959524388 33959524398 33959530442; do
             STATUS=$(curl -sS -o "/tmp/run-$RUN_ID.json" -w '%{http_code}'               -H "Authorization: Bearer $GH_TOKEN"               -H 'Accept: application/vnd.github+json'               -H 'X-GitHub-Api-Version: 2022-11-28'               "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")
             test "$STATUS" = 200
             STATE=$(python3 - "$RUN_ID" <<'PY'
