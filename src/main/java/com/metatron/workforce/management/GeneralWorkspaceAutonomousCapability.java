@@ -95,6 +95,9 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 contextualBrain);
 
         List<String> evidence = new ArrayList<>(outcome.evidenceReferences());
+        if (outcome.success()) {
+            evidence.add("general-work-output:" + outcome.summary());
+        }
         evidence.addAll(brain.evidenceReferences());
         evidence.add("general-action-composition:capability=" + request.workSpec().requiredCapability()
                 + ":workspace=" + workspace.workspaceRef()
