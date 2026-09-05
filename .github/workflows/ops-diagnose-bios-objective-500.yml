@@ -14,7 +14,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     env:
-      OBJECTIVE_ID: objective_f63706b177694898a33b9d436184860b
+      OBJECTIVE_ID: objective_5bc55fe07a104710b1ba694f348d7c8d
     steps:
       - name: Inspect live Workforce objective lookup failure
         shell: bash
@@ -67,6 +67,11 @@ jobs:
                   print('BIOS_TO_WORKFORCE_ERROR='+path+':'+repr(e))
           PY
           fi
+
+          echo '=== COGNITIVE ACTION JOURNAL ==='
+          SAFE_OBJECTIVE=$(printf '%s' "$OBJECTIVE_ID" | sed 's#[\\/:*?"<>|]#_#g')
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          docker exec "$CID" sh -c "cat /var/lib/metatron-workforce/runtime-evidence/action-journal/$SAFE_OBJECTIVE/general-external-research.jsonl 2>/dev/null" | tail -20 || true
 
           echo '=== WORKFORCE LOGS FILTERED ==='
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
