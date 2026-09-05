@@ -116,6 +116,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
         List<ExecutionWorkSpec> deterministicGeneralEngineeringFallback = deterministicGeneralEngineeringWork(
                 normalized, availableExecutionCapabilities);
+        if (!deterministicGeneralEngineeringFallback.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicGeneralEngineeringFallback);
+            return deterministicGeneralEngineeringFallback;
+        }
         if (providers.isEmpty()) {
             if (!deterministicSingleRepositoryPlan.isEmpty()) {
                 validate(deterministicSingleRepositoryPlan);
