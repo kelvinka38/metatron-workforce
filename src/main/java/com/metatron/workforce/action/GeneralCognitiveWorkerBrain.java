@@ -9,6 +9,7 @@ import com.metatron.workforce.interaction.llm.LlmResponse;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,6 +20,10 @@ import java.util.regex.Pattern;
 public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime.Brain {
     private static final Pattern OWNER_REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
     private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
+    private static final Pattern RESEARCH_TOP_N = Pattern.compile("(?i)\\b(?:top\\s*|exactly\\s+)(\\d{1,2})\\b");
+    private static final Pattern RESEARCH_URL = Pattern.compile("https?://[^\\s)\\]}>;,]+");
+    private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
+    private static final Pattern RESEARCH_DECISION = Pattern.compile("(?i)\\b(?:KEEP|TEST|CHANGE|REJECT)\\b");
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
             Map.entry(GeneralWebResearchAction.ACTION_REF, Map.of(
@@ -115,12 +120,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (!context.workSpec().target().isBlank()) {
             query.append("\nTarget: ").append(context.workSpec().target());
         }
-        if (!context.workSpec().acceptanceCriteria().isEmpty()) {
-            query.append("\nAcceptance: ").append(String.join("; ", context.workSpec().acceptanceCriteria()));
-        }
-        if (!context.workSpec().evidenceRequirements().isEmpty()) {
-            query.append("\nEvidence requirements: ").append(String.join("; ", context.workSpec().evidenceRequirements()));
-        }
+        query.append("\nUse focused search terms. Prefer primary regulators, standards bodies, peer-reviewed papers,")
+                .append(" or authoritative substantive research over generic encyclopedia, promotional, SEO, or travel content.");
         String bounded = query.toString();
         if (bounded.length() > 8_000) bounded = bounded.substring(0, 8_000);
         return new CognitiveWorkerRuntime.Thought(
@@ -264,6 +265,78 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("source tree")
                 || text.contains("git rev-parse")
                 || EXACT_GIT_SHA.matcher(text).find();
+    }
+
+    static List<String> researchCompletionQualityProblems(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            ActionFabric.ActionObservation latest,
+            String summary) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(latest, "latest");
+        int requested = requestedResearchItemCount(context);
+        if (requested < 2) return List.of();
+
+        LinkedHashSet<String> observedUrls = new LinkedHashSet<>();
+        for (CognitiveWorkerRuntime.Cycle cycle : context.history()) {
+            collectHttpEvidence(observedUrls, cycle.observation().evidenceReferences());
+        }
+        collectHttpEvidence(observedUrls, latest.evidenceReferences());
+
+        LinkedHashSet<String> summaryUrls = new LinkedHashSet<>();
+        Matcher urls = RESEARCH_URL.matcher(summary == null ? "" : summary);
+        while (urls.find()) summaryUrls.add(urls.group());
+
+        int matchedSummaryUrls = 0;
+        for (String url : summaryUrls) if (observedUrls.contains(url)) matchedSummaryUrls++;
+
+        int itemCount = countMatches(RESEARCH_ITEM, summary);
+        int decisionCount = countMatches(RESEARCH_DECISION, summary);
+        List<String> problems = new ArrayList<>();
+        if (observedUrls.size() < requested) {
+            problems.add("at least " + requested + " distinct attributable research sources (observed "
+                    + observedUrls.size() + ")");
+        }
+        if (itemCount < requested) {
+            problems.add("an enumerated " + requested + "-item substantive deliverable (found " + itemCount + " items)");
+        }
+        if (matchedSummaryUrls < requested) {
+            problems.add(requested + " observed source URLs embedded in the deliverable (found "
+                    + matchedSummaryUrls + ")");
+        }
+        String work = workText(context).toLowerCase(java.util.Locale.ROOT);
+        if ((work.contains("keep") || work.contains("test") || work.contains("change") || work.contains("reject"))
+                && decisionCount < requested) {
+            problems.add(requested + " explicit KEEP/TEST/CHANGE/REJECT decisions (found " + decisionCount + ")");
+        }
+        return List.copyOf(problems);
+    }
+
+    static int requestedResearchItemCount(CognitiveWorkerRuntime.CognitiveContext context) {
+        Matcher matcher = RESEARCH_TOP_N.matcher(workText(context));
+        int requested = 0;
+        while (matcher.find()) {
+            try {
+                int value = Integer.parseInt(matcher.group(1));
+                if (value > requested && value <= 50) requested = value;
+            } catch (NumberFormatException ignored) {
+                // Ignore malformed count and leave completion to normal acceptance reasoning.
+            }
+        }
+        return requested;
+    }
+
+    private static int countMatches(Pattern pattern, String value) {
+        Matcher matcher = pattern.matcher(value == null ? "" : value);
+        int count = 0;
+        while (matcher.find()) count++;
+        return count;
+    }
+
+    private static void collectHttpEvidence(LinkedHashSet<String> out, List<String> refs) {
+        if (refs == null) return;
+        for (String ref : refs) {
+            if (ref != null && (ref.startsWith("https://") || ref.startsWith("http://"))) out.add(ref.trim());
+        }
     }
 
     private static boolean requiresExternalResearch(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -453,7 +526,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 FAILED only when the observed state makes bounded recovery impossible.
                 Never treat a successful intermediate action as completion of unrelated acceptance criteria.
                 Repository source identity is proven by workspace.repository.materialize output sourceCommitSha. localBaselineCommitSha and workspace.git.status headSha are local Objective-workspace identities and may intentionally differ from sourceCommitSha.
-                For external research/synthesis Work, a COMPLETE summary is the durable Work output, not a status sentence. It MUST contain the requested substantive deliverable, preserve source URLs or canonical identifiers from observations, distinguish evidence from inference, and explicitly state uncertainty. When the Work asks for a Top-N shortlist, enumerate the requested items unless the observed evidence supports an explicit fewer-qualified-items conclusion.
+                For external research/synthesis Work, a COMPLETE summary is the durable Work output, not a status sentence. It MUST contain the requested substantive deliverable, preserve source URLs or canonical identifiers from observations, distinguish evidence from inference, and explicitly state uncertainty.
+                Never claim that N items were found unless at least N distinct attributable source URLs were actually observed.
+                When the Work asks for a Top-N shortlist, the COMPLETE summary MUST enumerate items 1..N. Each item must include title, issuer/authors, publication/update date when observed, Source: <observed URL>, What is new, Why it matters, and Decision: KEEP|TEST|CHANGE|REJECT. End with the highest-potential model experiment and remaining uncertainty.
+                If there are not enough qualified sources yet, CONTINUE with a narrower governed search. Do not substitute generic encyclopedias, promotional pages, tourism pages, or unrelated sources for missing evidence.
                 Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"evidence-based result or next-step reason"}.
                 """;
         String user = contextPrompt(context) + "\nLATEST_OBSERVATION=" + write(Map.of(
@@ -525,6 +601,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !latestResearchPassed
                 && !successfulAction(context, GeneralWebResearchAction.ACTION_REF)) {
             missing.add("successful " + GeneralWebResearchAction.ACTION_REF);
+        }
+        if (requiresExternalResearch(context)
+                && (latestResearchPassed || successfulAction(context, GeneralWebResearchAction.ACTION_REF))) {
+            missing.addAll(researchCompletionQualityProblems(context, observation, proposed.summary()));
         }
         boolean latestTestPassed = "workspace.test.run".equals(observation.actionRef()) && observation.success();
         if (requiresGovernedTest(context)

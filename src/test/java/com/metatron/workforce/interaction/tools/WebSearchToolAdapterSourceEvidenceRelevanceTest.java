@@ -51,6 +51,34 @@ class WebSearchToolAdapterSourceEvidenceRelevanceTest {
         assertTrue(result.output().contains("web_search_no_relevant_results"), result.output());
     }
 
+    @Test
+    void researchRelevanceRequiresExplicitTargetScopeInsteadOfGenericTaskWords() {
+        String query = "Find and shortlist exactly 5 useful research reports.\n"
+                + "Target: Vietnam-first Mother & Baby consumer protection, influencer trust, and risk scoring.";
+        String apple = "Find My helps family members find Apple devices and items. "
+                + "This page describes device location, privacy, and account protection.";
+
+        assertFalse(WebSearchToolAdapter.materiallyRelevant(query, apple));
+        assertTrue(WebSearchToolAdapter.materiallyRelevant(query,
+                "Vietnam consumer protection regulation and influencer trust research for mother and baby commerce risk scoring."));
+    }
+
+    @Test
+    void researchSiteRestrictionRejectsSearchEngineLeakageOutsideRequestedDomain() {
+        String query = "site:export.gov Vietnam e-commerce consumer protection research report";
+
+        assertFalse(WebSearchToolAdapter.sourceAllowedForQuery(query, "https://en.wikipedia.org/wiki/Vietnam"));
+        assertFalse(WebSearchToolAdapter.sourceAllowedForQuery(query, "https://example.com/vietnam-report"));
+        assertTrue(WebSearchToolAdapter.sourceAllowedForQuery(query, "https://export.gov/vietnam/report"));
+    }
+
+    @Test
+    void authoritativeResearchDoesNotAcceptWikipediaAsPrimaryEvidence() {
+        assertFalse(WebSearchToolAdapter.sourceAllowedForQuery(
+                "Vietnam authoritative regulator research publication consumer protection",
+                "https://en.wikipedia.org/wiki/Vietnam"));
+    }
+
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, String contentType, String body)
             throws java.io.IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);

@@ -56,4 +56,99 @@ class GeneralCognitiveWorkerBrainClosureTest {
         assertEquals(2, brain.evidenceReferences().size());
         assertTrue(brain.evidenceReferences().stream().allMatch(value -> value.contains("GOOGLE")));
     }
+    @Test
+    void topNResearchCannotCompleteWithNarrativeClaimOrTooFewObservedSources() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "general-external-research",
+                "Find and shortlist exactly 5 useful Vietnam Mother & Baby regulatory research items",
+                "Vietnam consumer protection influencer trust risk scoring",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of(
+                        "Exactly 5 substantive candidates",
+                        "Each candidate ends in KEEP, TEST, CHANGE, or REJECT"),
+                List.of("research-action:research.web.search", "externally attributable source URLs"));
+
+        List<CognitiveWorkerRuntime.Cycle> history = new java.util.ArrayList<>();
+        for (int i = 1; i <= 3; i++) {
+            String url = "https://authority.example/source-" + i;
+            history.add(new CognitiveWorkerRuntime.Cycle(
+                    i,
+                    new CognitiveWorkerRuntime.Thought(
+                            GeneralWebResearchAction.ACTION_REF, Map.of("query", "Vietnam research " + i), "research"),
+                    ActionFabric.ActionObservation.success(
+                            GeneralWebResearchAction.ACTION_REF, "research result",
+                            Map.of("researchResult", "result " + i), List.of(url)),
+                    CognitiveWorkerRuntime.Reflection.continueWith("more evidence required")));
+        }
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of(GeneralWebResearchAction.ACTION_REF), history, Map.of());
+        ActionFabric.ActionObservation latest = ActionFabric.ActionObservation.success(
+                GeneralWebResearchAction.ACTION_REF, "research result",
+                Map.of("researchResult", "result 4"), List.of("https://authority.example/source-4"));
+
+        List<String> problems = GeneralCognitiveWorkerBrain.researchCompletionQualityProblems(
+                context, latest,
+                "We successfully identified and synthesized five candidates with KEEP, TEST, CHANGE, REJECT, KEEP.");
+
+        assertTrue(problems.stream().anyMatch(value -> value.contains("5 distinct attributable research sources")));
+        assertTrue(problems.stream().anyMatch(value -> value.contains("enumerated 5-item")));
+        assertTrue(problems.stream().anyMatch(value -> value.contains("5 observed source URLs")));
+    }
+
+    @Test
+    void topNResearchCompletionPassesOnlyWithEnumeratedObservedSourcesAndDecisions() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "general-external-research",
+                "Find exactly 5 research items",
+                "Vietnam Mother & Baby consumer protection",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Each candidate ends in KEEP, TEST, CHANGE, or REJECT"),
+                List.of("research-action:research.web.search"));
+
+        List<CognitiveWorkerRuntime.Cycle> history = new java.util.ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            String url = "https://authority.example/source-" + i;
+            history.add(new CognitiveWorkerRuntime.Cycle(
+                    i,
+                    new CognitiveWorkerRuntime.Thought(
+                            GeneralWebResearchAction.ACTION_REF, Map.of("query", "Vietnam research " + i), "research"),
+                    ActionFabric.ActionObservation.success(
+                            GeneralWebResearchAction.ACTION_REF, "research result",
+                            Map.of("researchResult", "result " + i), List.of(url)),
+                    CognitiveWorkerRuntime.Reflection.continueWith("more evidence required")));
+        }
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of(GeneralWebResearchAction.ACTION_REF), history, Map.of());
+        ActionFabric.ActionObservation latest = ActionFabric.ActionObservation.success(
+                GeneralWebResearchAction.ACTION_REF, "research result",
+                Map.of("researchResult", "result 5"), List.of("https://authority.example/source-5"));
+
+        String summary = """
+                1. Item one
+                Source: https://authority.example/source-1
+                Decision: KEEP
+                2. Item two
+                Source: https://authority.example/source-2
+                Decision: TEST
+                3. Item three
+                Source: https://authority.example/source-3
+                Decision: CHANGE
+                4. Item four
+                Source: https://authority.example/source-4
+                Decision: KEEP
+                5. Item five
+                Source: https://authority.example/source-5
+                Decision: REJECT
+                Highest-potential experiment: test item two.
+                """;
+
+        assertTrue(GeneralCognitiveWorkerBrain.researchCompletionQualityProblems(context, latest, summary).isEmpty());
+    }
+
 }

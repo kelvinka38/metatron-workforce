@@ -64,6 +64,13 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             "the", "and", "for", "with", "from", "this", "that", "what", "how", "much", "about",
             "current", "currently", "latest", "today", "now", "data", "source", "sources", "use", "using",
             "check", "answer", "information", "external", "reality", "please", "new", "fresh",
+            "find", "shortlist", "exactly", "useful", "recent", "papers", "paper", "reports", "report",
+            "analyses", "analysis", "publications", "publication", "substantive", "item", "items", "state",
+            "why", "matters", "whether", "suggests", "keep", "test", "change", "reject", "model", "target",
+            "acceptance", "criteria", "requested", "output", "produced", "evidence", "requirements",
+            "externally", "attributable", "url", "urls", "support", "supports", "material", "finding",
+            "findings", "completed", "deliverable", "general", "action", "runtime", "work", "objective",
+            "result", "results", "top", "only", "prefer", "primary", "authoritative", "peer", "reviewed",
             "tra", "cuu", "kiem", "dung", "su", "lieu", "moi", "nhat", "neu", "nguon", "cho", "bao", "nhieu",
             "khoang", "hien", "tai", "bay", "gio", "ngay", "luc", "nay", "nao", "va", "cua", "dang", "roi", "gi", "ai", "loi");
 
@@ -77,6 +84,9 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             "(?i)\\b([a-z]{3})\\b\\s*(?:/|->|to|vs\\.?|versus)\\s*\\b([a-z]{3})\\b");
     private static final Pattern WEATHER_LOCATION = Pattern.compile(
             "(?iu)(?:weather|thời\\s*tiết).*?(?:\\bin\\b|\\bfor\\b|ở|tại)\\s+([^?.,;]+)");
+    private static final Pattern SITE_RESTRICTION = Pattern.compile("(?i)(?:^|\\s)site:([a-z0-9.-]+)");
+    private static final Pattern TARGET_SCOPE = Pattern.compile("(?im)\\btarget:\\s*([\\p{L}][\\p{L}-]{2,})");
+    private static final Pattern LEADING_SCOPE = Pattern.compile("^\\s*([A-Z][A-Za-z]{2,})\\b");
 
     private final HttpClient client;
     private final Duration timeout;
@@ -147,7 +157,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         ToolResult publicKnowledge = searchPublicKnowledge(request, query);
         if (publicKnowledge.success()) return publicKnowledge;
 
-        String compactQuery = compactSearchQuery(query);
+        String compactQuery = siteRestriction(query).isBlank() ? compactSearchQuery(query) : "";
         if (!compactQuery.isBlank() && !compactQuery.equalsIgnoreCase(query)) {
             ToolResult compactGrounded = searchGrounded(request, compactQuery);
             if (compactGrounded.success()) return compactGrounded;
@@ -297,10 +307,59 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         Set<String> subject = subjectTokens(query);
         if (subject.isEmpty()) return true;
         Set<String> evidence = subjectTokens(evidenceText);
+        if (researchLike(query)) {
+            String scope = researchScopeAnchor(query);
+            if (!scope.isBlank() && !evidence.contains(scope)) return false;
+        }
         int overlap = 0;
         for (String token : subject) if (evidence.contains(token)) overlap++;
-        int required = Math.min(2, subject.size());
+        int required = subject.size() >= 6 ? 3 : Math.min(2, subject.size());
         return overlap >= required;
+    }
+
+    static String siteRestriction(String query) {
+        Matcher matcher = SITE_RESTRICTION.matcher(query == null ? "" : query);
+        return matcher.find() ? matcher.group(1).toLowerCase(Locale.ROOT) : "";
+    }
+
+    static boolean sourceAllowedForQuery(String query, String url) {
+        try {
+            String host = URI.create(url).getHost();
+            if (host == null || host.isBlank()) return false;
+            host = host.toLowerCase(Locale.ROOT);
+            String site = siteRestriction(query);
+            if (!site.isBlank() && !(host.equals(site) || host.endsWith("." + site))) return false;
+            if (researchLike(query) && asksForAuthoritativeResearch(query)
+                    && (host.equals("wikipedia.org") || host.endsWith(".wikipedia.org"))) return false;
+            return true;
+        } catch (Exception invalid) {
+            return false;
+        }
+    }
+
+    private static boolean researchLike(String query) {
+        String value = fold(query);
+        return value.contains("research") || value.contains("paper") || value.contains("report")
+                || value.contains("regulat") || value.contains("standard") || value.contains("publication")
+                || value.contains("consumer protection") || value.contains("risk scoring");
+    }
+
+    private static boolean asksForAuthoritativeResearch(String query) {
+        String value = fold(query);
+        return value.contains("primary") || value.contains("authoritative") || value.contains("peer reviewed")
+                || value.contains("regulator") || value.contains("official") || value.contains("standard");
+    }
+
+    private static String researchScopeAnchor(String query) {
+        if (query == null || query.isBlank()) return "";
+        Matcher target = TARGET_SCOPE.matcher(query);
+        if (target.find()) return fold(target.group(1)).split("[^a-z0-9]+")[0];
+        Matcher leading = LEADING_SCOPE.matcher(query);
+        if (leading.find()) {
+            String candidate = fold(leading.group(1));
+            if (!QUERY_STOP_WORDS.contains(candidate)) return candidate;
+        }
+        return "";
     }
 
     static String compactSearchQuery(String query) {
@@ -572,6 +631,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
                 if (title.isBlank() || pageId <= 0L) continue;
                 if (publicKnowledgeArticleEndpoint.isBlank()) continue;
                 String url = publicKnowledgeArticleEndpoint + pageId;
+                if (!sourceAllowedForQuery(query, url)) continue;
                 String excerpt = fetchReadableExcerpt(url);
                 if (excerpt.isBlank() || !materiallyRelevant(query, excerpt)) continue;
                 output.append('[').append(index).append("] ").append(title).append('\n')
@@ -600,6 +660,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
         int fetched = 0;
         for (String ref : refs) {
             if (fetched >= FETCH_RESULT_LIMIT) break;
+            if (!sourceAllowedForQuery(query, ref)) continue;
             String excerpt = fetchReadableExcerpt(ref);
             fetched++;
             if (!excerpt.isBlank() && materiallyRelevant(query, excerpt)) {
@@ -620,6 +681,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             List<SearchEvidence> relevant = new ArrayList<>();
             int fetched = 0;
             for (Result result : results) {
+                if (!sourceAllowedForQuery(query, result.url())) continue;
                 String excerpt = "";
                 if (fetched < FETCH_RESULT_LIMIT) {
                     excerpt = fetchReadableExcerpt(result.url());
