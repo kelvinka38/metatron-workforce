@@ -1,4 +1,4 @@
-name: Live Probe General GS2 cc878c2
+name: Live Probe GS2 verifier 24a5d99
 
 on:
   push:
@@ -14,70 +14,52 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     steps:
-      - name: Inspect exact strengthened GS2 failure
+      - name: Inspect GS2 local verifier state
         shell: bash
         env:
-          OID: objective:intelligence-case:case-324bfb8c-1859-4507-9a8a-93e86dc7f8c9:request:telegram:update:178868712519093947
+          OID: objective:intelligence-case:case-95bfb9e6-7e56-4391-9332-712fc427cd50:request:telegram:update:178868936469353422
         run: |
           set -euo pipefail
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           SID=$(docker ps --filter name=deploy-workforce-sandbox-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
           test -n "$SID"
-
-          curl -fsS "http://127.0.0.1:8080/workforce/management/objectives/$OID" > /tmp/view.json
-          python3 - /tmp/view.json <<'PY'
-          import json,sys
-          d=json.load(open(sys.argv[1]))
-          o=d.get('objective') or {}
-          w=d.get('autonomousWork') or {}
-          print('STATUS='+str(o.get('status')))
-          print('BLOCKER='+str(w.get('blocker','')))
-          print('COMPLETED_STEPS='+json.dumps(w.get('completedStepIds',[])))
-          print('HISTORY_BEGIN')
-          for row in d.get('history') or []:
-              print(json.dumps(row,sort_keys=True)[:6000])
-          print('HISTORY_END')
-          PY
-
           docker exec "$CID" sh -c "grep -R -h -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
-          echo 'ACTIONS_BEGIN'
-          python3 - /tmp/actions.jsonl <<'PY'
+          python3 - /tmp/actions.jsonl > /tmp/proof.env <<'PY'
           import json,sys
           rows=[]
           for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
-              try: d=json.loads(line)
-              except Exception: continue
-              rows.append(d)
-              out={k:d.get(k) for k in ('workStepId','workerId','cycle','thoughtAction','thoughtInputs','actionSuccess','actionSummary','outputs','reflection','reflectionSummary')}
-              print(json.dumps(out,sort_keys=True)[:20000])
-          for d in rows:
-              if d.get('thoughtAction')=='workspace.repository.materialize' and d.get('actionSuccess') is True:
-                  ref=(d.get('outputs') or {}).get('workspaceRef','')
-                  if ref.startswith('objective-workspace:'):
-                      print('WORKSPACE_KEY='+ref.split(':',1)[1])
-                      break
+              try: rows.append(json.loads(line))
+              except Exception: pass
+          mats=[r for r in rows if r.get('thoughtAction')=='workspace.repository.materialize' and r.get('actionSuccess') is True]
+          pubs=[r for r in rows if r.get('thoughtAction')=='workspace.github.pr.publish' and r.get('actionSuccess') is True]
+          assert mats and pubs
+          m=mats[-1].get('outputs') or {}; p=pubs[-1].get('outputs') or {}
+          print('WORKSPACE_KEY='+m['workspaceRef'].split(':',1)[1])
+          print('BASELINE_SHA='+m['localBaselineCommitSha'])
+          print('LOCAL_HEAD='+p['localHeadSha'])
+          print('REMOTE_COMMIT='+p['remoteCommitSha'])
+          print('PR_NUMBER='+p['pullRequestNumber'])
           PY
-          echo 'ACTIONS_END'
-
-          WK=$(python3 - /tmp/actions.jsonl <<'PY'
-          import json,sys
-          for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
-              try: d=json.loads(line)
-              except Exception: continue
-              if d.get('thoughtAction')=='workspace.repository.materialize' and d.get('actionSuccess') is True:
-                  ref=(d.get('outputs') or {}).get('workspaceRef','')
-                  if ref.startswith('objective-workspace:'):
-                      print(ref.split(':',1)[1]); break
-          PY
-          )
-          if [ -n "$WK" ]; then
-            echo 'GIT_BEGIN'
-            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" rev-parse HEAD
-            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" rev-list --max-parents=0 HEAD
-            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" status --porcelain=v1
-            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" log --oneline -8
-            ROOT=$(docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" rev-list --max-parents=0 HEAD | head -1)
-            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" diff --name-status --no-renames "$ROOT..HEAD" --
-            echo 'GIT_END'
-          fi
+          cat /tmp/proof.env
+          source /tmp/proof.env
+          W="/workspaces/$WORKSPACE_KEY"
+          echo 'VERIFY_BEGIN'
+          ACTUAL_LOCAL_HEAD=$(docker exec --user 10001:10001 "$SID" git -C "$W" rev-parse HEAD | tr -d '\r\n')
+          echo "ACTUAL_LOCAL_HEAD=$ACTUAL_LOCAL_HEAD"
+          echo "LOCAL_HEAD_MATCH=$([ "$ACTUAL_LOCAL_HEAD" = "$LOCAL_HEAD" ] && echo true || echo false)"
+          echo 'STATUS_BEGIN'
+          docker exec --user 10001:10001 "$SID" git -C "$W" status --porcelain=v1
+          echo 'STATUS_END'
+          echo 'BASELINE_REF='
+          docker exec --user 10001:10001 "$SID" git -C "$W" rev-parse refs/metatron/materialized
+          echo 'DIFF_BEGIN'
+          docker exec --user 10001:10001 "$SID" git -C "$W" diff --name-status --no-renames "$BASELINE_SHA..$LOCAL_HEAD" --
+          echo 'DIFF_END'
+          echo 'LOG_BEGIN'
+          docker exec --user 10001:10001 "$SID" git -C "$W" log --oneline --decorate -5
+          echo 'LOG_END'
+          echo 'SOURCE_SENTENCE_BEGIN'
+          docker exec --user 10001:10001 "$SID" git -C "$W" show "$LOCAL_HEAD:src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java" | grep 'Produces one stateful provider-backed brain' || true
+          echo 'SOURCE_SENTENCE_END'
+          echo 'VERIFY_END'
