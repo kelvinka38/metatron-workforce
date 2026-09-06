@@ -14,49 +14,27 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     steps:
-      - name: Inspect latest exact-SHA general Objective
+      - name: Inspect exact GS2 workspace and action journal
         shell: bash
         env:
-          TARGET_SHA: dbd9674cf1029ef47dbffa62bd88c972e46ae33a
+          OID: objective:intelligence-case:case-1aa25553-6f82-4f31-9e01-55e41fdfce82:request:telegram:update:178868556547190977
+          WORKSPACE_KEY: df5fd07a19601634ed8fc6f6b1220c62
         run: |
           set -euo pipefail
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
-          curl -fsS http://127.0.0.1:8080/workforce/management/objectives > /tmp/objectives.json
-          python3 - /tmp/objectives.json "$TARGET_SHA" > /tmp/oid.txt <<'PY'
-          import json,sys
-          data=json.load(open(sys.argv[1])); target=sys.argv[2]
-          rows=[]
-          for item in data if isinstance(data,list) else []:
-              blob=json.dumps(item,sort_keys=True)
-              if target not in blob or 'MUTATING general engineering Objective' not in blob:
-                  continue
-              o=item.get('objective') or {}
-              oid=o.get('objectiveId')
-              if oid:
-                  rows.append((o.get('createdAt',''),oid,o.get('status','')))
-          if not rows:
-              raise SystemExit('NO_EXACT_GS2_OBJECTIVE')
-          rows.sort()
-          created,oid,status=rows[-1]
-          print(oid)
-          print('DISCOVERED_STATUS='+status,file=sys.stderr)
-          PY
-          OID=$(head -1 /tmp/oid.txt)
-          echo "OID=$OID"
-          curl -fsS "http://127.0.0.1:8080/workforce/management/objectives/$OID" > /tmp/view.json
-          python3 - /tmp/view.json <<'PY'
-          import json,sys
-          d=json.load(open(sys.argv[1]))
-          o=d.get('objective') or {}
-          w=d.get('autonomousWork') or {}
-          print('STATUS='+str(o.get('status')))
-          print('BLOCKER='+str(w.get('blocker','')))
-          print('COMPLETED_STEPS='+json.dumps(w.get('completedStepIds',[])))
-          print('HISTORY_TYPES='+','.join(str(x.get('type','')) for x in (d.get('history') or [])))
-          PY
+          W="/var/lib/metatron-workforce/objective-workspaces/$WORKSPACE_KEY"
+          echo "CONTAINER=$CID"
+          docker exec "$CID" sh -c "test -d '$W' && echo WORKSPACE_PRESENT=true || echo WORKSPACE_PRESENT=false"
+          echo 'IDENTITY_BEGIN'
+          docker exec "$CID" sh -c "cat '$W/.metatron-workspace' 2>/dev/null || true"
+          docker exec "$CID" sh -c "cat '$W/.metatron-repository' 2>/dev/null || true"
+          echo 'IDENTITY_END'
+          echo 'GIT_BEGIN'
+          docker exec "$CID" sh -c "cd '$W' && echo HEAD=\$(git rev-parse HEAD) && echo ROOTS=\$(git rev-list --max-parents=0 HEAD | tr '\n' ',') && echo COUNT=\$(git rev-list --count HEAD) && echo STATUS_BEGIN && git status --porcelain=v1 && echo STATUS_END && echo LOG_BEGIN && git log --oneline --decorate -8 && echo LOG_END && R=\$(git rev-list --max-parents=0 HEAD | head -1) && echo DIFF_BEGIN && git diff --name-status --no-renames \$R..HEAD -- && echo DIFF_END"
+          echo 'GIT_END'
           echo 'ACTIONS_BEGIN'
-          docker exec "$CID" sh -c "grep -R -F '$OID' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
+          docker exec "$CID" sh -c "grep -R -h -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
           python3 - /tmp/actions.jsonl <<'PY'
           import json,sys
           for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
@@ -64,16 +42,7 @@ jobs:
                   d=json.loads(line)
               except Exception:
                   continue
-              out={
-                  'step':d.get('workStepId'),
-                  'worker':d.get('workerId'),
-                  'cycle':d.get('cycle'),
-                  'action':d.get('thoughtAction'),
-                  'success':d.get('actionSuccess'),
-                  'reflection':d.get('reflection'),
-                  'summary':d.get('actionSummary'),
-                  'outputs':d.get('outputs')
-              }
-              print(json.dumps(out,sort_keys=True)[:12000])
+              out={k:d.get(k) for k in ('workStepId','workerId','cycle','thoughtAction','thoughtInputs','actionSuccess','actionSummary','outputs','reflection','reflectionSummary')}
+              print(json.dumps(out,sort_keys=True)[:16000])
           PY
           echo 'ACTIONS_END'
