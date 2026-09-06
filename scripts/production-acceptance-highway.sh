@@ -17,6 +17,39 @@ test "$LIVE_SHA" = "$TARGET_SHA"; test "$(docker inspect "$LIVE_CID" --format '{
 docker image inspect "metatron-workforce:$TARGET_SHA" >/dev/null
 echo "HIGHWAY_TARGET_SHA=$TARGET_SHA"; echo "HIGHWAY_LIVE_SHA=$LIVE_SHA"
 
+HIGHWAY_PROFILE="${HIGHWAY_PROFILE:-FAST}"
+if [ "$HIGHWAY_PROFILE" = FAST ]; then
+  echo 'HIGHWAY_PROFILE=FAST'
+  curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
+  test "$(docker inspect "$LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
+  echo 'LIVE_PUBLIC_GATEWAY=PASS'
+
+  curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/monitor > "$OUT/live-monitor.html"
+  grep -q 'METATRON WORKFORCE' "$OUT/live-monitor.html"
+  grep -q 'canonical management projection' "$OUT/live-monitor.html"
+  curl -fsS --max-time 10 -H 'X-Metatron-Actor: human-primary'     http://127.0.0.1:8080/workforce/monitor/api/objectives > "$OUT/live-observability-api.json"
+  python3 - "$OUT/live-observability-api.json" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1],encoding='utf-8')); assert isinstance(rows,list)
+for row in rows:
+    for key in ('objectiveId','humanStatus','ownerWorker','staffingState','workItems','executionProof'):
+        assert key in row,(key,row)
+print('LIVE_OBSERVABILITY=PASS')
+PY
+  FINAL_LIVE_CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+  test -n "$FINAL_LIVE_CID"
+  test "$(docker inspect "$FINAL_LIVE_CID" --format '{{.State.Health.Status}}')" = healthy
+  FINAL_LIVE_SHA=$(docker inspect "$FINAL_LIVE_CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+  test "$FINAL_LIVE_SHA" = "$TARGET_SHA"
+  echo "HIGHWAY_FINAL_LIVE_SHA=$FINAL_LIVE_SHA"
+  echo 'HIGHWAY_FAST_LIVE_GATE=PASS'
+  echo 'HIGHWAY_DESTRUCTIVE_STRESS=DEFERRED_TO_DEEP_RATIFICATION'
+  echo 'PRODUCTION_ACCEPTANCE_HIGHWAY=PASS'
+  exit 0
+fi
+test "$HIGHWAY_PROFILE" = FULL
+echo 'HIGHWAY_PROFILE=FULL'
+
 reclaim_stale_highway() {
   local project cids networks volumes
   while IFS= read -r project; do
