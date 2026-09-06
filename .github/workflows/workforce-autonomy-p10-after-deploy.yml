@@ -7,6 +7,10 @@ on:
         description: Exact deployed production SHA to ratify through GS1/2, GS3/4, 45-condition gate and Gateway Director
         required: true
         type: string
+      confirm:
+        description: Explicit deep-ratification acknowledgement; enter RUN_DEEP_P10
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +26,7 @@ concurrency:
 
 jobs:
   exact-sha-p10-controller:
+    if: ${{ inputs.confirm == 'RUN_DEEP_P10' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
