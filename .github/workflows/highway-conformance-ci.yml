@@ -92,12 +92,14 @@ jobs:
           assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
           assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: true' in deploy_job
           assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
-          assert 'actions/upload-artifact@v7' in build
-          assert 'actions/download-artifact@v8' in deploy_job
+          assert 'actions/cache/save@v4' in build
+          assert 'actions/cache/restore@v4' in deploy_job
+          assert 'fail-on-cache-miss: true' in deploy_job
           assert 'PRODUCTION_EXACT_TESTED_ARTIFACT_HANDOFF=PASS' in deploy_job
           assert './gradlew clean test bootJar' not in deploy_job
           assert "      - 'scripts/**'" not in deploy
           assert 'workforce-autonomy-p10-production-acceptance.yml' not in deploy
+          print('HIGHWAY_TESTED_CACHE_HANDOFF=PASS')
           print('HIGHWAY_TESTED_ARTIFACT_HANDOFF=PASS')
           print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
           print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')

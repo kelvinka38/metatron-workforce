@@ -59,15 +59,13 @@ jobs:
           set -euo pipefail
           test -f build/libs/metatron-workforce-${METATRON_VERSION}.jar
           sha256sum build/libs/metatron-workforce-${METATRON_VERSION}.jar > build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256
-      - name: Upload exact tested Workforce artifact
-        uses: actions/upload-artifact@v7
+      - name: Save exact tested Workforce handoff
+        uses: actions/cache/save@v4
         with:
-          name: workforce-tested-${{ github.sha }}
           path: |
             build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar
             build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar.sha256
-          if-no-files-found: error
-          retention-days: 1
+          key: workforce-tested-${{ github.sha }}
   deploy-production:
     needs: test-and-build
     runs-on: [self-hosted, linux, x64, metatron-prod]
@@ -77,11 +75,14 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
-      - name: Download exact tested Workforce artifact
-        uses: actions/download-artifact@v8
+      - name: Restore exact tested Workforce handoff
+        uses: actions/cache/restore@v4
         with:
-          name: workforce-tested-${{ github.sha }}
-          path: build/libs
+          path: |
+            build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar
+            build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar.sha256
+          key: workforce-tested-${{ github.sha }}
+          fail-on-cache-miss: true
       - name: Verify exact tested artifact and source identity
         shell: bash
         run: |
