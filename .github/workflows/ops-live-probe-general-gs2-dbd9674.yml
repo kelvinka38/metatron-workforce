@@ -33,9 +33,11 @@ jobs:
           if [ -n "$SID" ]; then docker inspect "$SID" --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'; fi
           echo 'SANDBOX_MOUNTS_END'
 
-          SRC=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/metatron-workforce"}}{{.Source}}{{end}}{{end}}')
+          SRC=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/metatron-workforce/objective-workspaces"}}{{.Source}}{{end}}{{end}}')
+          STATE=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/metatron-workforce"}}{{.Source}}{{end}}{{end}}')
           test -n "$SRC"
-          W="$SRC/objective-workspaces/$WORKSPACE_KEY"
+          test -n "$STATE"
+          W="$SRC/$WORKSPACE_KEY"
           echo "HOST_WORKSPACE=$W"
           test -d "$W"
           echo 'IDENTITY_BEGIN'
@@ -60,7 +62,7 @@ jobs:
           echo 'GIT_END'
 
           echo 'ACTIONS_BEGIN'
-          grep -R -h -F "\"objectiveId\":\"$OID\"" "$SRC/runtime-evidence/action-journal" 2>/dev/null > /tmp/actions.jsonl || true
+          grep -R -h -F "\"objectiveId\":\"$OID\"" "$STATE/runtime-evidence/action-journal" 2>/dev/null > /tmp/actions.jsonl || true
           python3 - /tmp/actions.jsonl <<'PY'
           import json,sys
           for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
