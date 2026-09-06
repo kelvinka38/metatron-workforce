@@ -1,4 +1,4 @@
-name: One Shot P10 Closure 71f2973
+name: One Shot P10 Closure 25b9a6b
 
 on:
   workflow_run:
@@ -11,14 +11,14 @@ permissions:
 
 jobs:
   dispatch:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '71f29733765e6208085a35adb1fdf1e26ec8a007' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '25b9a6b440e9aa66e58ca4bebbbc29924a39ddd7' }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch exact deployed SHA deep ratification
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: 71f29733765e6208085a35adb1fdf1e26ec8a007
+          TARGET_SHA: 25b9a6b440e9aa66e58ca4bebbbc29924a39ddd7
         run: |
           set -euo pipefail
           payload=$(python3 - "$TARGET_SHA" <<'PY'
