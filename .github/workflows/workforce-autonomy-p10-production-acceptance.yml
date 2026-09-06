@@ -1,9 +1,6 @@
 name: Workforce Autonomy P10 Production Acceptance
 
 on:
-  workflow_run:
-    workflows: ["Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -15,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-workforce-autonomy-p10-production-acceptance
+  group: metatron-production-lane
   cancel-in-progress: false
 
 jobs:
