@@ -40,6 +40,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
         List<ExecutionWorkSpec> plan = delegate.propose(caseId, request, availableCapabilities);
         if (plan == null || plan.isEmpty()) return plan;
         plan = collapseExplicitRecoveryComposite(request, availableCapabilities, plan);
+        plan = collapseExplicitGeneralWorkspaceObjective(request, availableCapabilities, plan);
         plan = removeInvalidCrossRepositoryAuditJoins(plan);
         if (plan.isEmpty()) return plan;
         Set<String> available = Set.copyOf(availableCapabilities == null ? List.of() : availableCapabilities);
@@ -65,6 +66,93 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                     step.dependsOn(), step.consequence(), acceptance, evidence));
         }
         return List.copyOf(composed);
+    }
+
+    /**
+     * When the Human explicitly selects the general workspace runtime, that is a capability-routing
+     * constraint for the whole Objective, not permission for the planner to replace later work with a
+     * narrower special capability. Collapse planner scope expansion back into one general Work item so
+     * the Cognitive Worker owns the complete requested sequence through its governed Action Fabric.
+     */
+    static List<ExecutionWorkSpec> collapseExplicitGeneralWorkspaceObjective(
+            NormalizedRequest request,
+            List<String> availableCapabilities,
+            List<ExecutionWorkSpec> plan) {
+        if (request == null || plan == null || plan.isEmpty()) return plan;
+        boolean generalAvailable = availableCapabilities != null && availableCapabilities.stream()
+                .filter(Objects::nonNull).map(String::trim)
+                .anyMatch(GeneralWorkspaceAutonomousCapability.CAPABILITY::equals);
+        if (!generalAvailable) return plan;
+
+        String semantic = explicitRequestSemantic(request);
+        if (!semantic.toLowerCase(Locale.ROOT).contains(
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.toLowerCase(Locale.ROOT))) {
+            return plan;
+        }
+
+        ExecutionWorkSpec.Consequence consequence = plan.stream()
+                .anyMatch(step -> step.consequence() == ExecutionWorkSpec.Consequence.MUTATING)
+                || semantic.toLowerCase(Locale.ROOT).contains("mutating")
+                ? ExecutionWorkSpec.Consequence.MUTATING
+                : ExecutionWorkSpec.Consequence.READ_ONLY;
+
+        String lower = semantic.toLowerCase(Locale.ROOT);
+        List<String> acceptance = new ArrayList<>();
+        addDistinct(acceptance, "explicit execution.general.workspace Objective completes without capability escape");
+        if (consequence == ExecutionWorkSpec.Consequence.MUTATING) {
+            addDistinct(acceptance, "requested workspace source change is present in the committed work product");
+        }
+        if (lower.contains("test")) {
+            addDistinct(acceptance, "repository tests pass after the requested workspace change");
+        }
+        if (lower.contains("pull request") || lower.contains("open pr")
+                || lower.contains("proposal branch") || lower.contains("publish") && lower.contains("github")) {
+            addDistinct(acceptance, "reviewable pull request exists for the committed Objective work product");
+        }
+        if (lower.contains("do not merge") || request.explicitProhibitions().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).anyMatch(value -> value.contains("merge"))) {
+            addDistinct(acceptance, "remote proposal remains unmerged");
+        }
+
+        List<String> evidence = new ArrayList<>();
+        addDistinct(evidence, GENERAL_RUNTIME_MARKER);
+        addDistinct(evidence, "requested-capability:" + GeneralWorkspaceAutonomousCapability.CAPABILITY);
+        addDistinct(evidence, "general Action Fabric action journal");
+        if (lower.contains("test")) addDistinct(evidence, "governed test action evidence");
+        if (lower.contains("pull request") || lower.contains("proposal branch")
+                || lower.contains("publish") && lower.contains("github")) {
+            addDistinct(evidence, "fresh authoritative GitHub API Observation");
+        }
+
+        String stepId = plan.stream()
+                .filter(step -> GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(step.requiredCapability()))
+                .map(ExecutionWorkSpec::stepId)
+                .findFirst()
+                .orElse(plan.getFirst().stepId());
+
+        return List.of(new ExecutionWorkSpec(
+                stepId,
+                semantic,
+                request.target(),
+                GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                List.of(),
+                consequence,
+                acceptance,
+                evidence));
+    }
+
+    private static String explicitRequestSemantic(NormalizedRequest request) {
+        StringBuilder out = new StringBuilder(request.objective().trim());
+        if (!request.constraints().isEmpty()) {
+            out.append("\nConstraints: ").append(String.join("; ", request.constraints()));
+        }
+        if (!request.explicitProhibitions().isEmpty()) {
+            out.append("\nProhibitions: ").append(String.join("; ", request.explicitProhibitions()));
+        }
+        if (!request.requestedOutput().isBlank()) {
+            out.append("\nRequested output: ").append(request.requestedOutput().trim());
+        }
+        return out.toString();
     }
 
     /**
