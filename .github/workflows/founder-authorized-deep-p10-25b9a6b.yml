@@ -1,0 +1,41 @@
+name: Founder Authorized Deep P10 25b9a6b
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/founder-authorized-deep-p10-25b9a6b.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  authorize-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch canonical exact-SHA deep P10 controller
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: 25b9a6b440e9aa66e58ca4bebbbc29924a39ddd7
+          CONFIRM: RUN_DEEP_P10
+        run: |
+          set -euo pipefail
+          test "$CONFIRM" = RUN_DEEP_P10
+          payload=$(python3 - "$TARGET_SHA" "$CONFIRM" <<'PY'
+          import json,sys
+          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1],"confirm":sys.argv[2]}}))
+          PY
+          )
+          status=$(curl -sS -o /tmp/dispatch.json -w '%{http_code}' \
+            -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/workforce-autonomy-p10-after-deploy.yml/dispatches" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -H 'Content-Type: application/json' \
+            --data-binary "$payload")
+          test "$status" = 204
+          echo "FOUNDER_AUTHORIZED_P10_TARGET_SHA=$TARGET_SHA"
+          echo "FOUNDER_AUTHORIZED_P10_CONFIRM=$CONFIRM"
+          echo 'FOUNDER_AUTHORIZED_P10_DISPATCH=PASS'
