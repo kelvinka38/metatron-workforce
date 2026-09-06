@@ -1,15 +1,22 @@
-name: Break Legacy P10 Production Queue — Completed
+name: Break Stale P10 Controller Queue
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-break-p10-queue.yml'
 
 permissions:
   contents: read
 
+concurrency:
+  group: workforce-autonomy-p10-ratification-
+  cancel-in-progress: true
+
 jobs:
-  record:
+  break-stale-controller:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo 'LEGACY_P10_QUEUE_BREAK_COMPLETED=PASS'
-          echo 'Automatic P10 ratification is no longer part of routine deploy topology.'
+          echo 'STALE_P10_CONTROLLER_QUEUE_BREAK=PASS'
+          echo 'Workflow-only P10 auto-trigger has been removed.'
