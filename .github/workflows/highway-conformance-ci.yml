@@ -91,8 +91,9 @@ jobs:
           grep -q 'HIGHWAY_REVISION: fast-production-lane-' "$H"
           grep -q 'group: metatron-production-lane' "$H"
           grep -q 'cancel-in-progress: true' "$H"
+          grep -q 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' "$D"
+          grep -q 'PRODUCTION_ADMISSION_REFRESH=PASS' "$D"
           grep -q 'group: metatron-production-lane' "$D"
-          grep -q 'cancel-in-progress: true' "$D"
           ! grep -q 'Dispatch exact-SHA P10 closure' "$D"
           ! grep -q 'workforce-autonomy-p10-after-deploy.yml/dispatches' "$D"
 
@@ -119,11 +120,14 @@ jobs:
           build=deploy.split('  deploy-production:',1)[0]
           deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
           supersede=deploy.split('  supersede-stale-production:',1)[1].split('  test-and-build:',1)[0]
-          assert 'group: metatron-production-lane' in supersede and 'cancel-in-progress: true' in supersede
+          refresh=deploy.split('  refresh-production-admission:',1)[1].split('  deploy-production:',1)[0]
+          assert 'actions/runs?per_page=100' in supersede and '/cancel' in supersede
           assert 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' in supersede
           assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
-          assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: true' in deploy_job
-          assert 'needs: [supersede-stale-production, test-and-build]' in deploy_job
+          assert 'group: metatron-production-lane' in refresh and 'cancel-in-progress: true' in refresh
+          assert 'PRODUCTION_ADMISSION_REFRESH=PASS' in refresh
+          assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: false' in deploy_job
+          assert 'needs: refresh-production-admission' in deploy_job
           assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
           assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v11' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh' in h
@@ -141,6 +145,8 @@ jobs:
           print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
           print('HIGHWAY_DEPLOY_NEVER_AUTODISPATCHES_DEEP_P10=PASS')
           print('HIGHWAY_IMMEDIATE_STALE_PREEMPTION=PASS')
+          print('HIGHWAY_JIT_ADMISSION_REFRESH=PASS')
+          print('HIGHWAY_NO_CONCURRENCY_SELF_CANCEL=PASS')
           print('HIGHWAY_FAST_PROFILE_CONTRACT=PASS')
           print('HIGHWAY_PARALLEL_PHASE_CONTRACT=PASS')
           print('HIGHWAY_FAIL_FAST_TIMEOUT_CONTRACT=PASS')
