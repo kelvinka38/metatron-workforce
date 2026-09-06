@@ -14,7 +14,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     steps:
-      - name: Inspect exact GS2 host workspace and mounts
+      - name: Inspect exact GS2 through sandbox workspace mount
         shell: bash
         env:
           OID: objective:intelligence-case:case-1aa25553-6f82-4f31-9e01-55e41fdfce82:request:telegram:update:178868556547190977
@@ -24,45 +24,18 @@ jobs:
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           SID=$(docker ps --filter name=workforce-sandbox --format '{{.ID}}' | head -1)
           test -n "$CID"
+          test -n "$SID"
+          W="/workspaces/$WORKSPACE_KEY"
           echo "WORKFORCE_CID=$CID"
           echo "SANDBOX_CID=$SID"
-          echo 'WORKFORCE_MOUNTS_BEGIN'
-          docker inspect "$CID" --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
-          echo 'WORKFORCE_MOUNTS_END'
-          echo 'SANDBOX_MOUNTS_BEGIN'
-          if [ -n "$SID" ]; then docker inspect "$SID" --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'; fi
-          echo 'SANDBOX_MOUNTS_END'
-
-          SRC=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/metatron-workforce/objective-workspaces"}}{{.Source}}{{end}}{{end}}')
-          STATE=$(docker inspect "$CID" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/metatron-workforce"}}{{.Source}}{{end}}{{end}}')
-          test -n "$SRC"
-          test -n "$STATE"
-          W="$SRC/$WORKSPACE_KEY"
-          echo "HOST_WORKSPACE=$W"
-          test -d "$W"
           echo 'IDENTITY_BEGIN'
-          cat "$W/.metatron-workspace"
-          cat "$W/.metatron-repository"
+          docker exec "$SID" sh -c "test -d '$W' && cat '$W/.metatron-workspace' && cat '$W/.metatron-repository'"
           echo 'IDENTITY_END'
           echo 'GIT_BEGIN'
-          cd "$W"
-          echo "HEAD=$(git rev-parse HEAD)"
-          echo "ROOTS=$(git rev-list --max-parents=0 HEAD | paste -sd, -)"
-          echo "COUNT=$(git rev-list --count HEAD)"
-          echo STATUS_BEGIN
-          git status --porcelain=v1
-          echo STATUS_END
-          echo LOG_BEGIN
-          git log --oneline --decorate -8
-          echo LOG_END
-          R=$(git rev-list --max-parents=0 HEAD | head -1)
-          echo DIFF_BEGIN
-          git diff --name-status --no-renames "$R..HEAD" --
-          echo DIFF_END
+          docker exec "$SID" sh -c "cd '$W' && echo HEAD=\$(git rev-parse HEAD) && echo ROOTS=\$(git rev-list --max-parents=0 HEAD | paste -sd, -) && echo COUNT=\$(git rev-list --count HEAD) && echo STATUS_BEGIN && git status --porcelain=v1 && echo STATUS_END && echo LOG_BEGIN && git log --oneline --decorate -8 && echo LOG_END && R=\$(git rev-list --max-parents=0 HEAD | head -1) && echo DIFF_BEGIN && git diff --name-status --no-renames \$R..HEAD -- && echo DIFF_END"
           echo 'GIT_END'
-
           echo 'ACTIONS_BEGIN'
-          grep -R -h -F "\"objectiveId\":\"$OID\"" "$STATE/runtime-evidence/action-journal" 2>/dev/null > /tmp/actions.jsonl || true
+          docker exec "$CID" sh -c "grep -R -h -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
           python3 - /tmp/actions.jsonl <<'PY'
           import json,sys
           for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
