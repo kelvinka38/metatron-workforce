@@ -1,43 +1,15 @@
-name: Workforce Autonomy P10 GS1 GS2 To GS3 GS4
+name: Workforce Autonomy P10 GS1 GS2 To GS3 GS4 — Archived
 
 on:
-  workflow_run:
-    workflows: ["Workforce Autonomy P10 Production Acceptance"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
-
-concurrency:
-  group: workforce-autonomy-p10-gs12-to-gs34-${{ github.event.workflow_run.head_sha }}
-  cancel-in-progress: false
 
 jobs:
-  dispatch-gs3-gs4:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+  archived:
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch exact-SHA GS3/GS4 acceptance
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
-          payload=$(python3 - "$TARGET_SHA" <<'PY'
-          import json,sys
-          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1]}}))
-          PY
-          )
-          status=$(curl -sS -o /tmp/dispatch-response.json -w '%{http_code}' \
-            -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml/dispatches" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            -H 'Content-Type: application/json' \
-            --data-binary "$payload")
-          test "$status" = 204
-          echo "P10_GS1_GS2_ACCEPTED_SHA=$TARGET_SHA"
-          echo 'P10_GS3_GS4_HANDOFF=DISPATCHED'
+      - run: |
+          echo 'P10_LEGACY_AUTOFANOUT=DISABLED'
+          echo 'Legacy automatic GS1/2 to GS3/4 handoff is archived; the explicit P10 controller owns sequencing.'
