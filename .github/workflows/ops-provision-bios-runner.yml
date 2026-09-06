@@ -1,0 +1,94 @@
+name: Provision BIOS Production Runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-provision-bios-runner.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metatron-provision-bios-runner
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 12
+    environment: production
+    env:
+      METATRON_GITHUB_TOKEN: ${{ secrets.METATRON_GITHUB_TOKEN }}
+    steps:
+      - name: Provision dedicated BIOS runner on production host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${METATRON_GITHUB_TOKEN:-}"
+          sudo -n true
+
+          RUNNER_NAME=metatron-bios-prod-01
+          INSTALL_DIR=/opt/actions-runner-bios
+          BIOS_REPO=kelvinka38/bios
+          API=https://api.github.com
+          AUTH=(-H "Authorization: Bearer $METATRON_GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+
+          runner_state() {
+            curl -fsSL "${AUTH[@]}" "$API/repos/$BIOS_REPO/actions/runners?per_page=100" |
+              python3 - "$RUNNER_NAME" <<'PY'
+import json,sys
+name=sys.argv[1]
+d=json.load(sys.stdin)
+rows=[r for r in d.get('runners',[]) if r.get('name')==name]
+if len(rows)==1:
+    r=rows[0]
+    print(f"{r.get('status','')} {str(bool(r.get('busy'))).lower()}")
+PY
+          }
+
+          state="$(runner_state || true)"
+          if [[ "$state" == online* ]]; then
+            echo "BIOS_RUNNER_ALREADY_ONLINE=$state"
+            echo 'BIOS_RUNNER_PROVISION=PASS'
+            exit 0
+          fi
+
+          REG_TOKEN="$(curl -fsSL -X POST "${AUTH[@]}" "$API/repos/$BIOS_REPO/actions/runners/registration-token" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+          test -n "$REG_TOKEN"
+
+          VERSION="$(curl -fsSL -H 'Accept: application/vnd.github+json' https://api.github.com/repos/actions/runner/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))')"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+          CURRENT_USER="$(id -un)"
+          sudo -n systemctl stop "actions.runner.kelvinka38-bios.$RUNNER_NAME.service" 2>/dev/null || true
+          if [ -d "$INSTALL_DIR" ]; then
+            sudo -n rm -rf "$INSTALL_DIR"
+          fi
+          sudo -n mkdir -p "$INSTALL_DIR"
+          sudo -n chown "$CURRENT_USER":"$(id -gn)" "$INSTALL_DIR"
+
+          cd "$INSTALL_DIR"
+          curl -fsSL -o actions-runner.tgz "https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-linux-x64-$VERSION.tar.gz"
+          tar xzf actions-runner.tgz
+          rm actions-runner.tgz
+
+          ./config.sh --unattended --replace             --url "https://github.com/$BIOS_REPO"             --token "$REG_TOKEN"             --name "$RUNNER_NAME"             --labels metatron-prod-bios             --work _work
+
+          sudo -n ./svc.sh install "$CURRENT_USER"
+          sudo -n ./svc.sh start
+
+          online=false
+          for _ in $(seq 1 60); do
+            state="$(runner_state || true)"
+            echo "BIOS_RUNNER_STATE=${state:-missing}"
+            if [[ "$state" == online* ]]; then
+              online=true
+              break
+            fi
+            sleep 2
+          done
+          test "$online" = true
+          sudo -n ./svc.sh status
+          echo 'BIOS_RUNNER_PROVISION=PASS'
