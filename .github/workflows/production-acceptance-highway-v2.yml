@@ -34,10 +34,10 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
-    timeout-minutes: 20
+    timeout-minutes: 12
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: fast-production-lane-v11
+      HIGHWAY_REVISION: fast-production-lane-v12
       HIGHWAY_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'FAST' }}
     steps:
       - uses: actions/checkout@v7
@@ -128,19 +128,24 @@ jobs:
             echo 'HIGHWAY_CORE_BOUNDED_ADMISSION_RECOVERY=PASS'
           fi
 
-          echo 'HIGHWAY_PHASE=INTELLIGENCE_AND_POINT2_PARALLEL'
+          echo 'HIGHWAY_PHASE=INTELLIGENCE_PRODUCT'
           set +e
-          timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh > "$ROOT/intelligence-product.log" 2>&1 & INTEL_PID=$!
-          timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1 & POINT2_PID=$!
-          wait "$INTEL_PID"; INTEL_RC=$?
-          wait "$POINT2_PID"; POINT2_RC=$?
+          timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh > "$ROOT/intelligence-product.log" 2>&1
+          INTEL_RC=$?
           set -e
           echo "$INTEL_RC" > "$ROOT/intelligence-product.rc"
-          echo "$POINT2_RC" > "$ROOT/point2-root-routing.rc"
-          cat "$ROOT/intelligence-product.log" "$ROOT/point2-root-routing.log" || true
+          cat "$ROOT/intelligence-product.log" || true
           test "$INTEL_RC" = 0
+
+          echo 'HIGHWAY_PHASE=POINT2_ROOT'
+          set +e
+          timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1
+          POINT2_RC=$?
+          set -e
+          echo "$POINT2_RC" > "$ROOT/point2-root-routing.rc"
+          cat "$ROOT/point2-root-routing.log" || true
           test "$POINT2_RC" = 0
-          echo 'HIGHWAY_INTELLIGENCE_POINT2_PARALLELISM=PASS'
+          echo 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS'
 
           echo 'HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5'
           mkdir -p "$ROOT/point5"
@@ -175,13 +180,3 @@ jobs:
           if [ -d "$ROOT" ]; then cp -a "$ROOT/." "$DURABLE/"; fi
           printf 'target_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
           echo "HIGHWAY_DURABLE_EVIDENCE=$DURABLE"
-
-      - name: Upload highway evidence
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-acceptance-highway-${{ github.run_id }}
-          path: /tmp/metatron-production-highway-${{ github.run_id }}/
-          if-no-files-found: warn
-          retention-days: 90

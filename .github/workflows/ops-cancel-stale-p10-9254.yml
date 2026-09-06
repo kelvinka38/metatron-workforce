@@ -1,20 +1,15 @@
-name: Cancel Stale P10 Controller 9254
+name: Cancel Stale P10 Controller 9254 — Archived
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-cancel-stale-p10-9254.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: workforce-autonomy-p10-ratification-9254a5e433eea2cf017ccae1c97b5b4b98310173
-  cancel-in-progress: true
-
 jobs:
-  cancel:
+  record:
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'STALE_P10_9254_CANCELLED=PASS'
+      - run: |
+          echo 'STALE_P10_9254_CLEANUP_ARCHIVED=PASS'
+          echo 'One-time queue cleanup completed; automatic execution is disabled.'

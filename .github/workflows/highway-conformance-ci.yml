@@ -23,6 +23,8 @@ on:
       - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
       - '.github/workflows/gateway-director-live-acceptance.yml'
       - '.github/workflows/ops-bootstrap-current-p10-ratification.yml'
+      - '.github/workflows/ops-one-shot-p10-closure-71f2973.yml'
+      - '.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml'
       - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
@@ -59,6 +61,8 @@ jobs:
           P10R=.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml
           GDIR=.github/workflows/gateway-director-live-acceptance.yml
           P10BOOT=.github/workflows/ops-bootstrap-current-p10-ratification.yml
+          P10ONESHOT=.github/workflows/ops-one-shot-p10-closure-71f2973.yml
+          P10CHAIN=.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml
 
           grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
           ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
@@ -87,6 +91,10 @@ jobs:
           grep -q 'group: metatron-production-lane' "$GDIR"
           ! grep -q '^  push:' "$P10BOOT"
           grep -q 'P10_BOOTSTRAP_AUTORUN=DISABLED' "$P10BOOT"
+          ! grep -q 'workflow_run:' "$P10ONESHOT"
+          ! grep -q 'workflow_run:' "$P10CHAIN"
+          grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10ONESHOT"
+          grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10CHAIN"
 
           grep -q 'HIGHWAY_REVISION: fast-production-lane-' "$H"
           grep -q 'group: metatron-production-lane' "$H"
@@ -107,11 +115,11 @@ jobs:
           grep -q 'HIGHWAY_FAST_LIVE_GATE=PASS' scripts/production-acceptance-highway.sh
           grep -q 'HIGHWAY_DESTRUCTIVE_STRESS=DEFERRED_TO_DEEP_RATIFICATION' scripts/production-acceptance-highway.sh
           grep -q 'INTELLIGENCE_TWO_WAVE_PARALLELISM=PASS' scripts/highway-intelligence-lane.sh
-          grep -q 'POINT2_PARALLEL_CURRENT_PROBES=PASS' scripts/runtime-conformance-point2.sh
-          grep -Eq 'highway-intelligence-lane\.sh.*& INTEL_PID=' "$H"
-          grep -Eq 'runtime-conformance-point2\.sh.*& POINT2_PID=' "$H"
-          grep -q 'HIGHWAY_INTELLIGENCE_POINT2_PARALLELISM=PASS' "$H"
+          grep -q 'POINT2_SEMANTIC_ISOLATION=PASS' scripts/runtime-conformance-point2.sh
+          ! grep -Eq 'highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&' "$H"
+          grep -q 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS' "$H"
           grep -q 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS' "$H"
+          ! grep -q 'actions/upload-artifact@' "$H"
 
           python3 - <<'PY'
           from pathlib import Path
@@ -129,10 +137,18 @@ jobs:
           assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: false' in deploy_job
           assert 'needs: refresh-production-admission' in deploy_job
           assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
-          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v11' in h
+          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v12' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh' in h
+          phase_positions=[
+              h.index("HIGHWAY_PHASE=INTELLIGENCE_PRODUCT"),
+              h.index("HIGHWAY_PHASE=POINT2_ROOT"),
+              h.index("HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5"),
+          ]
+          assert phase_positions==sorted(phase_positions),phase_positions
+          assert '& INTEL_PID' not in h and '& POINT2_PID' not in h
+          assert 'actions/upload-artifact@' not in h
           assert 'actions/cache/save@v4' in build
           assert 'actions/cache/restore@v4' in deploy_job
           assert 'fail-on-cache-miss: true' in deploy_job
@@ -148,7 +164,9 @@ jobs:
           print('HIGHWAY_JIT_ADMISSION_REFRESH=PASS')
           print('HIGHWAY_NO_CONCURRENCY_SELF_CANCEL=PASS')
           print('HIGHWAY_FAST_PROFILE_CONTRACT=PASS')
-          print('HIGHWAY_PARALLEL_PHASE_CONTRACT=PASS')
+          print('HIGHWAY_INTELLIGENCE_INTERNAL_PARALLELISM=PASS')
+          print('HIGHWAY_POINT2_SEMANTIC_ISOLATION=PASS')
+          print('HIGHWAY_NO_ROUTINE_ARTIFACT_UPLOAD=PASS')
           print('HIGHWAY_FAIL_FAST_TIMEOUT_CONTRACT=PASS')
           print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
           print('HIGHWAY_LATEST_SHA_WINS_POLICY=PASS')
@@ -160,6 +178,7 @@ jobs:
           echo 'P10_BOOTSTRAP_AUTORUN_DISABLED=PASS'
           echo 'P10_EXPLICIT_DEEP_CONFIRMATION_REQUIRED=PASS'
           echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
+          echo 'P10_LEGACY_AUTOFANOUT_ARCHIVED=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Verify bounded execution planning recovery contract
         shell: bash

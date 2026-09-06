@@ -1,20 +1,15 @@
-name: Cancel Stale P10 Controller 827f
+name: Cancel Stale P10 Controller 827f — Archived
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-cancel-stale-p10-827f.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: workforce-autonomy-p10-ratification-827fccc55173c761cd18c4d263fe65ec85dc07d2
-  cancel-in-progress: true
-
 jobs:
-  cancel:
+  record:
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'STALE_P10_827F_CANCELLED=PASS'
+      - run: |
+          echo 'STALE_P10_827F_CLEANUP_ARCHIVED=PASS'
+          echo 'One-time queue cleanup completed; automatic execution is disabled.'
