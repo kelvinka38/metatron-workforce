@@ -1,11 +1,6 @@
 name: Workforce Autonomy P10 45 Condition Ratification
 
 on:
-  workflow_run:
-    workflows:
-      - "Workforce Autonomy P10 Production Acceptance"
-      - "Workforce Autonomy P10 GS3 GS4 Production Acceptance"
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -25,14 +20,9 @@ permissions:
   contents: read
   actions: read
 
-concurrency:
-  group: workforce-autonomy-p10-45-condition-ratification
-  cancel-in-progress: false
-
 jobs:
   resolve-evidence:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
@@ -103,6 +93,9 @@ jobs:
     needs: resolve-evidence
     if: ${{ needs.resolve-evidence.outputs.ready == 'true' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
+    concurrency:
+      group: metatron-production-lane
+      cancel-in-progress: false
     environment: production
     timeout-minutes: 35
     env:
