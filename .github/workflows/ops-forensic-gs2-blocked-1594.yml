@@ -1,0 +1,57 @@
+name: Forensic GS2 Blocked 1594
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-forensic-gs2-blocked-1594.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect bounded GS2 production evidence
+        shell: bash
+        env:
+          OID: objective:intelligence-case:case-446b826e-96d3-436f-b55f-4092cfc8391e:request:telegram:update:178868477505983197
+        run: |
+          set -euo pipefail
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          echo "CONTAINER_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)"
+          curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/$OID" > /tmp/gs2-objective.json
+          python3 - /tmp/gs2-objective.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          o=d.get('objective') or {}
+          print('OBJECTIVE_STATUS='+str(o.get('status')))
+          print('OBJECTIVE_OWNER='+str(o.get('ownerWorkerId')))
+          print('OBJECTIVE_CURRENT_BLOCKER='+str(o.get('blocker') or o.get('currentBlocker') or ''))
+          print('HISTORY_BEGIN')
+          for row in (d.get('history') or [])[-80:]:
+              print(json.dumps(row,sort_keys=True)[:4000])
+          print('HISTORY_END')
+          PY
+
+          echo 'EXECUTION_ATTEMPTS_BEGIN'
+          docker exec "$CID" sh -c "grep -F '$OID' /var/lib/metatron-workforce/execution-attempts.json 2>/dev/null || true" | tail -c 30000
+          echo
+          echo 'EXECUTION_ATTEMPTS_END'
+
+          echo 'ACTION_JOURNAL_BEGIN'
+          mapfile -t files < <(docker exec "$CID" sh -c "grep -R -l -F '$OID' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null" || true)
+          printf 'ACTION_JOURNAL_FILES=%s\n' "${#files[@]}"
+          for file in "${files[@]}"; do
+            echo "FILE=$file"
+            docker exec "$CID" sh -c "grep -F '$OID' '$file' 2>/dev/null || true" | tail -n 80 | cut -c1-8000
+          done
+          echo 'ACTION_JOURNAL_END'
+
+          echo 'COORDINATION_BEGIN'
+          docker exec "$CID" sh -c "grep -F '$OID' /var/lib/metatron-workforce/autonomy-coordination-state.json 2>/dev/null || true" | tail -c 30000
+          echo
+          echo 'COORDINATION_END'
