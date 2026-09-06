@@ -26,7 +26,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Publishes committed Objective-workspace changes as a reviewable GitHub proposal without exposing
+ * Publishes verified committed Objective-workspace changes as a reviewable GitHub proposal without exposing
  * repository credentials to the Worker sandbox. Publication is deliberately proposal-only: there is
  * no merge action and canonical branch mutation is never performed.
  */

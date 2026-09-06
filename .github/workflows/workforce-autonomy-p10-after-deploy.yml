@@ -24,7 +24,7 @@ permissions:
 # Deep L10 ratification is release evidence, not a routine per-commit deployment step.
 # Routine production deploys run only the single automatic Highway. Explicit dispatch remains
 # supported; changes to the P10 acceptance/ratification contract self-ratify after their exact SHA
-# reaches production so the gate cannot change without live evidence.
+# reaches production so the gate cannot change without live evidence. This controller is itself part of that contract.
 concurrency:
   group: workforce-autonomy-p10-ratification-${{ inputs.target_sha }}
   cancel-in-progress: false
