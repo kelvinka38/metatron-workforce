@@ -1,0 +1,32 @@
+name: Verify FAST Highway v13 Exact Deployed SHA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-verify-fast-highway-v13.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch FAST Highway for exact deployed SHA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: 9e404bc48529d68e0a4f44bc887bcca9f48d5f58
+        run: |
+          set -euo pipefail
+          payload=$(python3 - "$TARGET_SHA" <<'PY'
+          import json,sys
+          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1],"profile":"FAST"}}))
+          PY
+          )
+          code=$(curl -sS -o /tmp/dispatch.json -w '%{http_code}'             -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/production-acceptance-highway-v2.yml/dispatches"             -H "Authorization: Bearer $GH_TOKEN"             -H 'Accept: application/vnd.github+json'             -H 'X-GitHub-Api-Version: 2022-11-28'             -H 'Content-Type: application/json'             --data-binary "$payload")
+          test "$code" = 204
+          echo "FAST_HIGHWAY_TARGET_SHA=$TARGET_SHA"
+          echo 'FAST_HIGHWAY_V13_DISPATCH=PASS'
