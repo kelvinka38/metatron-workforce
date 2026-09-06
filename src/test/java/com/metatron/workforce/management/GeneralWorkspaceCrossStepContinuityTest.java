@@ -4,6 +4,7 @@ import com.metatron.workforce.action.ActionFabric;
 import com.metatron.workforce.action.CognitiveWorkerRuntime;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
+import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeneralWorkspaceCrossStepContinuityTest {
     private static final String SHA = "590aeeff27718784b9cbea7c485d2ea425cc5e4c";
+    private static final String BASELINE_SHA = "4a1d7f6b83cc201ec3a192c90e2d146f1872bd45";
 
     @TempDir
     Path tempDir;
@@ -29,11 +31,14 @@ class GeneralWorkspaceCrossStepContinuityTest {
         workspaces.write(workspace, "README.md", "source");
         workspaces.write(workspace, ".metatron-repository",
                 "repository=kelvinka38/metatron-workforce\nrequestedRef=" + SHA + "\ncommitSha=" + SHA + "\n");
+        workspaces.write(workspace, RepositoryWorkspaceMaterializationState.BASELINE_REF_PATH,
+                BASELINE_SHA + "\n");
 
         Map<String, String> memory = GeneralWorkspaceAutonomousCapability.objectiveWorkspaceMemory(workspaces, workspace);
         assertEquals("true", memory.get(GeneralWorkspaceAutonomousCapability.MEMORY_WORKSPACE_MATERIALIZED));
         assertEquals("kelvinka38/metatron-workforce", memory.get("repository"));
         assertEquals(SHA, memory.get("sourceCommitSha"));
+        assertEquals(BASELINE_SHA, memory.get("localBaselineCommitSha"));
         assertEquals(workspace.workspaceRef(), memory.get("workspaceRef"));
 
         ExecutionWorkSpec followUp = new ExecutionWorkSpec(
