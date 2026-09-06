@@ -106,6 +106,7 @@ public final class WorkerRuntimeProfileBindingService {
                             "workspace.file.read", "workspace.file.list", "workspace.file.write",
                             "workspace.process.run", "workspace.shell.run",
                             "workspace.git.status", "workspace.git.diff", "workspace.git.run",
+                            "workspace.github.pr.publish",
                             "workspace.build.run", "workspace.test.run"),
                     Set.of("git", "java", "javac", "sh", "bash", "gradle", "mvn", "./gradlew", "./mvnw"),
                     true, 300, 2_000_000);

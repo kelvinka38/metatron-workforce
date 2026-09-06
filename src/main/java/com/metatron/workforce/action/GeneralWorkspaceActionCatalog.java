@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
+import com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
@@ -24,17 +25,20 @@ public final class GeneralWorkspaceActionCatalog {
     private final WorkerExecutionSandboxService sandbox;
     private final WorkerRuntimeProfileBindingService profiles;
     private final RepositoryWorkspaceMaterializationService repositories;
+    private final GitHubWorkspaceProposalPublisher proposals;
     private final ObjectMapper json;
 
     public GeneralWorkspaceActionCatalog(ObjectiveWorkspaceService workspaces,
                                          WorkerExecutionSandboxService sandbox,
                                          WorkerRuntimeProfileBindingService profiles,
                                          RepositoryWorkspaceMaterializationService repositories,
+                                         GitHubWorkspaceProposalPublisher proposals,
                                          ObjectMapper json) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.repositories = Objects.requireNonNull(repositories, "repositories");
+        this.proposals = Objects.requireNonNull(proposals, "proposals");
         this.json = Objects.requireNonNull(json, "json");
     }
 
@@ -52,6 +56,7 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, gitStatus(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitDiff(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitRun(workerId, authorizationReference, objectiveId));
+        add(profile, actions, githubProposal(workerId, authorizationReference, objectiveId));
         add(profile, actions, build(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, test(workerId, authorizationReference, objectiveId, workspace));
         return List.copyOf(actions);
@@ -261,6 +266,42 @@ public final class GeneralWorkspaceActionCatalog {
             List<String> args = stringList(input(request, "argsJson"));
             if (args.isEmpty()) throw new IllegalArgumentException("git args required");
             return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, "git", args));
+        });
+    }
+
+    private ActionFabric.Action githubProposal(String worker, String auth, String objectiveId) {
+        return action("workspace.github.pr.publish", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+            GitHubWorkspaceProposalPublisher.Publication publication = proposals.publish(
+                    worker,
+                    objectiveId,
+                    request.inputs().getOrDefault("title", ""),
+                    request.inputs().getOrDefault("body", ""));
+            Map<String, String> outputs = new LinkedHashMap<>();
+            outputs.put("repository", publication.repository());
+            outputs.put("baseBranch", publication.baseBranch());
+            outputs.put("sourceCommitSha", publication.sourceCommitSha());
+            outputs.put("localHeadSha", publication.localHeadSha());
+            outputs.put("branch", publication.branch());
+            outputs.put("remoteCommitSha", publication.remoteCommitSha());
+            outputs.put("pullRequestNumber", Integer.toString(publication.pullRequestNumber()));
+            outputs.put("pullRequestUrl", publication.pullRequestUrl());
+            outputs.put("changedPathsJson", write(publication.changedPaths()));
+
+            List<String> evidence = new ArrayList<>();
+            evidence.add("github-general-proposal:true");
+            evidence.add("github-pr:" + publication.pullRequestUrl());
+            evidence.add("github-pr-number:" + publication.pullRequestNumber());
+            evidence.add("github-repository:" + publication.repository());
+            evidence.add("github-base-branch:" + publication.baseBranch());
+            evidence.add("github-source-sha:" + publication.sourceCommitSha());
+            evidence.add("github-local-head:" + publication.localHeadSha());
+            evidence.add("github-branch:" + publication.branch());
+            evidence.add("github-remote-commit:" + publication.remoteCommitSha());
+            publication.changedPaths().forEach(path -> evidence.add("github-changed-path:" + path));
+            evidence.add("github-merge-performed:false");
+            return observation(request.actionRef(), true,
+                    "committed Objective workspace published as reviewable unmerged GitHub Pull Request",
+                    outputs, evidence);
         });
     }
 

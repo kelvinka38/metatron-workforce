@@ -16,8 +16,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -66,7 +68,12 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         if (repo == null) return Optional.empty();
         try {
             PullEvidence pull = pullEvidence(executionEvidenceReferences);
-            if (pull != null) return Optional.of(observePull(requirement, executionEvidenceReferences, pull, at));
+            if (pull != null) {
+                if (executionEvidenceReferences.stream().anyMatch("github-general-proposal:true"::equals)) {
+                    return Optional.of(observeGeneralPull(requirement, executionEvidenceReferences, pull, at));
+                }
+                return Optional.of(observePull(requirement, executionEvidenceReferences, pull, at));
+            }
             return Optional.of(observeReadOnly(requirement, executionEvidenceReferences, repo, at));
         } catch (Exception failure) {
             return Optional.of(new ObservationReport(
@@ -107,6 +114,77 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
                 executionClosed ? ObservationReport.Quality.HIGH : ObservationReport.Quality.INSUFFICIENT,
                 executionClosed ? "" : "missing work:/RepositoryAuditWorker:PASS execution evidence",
                 executionClosed ? ObservationReport.CriterionResult.PASS : ObservationReport.CriterionResult.INCONCLUSIVE);
+    }
+
+    private ObservationReport observeGeneralPull(ObservationRequirement requirement,
+                                                  List<String> executionEvidenceReferences,
+                                                  PullEvidence pull,
+                                                  Instant at) throws Exception {
+        String targetRepository = repository(requirement.target());
+        if (targetRepository == null || !targetRepository.equalsIgnoreCase(pull.repository())) {
+            throw new SecurityException("general proposal evidence repository does not match Observation target");
+        }
+
+        JsonNode pr = get("/repos/" + pull.repository() + "/pulls/" + pull.number());
+        boolean open = "open".equalsIgnoreCase(pr.path("state").asText());
+        boolean unmerged = !pr.path("merged").asBoolean(false) && pr.path("merged_at").isNull();
+        String base = pr.at("/base/ref").asText();
+        String head = pr.at("/head/ref").asText();
+        String headSha = pr.at("/head/sha").asText();
+
+        String expectedBase = evidenceValue(executionEvidenceReferences, "github-base-branch:");
+        String expectedBranch = evidenceValue(executionEvidenceReferences, "github-branch:");
+        String expectedSource = evidenceValue(executionEvidenceReferences, "github-source-sha:");
+        String expectedRemoteCommit = evidenceValue(executionEvidenceReferences, "github-remote-commit:");
+        Set<String> expectedPaths = evidenceValues(executionEvidenceReferences, "github-changed-path:");
+        boolean noMergeClaim = executionEvidenceReferences.stream().anyMatch("github-merge-performed:false"::equals);
+
+        JsonNode commit = get("/repos/" + pull.repository() + "/git/commits/" + headSha);
+        String parentSha = commit.path("parents").isArray() && !commit.path("parents").isEmpty()
+                ? commit.path("parents").get(0).path("sha").asText() : "";
+
+        JsonNode files = get("/repos/" + pull.repository() + "/pulls/" + pull.number() + "/files?per_page=100");
+        Set<String> actualPaths = new LinkedHashSet<>();
+        if (files.isArray()) {
+            for (JsonNode file : files) {
+                String path = file.path("filename").asText("").trim();
+                if (!path.isBlank()) actualPaths.add(path);
+            }
+        }
+
+        boolean sourceBound = expectedSource.matches("[0-9a-f]{40}") && expectedSource.equals(parentSha);
+        boolean remoteCommitBound = expectedRemoteCommit.matches("[0-9a-f]{40}")
+                && expectedRemoteCommit.equals(headSha);
+        boolean branchBound = !expectedBranch.isBlank() && expectedBranch.equals(head)
+                && head.startsWith("metatron/objective-");
+        boolean baseBound = !expectedBase.isBlank() && expectedBase.equals(base);
+        boolean pathsBound = !expectedPaths.isEmpty() && expectedPaths.size() <= 50
+                && expectedPaths.equals(actualPaths);
+        boolean pass = open && unmerged && sourceBound && remoteCommitBound && branchBound
+                && baseBound && pathsBound && noMergeClaim;
+
+        List<String> evidence = List.of(
+                "github-general-pr-observation:https://github.com/" + pull.repository() + "/pull/" + pull.number(),
+                "github-general-pr-observation-open:" + open,
+                "github-general-pr-observation-unmerged:" + unmerged,
+                "github-general-pr-observation-source-bound:" + sourceBound,
+                "github-general-pr-observation-remote-commit-bound:" + remoteCommitBound,
+                "github-general-pr-observation-branch-bound:" + branchBound,
+                "github-general-pr-observation-base-bound:" + baseBound,
+                "github-general-pr-observation-paths-bound:" + pathsBound,
+                "github-general-pr-observation-fresh-api-read:true");
+        return new ObservationReport(
+                "observation:github-general-pr:" + pull.number() + ":" + requirement.requirementId(),
+                requirement.requirementId(), requirement.objectiveId(), requirement.target(),
+                pass
+                        ? "fresh GitHub reads prove the reviewable proposal is source-bound, unmerged, and contains exactly the committed Objective path set"
+                        : "general GitHub proposal does not satisfy the governed source/branch/path contract",
+                "authoritative-github-api-read", at, at, evidence, 0.99,
+                ObservationReport.Quality.HIGH,
+                pass ? "" : "open=" + open + ",unmerged=" + unmerged + ",sourceBound=" + sourceBound
+                        + ",remoteCommitBound=" + remoteCommitBound + ",branchBound=" + branchBound
+                        + ",baseBound=" + baseBound + ",pathsBound=" + pathsBound + ",noMergeClaim=" + noMergeClaim,
+                pass ? ObservationReport.CriterionResult.PASS : ObservationReport.CriterionResult.FAIL);
     }
 
     private ObservationReport observePull(ObservationRequirement requirement,
@@ -189,6 +267,24 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
             from += needle.length();
         }
         return count;
+    }
+
+    private static String evidenceValue(List<String> evidence, String prefix) {
+        for (String value : evidence) {
+            if (value != null && value.startsWith(prefix)) return value.substring(prefix.length()).trim();
+        }
+        return "";
+    }
+
+    private static Set<String> evidenceValues(List<String> evidence, String prefix) {
+        Set<String> values = new LinkedHashSet<>();
+        for (String value : evidence) {
+            if (value != null && value.startsWith(prefix)) {
+                String extracted = value.substring(prefix.length()).trim();
+                if (!extracted.isBlank()) values.add(extracted);
+            }
+        }
+        return Set.copyOf(values);
     }
 
     private PullEvidence pullEvidence(List<String> evidence) {

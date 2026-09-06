@@ -3,6 +3,7 @@ package com.metatron.workforce.action;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
+import com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.junit.jupiter.api.Test;
@@ -45,9 +46,11 @@ class GeneralWorkspaceActionCatalogReadOnlyMaterializationTest {
                 json);
         RepositoryWorkspaceMaterializationService repositories =
                 new RepositoryWorkspaceMaterializationService(http, "", workspaces, json);
+        GitHubWorkspaceProposalPublisher proposals =
+                new GitHubWorkspaceProposalPublisher(http, "", workspaces, sandbox, json);
 
         GeneralWorkspaceActionCatalog catalog = new GeneralWorkspaceActionCatalog(
-                workspaces, sandbox, profiles, repositories, json);
+                workspaces, sandbox, profiles, repositories, proposals, json);
         ActionFabric fabric = new ActionFabric(catalog.actions(worker, authorization, objective));
         List<String> readOnlyCatalog = fabric.catalogFor(worker, authorization, false);
 

@@ -68,20 +68,23 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
-    void mutatingFollowUpStepDoesNotRematerializeAndDestroyPriorWorkspaceWork() {
+    void singleStepMutatingRepositoryWorkMustMaterializeBeforeEditing() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "create_proof",
-                "Create proof file after repository materialization",
+                "repair",
+                "Repair a defect, run tests, commit the change, and open a pull request",
                 "kelvinka38/metatron-workforce",
                 "execution.general.workspace",
-                List.of("checkout_target_snapshot"),
+                List.of(),
                 ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("proof exists"), List.of("file evidence"));
+                List.of("tests pass", "reviewable pull request exists"), List.of("runtime evidence"));
         CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.repository.materialize", "workspace.file.write"), List.of(), Map.of());
 
-        assertNull(GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context));
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context);
+        assertEquals("workspace.repository.materialize", thought.actionRef());
+        assertEquals("kelvinka38/metatron-workforce", thought.inputs().get("repository"));
     }
 
 
@@ -169,9 +172,11 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     @Test
     void stageAndCommitWorkForcesBothGovernedGitSubactionsInOrder() {
         ExecutionWorkSpec work = stageAndCommitWork();
+        CognitiveWorkerRuntime.Cycle written = successfulCycle(
+                1, "workspace.file.write", Map.of("path", "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md"));
         CognitiveWorkerRuntime.CognitiveContext beforeAdd = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
-                List.of("workspace.git.run", "workspace.git.status"), List.of(), Map.of());
+                List.of("workspace.git.run", "workspace.git.status"), List.of(written), Map.of());
 
         CognitiveWorkerRuntime.Thought add = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeAdd);
 
@@ -179,7 +184,7 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
         assertEquals("[\"add\",\"docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md\"]",
                 add.inputs().get("argsJson"));
 
-        CognitiveWorkerRuntime.Cycle added = successfulCycle(1, "workspace.git.run", add.inputs());
+        CognitiveWorkerRuntime.Cycle added = successfulCycle(2, "workspace.git.run", add.inputs());
         CognitiveWorkerRuntime.CognitiveContext beforeCommit = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.git.run", "workspace.git.status"), List.of(added), Map.of());
@@ -189,7 +194,7 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
         assertEquals("workspace.git.run", commit.actionRef());
         assertEquals(true, commit.inputs().get("argsJson").startsWith("[\"commit\",\"-m\","));
 
-        CognitiveWorkerRuntime.Cycle committed = successfulCycle(2, "workspace.git.run", commit.inputs());
+        CognitiveWorkerRuntime.Cycle committed = successfulCycle(3, "workspace.git.run", commit.inputs());
         CognitiveWorkerRuntime.CognitiveContext beforeVerification = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.git.run", "workspace.git.status"), List.of(added, committed), Map.of());
@@ -261,6 +266,44 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                 GeneralCognitiveWorkerBrain.governedRequiredActionReflection(beforeCommit, gitSuccess);
 
         assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, afterCommit.decision());
+    }
+
+    @Test
+    void remoteProposalCannotRunUntilLatestMutationIsTestedAndCommitted() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "repair-and-publish",
+                "Repair the defect, run tests, commit the change, and open a pull request",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass", "reviewable pull request exists"),
+                List.of("general Action Fabric and fresh GitHub Observation"));
+
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize", Map.of("repository", "kelvinka38/metatron-workforce"));
+        CognitiveWorkerRuntime.Cycle written = successfulCycle(
+                2, "workspace.file.write", Map.of("path", "src/main/java/example.java"));
+        CognitiveWorkerRuntime.Cycle tested = successfulCycle(3, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.Cycle added = successfulCycle(
+                4, "workspace.git.run", Map.of("argsJson", "[\"add\",\"-A\"]"));
+        CognitiveWorkerRuntime.Cycle committed = successfulCycle(
+                5, "workspace.git.run", Map.of("argsJson", "[\"commit\",\"-m\",\"Complete governed Objective work step\"]"));
+        CognitiveWorkerRuntime.CognitiveContext ready = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.write", "workspace.test.run",
+                        "workspace.git.run", "workspace.github.pr.publish"),
+                List.of(materialized, written, tested, added, committed), Map.of());
+
+        CognitiveWorkerRuntime.Thought proposal =
+                GeneralCognitiveWorkerBrain.governedRemoteProposalPrecondition(ready);
+        assertEquals("workspace.github.pr.publish", proposal.actionRef());
+
+        CognitiveWorkerRuntime.Reflection guarded = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                ready,
+                ActionFabric.ActionObservation.success("workspace.git.status", "verified", Map.of(), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("done"));
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, guarded.decision());
     }
 
     private static CognitiveWorkerRuntime.Cycle successfulCycle(int number, String actionRef, Map<String, String> inputs) {

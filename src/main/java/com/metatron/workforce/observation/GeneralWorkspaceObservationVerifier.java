@@ -4,6 +4,7 @@ import com.metatron.workforce.interaction.intelligence.GeneralActionComposingExe
 import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
@@ -22,11 +23,22 @@ import java.util.Optional;
 public final class GeneralWorkspaceObservationVerifier implements ObservationVerifier {
     private final ObjectiveWorkspaceService workspaces;
     private final WorkerExecutionSandboxService sandbox;
+    private final GitHubRepositoryObservationVerifier github;
 
+    @Autowired
     public GeneralWorkspaceObservationVerifier(ObjectiveWorkspaceService workspaces,
-                                               WorkerExecutionSandboxService sandbox) {
+                                               WorkerExecutionSandboxService sandbox,
+                                               GitHubRepositoryObservationVerifier github) {
         this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
         this.sandbox = java.util.Objects.requireNonNull(sandbox, "sandbox");
+        this.github = java.util.Objects.requireNonNull(github, "github");
+    }
+
+    GeneralWorkspaceObservationVerifier(ObjectiveWorkspaceService workspaces,
+                                        WorkerExecutionSandboxService sandbox) {
+        this.workspaces = java.util.Objects.requireNonNull(workspaces, "workspaces");
+        this.sandbox = java.util.Objects.requireNonNull(sandbox, "sandbox");
+        this.github = null;
     }
 
     @Override
@@ -41,6 +53,9 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
     public Optional<ObservationReport> observe(ObservationRequirement requirement,
                                                List<String> executionEvidenceReferences,
                                                Instant at) {
+        if (generalRemoteProposalRequirement(requirement, executionEvidenceReferences) && github != null) {
+            return github.observe(requirement, executionEvidenceReferences, at);
+        }
         if (researchRequirement(requirement)) {
             return Optional.of(observeResearch(requirement, executionEvidenceReferences, at));
         }
@@ -155,6 +170,19 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                 "Durable Objective workspace contains independently observable work product",
                 "independent-workspace-state-inspection", evidence,
                 ObservationReport.Quality.MEDIUM, ObservationReport.CriterionResult.PASS));
+    }
+
+    private static boolean generalRemoteProposalRequirement(
+            ObservationRequirement requirement,
+            List<String> executionEvidenceReferences) {
+        boolean published = executionEvidenceReferences != null
+                && executionEvidenceReferences.stream().anyMatch("github-general-proposal:true"::equals);
+        if (!published) return false;
+        String criterion = requirement.criterion().toLowerCase(Locale.ROOT);
+        return criterion.contains("pull request")
+                || criterion.contains("proposal branch")
+                || criterion.contains("remote proposal")
+                || criterion.contains("reviewable pr");
     }
 
     private static boolean researchRequirement(ObservationRequirement requirement) {

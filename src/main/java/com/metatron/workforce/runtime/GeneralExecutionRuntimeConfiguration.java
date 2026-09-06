@@ -61,13 +61,24 @@ public class GeneralExecutionRuntimeConfiguration {
     }
 
     @Bean
+    GitHubWorkspaceProposalPublisher gitHubWorkspaceProposalPublisher(
+            @Value("${GITHUB_TOKEN:}") String githubToken,
+            ObjectiveWorkspaceService workspaces,
+            WorkerExecutionSandboxService sandbox,
+            ObjectMapper json) {
+        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        return new GitHubWorkspaceProposalPublisher(http, githubToken, workspaces, sandbox, json);
+    }
+
+    @Bean
     GeneralWorkspaceActionCatalog generalWorkspaceActionCatalog(
             ObjectiveWorkspaceService workspaces,
             WorkerExecutionSandboxService sandbox,
             WorkerRuntimeProfileBindingService profiles,
             RepositoryWorkspaceMaterializationService repositories,
+            GitHubWorkspaceProposalPublisher proposals,
             ObjectMapper json) {
-        return new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, repositories, json);
+        return new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, repositories, proposals, json);
     }
 
     @Bean

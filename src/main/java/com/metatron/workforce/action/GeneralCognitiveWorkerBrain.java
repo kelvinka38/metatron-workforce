@@ -54,6 +54,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             Map.entry("workspace.git.run", Map.of(
                     "inputs", Map.of("argsJson", "required JSON string array of git arguments"),
                     "purpose", "run a local Git operation; no remote credential is exposed to the sandbox")),
+            Map.entry("workspace.github.pr.publish", Map.of(
+                    "inputs", Map.of("title", "optional pull-request title", "body", "optional pull-request body"),
+                    "purpose", "publish the clean committed Objective-workspace delta as an Objective-scoped reviewable GitHub proposal branch and unmerged pull request; no merge authority")),
             Map.entry("workspace.build.run", Map.of(
                     "inputs", Map.of("tasksJson", "optional JSON string array of build tasks"),
                     "purpose", "detect Gradle/Maven project and run its build in the isolated sandbox")),
@@ -87,6 +90,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (requiredTest != null) return requiredTest;
         CognitiveWorkerRuntime.Thought requiredGit = governedGitPrecondition(context);
         if (requiredGit != null) return requiredGit;
+        CognitiveWorkerRuntime.Thought remoteProposal = governedRemoteProposalPrecondition(context);
+        if (remoteProposal != null) return remoteProposal;
         CognitiveWorkerRuntime.Thought gitInspection = readOnlyGitInspectionPrecondition(context);
         if (gitInspection != null) return gitInspection;
 
@@ -211,13 +216,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         if (!context.availableActions().contains("workspace.test.run")) return null;
         if (!requiresGovernedTest(context)) return null;
-        if (successfulAction(context, "workspace.test.run")) return null;
-        if (requiresRepositoryMaterialization(context)
-                && context.availableActions().contains("workspace.repository.materialize")
-                && !successfulAction(context, "workspace.repository.materialize")) return null;
+        if (!materializationSatisfied(context)) return null;
+        if (context.workSpec().consequence()
+                == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING
+                && !hasWorkspaceSourceMutation(context)) return null;
+        if (governedTestSatisfied(context)) return null;
         return new CognitiveWorkerRuntime.Thought(
                 "workspace.test.run", Map.of(),
-                "Work explicitly requires the governed repository test suite to pass before completion");
+                "Run the governed repository test suite against the latest Objective-workspace source mutation before commit/publication");
     }
 
     static CognitiveWorkerRuntime.Thought governedGitPrecondition(
@@ -225,13 +231,16 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         if (!context.availableActions().contains("workspace.git.run")) return null;
         if (requiresGitAdd(context) && !successfulGitSubcommand(context, "add")) {
+            if (!hasWorkspaceSourceMutation(context)) return null;
+            if (requiresGovernedTest(context) && !governedTestSatisfied(context)) return null;
             String path = governedStagePath(context.workSpec().target());
-            if (!path.isBlank()) {
-                return new CognitiveWorkerRuntime.Thought(
-                        "workspace.git.run",
-                        Map.of("argsJson", writeActionArgs(List.of("add", path))),
-                        "Work explicitly requires staging the governed target before local commit");
-            }
+            List<String> args = path.isBlank() ? List.of("add", "-A") : List.of("add", path);
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.git.run",
+                    Map.of("argsJson", writeActionArgs(args)),
+                    path.isBlank()
+                            ? "Stage the complete bounded Objective-workspace source delta before the required commit"
+                            : "Stage the governed target before the required commit");
         }
         if (requiresGitCommit(context)
                 && (!requiresGitAdd(context) || successfulGitSubcommand(context, "add"))
@@ -240,7 +249,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "workspace.git.run",
                     Map.of("argsJson", writeActionArgs(List.of(
                             "commit", "-m", "Complete governed Objective work step"))),
-                    "Work explicitly requires one immutable local Git commit");
+                    "Create one immutable local Git commit for the verified Objective work product");
         }
         if (requiresGitVerification(context)
                 && context.availableActions().contains("workspace.git.status")
@@ -253,11 +262,23 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return null;
     }
 
+    static CognitiveWorkerRuntime.Thought governedRemoteProposalPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!requiresRemoteProposal(context)) return null;
+        if (!context.availableActions().contains("workspace.github.pr.publish")) return null;
+        if (!successfulGitSubcommand(context, "commit")) return null;
+        if (requiresGovernedTest(context) && !governedTestSatisfied(context)) return null;
+        if (successfulAction(context, "workspace.github.pr.publish")) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.github.pr.publish", Map.of(),
+                "Publish the clean tested committed Objective-workspace delta through the governed credential-isolated proposal action");
+    }
+
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
-        if (context.workSpec().consequence()
-                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.READ_ONLY) {
-            return false;
-        }
+        if (context.memory().getOrDefault("workspaceMaterialized", "false").equalsIgnoreCase("true")) return false;
+        String repository = repositoryFromTarget(context.workSpec().target());
+        if (!repository.isBlank()) return true;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("materializ")
                 || text.contains("snapshot")
@@ -265,6 +286,49 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("source tree")
                 || text.contains("git rev-parse")
                 || EXACT_GIT_SHA.matcher(text).find();
+    }
+
+    private static boolean materializationSatisfied(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.memory().getOrDefault("workspaceMaterialized", "false").equalsIgnoreCase("true")) return true;
+        if (!context.availableActions().contains("workspace.repository.materialize")) return true;
+        return successfulAction(context, "workspace.repository.materialize");
+    }
+
+    private static boolean hasWorkspaceSourceMutation(CognitiveWorkerRuntime.CognitiveContext context) {
+        return context.history().stream().anyMatch(cycle -> cycle.observation().success()
+                && ("workspace.file.write".equals(cycle.thought().actionRef())
+                || "workspace.shell.run".equals(cycle.thought().actionRef())
+                || "workspace.process.run".equals(cycle.thought().actionRef())));
+    }
+
+    private static boolean governedTestSatisfied(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (!requiresGovernedTest(context)) return true;
+        int latestMutation = -1;
+        int latestTest = -1;
+        for (int i = 0; i < context.history().size(); i++) {
+            CognitiveWorkerRuntime.Cycle cycle = context.history().get(i);
+            if (!cycle.observation().success()) continue;
+            String action = cycle.thought().actionRef();
+            if ("workspace.file.write".equals(action)
+                    || "workspace.shell.run".equals(action)
+                    || "workspace.process.run".equals(action)) latestMutation = i;
+            if ("workspace.test.run".equals(action)) latestTest = i;
+        }
+        if (context.workSpec().consequence()
+                == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) {
+            return latestMutation >= 0 && latestTest > latestMutation;
+        }
+        return latestTest >= 0;
+    }
+
+    private static boolean requiresRemoteProposal(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("pull request")
+                || text.contains("open pr")
+                || text.contains("proposal branch")
+                || text.contains("publish") && text.contains("github");
     }
 
     static List<String> researchCompletionQualityProblems(
@@ -384,12 +448,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
-        return text.contains("stage ") || text.contains("staged ") || text.contains("git add");
+        return requiresGitCommit(context)
+                || text.contains("stage ") || text.contains("staged ") || text.contains("git add");
     }
 
     private static boolean requiresGitCommit(CognitiveWorkerRuntime.CognitiveContext context) {
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        if (requiresRemoteProposal(context)) return true;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("local git commit")
                 || text.contains("local commit")
@@ -563,7 +629,11 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         }
         if (requiresGovernedTest(context) && "workspace.test.run".equals(observation.actionRef())) {
             return CognitiveWorkerRuntime.Reflection.complete(
-                    "Governed test action succeeded; all explicit action requirements are now evaluated");
+                    "Governed test action succeeded against the latest observed source mutation");
+        }
+        if (requiresRemoteProposal(context) && "workspace.github.pr.publish".equals(observation.actionRef())) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Governed remote publication succeeded with a reviewable unmerged Pull Request");
         }
         if ("workspace.git.run".equals(observation.actionRef())) {
             if (requiresGitAdd(context) && !successfulGitSubcommand(context, "add")) {
@@ -606,11 +676,18 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && (latestResearchPassed || successfulAction(context, GeneralWebResearchAction.ACTION_REF))) {
             missing.addAll(researchCompletionQualityProblems(context, observation, proposed.summary()));
         }
+        boolean latestMaterializationPassed = "workspace.repository.materialize".equals(observation.actionRef())
+                && observation.success();
+        if (requiresRepositoryMaterialization(context)
+                && !latestMaterializationPassed
+                && !materializationSatisfied(context)) {
+            missing.add("successful workspace.repository.materialize");
+        }
         boolean latestTestPassed = "workspace.test.run".equals(observation.actionRef()) && observation.success();
         if (requiresGovernedTest(context)
                 && !latestTestPassed
-                && !successfulAction(context, "workspace.test.run")) {
-            missing.add("successful workspace.test.run");
+                && !governedTestSatisfied(context)) {
+            missing.add("successful workspace.test.run after the latest source mutation");
         }
         if (requiresGitAdd(context)
                 && !successfulGitSubcommand(context, "add")) {
@@ -625,6 +702,13 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !latestGitStatusPassed
                 && !successfulAction(context, "workspace.git.status")) {
             missing.add("successful workspace.git.status verification");
+        }
+        boolean latestRemoteProposalPassed = "workspace.github.pr.publish".equals(observation.actionRef())
+                && observation.success();
+        if (requiresRemoteProposal(context)
+                && !latestRemoteProposalPassed
+                && !successfulAction(context, "workspace.github.pr.publish")) {
+            missing.add("successful workspace.github.pr.publish");
         }
         if (missing.isEmpty()) return proposed;
         return CognitiveWorkerRuntime.Reflection.continueWith(
