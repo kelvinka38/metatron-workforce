@@ -22,6 +22,7 @@ on:
       - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
       - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
       - '.github/workflows/gateway-director-live-acceptance.yml'
+      - '.github/workflows/ops-bootstrap-current-p10-ratification.yml'
       - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
@@ -57,6 +58,7 @@ jobs:
           P10GS34=.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml
           P10R=.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml
           GDIR=.github/workflows/gateway-director-live-acceptance.yml
+          P10BOOT=.github/workflows/ops-bootstrap-current-p10-ratification.yml
 
           grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
           ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
@@ -80,8 +82,10 @@ jobs:
           grep -q 'group: metatron-production-lane' "$P10R"
           grep -q 'runs-on: ubuntu-latest' "$P10R"
           grep -q 'group: metatron-production-lane' "$GDIR"
+          ! grep -q '^  push:' "$P10BOOT"
+          grep -q 'P10_BOOTSTRAP_AUTORUN=DISABLED' "$P10BOOT"
 
-          grep -q 'HIGHWAY_REVISION: single-production-lane-' "$H"
+          grep -q 'HIGHWAY_REVISION: fast-production-lane-' "$H"
           grep -q 'group: metatron-production-lane' "$H"
           grep -q 'cancel-in-progress: true' "$H"
           grep -q 'group: metatron-production-lane' "$D"
@@ -92,24 +96,34 @@ jobs:
           grep -q "scripts/runtime-conformance-point2.sh" "$H"
           grep -q "scripts/runtime-conformance-point5.sh" "$H"
           grep -q "scripts/runtime-conformance-point5.sh" "$P5"
-          ! grep -Eq 'production-acceptance-highway\.sh.*&|highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&|runtime-conformance-point5\.sh.*&' "$H"
+          grep -q 'HIGHWAY_PROFILE:' "$H"
+          grep -q 'HIGHWAY_PROFILE="\${HIGHWAY_PROFILE:-FAST}"' scripts/production-acceptance-highway.sh
+          grep -q 'HIGHWAY_FAST_LIVE_GATE=PASS' scripts/production-acceptance-highway.sh
+          grep -q 'HIGHWAY_DESTRUCTIVE_STRESS=DEFERRED_TO_DEEP_RATIFICATION' scripts/production-acceptance-highway.sh
+          grep -q 'INTELLIGENCE_TWO_WAVE_PARALLELISM=PASS' scripts/highway-intelligence-lane.sh
+          grep -q 'POINT2_PARALLEL_CURRENT_PROBES=PASS' scripts/runtime-conformance-point2.sh
+          grep -Eq 'highway-intelligence-lane\.sh.*& INTEL_PID=' "$H"
+          grep -Eq 'runtime-conformance-point2\.sh.*& POINT2_PID=' "$H"
+          grep -q 'HIGHWAY_INTELLIGENCE_POINT2_PARALLELISM=PASS' "$H"
+          grep -q 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS' "$H"
 
           python3 - <<'PY'
           from pathlib import Path
           deploy=Path('.github/workflows/production-deploy.yml').read_text()
           h=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
-          positions=[
-              h.index('scripts/production-acceptance-highway.sh >'),
-              h.index('scripts/highway-intelligence-lane.sh >'),
-              h.index('scripts/runtime-conformance-point2.sh >'),
-              h.index('scripts/runtime-conformance-point5.sh >'),
-          ]
-          assert positions==sorted(positions) and len(set(positions))==4,positions
           build=deploy.split('  deploy-production:',1)[0]
           deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
+          supersede=deploy.split('  supersede-stale-production:',1)[1].split('  test-and-build:',1)[0]
+          assert 'group: metatron-production-lane' in supersede and 'cancel-in-progress: true' in supersede
+          assert 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' in supersede
           assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
           assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: true' in deploy_job
+          assert 'needs: [supersede-stale-production, test-and-build]' in deploy_job
           assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
+          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v11' in h
+          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh' in h
+          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh' in h
+          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh' in h
           assert 'actions/cache/save@v4' in build
           assert 'actions/cache/restore@v4' in deploy_job
           assert 'fail-on-cache-miss: true' in deploy_job
@@ -120,6 +134,10 @@ jobs:
           print('HIGHWAY_TESTED_CACHE_HANDOFF=PASS')
           print('HIGHWAY_TESTED_ARTIFACT_HANDOFF=PASS')
           print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
+          print('HIGHWAY_IMMEDIATE_STALE_PREEMPTION=PASS')
+          print('HIGHWAY_FAST_PROFILE_CONTRACT=PASS')
+          print('HIGHWAY_PARALLEL_PHASE_CONTRACT=PASS')
+          print('HIGHWAY_FAIL_FAST_TIMEOUT_CONTRACT=PASS')
           print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
           print('HIGHWAY_LATEST_SHA_WINS_POLICY=PASS')
           print('HIGHWAY_RATIFIED_POINT_WORKFLOWS_MANUAL_ONLY=PASS')
@@ -127,6 +145,7 @@ jobs:
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_DEEP_RATIFICATION_ON_DEMAND=PASS'
           echo 'HIGHWAY_PREEMPTS_STALE_RATIFICATION=PASS'
+          echo 'P10_BOOTSTRAP_AUTORUN_DISABLED=PASS'
           echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Verify bounded execution planning recovery contract
