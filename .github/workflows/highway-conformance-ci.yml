@@ -18,6 +18,10 @@ on:
       - '.github/workflows/runtime-conformance-point4-read-production-acceptance.yml'
       - '.github/workflows/runtime-conformance-point5-production-acceptance.yml'
       - '.github/workflows/workforce-autonomy-p10-after-deploy.yml'
+      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
+      - '.github/workflows/gateway-director-live-acceptance.yml'
       - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
@@ -49,6 +53,10 @@ jobs:
           P4R=.github/workflows/runtime-conformance-point4-read-production-acceptance.yml
           P5=.github/workflows/runtime-conformance-point5-production-acceptance.yml
           P10C=.github/workflows/workforce-autonomy-p10-after-deploy.yml
+          P10GS12=.github/workflows/workforce-autonomy-p10-production-acceptance.yml
+          P10GS34=.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml
+          P10R=.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml
+          GDIR=.github/workflows/gateway-director-live-acceptance.yml
 
           grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
           ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
@@ -60,8 +68,18 @@ jobs:
           grep -q 'workflow_dispatch:' "$P4R"
           grep -q 'workflow_dispatch:' "$P5"
           ! grep -q 'workflow_run:' "$P10C"
+          ! grep -q '^  push:' "$P10C"
           grep -q 'workflow_dispatch:' "$P10C"
+          grep -q 'cancel-in-progress: true' "$P10C"
           grep -q 'P10_RATIFICATION_ON_DEMAND=PASS' "$P10C"
+          ! grep -q 'workflow_run:' "$P10GS12"
+          ! grep -q 'workflow_run:' "$P10GS34"
+          ! grep -q 'workflow_run:' "$P10R"
+          grep -q 'group: metatron-production-lane' "$P10GS12"
+          grep -q 'group: metatron-production-lane' "$P10GS34"
+          grep -q 'group: metatron-production-lane' "$P10R"
+          grep -q 'runs-on: ubuntu-latest' "$P10R"
+          grep -q 'group: metatron-production-lane' "$GDIR"
 
           grep -q 'HIGHWAY_REVISION: single-production-lane-' "$H"
           grep -q 'group: metatron-production-lane' "$H"
@@ -108,6 +126,8 @@ jobs:
           PY
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_DEEP_RATIFICATION_ON_DEMAND=PASS'
+          echo 'HIGHWAY_PREEMPTS_STALE_RATIFICATION=PASS'
+          echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Verify bounded execution planning recovery contract
         shell: bash
