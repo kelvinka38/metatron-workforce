@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           payload=$(python3 - "$TARGET_SHA" <<'PY'
           import json,sys
-          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1]}}))
+          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1],"confirm":"RUN_DEEP_P10"}}))
           PY
           )
           status=$(curl -sS -o /tmp/p10-dispatch.json -w '%{http_code}' \
