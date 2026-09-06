@@ -6,7 +6,7 @@ import com.metatron.workforce.interaction.llm.LlmProviderRouter;
 
 import java.util.Objects;
 
-/** Produces one stateful provider-backed brain per Cognitive Worker execution. */
+/** Produces one stateful provider-backed brain for each governed Cognitive Worker execution. */
 public final class GeneralCognitiveWorkerBrainFactory {
     private final LlmProviderRouter router;
     private final LlmProvider provider;
