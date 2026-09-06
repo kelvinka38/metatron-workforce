@@ -27,7 +27,7 @@ permissions:
 # reaches production so the gate cannot change without live evidence. This controller is itself part of that contract.
 concurrency:
   group: workforce-autonomy-p10-ratification-${{ inputs.target_sha }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   exact-sha-p10-controller:
