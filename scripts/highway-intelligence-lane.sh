@@ -139,13 +139,25 @@ fresh_case() {
 BASE_ID=$(date +%s%N | cut -c1-13)
 BTC_1="${BASE_ID}11"; FX="${BASE_ID}12"; WEATHER="${BASE_ID}13"; BTC_2="${BASE_ID}14"
 
-# One full public-Gateway natural-chat Case proves the production ingress path. The remaining
-# independent current-information Cases enter the same exact production JVM locally so Cloudflare
-# edge delivery jitter cannot masquerade as an Intelligence routing/tool-use failure.
-fresh_case "$BTC_1" 'Giá Bitcoin hiện tại khoảng bao nhiêu USD và VND? Hãy dùng dữ liệu mới và nêu nguồn.' 'Bitcoin|BTC' "$OUT/btc-1" public 1
-fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx" local 1
-fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather" local 1
-fresh_case "$BTC_2" 'Kiểm tra lại giá Bitcoin ngay lúc này bằng dữ liệu hiện tại mới và nêu nguồn.' 'Bitcoin|BTC' "$OUT/btc-2" local 1
+# Run two bounded waves. BTC_2 remains after BTC_1 so same-topic reacquisition is preserved,
+# while unrelated fresh-information Cases execute concurrently on the same production JVM.
+set +e
+fresh_case "$BTC_1" 'Giá Bitcoin hiện tại khoảng bao nhiêu USD và VND? Hãy dùng dữ liệu mới và nêu nguồn.' 'Bitcoin|BTC' "$OUT/btc-1" public 1 >"$OUT/btc-1-wave.log" 2>&1 & P_BTC1=$!
+fresh_case "$FX" 'Tỷ giá USD/VND hiện tại khoảng bao nhiêu? Dùng dữ liệu mới và cho nguồn.' 'USD|VND|tỷ giá|exchange' "$OUT/fx" local 1 >"$OUT/fx-wave.log" 2>&1 & P_FX=$!
+wait "$P_BTC1"; RC_BTC1=$?
+wait "$P_FX"; RC_FX=$?
+cat "$OUT/btc-1-wave.log" "$OUT/fx-wave.log" || true
+test "$RC_BTC1" = 0 && test "$RC_FX" = 0 || exit 1
+
+fresh_case "$WEATHER" 'Thời tiết hiện tại ở Thành phố Hồ Chí Minh thế nào? Kiểm tra dữ liệu mới và nêu nguồn.' 'thời tiết|weather|Ho Chi Minh|Hồ Chí Minh' "$OUT/weather" local 1 >"$OUT/weather-wave.log" 2>&1 & P_WEATHER=$!
+fresh_case "$BTC_2" 'Kiểm tra lại giá Bitcoin ngay lúc này bằng dữ liệu hiện tại mới và nêu nguồn.' 'Bitcoin|BTC' "$OUT/btc-2" local 1 >"$OUT/btc-2-wave.log" 2>&1 & P_BTC2=$!
+wait "$P_WEATHER"; RC_WEATHER=$?
+wait "$P_BTC2"; RC_BTC2=$?
+set -e
+cat "$OUT/weather-wave.log" "$OUT/btc-2-wave.log" || true
+test "$RC_WEATHER" = 0
+test "$RC_BTC2" = 0
+echo 'INTELLIGENCE_TWO_WAVE_PARALLELISM=PASS'
 BTC_CASE_1=$(cat "$OUT/btc-1.case"); BTC_CASE_2=$(cat "$OUT/btc-2.case")
 test "$BTC_CASE_1" != "$BTC_CASE_2"
 ! cmp -s "$OUT/btc-1.json" "$OUT/btc-2.json"
