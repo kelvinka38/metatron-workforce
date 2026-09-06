@@ -115,7 +115,12 @@ public final class GitHubWorkspaceProposalPublisher {
         JsonNode baseRef = get("repos/" + repository + "/git/ref/heads/" + encodePath(defaultBranch));
         String currentBaseSha = requireSha(baseRef.at("/object/sha").asText(""), "current base SHA");
         if (!sourceSha.equals(currentBaseSha)) {
-            throw new IllegalStateException("proposal source is stale: materialized=" + sourceSha + " current=" + currentBaseSha);
+            JsonNode comparison = get("repos/" + repository + "/compare/" + sourceSha + "..." + currentBaseSha);
+            if (!sourceLineageAcceptable(comparison, sourceSha, currentBaseSha)) {
+                throw new IllegalStateException(
+                        "proposal source is not an ancestor of current base: materialized="
+                                + sourceSha + " current=" + currentBaseSha);
+            }
         }
 
         String localHead = git(workerId, objectiveId, List.of("rev-parse", "HEAD")).trim();
@@ -210,6 +215,19 @@ public final class GitHubWorkspaceProposalPublisher {
 
         return new Publication(repository, defaultBranch, sourceSha, localHead, branch, remoteCommit,
                 number, url, changes.stream().map(Change::path).toList());
+    }
+
+    static boolean sourceLineageAcceptable(JsonNode comparison, String sourceSha, String currentBaseSha) {
+        String source = requireSha(sourceSha, "sourceSha");
+        String current = requireSha(currentBaseSha, "currentBaseSha");
+        if (source.equals(current)) return true;
+        if (comparison == null || comparison.isMissingNode() || comparison.isNull()) return false;
+        String mergeBase = comparison.at("/merge_base_commit/sha").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+        String status = comparison.path("status").asText("").trim().toLowerCase(java.util.Locale.ROOT);
+        int behindBy = comparison.path("behind_by").asInt(-1);
+        return source.equals(mergeBase)
+                && behindBy == 0
+                && ("ahead".equals(status) || "identical".equals(status));
     }
 
     static List<Change> parseChanges(String diff) {

@@ -5,11 +5,44 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitHubWorkspaceProposalPublisherTest {
     private static final String HEAD = "0123456789abcdef0123456789abcdef01234567";
+
+    @Test
+    void acceptsMaterializedSourceWhenItIsStillAnAncestorOfCurrentMain() throws Exception {
+        String source = "1111111111111111111111111111111111111111";
+        String current = "2222222222222222222222222222222222222222";
+        com.fasterxml.jackson.databind.JsonNode comparison = new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
+                {
+                  "status": "ahead",
+                  "ahead_by": 8,
+                  "behind_by": 0,
+                  "merge_base_commit": {"sha": "1111111111111111111111111111111111111111"}
+                }
+                """);
+
+        assertTrue(GitHubWorkspaceProposalPublisher.sourceLineageAcceptable(comparison, source, current));
+    }
+
+    @Test
+    void rejectsDivergedOrUnrelatedMaterializedSource() throws Exception {
+        String source = "1111111111111111111111111111111111111111";
+        String current = "2222222222222222222222222222222222222222";
+        com.fasterxml.jackson.databind.JsonNode comparison = new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
+                {
+                  "status": "diverged",
+                  "ahead_by": 2,
+                  "behind_by": 3,
+                  "merge_base_commit": {"sha": "3333333333333333333333333333333333333333"}
+                }
+                """);
+
+        assertFalse(GitHubWorkspaceProposalPublisher.sourceLineageAcceptable(comparison, source, current));
+    }
 
     @Test
     void parsesOnlyBoundedSourcePathChanges() {
