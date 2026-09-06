@@ -20,6 +20,8 @@ import java.util.regex.Pattern;
 public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime.Brain {
     private static final Pattern OWNER_REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
     private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
+    private static final Pattern EXACT_TEXT_REPLACEMENT = Pattern.compile(
+            "(?is)\\bread\\s+([^\\s]+)\\s+and\\s+replace\\s+exactly\\s+one\\s+.*?'([^'\\r\\n]+)'\\s+with\\s+'([^'\\r\\n]+)'");
     private static final Pattern RESEARCH_TOP_N = Pattern.compile("(?i)\\b(?:top\\s*|exactly\\s+)(\\d{1,2})\\b");
     private static final Pattern RESEARCH_URL = Pattern.compile("https?://[^\\s)\\]}>;,]+");
     private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
@@ -84,6 +86,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (researchPrecondition != null) return researchPrecondition;
         CognitiveWorkerRuntime.Thought requiredPrecondition = repositoryMaterializationPrecondition(context);
         if (requiredPrecondition != null) return requiredPrecondition;
+        CognitiveWorkerRuntime.Thought exactTextReplacement = governedExactTextReplacementPrecondition(context);
+        if (exactTextReplacement != null) return exactTextReplacement;
         CognitiveWorkerRuntime.Thought requiredFileWrite = governedExactShaFileWritePrecondition(context);
         if (requiredFileWrite != null) return requiredFileWrite;
         CognitiveWorkerRuntime.Thought requiredTest = governedTestPrecondition(context);
@@ -183,6 +187,96 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
 
+    static CognitiveWorkerRuntime.Thought governedExactTextReplacementPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return null;
+        if (!context.availableActions().contains("workspace.file.read")
+                || !context.availableActions().contains("workspace.file.write")) return null;
+        ExactTextReplacement replacement = exactTextReplacement(context);
+        if (replacement == null || !materializationSatisfied(context)) return null;
+        if (successfulFileAction(context, "workspace.file.write", replacement.path())) return null;
+
+        CognitiveWorkerRuntime.Cycle read = latestSuccessfulFileRead(context, replacement.path());
+        if (read == null) {
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.file.read",
+                    Map.of("path", replacement.path()),
+                    "Read the exact governed source path before applying the requested bounded text replacement");
+        }
+
+        String content = read.observation().outputs().get("content");
+        if (content == null) throw new IllegalStateException("workspace.file.read returned no content");
+        int oldCount = countOccurrences(content, replacement.oldText());
+        int newCount = countOccurrences(content, replacement.newText());
+        if (oldCount == 0 && newCount == 1) return null;
+        if (oldCount != 1) {
+            throw new IllegalStateException(
+                    "exact text replacement requires one old-text occurrence but observed " + oldCount);
+        }
+        String updated = content.replace(replacement.oldText(), replacement.newText());
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.file.write",
+                Map.of("path", replacement.path(), "content", updated),
+                "Apply exactly one requested source-text replacement through the governed workspace write action");
+    }
+
+    private static CognitiveWorkerRuntime.Cycle latestSuccessfulFileRead(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            String path) {
+        for (int i = context.history().size() - 1; i >= 0; i--) {
+            CognitiveWorkerRuntime.Cycle cycle = context.history().get(i);
+            if (!cycle.observation().success()) continue;
+            if (!"workspace.file.read".equals(cycle.thought().actionRef())) continue;
+            if (path.equals(cycle.thought().inputs().get("path"))) return cycle;
+        }
+        return null;
+    }
+
+    private static boolean successfulFileAction(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            String actionRef,
+            String path) {
+        return context.history().stream().anyMatch(cycle ->
+                cycle.observation().success()
+                        && actionRef.equals(cycle.thought().actionRef())
+                        && path.equals(cycle.thought().inputs().get("path")));
+    }
+
+    private static ExactTextReplacement exactTextReplacement(CognitiveWorkerRuntime.CognitiveContext context) {
+        Matcher matcher = EXACT_TEXT_REPLACEMENT.matcher(workText(context));
+        if (!matcher.find()) return null;
+        String path = matcher.group(1).trim();
+        if (!safeWorkspaceMutationPath(path)) {
+            throw new SecurityException("unsafe exact replacement path: " + path);
+        }
+        String oldText = matcher.group(2);
+        String newText = matcher.group(3);
+        if (oldText.isEmpty() || newText.isEmpty() || oldText.equals(newText)) {
+            throw new IllegalStateException("exact text replacement requires distinct non-empty text");
+        }
+        return new ExactTextReplacement(path, oldText, newText);
+    }
+
+    private static boolean safeWorkspaceMutationPath(String path) {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.contains("\\")
+                || path.contains("..") || path.contains("\n") || path.contains("\r")
+                || path.equals(".git") || path.startsWith(".git/")
+                || path.equals(".metatron-workspace") || path.equals(".metatron-repository")) return false;
+        return !OWNER_REPOSITORY.matcher(path).matches();
+    }
+
+    private static int countOccurrences(String content, String needle) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = content.indexOf(needle, offset)) >= 0) {
+            count++;
+            offset += needle.length();
+        }
+        return count;
+    }
+
     static CognitiveWorkerRuntime.Thought governedExactShaFileWritePrecondition(
             CognitiveWorkerRuntime.CognitiveContext context) {
         Objects.requireNonNull(context, "context");
@@ -233,7 +327,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (requiresGitAdd(context) && !successfulGitSubcommand(context, "add")) {
             if (!hasWorkspaceSourceMutation(context)) return null;
             if (requiresGovernedTest(context) && !governedTestSatisfied(context)) return null;
-            String path = governedStagePath(context.workSpec().target());
+            String path = governedMutationPath(context);
             List<String> args = path.isBlank() ? List.of("add", "-A") : List.of("add", path);
             return new CognitiveWorkerRuntime.Thought(
                     "workspace.git.run",
@@ -267,6 +361,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         if (!requiresRemoteProposal(context)) return null;
         if (!context.availableActions().contains("workspace.github.pr.publish")) return null;
+        if (requiresWorkspaceSourceMutation(context)
+                && successfulAction(context, "workspace.repository.materialize")
+                && !hasWorkspaceSourceMutation(context)) return null;
         // In a fresh publish-only Work step, prior commit history is intentionally not step-local.
         // The publisher itself re-opens the durable Objective workspace and fails closed unless a clean
         // committed delta exists. When this same step mutated source, however, force add/test/commit first.
@@ -476,6 +573,28 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("verify")
                 || text.contains("commit exists")
                 || text.contains("exactly the change");
+    }
+
+    private static String governedMutationPath(CognitiveWorkerRuntime.CognitiveContext context) {
+        ExactTextReplacement replacement = exactTextReplacement(context);
+        if (replacement != null) return replacement.path();
+        return governedStagePath(context.workSpec().target());
+    }
+
+    private static boolean requiresWorkspaceSourceMutation(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        if (exactTextReplacement(context) != null) return true;
+        String text = " " + workText(context).toLowerCase(java.util.Locale.ROOT) + " ";
+        return text.contains(" repair ")
+                || text.contains(" replace ")
+                || text.contains(" modify ")
+                || text.contains(" edit ")
+                || text.contains(" change ")
+                || text.contains(" create ")
+                || text.contains(" delete ")
+                || text.contains(" remove ")
+                || text.contains(" write ");
     }
 
     private static String governedStagePath(String target) {
@@ -810,6 +929,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static String clean(String value) {
         return value == null || value.isBlank() ? "unknown" : value.replace('\n', ' ').replace('\r', ' ').trim();
     }
+
+    private record ExactTextReplacement(String path, String oldText, String newText) {}
 
     private static String require(String value, String field) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " required");

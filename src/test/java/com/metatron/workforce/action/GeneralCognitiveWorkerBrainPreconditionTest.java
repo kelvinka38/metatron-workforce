@@ -8,6 +8,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeneralCognitiveWorkerBrainPreconditionTest {
     private static final String SHA = "3e86d4e2876a90c580383d5c1de48360b5049b3b";
@@ -330,6 +332,167 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                 CognitiveWorkerRuntime.Reflection.complete("done"));
 
         assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, guarded.decision());
+    }
+
+    @Test
+    void exactSourceReplacementCannotJumpFromMaterializationToRemotePublish() {
+        ExecutionWorkSpec work = exactReplacementAndPublishWork();
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize",
+                Map.of("repository", "kelvinka38/metatron-workforce", "ref", SHA));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized), Map.of());
+
+        CognitiveWorkerRuntime.Thought read =
+                GeneralCognitiveWorkerBrain.governedExactTextReplacementPrecondition(context);
+
+        assertEquals("workspace.file.read", read.actionRef());
+        assertEquals("src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java",
+                read.inputs().get("path"));
+        assertNull(GeneralCognitiveWorkerBrain.governedRemoteProposalPrecondition(context));
+    }
+
+    @Test
+    void exactSourceReplacementExecutesDeterministicReadWriteTestCommitVerifyPublishSequence() {
+        ExecutionWorkSpec work = exactReplacementAndPublishWork();
+        String path = "src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java";
+        String oldText = "Produces one stateful provider-backed brain per Cognitive Worker execution.";
+        String newText = "Produces one stateful provider-backed brain for each governed Cognitive Worker execution.";
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize",
+                Map.of("repository", "kelvinka38/metatron-workforce", "ref", SHA));
+        CognitiveWorkerRuntime.Cycle read = new CognitiveWorkerRuntime.Cycle(
+                2,
+                new CognitiveWorkerRuntime.Thought("workspace.file.read", Map.of("path", path), "read"),
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.read", "read",
+                        Map.of("path", path, "content",
+                                "package sample;\n/** " + oldText + " */\nfinal class Sample {}\n"),
+                        List.of()),
+                CognitiveWorkerRuntime.Reflection.continueWith("replace"));
+        CognitiveWorkerRuntime.CognitiveContext beforeWrite = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized, read), Map.of());
+
+        CognitiveWorkerRuntime.Thought write =
+                GeneralCognitiveWorkerBrain.governedExactTextReplacementPrecondition(beforeWrite);
+
+        assertEquals("workspace.file.write", write.actionRef());
+        assertEquals(path, write.inputs().get("path"));
+        assertTrue(write.inputs().get("content").contains(newText));
+        assertTrue(!write.inputs().get("content").contains(oldText));
+
+        CognitiveWorkerRuntime.Cycle written = successfulCycle(3, "workspace.file.write", write.inputs());
+        CognitiveWorkerRuntime.CognitiveContext beforeTest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized, read, written), Map.of());
+        assertEquals("workspace.test.run",
+                GeneralCognitiveWorkerBrain.governedTestPrecondition(beforeTest).actionRef());
+
+        CognitiveWorkerRuntime.Cycle tested = successfulCycle(4, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext beforeAdd = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized, read, written, tested), Map.of());
+        CognitiveWorkerRuntime.Thought add = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeAdd);
+        assertEquals("[\"add\",\"" + path + "\"]", add.inputs().get("argsJson"));
+
+        CognitiveWorkerRuntime.Cycle added = successfulCycle(5, "workspace.git.run", add.inputs());
+        CognitiveWorkerRuntime.CognitiveContext beforeCommit = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized, read, written, tested, added), Map.of());
+        CognitiveWorkerRuntime.Thought commit = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeCommit);
+        assertTrue(commit.inputs().get("argsJson").startsWith("[\"commit\",\"-m\","));
+
+        CognitiveWorkerRuntime.Cycle committed = successfulCycle(6, "workspace.git.run", commit.inputs());
+        CognitiveWorkerRuntime.CognitiveContext beforeStatus = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized, read, written, tested, added, committed), Map.of());
+        CognitiveWorkerRuntime.Thought status = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeStatus);
+        assertEquals("workspace.git.status", status.actionRef());
+
+        CognitiveWorkerRuntime.Cycle verified = successfulCycle(7, "workspace.git.status", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext readyToPublish = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
+                        "workspace.test.run", "workspace.git.run", "workspace.git.status",
+                        "workspace.github.pr.publish"),
+                List.of(materialized, read, written, tested, added, committed, verified), Map.of());
+        CognitiveWorkerRuntime.Thought publish =
+                GeneralCognitiveWorkerBrain.governedRemoteProposalPrecondition(readyToPublish);
+        assertEquals("workspace.github.pr.publish", publish.actionRef());
+    }
+
+    @Test
+    void exactReplacementFailsClosedWhenRequestedOldTextIsNotUnique() {
+        ExecutionWorkSpec work = exactReplacementAndPublishWork();
+        String path = "src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java";
+        String oldText = "Produces one stateful provider-backed brain per Cognitive Worker execution.";
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize",
+                Map.of("repository", "kelvinka38/metatron-workforce", "ref", SHA));
+        CognitiveWorkerRuntime.Cycle read = new CognitiveWorkerRuntime.Cycle(
+                2,
+                new CognitiveWorkerRuntime.Thought("workspace.file.read", Map.of("path", path), "read"),
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.read", "read",
+                        Map.of("path", path, "content", oldText + "\n" + oldText + "\n"),
+                        List.of()),
+                CognitiveWorkerRuntime.Reflection.continueWith("replace"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.read", "workspace.file.write"),
+                List.of(materialized, read), Map.of());
+
+        assertThrows(IllegalStateException.class,
+                () -> GeneralCognitiveWorkerBrain.governedExactTextReplacementPrecondition(context));
+    }
+
+    private static ExecutionWorkSpec exactReplacementAndPublishWork() {
+        return new ExecutionWorkSpec(
+                "repair-and-publish",
+                "Take ownership of one governed MUTATING general engineering Objective against "
+                        + "kelvinka38/metatron-workforce at exact source commit " + SHA
+                        + " using execution.general.workspace. Materialize that exact repository snapshot into the Objective workspace. "
+                        + "Read src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java and replace exactly one "
+                        + "Javadoc sentence 'Produces one stateful provider-backed brain per Cognitive Worker execution.' with "
+                        + "'Produces one stateful provider-backed brain for each governed Cognitive Worker execution.' "
+                        + "Do not modify any other source path. Run the full repository test suite through the governed test action after "
+                        + "the edit and require PASS. Stage the intended source change and create one local Git commit. Publish the clean "
+                        + "committed Objective workspace through the governed GitHub proposal action as an Objective-scoped reviewable "
+                        + "unmerged pull request against main. Verify both tests and the remote pull request through independent Observation. "
+                        + "Do not merge.",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("requested workspace source change is present in the committed work product",
+                        "repository tests pass after the requested workspace change",
+                        "reviewable pull request exists for the committed Objective work product",
+                        "remote proposal remains unmerged"),
+                List.of("general-action-runtime:execution.general.workspace",
+                        "requested-capability:execution.general.workspace",
+                        "general Action Fabric action journal",
+                        "governed test action evidence",
+                        "fresh authoritative GitHub API Observation"));
     }
 
     private static CognitiveWorkerRuntime.Cycle successfulCycle(int number, String actionRef, Map<String, String> inputs) {
