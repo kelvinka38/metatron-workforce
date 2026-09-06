@@ -1,4 +1,4 @@
-name: Founder Authorized Deep P10 25b9a6b
+name: Founder Authorized Deep P10 1594d9e
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: 25b9a6b440e9aa66e58ca4bebbbc29924a39ddd7
+          TARGET_SHA: 1594d9e165a118101c4547d3a6125879fd5dcdc2
           CONFIRM: RUN_DEEP_P10
         run: |
           set -euo pipefail
