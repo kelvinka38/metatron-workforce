@@ -29,10 +29,10 @@ jobs:
           echo "WORKFORCE_CID=$CID"
           echo "SANDBOX_CID=$SID"
           echo 'IDENTITY_BEGIN'
-          docker exec -u 0 "$SID" sh -c "echo WORKSPACES_ROOT; ls -la /workspaces | tail -n 20; test -d '$W' && cat '$W/.metatron-workspace' && cat '$W/.metatron-repository'"
+          docker exec --user 10001:10001 "$SID" sh -c "echo WORKSPACES_ROOT; ls -la /workspaces | tail -n 20; test -d '$W' && cat '$W/.metatron-workspace' && cat '$W/.metatron-repository'"
           echo 'IDENTITY_END'
           echo 'GIT_BEGIN'
-          docker exec -u 0 "$SID" sh -c "cd '$W' && echo HEAD=\$(git rev-parse HEAD) && echo ROOTS=\$(git rev-list --max-parents=0 HEAD | paste -sd, -) && echo COUNT=\$(git rev-list --count HEAD) && echo STATUS_BEGIN && git status --porcelain=v1 && echo STATUS_END && echo LOG_BEGIN && git log --oneline --decorate -8 && echo LOG_END && R=\$(git rev-list --max-parents=0 HEAD | head -1) && echo DIFF_BEGIN && git diff --name-status --no-renames \$R..HEAD -- && echo DIFF_END"
+          docker exec --user 10001:10001 "$SID" sh -c "cd '$W' && echo HEAD=\$(git rev-parse HEAD) && echo ROOTS=\$(git rev-list --max-parents=0 HEAD | paste -sd, -) && echo COUNT=\$(git rev-list --count HEAD) && echo STATUS_BEGIN && git status --porcelain=v1 && echo STATUS_END && echo LOG_BEGIN && git log --oneline --decorate -8 && echo LOG_END && R=\$(git rev-list --max-parents=0 HEAD | head -1) && echo DIFF_BEGIN && git diff --name-status --no-renames \$R..HEAD -- && echo DIFF_END"
           echo 'GIT_END'
           echo 'ACTIONS_BEGIN'
           docker exec "$CID" sh -c "grep -R -h -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
