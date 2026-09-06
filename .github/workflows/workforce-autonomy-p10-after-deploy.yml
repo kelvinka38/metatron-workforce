@@ -7,14 +7,24 @@ on:
         description: Exact deployed production SHA to ratify through GS1/2, GS3/4, 45-condition gate and Gateway Director
         required: true
         type: string
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/workforce-autonomy-p10-after-deploy.yml'
+      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
+      - 'scripts/autonomy/p10_collect.py'
+      - 'scripts/autonomy/p10_general_runtime_guard.py'
+      - 'scripts/autonomy/p10_ratify.py'
 
 permissions:
   contents: read
   actions: write
 
-# Deep L10 ratification is release evidence, not a per-commit deployment step.
-# Routine production deploys run only the single automatic Highway. Invoke this
-# controller explicitly when an exact deployed SHA needs institutional ratification.
+# Deep L10 ratification is release evidence, not a routine per-commit deployment step.
+# Routine production deploys run only the single automatic Highway. Explicit dispatch remains
+# supported; changes to the P10 acceptance/ratification contract self-ratify after their exact SHA
+# reaches production so the gate cannot change without live evidence.
 concurrency:
   group: workforce-autonomy-p10-ratification-${{ inputs.target_sha }}
   cancel-in-progress: false
@@ -25,7 +35,7 @@ jobs:
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
-      TARGET_SHA: ${{ inputs.target_sha }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.sha }}
     steps:
       - name: Run exact-SHA GS1/2 to GS3/4 to ratification sequence
         shell: bash
@@ -124,6 +134,34 @@ jobs:
             return 1
           }
 
+          wait_exact_production_deploy() {
+            local response=/tmp/production-deploy-runs.json
+            for _ in $(seq 1 360); do
+              api_get "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/production-deploy.yml/runs?branch=main&per_page=100" > "$response"
+              read -r status conclusion run_id < <(python3 - "$response" "$TARGET_SHA" <<'PY'
+          import json,sys
+          data=json.load(open(sys.argv[1])); target=sys.argv[2]
+          rows=[r for r in data.get('workflow_runs',[]) if r.get('head_sha')==target]
+          if not rows:
+              print('missing', '', '0')
+          else:
+              rows.sort(key=lambda r:(r.get('created_at',''),int(r.get('id',0))), reverse=True)
+              row=rows[0]
+              print(row.get('status',''), row.get('conclusion') or '', row.get('id',0))
+          PY
+              )
+              echo "P10_DEPLOY_WAIT target=$TARGET_SHA run_id=$run_id status=$status conclusion=${conclusion:-pending}"
+              if [ "$status" = completed ]; then
+                test "$conclusion" = success
+                echo "P10_EXACT_SHA_DEPLOYMENT=PASS run_id=$run_id"
+                return 0
+              fi
+              sleep 10
+            done
+            echo "P10_EXACT_SHA_DEPLOYMENT_TIMEOUT target=$TARGET_SHA" >&2
+            return 1
+          }
+
           dispatch_or_reuse() {
             local workflow="$1"
             local workflow_name="$2"
@@ -139,6 +177,8 @@ jobs:
             dispatch_workflow "$workflow" "$payload"
             capture_dispatched_run "$workflow" "$workflow_name" "$started"
           }
+
+          wait_exact_production_deploy
 
           gs12_payload=$(python3 - "$TARGET_SHA" <<'PY'
           import json,sys
