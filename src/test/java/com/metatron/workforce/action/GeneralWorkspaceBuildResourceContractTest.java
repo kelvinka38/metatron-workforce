@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
+import com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.sun.net.httpserver.HttpServer;
@@ -67,9 +68,12 @@ class GeneralWorkspaceBuildResourceContractTest {
             WorkerExecutionSandboxService sandbox = new WorkerExecutionSandboxService(
                     http, URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
                     "sandbox-test-token", profiles, workspaces, json);
+            RepositoryWorkspaceMaterializationService repositories =
+                    new RepositoryWorkspaceMaterializationService(http, "", workspaces, json);
+            GitHubWorkspaceProposalPublisher proposals =
+                    new GitHubWorkspaceProposalPublisher(http, "", workspaces, sandbox, json);
             GeneralWorkspaceActionCatalog catalog = new GeneralWorkspaceActionCatalog(
-                    workspaces, sandbox, profiles,
-                    new RepositoryWorkspaceMaterializationService(http, "", workspaces, json), json);
+                    workspaces, sandbox, profiles, repositories, proposals, json);
             ActionFabric fabric = new ActionFabric(catalog.actions(WORKER, AUTHORIZATION, OBJECTIVE));
 
             ActionFabric.ActionObservation observation = fabric.execute(new ActionFabric.ActionRequest(
