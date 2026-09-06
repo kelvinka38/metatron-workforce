@@ -1,43 +1,15 @@
-name: Bootstrap Current P10 Ratification
+name: Bootstrap Current P10 Ratification — Archived
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-bootstrap-current-p10-ratification.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
-
-concurrency:
-  group: bootstrap-current-p10-ratification
-  cancel-in-progress: true
 
 jobs:
-  dispatch-exact-sha-controller:
+  archived:
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch P10 controller for this exact deployable SHA
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
-          payload=$(python3 - "$TARGET_SHA" <<'PY'
-          import json,sys
-          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1]}}))
-          PY
-          )
-          code=$(curl -sS -o /tmp/dispatch.json -w '%{http_code}' \
-            -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/workforce-autonomy-p10-after-deploy.yml/dispatches" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            -H 'Content-Type: application/json' \
-            --data-binary "$payload")
-          test "$code" = 204
-          echo "P10_BOOTSTRAP_TARGET_SHA=$TARGET_SHA"
-          echo 'P10_CONTROLLER_DISPATCH=PASS'
+      - run: |
+          echo 'P10_BOOTSTRAP_AUTORUN=DISABLED'
+          echo 'Deep ratification is explicitly invoked only for a deployed SHA after the fast Highway.'
