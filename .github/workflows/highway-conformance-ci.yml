@@ -23,6 +23,7 @@ on:
       - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
       - '.github/workflows/gateway-director-live-acceptance.yml'
       - '.github/workflows/ops-bootstrap-current-p10-ratification.yml'
+      - '.github/workflows/founder-authorized-deep-p10-25b9a6b.yml'
       - '.github/workflows/ops-one-shot-p10-closure-71f2973.yml'
       - '.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml'
       - '.github/workflows/highway-conformance-ci.yml'
@@ -61,6 +62,7 @@ jobs:
           P10R=.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml
           GDIR=.github/workflows/gateway-director-live-acceptance.yml
           P10BOOT=.github/workflows/ops-bootstrap-current-p10-ratification.yml
+          FOUNDERP10=.github/workflows/founder-authorized-deep-p10-25b9a6b.yml
           P10ONESHOT=.github/workflows/ops-one-shot-p10-closure-71f2973.yml
           P10CHAIN=.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml
 
@@ -80,6 +82,8 @@ jobs:
           grep -q 'P10_RATIFICATION_ON_DEMAND=PASS' "$P10C"
           grep -q 'confirm:' "$P10C"
           grep -q 'RUN_DEEP_P10' "$P10C"
+          grep -q "github.actor == 'kelvinka38'" "$P10C"
+          grep -q "github.triggering_actor == 'kelvinka38'" "$P10C"
           grep -q "inputs.confirm == 'RUN_DEEP_P10'" "$P10C"
           ! grep -q 'workflow_run:' "$P10GS12"
           ! grep -q 'workflow_run:' "$P10GS34"
@@ -91,6 +95,9 @@ jobs:
           grep -q 'group: metatron-production-lane' "$GDIR"
           ! grep -q '^  push:' "$P10BOOT"
           grep -q 'P10_BOOTSTRAP_AUTORUN=DISABLED' "$P10BOOT"
+          ! grep -q '^  push:' "$FOUNDERP10"
+          grep -q 'FOUNDER_AUTHORIZED_P10_BOT_AUTODISPATCH=DISABLED' "$FOUNDERP10"
+          ! grep -R -n 'workforce-autonomy-p10-after-deploy.yml/dispatches' .github/workflows
           ! grep -q 'workflow_run:' "$P10ONESHOT"
           ! grep -q 'workflow_run:' "$P10CHAIN"
           grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10ONESHOT"
@@ -119,6 +126,8 @@ jobs:
           ! grep -Eq 'highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&' "$H"
           grep -q 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS' "$H"
           grep -q 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS' "$H"
+          grep -q 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS' "$H"
+          ! grep -q 'upload-artifact' "$H"
           ! grep -q 'actions/upload-artifact@' "$H"
 
           python3 - <<'PY'
@@ -137,7 +146,7 @@ jobs:
           assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: false' in deploy_job
           assert 'needs: refresh-production-admission' in deploy_job
           assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
-          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v12' in h
+          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v13' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh' in h
           assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh' in h
@@ -177,6 +186,10 @@ jobs:
           echo 'HIGHWAY_PREEMPTS_STALE_RATIFICATION=PASS'
           echo 'P10_BOOTSTRAP_AUTORUN_DISABLED=PASS'
           echo 'P10_EXPLICIT_DEEP_CONFIRMATION_REQUIRED=PASS'
+          echo 'P10_HUMAN_FOUNDER_ACTOR_REQUIRED=PASS'
+          echo 'P10_NO_WORKFLOW_SELF_DISPATCH_ENTRYPOINT=PASS'
+          echo 'HIGHWAY_LATENCY_SLO_CONTRACT=PASS'
+          echo 'HIGHWAY_NO_ARTIFACT_STORAGE_DEPENDENCY=PASS'
           echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
           echo 'P10_LEGACY_AUTOFANOUT_ARCHIVED=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'

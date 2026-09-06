@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 12
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: fast-production-lane-v12
+      HIGHWAY_REVISION: fast-production-lane-v13
       HIGHWAY_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'FAST' }}
     steps:
       - uses: actions/checkout@v7
@@ -53,6 +53,8 @@ jobs:
             scripts/runtime-conformance-point5.sh
           ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
           mkdir -p "$ROOT"
+          HIGHWAY_STARTED_AT=$(date +%s)
+          HIGHWAY_LATENCY_SLO_SECONDS=300
 
           # Capacity-heavy phases stay sequential on the 4GB production host.
           # Core Highway retains its own bounded internal concurrency. No other
@@ -166,6 +168,10 @@ jobs:
           echo 'HIGHWAY_INTELLIGENCE_PRODUCT=PASS'
           echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
           echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=PASS'
+          HIGHWAY_TOTAL_SECONDS=$(( $(date +%s) - HIGHWAY_STARTED_AT ))
+          echo "HIGHWAY_TOTAL_SECONDS=$HIGHWAY_TOTAL_SECONDS"
+          test "$HIGHWAY_TOTAL_SECONDS" -lt "$HIGHWAY_LATENCY_SLO_SECONDS"
+          echo 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS'
           echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2_AND_POINT5=PASS'
       - name: Persist highway evidence locally
         if: always()

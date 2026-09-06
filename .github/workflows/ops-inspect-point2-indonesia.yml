@@ -1,28 +1,13 @@
-name: Inspect Point2 Indonesia Evidence
+name: Inspect Point2 Indonesia Evidence — Archived
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-inspect-point2-indonesia.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  inspect:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 3
+  archived:
+    runs-on: ubuntu-latest
     steps:
-      - name: Print persisted case
-        shell: bash
-        run: |
-          set -euo pipefail
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          UPDATE=1788689293505443
-          CASE=$(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$UPDATE' /var/lib/metatron-workforce/intelligence-cases/cases 2>/dev/null | tail -1")
-          test -n "$CASE"
-          echo "CASE_PATH=$CASE"
-          docker exec "$CID" cat "$CASE"
-          echo "POINT2_INDONESIA_CASE_INSPECTION=PASS"
+      - run: echo 'POINT2_DIAGNOSTIC_ARCHIVED=PASS'
