@@ -14,7 +14,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 3
     steps:
-      - name: Inspect exact persisted Intelligence Case
+      - name: Print persisted case
         shell: bash
         run: |
           set -euo pipefail
@@ -23,16 +23,6 @@ jobs:
           UPDATE=1788689293505443
           CASE=$(docker exec "$CID" sh -c "grep -R -l 'telegram:update:$UPDATE' /var/lib/metatron-workforce/intelligence-cases/cases 2>/dev/null | tail -1")
           test -n "$CASE"
-          docker exec "$CID" cat "$CASE" | python3 -c '
-import json,sys
-d=json.load(sys.stdin)
-print("CASE_ID",d.get("caseId"))
-print("CONCLUSION",(d.get("latestConclusion") or "")[:1200].replace("\n"," "))
-for r in d.get("informationRequirements") or []:
-    print("REQ",json.dumps({
-      "question":r.get("question"),
-      "status":r.get("status"),
-      "evidenceReferences":r.get("evidenceReferences")
-    },ensure_ascii=False))
-'
-          echo 'POINT2_INDONESIA_CASE_INSPECTION=PASS'
+          echo "CASE_PATH=$CASE"
+          docker exec "$CID" cat "$CASE"
+          echo "POINT2_INDONESIA_CASE_INSPECTION=PASS"
