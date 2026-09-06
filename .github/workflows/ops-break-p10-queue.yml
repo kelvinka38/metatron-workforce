@@ -1,22 +1,15 @@
-name: Break Legacy P10 Production Queue
+name: Break Legacy P10 Production Queue — Completed
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-break-p10-queue.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: metatron-workforce-autonomy-p10-production-acceptance
-  cancel-in-progress: true
-
 jobs:
-  break-legacy-p10-queue:
+  record:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo 'P10_LEGACY_QUEUE_BREAKER=PASS'
-          echo 'Automatic deep ratification is being removed from the per-commit production path.'
+          echo 'LEGACY_P10_QUEUE_BREAK_COMPLETED=PASS'
+          echo 'Automatic P10 ratification is no longer part of routine deploy topology.'

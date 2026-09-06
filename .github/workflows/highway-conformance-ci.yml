@@ -17,6 +17,7 @@ on:
       - '.github/workflows/runtime-conformance-point4-production-acceptance.yml'
       - '.github/workflows/runtime-conformance-point4-read-production-acceptance.yml'
       - '.github/workflows/runtime-conformance-point5-production-acceptance.yml'
+      - '.github/workflows/workforce-autonomy-p10-after-deploy.yml'
       - '.github/workflows/highway-conformance-ci.yml'
   workflow_dispatch:
 
@@ -47,6 +48,7 @@ jobs:
           P4=.github/workflows/runtime-conformance-point4-production-acceptance.yml
           P4R=.github/workflows/runtime-conformance-point4-read-production-acceptance.yml
           P5=.github/workflows/runtime-conformance-point5-production-acceptance.yml
+          P10C=.github/workflows/workforce-autonomy-p10-after-deploy.yml
 
           grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
           ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
@@ -57,6 +59,9 @@ jobs:
           grep -q 'workflow_dispatch:' "$P4"
           grep -q 'workflow_dispatch:' "$P4R"
           grep -q 'workflow_dispatch:' "$P5"
+          ! grep -q 'workflow_run:' "$P10C"
+          grep -q 'workflow_dispatch:' "$P10C"
+          grep -q 'P10_RATIFICATION_ON_DEMAND=PASS' "$P10C"
 
           grep -q 'HIGHWAY_REVISION: single-production-lane-' "$H"
           grep -q 'group: metatron-production-lane' "$H"
@@ -87,11 +92,20 @@ jobs:
           assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
           assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: true' in deploy_job
           assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
+          assert 'actions/upload-artifact@v7' in build
+          assert 'actions/download-artifact@v8' in deploy_job
+          assert 'PRODUCTION_EXACT_TESTED_ARTIFACT_HANDOFF=PASS' in deploy_job
+          assert './gradlew clean test bootJar' not in deploy_job
+          assert "      - 'scripts/**'" not in deploy
+          assert 'workforce-autonomy-p10-production-acceptance.yml' not in deploy
+          print('HIGHWAY_TESTED_ARTIFACT_HANDOFF=PASS')
+          print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
           print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
           print('HIGHWAY_LATEST_SHA_WINS_POLICY=PASS')
           print('HIGHWAY_RATIFIED_POINT_WORKFLOWS_MANUAL_ONLY=PASS')
           PY
           echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
+          echo 'HIGHWAY_DEEP_RATIFICATION_ON_DEMAND=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Verify bounded execution planning recovery contract
         shell: bash

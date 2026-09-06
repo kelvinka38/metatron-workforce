@@ -1,30 +1,31 @@
-name: Workforce Autonomy P10 After Deploy
+name: Workforce Autonomy P10 Ratification Controller
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to ratify through GS1/2, GS3/4, 45-condition gate and Gateway Director
+        required: true
+        type: string
 
 permissions:
   contents: read
   actions: write
 
-# One GitHub-hosted controller owns the exact-SHA P10 sequence after deployment.
-# It does not occupy the production runner; each production acceptance workflow
-# remains the canonical evidence owner and is dispatched only after its
-# prerequisite has succeeded.
+# Deep L10 ratification is release evidence, not a per-commit deployment step.
+# Routine production deploys run only the single automatic Highway. Invoke this
+# controller explicitly when an exact deployed SHA needs institutional ratification.
 concurrency:
-  group: workforce-autonomy-p10-after-deploy-${{ github.event.workflow_run.head_sha }}
+  group: workforce-autonomy-p10-ratification-${{ inputs.target_sha }}
   cancel-in-progress: false
 
 jobs:
   exact-sha-p10-controller:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
-      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+      TARGET_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Run exact-SHA GS1/2 to GS3/4 to ratification sequence
         shell: bash
@@ -184,4 +185,5 @@ jobs:
           echo "P10_RATIFICATION_RUN_ID=$RATIFICATION_RUN_ID"
           echo "GATEWAY_DIRECTOR_LIVE_RUN_ID=$GATEWAY_DIRECTOR_RUN_ID"
           echo 'P10_EXACT_SHA_SERIAL_CONTROLLER=PASS'
+          echo 'P10_RATIFICATION_ON_DEMAND=PASS'
           echo 'WORKFORCE_AUTONOMY_AND_GATEWAY_DIRECTOR_PRODUCT=PASS'

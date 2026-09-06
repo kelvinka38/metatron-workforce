@@ -12,19 +12,10 @@ on:
       - 'Dockerfile'
       - 'runtime-sandbox/**'
       - 'deploy/**'
-      - 'scripts/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
       - '.github/workflows/production-deploy.yml'
-      - '.github/workflows/production-acceptance-highway-v2.yml'
-      - '.github/workflows/highway-conformance-ci.yml'
-      - '.github/workflows/runtime-conformance-point4-production-acceptance.yml'
-      - '.github/workflows/runtime-conformance-point4-read-production-acceptance.yml'
-      - '.github/workflows/runtime-conformance-point5-production-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-after-deploy.yml'
-      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml'
-      - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
-      - '.github/workflows/workforce-autonomy-p10-closure-final.yml'
   workflow_dispatch:
 
 permissions:
@@ -62,6 +53,21 @@ jobs:
           METATRON_IMAGE_TAG: hosted-${{ github.sha }}
           METATRON_SANDBOX_TOKEN: hosted-build-contract
         run: docker compose -f deploy/docker-compose.yml build workforce-sandbox
+      - name: Seal exact tested Workforce artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build/libs/metatron-workforce-${METATRON_VERSION}.jar
+          sha256sum build/libs/metatron-workforce-${METATRON_VERSION}.jar > build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256
+      - name: Upload exact tested Workforce artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: workforce-tested-${{ github.sha }}
+          path: |
+            build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar
+            build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar.sha256
+          if-no-files-found: error
+          retention-days: 1
   deploy-production:
     needs: test-and-build
     runs-on: [self-hosted, linux, x64, metatron-prod]
@@ -71,21 +77,30 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
-      - name: Rebuild and retest exact source on production runner
+      - name: Download exact tested Workforce artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: workforce-tested-${{ github.sha }}
+          path: build/libs
+      - name: Verify exact tested artifact and source identity
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew clean test bootJar --no-daemon --max-workers=1
-          test -f build/libs/metatron-workforce-${METATRON_VERSION}.jar
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
-          echo "PRODUCTION_LOCAL_EXACT_SOURCE_BUILD=PASS"
+          test -f build/libs/metatron-workforce-${METATRON_VERSION}.jar
+          test -f build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256
+          sha256sum -c build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256
+          echo "PRODUCTION_EXACT_TESTED_ARTIFACT_HANDOFF=PASS"
       - name: Deploy exact tested artifact and isolated sandbox with rollback
         shell: bash
         env:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          mkdir -p "$HOME/.metatron"
+          exec 9>"$HOME/.metatron/production-mutation.lock"
+          flock -w 600 9
+          echo 'PRODUCTION_MUTATION_LOCK=ACQUIRED'
           BASE=/opt/metatron/metatron-workforce
           WORKSPACE="$GITHUB_WORKSPACE"
           COMPOSE="$WORKSPACE/deploy/docker-compose.yml"
