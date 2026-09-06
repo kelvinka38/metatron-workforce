@@ -26,6 +26,18 @@ env:
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
 jobs:
+  supersede-stale-production:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    concurrency:
+      group: metatron-production-lane
+      cancel-in-progress: true
+    steps:
+      - name: Preempt stale production work immediately
+        run: |
+          echo "LATEST_SHA=${{ github.sha }}"
+          echo 'PRODUCTION_STALE_WORK_PREEMPTED=PASS'
+
   test-and-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -67,7 +79,7 @@ jobs:
             build/libs/metatron-workforce-${{ env.METATRON_VERSION }}.jar.sha256
           key: workforce-tested-${{ github.sha }}
   deploy-production:
-    needs: test-and-build
+    needs: [supersede-stale-production, test-and-build]
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     concurrency:
