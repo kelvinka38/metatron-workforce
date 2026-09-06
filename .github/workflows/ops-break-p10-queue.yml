@@ -1,22 +1,15 @@
-name: Break Stale P10 Controller Queue
+name: Break Stale P10 Controller Queue — Completed
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-break-p10-queue.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: workforce-autonomy-p10-ratification-
-  cancel-in-progress: true
-
 jobs:
-  break-stale-controller:
+  record:
     runs-on: ubuntu-latest
     steps:
       - run: |
           echo 'STALE_P10_CONTROLLER_QUEUE_BREAK=PASS'
-          echo 'Workflow-only P10 auto-trigger has been removed.'
+          echo 'Automatic workflow-only P10 queue generation is disabled.'
