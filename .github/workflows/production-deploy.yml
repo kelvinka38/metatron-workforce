@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   METATRON_VERSION: "0.1.0"
@@ -37,6 +38,30 @@ jobs:
         run: |
           echo "LATEST_SHA=${{ github.sha }}"
           echo 'PRODUCTION_STALE_WORK_PREEMPTED=PASS'
+
+      - name: Dispatch exact-SHA P10 closure
+        if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[P10-CLOSE]') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          payload=$(python3 - "$TARGET_SHA" <<'PY'
+          import json,sys
+          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1]}}))
+          PY
+          )
+          status=$(curl -sS -o /tmp/p10-dispatch.json -w '%{http_code}' \
+            -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/workforce-autonomy-p10-after-deploy.yml/dispatches" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -H 'Content-Type: application/json' \
+            --data-binary "$payload")
+          test "$status" = 204
+          echo "P10_CLOSURE_TARGET_SHA=$TARGET_SHA"
+          echo 'P10_CLOSURE_CONTROLLER_DISPATCH=PASS'
 
   test-and-build:
     runs-on: ubuntu-24.04
@@ -84,7 +109,7 @@ jobs:
     environment: production
     concurrency:
       group: metatron-production-lane
-      cancel-in-progress: true
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
       - name: Restore exact tested Workforce handoff
