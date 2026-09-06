@@ -1,9 +1,6 @@
 name: Workforce Autonomy P10 GS3 GS4 Production Acceptance
 
 on:
-  workflow_run:
-    workflows: ["Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -17,7 +14,7 @@ permissions:
 # Serialize with the existing GS1/GS2 production workflow. This keeps fault injection from
 # interrupting the already-proven governed mutation slice while preserving independent evidence.
 concurrency:
-  group: metatron-workforce-autonomy-p10-production-acceptance
+  group: metatron-production-lane
   cancel-in-progress: false
 
 jobs:
