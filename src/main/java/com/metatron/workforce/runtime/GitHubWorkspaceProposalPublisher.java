@@ -125,11 +125,15 @@ public final class GitHubWorkspaceProposalPublisher {
 
         String localHead = git(workerId, objectiveId, List.of("rev-parse", "HEAD")).trim();
         requireSha(localHead, "local HEAD");
-        String roots = git(workerId, objectiveId, List.of("rev-list", "--max-parents=0", "HEAD")).trim();
-        List<String> rootCommits = roots.lines().map(String::trim).filter(v -> !v.isBlank()).toList();
-        if (rootCommits.size() != 1) throw new IllegalStateException("Objective workspace must have exactly one local baseline root");
-        String localBaseline = requireSha(rootCommits.getFirst(), "local baseline");
+        String localBaseline = requireSha(
+                git(workerId, objectiveId, List.of("rev-parse", RepositoryWorkspaceMaterializationState.BASELINE_REF)).trim(),
+                "materialization baseline");
         if (localHead.equals(localBaseline)) throw new IllegalStateException("proposal requires a committed work-product delta");
+        WorkerExecutionSandboxService.SandboxResult ancestry = sandbox.run(
+                workerId, objectiveId, "git", List.of("merge-base", "--is-ancestor", localBaseline, localHead));
+        if (!ancestry.success()) {
+            throw new IllegalStateException("proposal local HEAD is not descended from the completed materialization baseline");
+        }
 
         String status = git(workerId, objectiveId, List.of("status", "--porcelain")).trim();
         if (!status.isBlank()) throw new IllegalStateException("proposal requires a clean committed Objective workspace");

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
+import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -82,35 +83,26 @@ public final class GeneralWorkspaceActionCatalog {
                 materialized = repositories.materialize(worker, objectiveId, repository, ref);
             }
 
-            String localHead = "";
-            if (reused) {
-                WorkerExecutionSandboxService.SandboxResult existingHead =
-                        sandbox.run(worker, objectiveId, "git", List.of("rev-parse", "HEAD"));
-                if (existingHead.success() && existingHead.output().trim().matches("[0-9a-f]{40}")) {
-                    localHead = existingHead.output().trim();
-                }
+            String localBaseline = RepositoryWorkspaceMaterializationState.completedBaselineSha(workspaces, workspace);
+            if (localBaseline.isBlank()) {
+                localBaseline = establishOrRecoverMaterializationBaseline(worker, objectiveId);
             }
-
-            // A first materialization, or a prior interrupted materialization that never completed the
-            // local baseline commit, establishes the baseline. A normal retry reuses the existing HEAD
-            // and never commits current Work product as a new baseline.
-            if (localHead.isBlank()) {
-                runOrThrow(worker, objectiveId, "git", List.of("init", "-q"), "git init");
-                runOrThrow(worker, objectiveId, "git", List.of("config", "user.name", "Metatron Workforce"), "git user.name");
-                runOrThrow(worker, objectiveId, "git", List.of("config", "user.email", "workforce@metatron.local"), "git user.email");
-                runOrThrow(worker, objectiveId, "git", List.of("add", "-A"), "git baseline add");
-                runOrThrow(worker, objectiveId, "git", List.of("commit", "-q", "-m", "metatron materialized baseline"), "git baseline commit");
-                WorkerExecutionSandboxService.SandboxResult head = runOrThrow(
-                        worker, objectiveId, "git", List.of("rev-parse", "HEAD"), "git baseline head");
-                localHead = head.output().trim();
+            if (!localBaseline.matches("[0-9a-f]{40}")) {
+                throw new IllegalStateException("local materialized baseline missing Git SHA");
             }
-            if (!localHead.matches("[0-9a-f]{40}")) throw new IllegalStateException("local materialized baseline missing Git SHA");
+            String verifiedBaseline = runOrThrow(
+                    worker, objectiveId, "git",
+                    List.of("rev-parse", RepositoryWorkspaceMaterializationState.BASELINE_REF),
+                    "git materialization baseline ref").output().trim();
+            if (!localBaseline.equals(verifiedBaseline)) {
+                throw new IllegalStateException("materialization baseline ref verification mismatch");
+            }
 
             Map<String, String> outputs = new LinkedHashMap<>();
             outputs.put("repository", materialized.repository());
             outputs.put("requestedRef", materialized.requestedRef());
             outputs.put("sourceCommitSha", materialized.resolvedCommitSha());
-            outputs.put("localBaselineCommitSha", localHead);
+            outputs.put("localBaselineCommitSha", localBaseline);
             outputs.put("materializedFiles", Integer.toString(materialized.files()));
             outputs.put("materializedBytes", Long.toString(materialized.bytes()));
             outputs.put("workspaceRef", workspace.workspaceRef());
@@ -120,8 +112,55 @@ public final class GeneralWorkspaceActionCatalog {
                     reused ? "existing immutable repository materialization reused" : "private repository materialized into isolated Objective workspace",
                     outputs, List.of(
                             evidencePrefix + materialized.repository() + "@" + materialized.resolvedCommitSha(),
-                            "objective-workspace:" + workspace.workspaceKey() + ":baseline=" + localHead));
+                            "objective-workspace:" + workspace.workspaceKey() + ":baseline=" + localBaseline,
+                            "repository-materialization-complete-ref:" + RepositoryWorkspaceMaterializationState.BASELINE_REF
+                                    + "=" + localBaseline));
         });
+    }
+
+    private String establishOrRecoverMaterializationBaseline(String worker, String objectiveId) {
+        WorkerExecutionSandboxService.SandboxResult existingHead =
+                sandbox.run(worker, objectiveId, "git", List.of("rev-parse", "HEAD"));
+        String baseline;
+        if (!existingHead.success() || !existingHead.output().trim().matches("[0-9a-f]{40}")) {
+            runOrThrow(worker, objectiveId, "git", List.of("init", "-q"), "git init");
+            runOrThrow(worker, objectiveId, "git", List.of("config", "user.name", "Metatron Workforce"), "git user.name");
+            runOrThrow(worker, objectiveId, "git", List.of("config", "user.email", "workforce@metatron.local"), "git user.email");
+            runOrThrow(worker, objectiveId, "git", List.of("add", "-A"), "git baseline add");
+            runOrThrow(worker, objectiveId, "git",
+                    List.of("commit", "-q", "-m", "metatron materialized baseline"), "git baseline commit");
+            baseline = runOrThrow(
+                    worker, objectiveId, "git", List.of("rev-parse", "HEAD"), "git baseline head").output().trim();
+        } else {
+            baseline = existingHead.output().trim();
+            String subject = runOrThrow(
+                    worker, objectiveId, "git", List.of("log", "-1", "--pretty=%s"), "git baseline recovery subject")
+                    .output().trim();
+            String parents = runOrThrow(
+                    worker, objectiveId, "git", List.of("rev-list", "--parents", "-n", "1", "HEAD"),
+                    "git baseline recovery parents").output().trim();
+            String status = runOrThrow(
+                    worker, objectiveId, "git", List.of("status", "--porcelain"), "git baseline recovery status")
+                    .output().trim();
+            int fields = parents.isBlank() ? 0 : parents.split("\\s+").length;
+            if (!"metatron materialized baseline".equals(subject) || fields != 1 || !status.isBlank()) {
+                throw new IllegalStateException(
+                        "partial repository materialization contains non-baseline Git history; refusing to bless Work product as baseline");
+            }
+        }
+        if (!baseline.matches("[0-9a-f]{40}")) {
+            throw new IllegalStateException("materialization baseline commit missing immutable SHA");
+        }
+        runOrThrow(worker, objectiveId, "git",
+                List.of("update-ref", RepositoryWorkspaceMaterializationState.BASELINE_REF, baseline),
+                "git materialization completion ref");
+        String status = runOrThrow(
+                worker, objectiveId, "git", List.of("status", "--porcelain"), "git materialization completion status")
+                .output().trim();
+        if (!status.isBlank()) {
+            throw new IllegalStateException("materialization completion requires a clean baseline workspace");
+        }
+        return baseline;
     }
 
     /** Same Objective + same repository/ref may safely retry materialization without destroying Work product. */

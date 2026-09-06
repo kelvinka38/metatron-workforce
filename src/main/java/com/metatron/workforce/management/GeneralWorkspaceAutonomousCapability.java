@@ -9,6 +9,7 @@ import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
 import com.metatron.workforce.action.GeneralWebResearchAction;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
+import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.springframework.stereotype.Component;
 
@@ -132,6 +133,9 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
             throw new IllegalStateException("objective workspace repository provenance is not a regular file");
         }
 
+        String baselineSha = RepositoryWorkspaceMaterializationState.completedBaselineSha(workspaces, workspace);
+        if (baselineSha.isBlank()) return Map.copyOf(memory);
+
         Map<String, String> fields = new LinkedHashMap<>();
         for (String line : workspaces.read(workspace, ".metatron-repository").lines().toList()) {
             int split = line.indexOf('=');
@@ -148,6 +152,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         memory.put("repository", repository);
         memory.put("requestedRef", requestedRef);
         memory.put("sourceCommitSha", sourceCommitSha.toLowerCase(Locale.ROOT));
+        memory.put("localBaselineCommitSha", baselineSha);
         return Map.copyOf(memory);
     }
 
