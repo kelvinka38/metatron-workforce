@@ -29,13 +29,16 @@ jobs:
           rows=[]
           for item in data if isinstance(data,list) else []:
               blob=json.dumps(item,sort_keys=True)
-              if target not in blob or 'MUTATING general engineering Objective' not in blob: continue
+              if target not in blob or 'MUTATING general engineering Objective' not in blob:
+                  continue
               o=item.get('objective') or {}
               oid=o.get('objectiveId')
-              if oid: rows.append((o.get('createdAt',''),oid,o.get('status','')))
-          if not rows: raise SystemExit('NO_EXACT_GS2_OBJECTIVE')
+              if oid:
+                  rows.append((o.get('createdAt',''),oid,o.get('status','')))
+          if not rows:
+              raise SystemExit('NO_EXACT_GS2_OBJECTIVE')
           rows.sort()
-          _,oid,status=rows[-1]
+          created,oid,status=rows[-1]
           print(oid)
           print('DISCOVERED_STATUS='+status,file=sys.stderr)
           PY
@@ -44,20 +47,33 @@ jobs:
           curl -fsS "http://127.0.0.1:8080/workforce/management/objectives/$OID" > /tmp/view.json
           python3 - /tmp/view.json <<'PY'
           import json,sys
-          d=json.load(open(sys.argv[1])); o=d.get('objective') or {}; w=d.get('autonomousWork') or {}
+          d=json.load(open(sys.argv[1]))
+          o=d.get('objective') or {}
+          w=d.get('autonomousWork') or {}
           print('STATUS='+str(o.get('status')))
           print('BLOCKER='+str(w.get('blocker','')))
           print('COMPLETED_STEPS='+json.dumps(w.get('completedStepIds',[])))
           print('HISTORY_TYPES='+','.join(str(x.get('type','')) for x in (d.get('history') or [])))
           PY
           echo 'ACTIONS_BEGIN'
-          mapfile -t files < <(docker exec "$CID" sh -c "grep -R -l -F '$OID' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null" || true)
-          echo "ACTION_FILES=${#files[@]}"
-          for file in "${files[@]}"; do
-            docker exec "$CID" sh -c "grep -F '$OID' '$file' 2>/dev/null || true"
-          done | python3 -c 'import sys,json
-for line in sys.stdin:
-    try: d=json.loads(line)
-    except: continue
-    print(json.dumps({"step":d.get("workStepId"),"worker":d.get("workerId"),"cycle":d.get("cycle"),"action":d.get("thoughtAction"),"success":d.get("actionSuccess"),"reflection":d.get("reflection"),"summary":d.get("actionSummary"),"outputs":d.get("outputs")},sort_keys=True)[:12000])'
+          docker exec "$CID" sh -c "grep -R -F '$OID' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
+          python3 - /tmp/actions.jsonl <<'PY'
+          import json,sys
+          for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
+              try:
+                  d=json.loads(line)
+              except Exception:
+                  continue
+              out={
+                  'step':d.get('workStepId'),
+                  'worker':d.get('workerId'),
+                  'cycle':d.get('cycle'),
+                  'action':d.get('thoughtAction'),
+                  'success':d.get('actionSuccess'),
+                  'reflection':d.get('reflection'),
+                  'summary':d.get('actionSummary'),
+                  'outputs':d.get('outputs')
+              }
+              print(json.dumps(out,sort_keys=True)[:12000])
+          PY
           echo 'ACTIONS_END'
