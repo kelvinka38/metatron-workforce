@@ -74,6 +74,9 @@ jobs:
           grep -q 'workflow_dispatch:' "$P10C"
           grep -q 'cancel-in-progress: true' "$P10C"
           grep -q 'P10_RATIFICATION_ON_DEMAND=PASS' "$P10C"
+          grep -q 'confirm:' "$P10C"
+          grep -q 'RUN_DEEP_P10' "$P10C"
+          grep -q "inputs.confirm == 'RUN_DEEP_P10'" "$P10C"
           ! grep -q 'workflow_run:' "$P10GS12"
           ! grep -q 'workflow_run:' "$P10GS34"
           ! grep -q 'workflow_run:' "$P10R"
@@ -149,6 +152,7 @@ jobs:
           echo 'HIGHWAY_DEEP_RATIFICATION_ON_DEMAND=PASS'
           echo 'HIGHWAY_PREEMPTS_STALE_RATIFICATION=PASS'
           echo 'P10_BOOTSTRAP_AUTORUN_DISABLED=PASS'
+          echo 'P10_EXPLICIT_DEEP_CONFIRMATION_REQUIRED=PASS'
           echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
           echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
       - name: Verify bounded execution planning recovery contract
