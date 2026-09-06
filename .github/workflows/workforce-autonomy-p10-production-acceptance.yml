@@ -277,7 +277,11 @@ jobs:
             ! grep -F "$old_sentence" "$EVIDENCE/gs2-local-source.java" >/dev/null
 
             # Independently rerun the repository tests after Worker completion in the isolated sandbox.
-            docker exec --user 10001:10001 -w "/workspaces/$WORKSPACE_KEY" "$SANDBOX_CID" \
+            docker exec --user 10001:10001 \
+              -e HOME="/workspaces/$WORKSPACE_KEY" \
+              -e GRADLE_USER_HOME="/workspaces/$WORKSPACE_KEY/.gradle" \
+              -e JAVA_HOME="/opt/java/openjdk" \
+              -w "/workspaces/$WORKSPACE_KEY" "$SANDBOX_CID" \
               ./gradlew --no-daemon --max-workers=1 test > "$EVIDENCE/gs2-independent-test-rerun.txt" 2>&1
             grep -F 'BUILD SUCCESSFUL' "$EVIDENCE/gs2-independent-test-rerun.txt" >/dev/null
             echo 'GS2_INDEPENDENT_TEST_RERUN=PASS'
