@@ -270,6 +270,8 @@ public final class InformationRequirementAcquisitionService {
     static String canonicalExternalQuery(String value) {
         if (value == null || value.isBlank()) return "";
         return value.trim()
+                .replaceAll("(?iu)xác\\s+định", " ")
+                .replaceAll("(?iu)đương\\s+nhiệm", "current")
                 .replaceAll("(?iu)phiên\\s+bản", "version")
                 .replaceAll("(?iu)ổn\\s+định", "stable")
                 .replaceAll("(?iu)mới\\s+nhất", "latest")

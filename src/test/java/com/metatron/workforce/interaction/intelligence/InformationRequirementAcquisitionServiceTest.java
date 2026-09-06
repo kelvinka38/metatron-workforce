@@ -8,6 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class InformationRequirementAcquisitionServiceTest {
 
     @Test
+    void canonicalizesVietnameseIncumbentOfficeHolderWithoutInstructionNoise() {
+        String query = InformationRequirementAcquisitionService.canonicalExternalQuery(
+                "Xác định Tổng thống đương nhiệm của Indonesia");
+
+        assertEquals("president current of Indonesia", query);
+        assertEquals(query, InformationRequirementAcquisitionService.searchOptimizedExternalQuery(query));
+    }
+
+    @Test
     void canonicalizesVietnameseFreshSoftwareVersionQueryForCrossLanguageEvidence() {
         String query = InformationRequirementAcquisitionService.canonicalExternalQuery(
                 "Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.");

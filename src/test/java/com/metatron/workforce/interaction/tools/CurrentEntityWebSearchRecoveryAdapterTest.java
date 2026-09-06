@@ -16,6 +16,22 @@ class CurrentEntityWebSearchRecoveryAdapterTest {
             "Xác định Tổng thống hiện tại của Indonesia bằng cách kiểm tra nguồn thông tin hiện tại";
 
     @Test
+    void recognizesVietnameseIncumbentQualifierAndRejectsInstructionIdentity() {
+        String query = "Xác định Tổng thống đương nhiệm của Indonesia";
+        Set<String> subject = CurrentEntityWebSearchRecoveryAdapter.subjectTokens(query);
+
+        assertTrue(CurrentEntityWebSearchRecoveryAdapter.supports(query));
+        assertTrue(subject.contains("president"));
+        assertTrue(subject.contains("indonesia"));
+        assertFalse(subject.contains("xac"));
+        assertFalse(subject.contains("dinh"));
+        assertFalse(subject.contains("duong"));
+        assertFalse(subject.contains("nhiem"));
+        assertEquals("current president indonesia",
+                CurrentEntityWebSearchRecoveryAdapter.compactCurrentQuery(query, subject));
+    }
+
+    @Test
     void stripsInstructionVerbsFromLiteralProductionObjective() {
         Set<String> subject = CurrentEntityWebSearchRecoveryAdapter.subjectTokens(PRODUCTION_OBJECTIVE);
 

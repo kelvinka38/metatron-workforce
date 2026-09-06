@@ -170,6 +170,7 @@ public final class CurrentEntityWebSearchRecoveryAdapter implements ToolAdapter 
         return folded
                 .replaceAll("\\btong\\s+thong\\b", "president")
                 .replaceAll("\\bhien\\s+tai\\b", "current")
+                .replaceAll("\\bduong\\s+nhiem\\b", "current")
                 .replaceAll("\\bhom\\s+nay\\b", "today")
                 .replaceAll("\\bxac\\s+dinh\\b", "determine")
                 .replaceAll("\\bkiem\\s+tra\\b", "check")
