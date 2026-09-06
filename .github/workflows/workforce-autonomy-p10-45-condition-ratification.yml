@@ -1,4 +1,5 @@
 name: Workforce Autonomy P10 45 Condition Ratification
+run-name: P10 RATIFY ${{ inputs.target_sha }}
 
 on:
   workflow_dispatch:

@@ -1,4 +1,5 @@
 name: Gateway Director Live Acceptance
+run-name: Gateway Director ${{ inputs.target_sha }}
 
 on:
   workflow_dispatch:

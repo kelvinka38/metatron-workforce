@@ -1,4 +1,5 @@
 name: Workforce Autonomy P10 Production Acceptance
+run-name: P10 GS12 ${{ inputs.target_sha }}
 
 on:
   workflow_dispatch:

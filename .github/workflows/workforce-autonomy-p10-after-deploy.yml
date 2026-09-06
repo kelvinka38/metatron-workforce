@@ -63,7 +63,7 @@ jobs:
           data=json.load(open(path))
           rows=[
               r for r in data.get('workflow_runs',[])
-              if r.get('head_sha')==target
+              if target in (r.get('display_title') or '')
               and r.get('name')==name
               and r.get('conclusion')=='success'
           ]
@@ -86,7 +86,7 @@ jobs:
           data=json.load(open(path))
           rows=[
               r for r in data.get('workflow_runs',[])
-              if r.get('head_sha')==target
+              if target in (r.get('display_title') or '')
               and r.get('name')==name
               and r.get('event')=='workflow_dispatch'
               and r.get('created_at','')>=started
