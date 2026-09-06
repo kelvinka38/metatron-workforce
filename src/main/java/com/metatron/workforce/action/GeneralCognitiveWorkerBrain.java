@@ -267,8 +267,11 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         if (!requiresRemoteProposal(context)) return null;
         if (!context.availableActions().contains("workspace.github.pr.publish")) return null;
-        if (!successfulGitSubcommand(context, "commit")) return null;
-        if (requiresGovernedTest(context) && !governedTestSatisfied(context)) return null;
+        // In a fresh publish-only Work step, prior commit history is intentionally not step-local.
+        // The publisher itself re-opens the durable Objective workspace and fails closed unless a clean
+        // committed delta exists. When this same step mutated source, however, force add/test/commit first.
+        if (hasWorkspaceSourceMutation(context) && !successfulGitSubcommand(context, "commit")) return null;
+        if (requiresGovernedTest(context) && hasWorkspaceSourceMutation(context) && !governedTestSatisfied(context)) return null;
         if (successfulAction(context, "workspace.github.pr.publish")) return null;
         return new CognitiveWorkerRuntime.Thought(
                 "workspace.github.pr.publish", Map.of(),
@@ -689,13 +692,19 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !governedTestSatisfied(context)) {
             missing.add("successful workspace.test.run after the latest source mutation");
         }
+        boolean latestRemoteProposalPassed = "workspace.github.pr.publish".equals(observation.actionRef())
+                && observation.success();
+        boolean priorRemoteProposalPassed = successfulAction(context, "workspace.github.pr.publish");
+        boolean committedWorkProductProvenByPublication = latestRemoteProposalPassed || priorRemoteProposalPassed;
         if (requiresGitAdd(context)
-                && !successfulGitSubcommand(context, "add")) {
-            missing.add("successful workspace.git.run add");
+                && !successfulGitSubcommand(context, "add")
+                && !committedWorkProductProvenByPublication) {
+            missing.add("successful workspace.git.run add or committed-work proof from workspace.github.pr.publish");
         }
         if (requiresGitCommit(context)
-                && !successfulGitSubcommand(context, "commit")) {
-            missing.add("successful workspace.git.run commit");
+                && !successfulGitSubcommand(context, "commit")
+                && !committedWorkProductProvenByPublication) {
+            missing.add("successful workspace.git.run commit or committed-work proof from workspace.github.pr.publish");
         }
         boolean latestGitStatusPassed = "workspace.git.status".equals(observation.actionRef()) && observation.success();
         if (requiresGitVerification(context)
@@ -703,8 +712,6 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !successfulAction(context, "workspace.git.status")) {
             missing.add("successful workspace.git.status verification");
         }
-        boolean latestRemoteProposalPassed = "workspace.github.pr.publish".equals(observation.actionRef())
-                && observation.success();
         if (requiresRemoteProposal(context)
                 && !latestRemoteProposalPassed
                 && !successfulAction(context, "workspace.github.pr.publish")) {

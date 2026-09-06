@@ -22,9 +22,11 @@ Duplicate delivery of the same provider event is replayed to test submission ide
 
 ## Golden Slice 2
 
-One accepted Objective asks Workforce to repair the approved stale Autonomy Closure gap matrix and open a pull request. The only allowed mutation capability is `repository.pr.propose`, bounded to `kelvinka38/metatron-workforce` and `docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md`.
+One accepted Objective exercises the **general** engineering runtime, `execution.general.workspace`, against the exact deployed `kelvinka38/metatron-workforce` source SHA. It materializes the repository into the Objective workspace, performs a bounded non-fixture source edit through the general Action Fabric, runs the repository test suite after the edit, stages and commits the work product locally, and publishes that committed delta through `workspace.github.pr.publish`.
 
-The harness independently re-reads GitHub and requires the generated PR to be OPEN and UNMERGED, target `main`, use the bounded `autonomy/gs2-*` branch and modify exactly one approved path. There is no merge action in the capability. Founder approval remains required before merge.
+Remote publication is credential-isolated: the Worker sandbox never receives `GITHUB_TOKEN`. The Workforce JVM publishes only the clean committed Objective-workspace delta to an Objective-scoped `metatron/objective-*` proposal branch. The publisher requires the materialized source SHA to still equal the canonical default-branch SHA, binds the remote commit parent to that source SHA, limits the changed path set, opens an unmerged pull request, and exposes no merge action.
+
+The harness then independently reruns tests and performs fresh GitHub reads. It requires the PR to be OPEN and UNMERGED, target `main`, have the exact Objective-scoped branch and remote commit reported by the general action, have the exact deployed source SHA as the remote commit parent, and contain exactly the source path changed by the Objective. A local-only commit or the historical hardcoded `repository.pr.propose` fixture cannot satisfy Golden Slice 2 or the L10 gate.
 
 ## What this stage does not prove
 

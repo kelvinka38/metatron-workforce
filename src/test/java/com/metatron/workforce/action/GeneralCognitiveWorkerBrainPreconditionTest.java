@@ -306,6 +306,32 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
         assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, guarded.decision());
     }
 
+    @Test
+    void successfulRemotePublicationCanCloseFreshPublishStepBecausePublisherProvesCommittedWorkspace() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "publish",
+                "Publish the committed Objective workspace as a reviewable pull request",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of("commit"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("reviewable pull request exists"),
+                List.of("fresh GitHub Observation"));
+        CognitiveWorkerRuntime.CognitiveContext freshPublishStep = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.github.pr.publish"), List.of(), Map.of(
+                        "workspaceMaterialized", "true",
+                        "repository", "kelvinka38/metatron-workforce"));
+
+        CognitiveWorkerRuntime.Reflection guarded = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                freshPublishStep,
+                ActionFabric.ActionObservation.success(
+                        "workspace.github.pr.publish", "published", Map.of("pullRequestUrl", "https://example.test/pr/1"), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("done"));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, guarded.decision());
+    }
+
     private static CognitiveWorkerRuntime.Cycle successfulCycle(int number, String actionRef, Map<String, String> inputs) {
         return new CognitiveWorkerRuntime.Cycle(
                 number,

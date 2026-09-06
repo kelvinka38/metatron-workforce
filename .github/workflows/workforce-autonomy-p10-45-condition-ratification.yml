@@ -220,7 +220,7 @@ jobs:
           assert d.get('conditions_accounted')==45
           assert not d.get('unresolved_critical_contradictions')
           print('P10_GOLDEN_SLICES=4/4')
-          print('P10_GENERAL_EXECUTION_RUNTIME=PASS')
+          print('P10_GENERAL_MUTATING_EXECUTION_RUNTIME=PASS')
           print('P10_PRODUCTION_CONDITIONS=45/45')
           print('P10_UNRESOLVED_CRITICAL_CONTRADICTIONS=0')
           print('P10_FINAL_VERDICT=ACCEPTED_L10')

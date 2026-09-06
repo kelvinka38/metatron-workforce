@@ -97,8 +97,8 @@ def ratify(manifest: dict) -> dict:
         if row.get("sha") != target_sha:
             _fail(errors, f"Golden Slice {slice_id} is not bound to target_sha")
         if slice_id == 2:
-            if row.get("scope") != "GENERAL_EXECUTION_RUNTIME":
-                _fail(errors, "Golden Slice 2 does not prove GENERAL_EXECUTION_RUNTIME scope")
+            if row.get("scope") != "GENERAL_MUTATING_EXECUTION_RUNTIME":
+                _fail(errors, "Golden Slice 2 does not prove GENERAL_MUTATING_EXECUTION_RUNTIME scope")
             if not isinstance(refs, list) or "artifact:gs12/gs2-general-runtime.txt" not in refs:
                 _fail(errors, "Golden Slice 2 missing general runtime proof artifact")
 
@@ -118,6 +118,17 @@ def ratify(manifest: dict) -> dict:
         _fail(errors, "general_execution_runtime source repository is not exact target SHA")
     if not SHA_RE.fullmatch(str(general_runtime.get("local_git_commit", ""))):
         _fail(errors, "general_execution_runtime local Git commit is missing")
+    if general_runtime.get("remote_publication") != "PASS":
+        _fail(errors, "general_execution_runtime remote publication is not PASS")
+    if not re.fullmatch(r"https://github\.com/kelvinka38/metatron-workforce/pull/[1-9][0-9]*",
+                        str(general_runtime.get("remote_pull_request", ""))):
+        _fail(errors, "general_execution_runtime remote pull request is missing")
+    if not str(general_runtime.get("remote_branch", "")).startswith("metatron/objective-"):
+        _fail(errors, "general_execution_runtime remote branch is not Objective-scoped")
+    if not SHA_RE.fullmatch(str(general_runtime.get("remote_commit", ""))):
+        _fail(errors, "general_execution_runtime remote commit is missing")
+    if general_runtime.get("remote_changed_path") != "src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java":
+        _fail(errors, "general_execution_runtime remote changed path is not the non-fixture coding acceptance target")
     runtime_refs = general_runtime.get("evidence_refs")
     if not isinstance(runtime_refs, list) or "artifact:gs12/gs2-general-runtime.txt" not in runtime_refs:
         _fail(errors, "general_execution_runtime has no strict proof reference")
@@ -211,6 +222,7 @@ def ratify(manifest: dict) -> dict:
 def self_test() -> int:
     sha = "a" * 40
     local_sha = "c" * 40
+    remote_sha = "d" * 40
     good = {
         "target_sha": sha,
         "deployed_sha": sha,
@@ -221,7 +233,13 @@ def self_test() -> int:
         "general_execution_runtime": {
             "status": "PASS", "sha": sha, "capability": "execution.general.workspace",
             "repository": "kelvinka38/metatron-workforce", "source_commit_sha": sha,
-            "local_git_commit": local_sha, "evidence_refs": ["artifact:gs12/gs2-general-runtime.txt"],
+            "local_git_commit": local_sha,
+            "remote_publication": "PASS",
+            "remote_pull_request": "https://github.com/kelvinka38/metatron-workforce/pull/999",
+            "remote_branch": "metatron/objective-abc123def456-cccccccc",
+            "remote_commit": remote_sha,
+            "remote_changed_path": "src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java",
+            "evidence_refs": ["artifact:gs12/gs2-general-runtime.txt"],
         },
         "conditions": [
             {"id": i, "status": "PASS", "sha": sha, "evidence_refs": [f"evidence:c{i}"],
@@ -230,7 +248,7 @@ def self_test() -> int:
         ],
         "unresolved_critical_contradictions": [],
     }
-    good["golden_slices"]["2"]["scope"] = "GENERAL_EXECUTION_RUNTIME"
+    good["golden_slices"]["2"]["scope"] = "GENERAL_MUTATING_EXECUTION_RUNTIME"
     good["golden_slices"]["2"]["evidence_refs"].append("artifact:gs12/gs2-general-runtime.txt")
     result = ratify(good)
     assert result["verdict"] == "ACCEPTED_L10", result
@@ -242,6 +260,12 @@ def self_test() -> int:
     assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
     broken = json.loads(json.dumps(good))
     broken["general_execution_runtime"]["source_commit_sha"] = "b" * 40
+    assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
+    broken = json.loads(json.dumps(good))
+    broken["general_execution_runtime"]["remote_publication"] = "NONE"
+    assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
+    broken = json.loads(json.dumps(good))
+    broken["general_execution_runtime"]["remote_changed_path"] = "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md"
     assert ratify(broken)["verdict"] == "NOT_ACCEPTED_L10"
     broken = json.loads(json.dumps(good))
     broken["conditions"][23]["status"] = "NOT_APPLICABLE"

@@ -171,7 +171,9 @@ jobs:
 
           assert_gs2() {
             local oid="$1"
-            local proof_path='docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md'
+            local source_path='src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java'
+            local old_sentence='Produces one stateful provider-backed brain per Cognitive Worker execution.'
+            local new_sentence='Produces one stateful provider-backed brain for each governed Cognitive Worker execution.'
             snapshot_state gs2
             OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
           import json,os
@@ -198,26 +200,29 @@ jobs:
               --objective-id "$oid" \
               --output "$EVIDENCE/gs2-action-journal.jsonl"
 
-            TARGET_SHA="$TARGET_SHA" PROOF_PATH="$proof_path" EVIDENCE="$EVIDENCE" python3 - <<'PY'
-          import json,os
-          target=os.environ['TARGET_SHA']; proof_path=os.environ['PROOF_PATH']; root=os.environ['EVIDENCE']
+            TARGET_SHA="$TARGET_SHA" SOURCE_PATH="$source_path" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+          import json,os,re
+          target=os.environ['TARGET_SHA']; source_path=os.environ['SOURCE_PATH']; root=os.environ['EVIDENCE']
           rows=[json.loads(line) for line in open(root+'/gs2-action-journal.jsonl',encoding='utf-8') if line.strip()]
           assert rows, 'empty_action_journal'
           successful=[r for r in rows if r.get('actionSuccess') is True]
           actions=[r.get('thoughtAction') for r in successful]
-          for required in ('workspace.repository.materialize','workspace.file.write','workspace.test.run','workspace.git.run'):
+          for required in ('workspace.repository.materialize','workspace.file.read','workspace.file.write',
+                           'workspace.test.run','workspace.git.run','workspace.github.pr.publish'):
               assert required in actions, f'missing_successful_action:{required}'
           materialized=next(r for r in successful if r.get('thoughtAction')=='workspace.repository.materialize')
           outputs=materialized.get('outputs') or {}
           assert outputs.get('repository')=='kelvinka38/metatron-workforce', outputs
           assert outputs.get('sourceCommitSha')==target, (outputs.get('sourceCommitSha'),target)
           baseline=outputs.get('localBaselineCommitSha','')
-          assert len(baseline)==40
+          assert re.fullmatch(r'[0-9a-f]{40}',baseline), baseline
           workspace_ref=outputs.get('workspaceRef','')
           assert workspace_ref.startswith('objective-workspace:'), workspace_ref
           workspace_key=workspace_ref.split(':',1)[1]
+
           writes=[r for r in successful if r.get('thoughtAction')=='workspace.file.write']
-          assert any((r.get('thoughtInputs') or {}).get('path')==proof_path for r in writes), 'proof_file_not_written'
+          assert any((r.get('thoughtInputs') or {}).get('path')==source_path for r in writes), 'source_file_not_written'
+
           git_rows=[r for r in successful if r.get('thoughtAction')=='workspace.git.run']
           parsed=[]
           for row in git_rows:
@@ -225,27 +230,95 @@ jobs:
               try: args=json.loads(raw)
               except Exception: args=[]
               parsed.append(args)
-          assert any(args and args[0]=='add' and proof_path in args for args in parsed), parsed
+          assert any(args and args[0]=='add' for args in parsed), parsed
           assert any(args and args[0]=='commit' for args in parsed), parsed
           assert not any(args and args[0] in ('push','fetch','pull','remote') for args in parsed), parsed
-          with open(root+'/gs2-journal-proof.env','w',encoding='utf-8') as f:
-              f.write('WORKSPACE_KEY='+workspace_key+'\n')
-              f.write('BASELINE_SHA='+baseline+'\n')
+
+          publications=[r for r in successful if r.get('thoughtAction')=='workspace.github.pr.publish']
+          publication=publications[-1]
+          remote=publication.get('outputs') or {}
+          assert remote.get('repository')=='kelvinka38/metatron-workforce', remote
+          assert remote.get('sourceCommitSha')==target, remote
+          assert re.fullmatch(r'[0-9a-f]{40}',remote.get('localHeadSha','')), remote
+          assert re.fullmatch(r'[0-9a-f]{40}',remote.get('remoteCommitSha','')), remote
+          assert remote.get('branch','').startswith('metatron/objective-'), remote
+          assert remote.get('pullRequestUrl','').startswith('https://github.com/kelvinka38/metatron-workforce/pull/'), remote
+          assert int(remote.get('pullRequestNumber','0')) > 0, remote
+          changed=json.loads(remote.get('changedPathsJson','[]'))
+          assert changed==[source_path], changed
+
+          with open(root+'/gs2-journal-proof.env','w',encoding='utf-8') as out:
+              out.write('WORKSPACE_KEY='+workspace_key+'\n')
+              out.write('BASELINE_SHA='+baseline+'\n')
+              out.write('LOCAL_HEAD='+remote['localHeadSha']+'\n')
+              out.write('REMOTE_BRANCH='+remote['branch']+'\n')
+              out.write('REMOTE_COMMIT='+remote['remoteCommitSha']+'\n')
+              out.write('PR_NUMBER='+remote['pullRequestNumber']+'\n')
+              out.write('PR_URL='+remote['pullRequestUrl']+'\n')
           print('GS2_REPOSITORY_MATERIALIZATION=PASS')
           print('GS2_COGNITIVE_ACTION_FABRIC=PASS')
+          print('GS2_SOURCE_EDIT_ACTION=PASS')
           print('GS2_TEST_ACTION=PASS')
           print('GS2_LOCAL_GIT_COMMIT_ACTION=PASS')
+          print('GS2_GOVERNED_REMOTE_PUBLICATION_ACTION=PASS')
           PY
             source "$EVIDENCE/gs2-journal-proof.env"
             [[ "$WORKSPACE_KEY" =~ ^[0-9a-f]{32}$ ]]
             [[ "$BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
-
-            LOCAL_HEAD=$(docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" rev-parse HEAD | tr -d '\r\n')
             [[ "$LOCAL_HEAD" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$REMOTE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$REMOTE_BRANCH" == metatron/objective-* ]]
+            [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
             test "$LOCAL_HEAD" != "$BASELINE_SHA"
-            CHANGED_PATHS=$(docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" diff-tree --no-commit-id --name-only -r HEAD | sed '/^$/d')
-            test "$CHANGED_PATHS" = "$proof_path"
-            docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" show "HEAD:$proof_path" | grep -F "$TARGET_SHA" >/dev/null
+
+            ACTUAL_LOCAL_HEAD=$(docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" rev-parse HEAD | tr -d '\r\n')
+            test "$ACTUAL_LOCAL_HEAD" = "$LOCAL_HEAD"
+            CHANGED_PATHS=$(docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" diff --name-only "$BASELINE_SHA..$LOCAL_HEAD" -- | sed '/^$/d')
+            test "$CHANGED_PATHS" = "$source_path"
+            docker exec --user 10001:10001 "$SANDBOX_CID" git -C "/workspaces/$WORKSPACE_KEY" show "$LOCAL_HEAD:$source_path" > "$EVIDENCE/gs2-local-source.java"
+            grep -F "$new_sentence" "$EVIDENCE/gs2-local-source.java" >/dev/null
+            ! grep -F "$old_sentence" "$EVIDENCE/gs2-local-source.java" >/dev/null
+
+            # Independently rerun the repository tests after Worker completion in the isolated sandbox.
+            docker exec --user 10001:10001 -w "/workspaces/$WORKSPACE_KEY" "$SANDBOX_CID" \
+              ./gradlew --no-daemon --max-workers=1 test > "$EVIDENCE/gs2-independent-test-rerun.txt" 2>&1
+            grep -F 'BUILD SUCCESSFUL' "$EVIDENCE/gs2-independent-test-rerun.txt" >/dev/null
+            echo 'GS2_INDEPENDENT_TEST_RERUN=PASS'
+
+            # Fresh remote reads: never accept the Worker's own publication response as Observation truth.
+            test -n "${GITHUB_TOKEN:-}"
+            API='https://api.github.com'
+            auth=(-H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+            curl -fsS --max-time 20 "${auth[@]}" "$API/repos/kelvinka38/metatron-workforce/pulls/$PR_NUMBER" > "$EVIDENCE/gs2-pr.json"
+            curl -fsS --max-time 20 "${auth[@]}" "$API/repos/kelvinka38/metatron-workforce/pulls/$PR_NUMBER/files?per_page=100" > "$EVIDENCE/gs2-pr-files.json"
+            curl -fsS --max-time 20 "${auth[@]}" "$API/repos/kelvinka38/metatron-workforce/git/commits/$REMOTE_COMMIT" > "$EVIDENCE/gs2-pr-commit.json"
+            curl -fsS --max-time 20 "${auth[@]}" "$API/repos/kelvinka38/metatron-workforce/contents/$source_path?ref=$REMOTE_COMMIT" > "$EVIDENCE/gs2-pr-source.json"
+
+            TARGET_SHA="$TARGET_SHA" SOURCE_PATH="$source_path" OLD_SENTENCE="$old_sentence" NEW_SENTENCE="$new_sentence" \
+              REMOTE_BRANCH="$REMOTE_BRANCH" REMOTE_COMMIT="$REMOTE_COMMIT" PR_NUMBER="$PR_NUMBER" EVIDENCE="$EVIDENCE" python3 - <<'PY'
+          import base64,json,os
+          root=os.environ['EVIDENCE']; target=os.environ['TARGET_SHA']; source_path=os.environ['SOURCE_PATH']
+          branch=os.environ['REMOTE_BRANCH']; remote=os.environ['REMOTE_COMMIT']
+          pr=json.load(open(root+'/gs2-pr.json'))
+          files=json.load(open(root+'/gs2-pr-files.json'))
+          commit=json.load(open(root+'/gs2-pr-commit.json'))
+          source=json.load(open(root+'/gs2-pr-source.json'))
+          assert pr.get('state')=='open', pr.get('state')
+          assert not pr.get('merged',False) and pr.get('merged_at') is None, 'PR unexpectedly merged'
+          assert (pr.get('base') or {}).get('ref')=='main', pr.get('base')
+          assert (pr.get('head') or {}).get('ref')==branch, pr.get('head')
+          assert (pr.get('head') or {}).get('sha')==remote, pr.get('head')
+          assert [f.get('filename') for f in files]==[source_path], files
+          parents=commit.get('parents') or []
+          assert len(parents)==1 and parents[0].get('sha')==target, parents
+          body=base64.b64decode((source.get('content') or '').replace('\n','')).decode('utf-8')
+          assert os.environ['NEW_SENTENCE'] in body
+          assert os.environ['OLD_SENTENCE'] not in body
+          print('GS2_FRESH_GITHUB_PR_OBSERVATION=PASS')
+          print('GS2_REMOTE_SOURCE_PARENT_BINDING=PASS')
+          print('GS2_REMOTE_CHANGED_PATH_SET=PASS')
+          print('GS2_REMOTE_PR_OPEN_UNMERGED=PASS')
+          PY
 
             docker exec "$CID" cat /var/lib/metatron-workforce/observation-state.json > "$EVIDENCE/gs2-observation-state.json"
             OID="$oid" EVIDENCE="$EVIDENCE" python3 - <<'PY'
@@ -256,7 +329,8 @@ jobs:
           selected=[r for r in reports.values() if r.get('objectiveId')==oid]
           assert selected, 'no_observation_reports_for_gs2'
           assert all(r.get('criterionResult')=='PASS' and r.get('quality')!='INSUFFICIENT' for r in selected), selected
-          assert any(r.get('method')=='independent-sandbox-test-rerun' for r in selected), selected
+          blob=json.dumps(selected,sort_keys=True)
+          assert 'authoritative-github-api-read' in blob or 'github-general-pr-observation-fresh-api-read:true' in blob, selected
           print('GS2_INDEPENDENT_OBSERVATION=PASS')
           PY
 
@@ -271,15 +345,21 @@ jobs:
           source_commit_sha=$TARGET_SHA
           workspace_materialized=PASS
           cognitive_action_fabric=PASS
+          source_edit_action=PASS
           test_action=PASS
+          independent_test_rerun=PASS
           independent_observation=PASS
           sandbox_isolated=PASS
           local_git_commit=$LOCAL_HEAD
           local_git_baseline=$BASELINE_SHA
           workspace_key=$WORKSPACE_KEY
-          changed_path=$CHANGED_PATHS
+          remote_publication=PASS
+          remote_pull_request=$PR_URL
+          remote_branch=$REMOTE_BRANCH
+          remote_commit=$REMOTE_COMMIT
+          remote_changed_path=$CHANGED_PATHS
           EOF
-            echo 'GS2_GENERAL_EXECUTION_RUNTIME=PASS'
+            echo 'GS2_GENERAL_MUTATING_EXECUTION_RUNTIME=PASS'
           }
 
           GS1_UPDATE=$(date +%s%N | cut -c1-18)
@@ -292,7 +372,7 @@ jobs:
           assert_gs1 "$GS1_OID"
 
           GS2_UPDATE=$((GS1_UPDATE+1))
-          GS2_TEXT="Take ownership of one governed general engineering Objective against kelvinka38/metatron-workforce at exact source commit $TARGET_SHA. Materialize that exact repository snapshot into the Objective workspace. Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md with a short proof containing exact source SHA $TARGET_SHA. Run the repository test suite through the governed test action and require it to pass. Stage only that proof file and create one local Git commit as the immutable work product. Verify the result through independent Observation. Do not push, do not open a pull request, do not modify any remote repository state."
+          GS2_TEXT="Take ownership of one governed MUTATING general engineering Objective against kelvinka38/metatron-workforce at exact source commit $TARGET_SHA using execution.general.workspace. Materialize that exact repository snapshot into the Objective workspace. Read src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java and replace exactly one Javadoc sentence 'Produces one stateful provider-backed brain per Cognitive Worker execution.' with 'Produces one stateful provider-backed brain for each governed Cognitive Worker execution.' Do not modify any other source path. Run the full repository test suite through the governed test action after the edit and require PASS. Stage the intended source change and create one local Git commit. Publish the clean committed Objective workspace through the governed GitHub proposal action as an Objective-scoped reviewable unmerged pull request against main. Verify both tests and the remote pull request through independent Observation. Do not merge."
           submit_objective gs2 "$GS2_TEXT" "$GS2_UPDATE"
           locate_objective gs2 "$GS2_UPDATE"
           GS2_OID=$(cat "$EVIDENCE/gs2-objective-id.txt")
@@ -311,8 +391,8 @@ jobs:
           printf 'kind=gs12\ntarget_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
 
           echo 'P10_GOLDEN_SLICE_1=PASS'
-          echo 'P10_GOLDEN_SLICE_2_GENERAL_EXECUTION_RUNTIME=PASS'
-          echo 'P10_GS2_REMOTE_MUTATION=NONE'
+          echo 'P10_GOLDEN_SLICE_2_GENERAL_MUTATING_EXECUTION_RUNTIME=PASS'
+          echo 'P10_GS2_REMOTE_MUTATION=GOVERNED_UNMERGED_PR'
           echo 'P10_L10_VERDICT=NOT_YET_CLAIMED_GS3_GS4_AND_45_GATE_REMAIN'
           echo "P10_DURABLE_EVIDENCE=$DURABLE"
 

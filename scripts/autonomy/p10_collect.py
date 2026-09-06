@@ -5,7 +5,7 @@ The collector does not decide ACCEPTED_L10; p10_ratify.py owns that verdict. Thi
 manifest construction unless both production Golden Slice artifact sets are exact-SHA consistent and
 the institutional invariant tests needed for non-destructive/unsafe production conditions actually
 executed with zero failures/errors on the same checked-out SHA. Golden Slice 2 proves the general
-execution runtime; a bounded hardcoded PR proposer is explicitly insufficient for L10 scope.
+mutating execution runtime including a generic credential-isolated remote PR publication; local-only execution or a bounded hardcoded PR proposer is explicitly insufficient for L10 scope.
 """
 from __future__ import annotations
 
@@ -90,12 +90,21 @@ def validate_gs2_general_runtime(root: Path, target_sha: str, terminal: dict) ->
         fail("GS2 did not execute against canonical Workforce repository")
     if proof.get("source_commit_sha") != target_sha:
         fail("GS2 materialized repository source is not exact target SHA")
-    for key in ("workspace_materialized", "cognitive_action_fabric", "test_action",
-                "independent_observation", "sandbox_isolated"):
+    for key in ("workspace_materialized", "cognitive_action_fabric", "source_edit_action", "test_action",
+                "independent_test_rerun", "independent_observation", "sandbox_isolated", "remote_publication"):
         if proof.get(key) != "PASS":
-            fail(f"GS2 general runtime proof missing {key}=PASS")
+            fail(f"GS2 general mutating runtime proof missing {key}=PASS")
     if not SHA_RE.fullmatch(proof.get("local_git_commit", "")):
         fail("GS2 missing immutable local Git work-product commit")
+    if not re.fullmatch(r"https://github\.com/kelvinka38/metatron-workforce/pull/[1-9][0-9]*",
+                        proof.get("remote_pull_request", "")):
+        fail("GS2 missing canonical remote pull request")
+    if not proof.get("remote_branch", "").startswith("metatron/objective-"):
+        fail("GS2 remote proposal branch is not Objective-scoped")
+    if not SHA_RE.fullmatch(proof.get("remote_commit", "")):
+        fail("GS2 missing immutable remote commit")
+    if proof.get("remote_changed_path") != "src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrainFactory.java":
+        fail("GS2 remote path is not the non-fixture general coding acceptance target")
     return [f"artifact:gs12/{proof_path.name}"]
 
 
