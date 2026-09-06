@@ -1,38 +1,15 @@
-name: One Shot P10 Closure 25b9a6b
+name: One Shot P10 Closure — Archived
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
-  dispatch:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '25b9a6b440e9aa66e58ca4bebbbc29924a39ddd7' }}
+  archived:
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch exact deployed SHA deep ratification
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: 25b9a6b440e9aa66e58ca4bebbbc29924a39ddd7
-        run: |
-          set -euo pipefail
-          payload=$(python3 - "$TARGET_SHA" <<'PY'
-          import json,sys
-          print(json.dumps({"ref":"main","inputs":{"target_sha":sys.argv[1],"confirm":"RUN_DEEP_P10"}}))
-          PY
-          )
-          status=$(curl -sS -o /tmp/dispatch.json -w '%{http_code}' \
-            -X POST "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/workforce-autonomy-p10-after-deploy.yml/dispatches" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            -H 'Content-Type: application/json' \
-            --data-binary "$payload")
-          test "$status" = 204
-          echo "ONE_SHOT_P10_TARGET_SHA=$TARGET_SHA"
-          echo 'ONE_SHOT_P10_CONTROLLER_DISPATCH=PASS'
+      - run: |
+          echo 'P10_LEGACY_AUTOFANOUT=DISABLED'
+          echo 'Temporary exact-SHA one-shot closure is archived; use the explicit deep P10 controller.'
