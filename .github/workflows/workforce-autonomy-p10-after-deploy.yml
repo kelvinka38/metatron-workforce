@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   exact-sha-p10-controller:
-    if: ${{ inputs.confirm == 'RUN_DEEP_P10' }}
+    if: ${{ github.actor == 'kelvinka38' && github.triggering_actor == 'kelvinka38' && inputs.confirm == 'RUN_DEEP_P10' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
