@@ -63,6 +63,7 @@ public final class TelegramWebhookController {
     private final ThreadPoolExecutor interactionExecutor;
     private final ScheduledExecutorService monitorExecutor;
     private final TelegramIngressReceiptStore receiptStore;
+    private final boolean channelObjectiveHandoffEnabled;
     private final Set<Long> scheduledUpdates = ConcurrentHashMap.newKeySet();
     private final Map<String, ScheduledFuture<?>> monitorTasks = new ConcurrentHashMap<>();
 
@@ -72,6 +73,7 @@ public final class TelegramWebhookController {
             @Value("${TELEGRAM_ALLOWED_USER_ID:}") String allowedTelegramUserId,
             @Value("${METATRON_ORGANIZATION_ID:}") String organizationContextId,
             @Value("${METATRON_TELEGRAM_INGRESS_PATH:/var/lib/metatron-workforce/telegram-ingress-state.json}") String ingressPath,
+            @Value("${METATRON_CHANNEL_OBJECTIVE_HANDOFF_ENABLED:false}") boolean channelObjectiveHandoffEnabled,
             ChannelInteractionIngressService interactionIngress,
             WorkCardRenderer workCardRenderer,
             ObjectMapper objectMapper) {
@@ -110,6 +112,7 @@ public final class TelegramWebhookController {
         this.interactionExecutor.allowCoreThreadTimeOut(false);
         this.monitorExecutor = Executors.newScheduledThreadPool(2, namedDaemonThreads("telegram-monitor-"));
         this.receiptStore = new TelegramIngressReceiptStore(Path.of(ingressPath.trim()), objectMapper);
+        this.channelObjectiveHandoffEnabled = channelObjectiveHandoffEnabled;
         recoverPendingReceipts();
     }
 
@@ -248,7 +251,9 @@ public final class TelegramWebhookController {
             MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
             String safeAnswer = validateAnswer(inbound.text(), response.text());
             String objectiveId = objectiveIdFromAnswer(safeAnswer);
-            if (requiresObjectiveBeforeAck(receipt.text()) && objectiveId.isBlank()) {
+            if (channelObjectiveHandoffEnabled
+                    && requiresObjectiveBeforeAck(receipt.text())
+                    && objectiveId.isBlank()) {
                 throw new IllegalStateException("explicit_objective_did_not_materialize");
             }
             if (!objectiveId.isBlank()) receiptStore.accepted(updateId, objectiveId);

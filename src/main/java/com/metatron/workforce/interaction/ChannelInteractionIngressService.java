@@ -39,6 +39,7 @@ public final class ChannelInteractionIngressService {
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
             @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
+            @Value("${METATRON_CHANNEL_OBJECTIVE_HANDOFF_ENABLED:false}") boolean channelObjectiveHandoffEnabled,
             IntelligenceCaseStore intelligenceCaseStore,
             IntelligenceDepthControlService intelligenceDepthControlService,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
@@ -51,7 +52,7 @@ public final class ChannelInteractionIngressService {
                 openAiModel, googleModel, anthropicModel, objectMapper,
                 gatewayAuditUrl, gatewayAuditToken,
                 Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
-                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"));
+                channelExecutionHandoff(channelObjectiveHandoffEnabled, executionObjectiveHandoff));
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
@@ -60,6 +61,13 @@ public final class ChannelInteractionIngressService {
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
+    }
+
+    static ExecutionObjectiveHandoff channelExecutionHandoff(
+            boolean enabled,
+            ExecutionObjectiveHandoff configuredHandoff) {
+        Objects.requireNonNull(configuredHandoff, "configuredHandoff");
+        return enabled ? configuredHandoff : ExecutionObjectiveHandoff.unavailable();
     }
 
     ChannelInteractionIngressService(MetatronInteractionOrchestrator orchestrator) {

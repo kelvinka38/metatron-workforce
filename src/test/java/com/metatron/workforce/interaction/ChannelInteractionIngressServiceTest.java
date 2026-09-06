@@ -1,15 +1,51 @@
 package com.metatron.workforce.interaction;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
+import com.metatron.workforce.interaction.intelligence.IntelligenceMode;
+import com.metatron.workforce.interaction.intelligence.NormalizedRequest;
 import com.metatron.workforce.phase3.ActorRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 final class ChannelInteractionIngressServiceTest {
+    @Test
+    void channelObjectiveHandoffIsDisabledByDefaultBoundaryAndNeverCallsWorkforce() {
+        AtomicInteger submits = new AtomicInteger();
+        ExecutionObjectiveHandoff configured = (humanId, organizationContextId, caseId, conversationId,
+                                                 externalMessageReference, channel, request) -> {
+            submits.incrementAndGet();
+            return new ExecutionObjectiveHandoff.HandoffReceipt(
+                    true, "objective:should-not-exist", "worker", "queue", "ACCEPTED", "ADMITTED", "unexpected");
+        };
+
+        ExecutionObjectiveHandoff disabled =
+                ChannelInteractionIngressService.channelExecutionHandoff(false, configured);
+        NormalizedRequest request = new NormalizedRequest(
+                "do work", "", List.of(), com.metatron.workforce.interaction.intelligence.IntelligenceDepth.FAST,
+                "", List.of(), List.of(), "", "",
+                IntelligenceMode.EXECUTION,
+                com.metatron.workforce.interaction.intelligence.CollaborationMode.SINGLE,
+                List.of(),
+                com.metatron.workforce.interaction.intelligence.DeterministicCapability.NONE,
+                false, null, null, "");
+
+        ExecutionObjectiveHandoff.HandoffReceipt receipt = disabled.submit(
+                "human", "org", "case", "conversation", "message", "telegram", request);
+
+        assertFalse(receipt.accepted());
+        assertEquals("EXECUTION_OBJECTIVE_HANDOFF_UNAVAILABLE", receipt.reason());
+        assertEquals(0, submits.get());
+        assertSame(configured, ChannelInteractionIngressService.channelExecutionHandoff(true, configured));
+    }
+
     @Test
     void telegramAndZaloUseSameCanonicalConversationIngress() {
         List<MetatronInteraction> observed = new ArrayList<>();
