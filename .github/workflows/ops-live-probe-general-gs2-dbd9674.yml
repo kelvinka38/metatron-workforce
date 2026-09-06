@@ -1,0 +1,63 @@
+name: Live Probe General GS2 dbd9674
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ops-live-probe-general-gs2-dbd9674.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect latest exact-SHA general Objective
+        shell: bash
+        env:
+          TARGET_SHA: dbd9674cf1029ef47dbffa62bd88c972e46ae33a
+        run: |
+          set -euo pipefail
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          curl -fsS http://127.0.0.1:8080/workforce/management/objectives > /tmp/objectives.json
+          python3 - /tmp/objectives.json "$TARGET_SHA" > /tmp/oid.txt <<'PY'
+          import json,sys
+          data=json.load(open(sys.argv[1])); target=sys.argv[2]
+          rows=[]
+          for item in data if isinstance(data,list) else []:
+              blob=json.dumps(item,sort_keys=True)
+              if target not in blob or 'MUTATING general engineering Objective' not in blob: continue
+              o=item.get('objective') or {}
+              oid=o.get('objectiveId')
+              if oid: rows.append((o.get('createdAt',''),oid,o.get('status','')))
+          if not rows: raise SystemExit('NO_EXACT_GS2_OBJECTIVE')
+          rows.sort()
+          _,oid,status=rows[-1]
+          print(oid)
+          print('DISCOVERED_STATUS='+status,file=sys.stderr)
+          PY
+          OID=$(head -1 /tmp/oid.txt)
+          echo "OID=$OID"
+          curl -fsS "http://127.0.0.1:8080/workforce/management/objectives/$OID" > /tmp/view.json
+          python3 - /tmp/view.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); o=d.get('objective') or {}; w=d.get('autonomousWork') or {}
+          print('STATUS='+str(o.get('status')))
+          print('BLOCKER='+str(w.get('blocker','')))
+          print('COMPLETED_STEPS='+json.dumps(w.get('completedStepIds',[])))
+          print('HISTORY_TYPES='+','.join(str(x.get('type','')) for x in (d.get('history') or [])))
+          PY
+          echo 'ACTIONS_BEGIN'
+          mapfile -t files < <(docker exec "$CID" sh -c "grep -R -l -F '$OID' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null" || true)
+          echo "ACTION_FILES=${#files[@]}"
+          for file in "${files[@]}"; do
+            docker exec "$CID" sh -c "grep -F '$OID' '$file' 2>/dev/null || true"
+          done | python3 -c 'import sys,json
+for line in sys.stdin:
+    try: d=json.loads(line)
+    except: continue
+    print(json.dumps({"step":d.get("workStepId"),"worker":d.get("workerId"),"cycle":d.get("cycle"),"action":d.get("thoughtAction"),"success":d.get("actionSuccess"),"reflection":d.get("reflection"),"summary":d.get("actionSummary"),"outputs":d.get("outputs")},sort_keys=True)[:12000])'
+          echo 'ACTIONS_END'
