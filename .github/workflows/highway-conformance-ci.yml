@@ -90,6 +90,8 @@ jobs:
           grep -q 'cancel-in-progress: true' "$H"
           grep -q 'group: metatron-production-lane' "$D"
           grep -q 'cancel-in-progress: true' "$D"
+          ! grep -q 'Dispatch exact-SHA P10 closure' "$D"
+          ! grep -q 'workforce-autonomy-p10-after-deploy.yml/dispatches' "$D"
 
           grep -q "scripts/production-acceptance-highway.sh" "$H"
           grep -q "scripts/highway-intelligence-lane.sh" "$H"
@@ -134,6 +136,7 @@ jobs:
           print('HIGHWAY_TESTED_CACHE_HANDOFF=PASS')
           print('HIGHWAY_TESTED_ARTIFACT_HANDOFF=PASS')
           print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
+          print('HIGHWAY_DEPLOY_NEVER_AUTODISPATCHES_DEEP_P10=PASS')
           print('HIGHWAY_IMMEDIATE_STALE_PREEMPTION=PASS')
           print('HIGHWAY_FAST_PROFILE_CONTRACT=PASS')
           print('HIGHWAY_PARALLEL_PHASE_CONTRACT=PASS')
