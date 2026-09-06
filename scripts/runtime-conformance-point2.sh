@@ -106,8 +106,16 @@ LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
 printf '%s\n' "$LOGS" > "$OUT/${CASUAL}-runtime.log"
 ! grep -Eq "execution-objective-workforce-accepted.*$CASUAL|METATRON WORK ACCEPTED.*$CASUAL|telegram_answer_ready update_id=$CASUAL.*objective_id=[^[:space:]]+" <<<"$LOGS"
 
-assert_current_answer "$VERSION" 'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' 'Python|stable|version|phiên bản' 1 'Python,3\.[0-9]+'
-assert_current_answer "$LEADER" 'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' 'Indonesia|Tổng thống|President' 0 'Indonesia,(?:President|Presiden)'
+set +e
+assert_current_answer "$VERSION" 'Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.' 'Python|stable|version|phiên bản' 1 'Python,3\.[0-9]+' >"$OUT/version-probe.log" 2>&1 & P_VERSION=$!
+assert_current_answer "$LEADER" 'Ai hiện đang là Tổng thống Indonesia? Kiểm tra nguồn hiện tại rồi trả lời.' 'Indonesia|Tổng thống|President' 0 'Indonesia,(?:President|Presiden)' >"$OUT/leader-probe.log" 2>&1 & P_LEADER=$!
+wait "$P_VERSION"; RC_VERSION=$?
+wait "$P_LEADER"; RC_LEADER=$?
+set -e
+cat "$OUT/version-probe.log" "$OUT/leader-probe.log" || true
+test "$RC_VERSION" = 0
+test "$RC_LEADER" = 0
+echo 'POINT2_PARALLEL_CURRENT_PROBES=PASS'
 
 echo 'POINT2_LOCAL_LIVE_RUNTIME=PASS'
 echo 'POINT2_CASUAL_NOT_OBJECTIVE=PASS'
