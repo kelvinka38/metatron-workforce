@@ -35,6 +35,11 @@ jobs:
           for row in (d.get('history') or [])[-80:]:
               print(json.dumps(row,sort_keys=True)[:4000])
           print('HISTORY_END')
+          print('OBJECTIVE_VIEW_NON_HISTORY_BEGIN')
+          for key,value in d.items():
+              if key == 'history': continue
+              print(key+'='+json.dumps(value,sort_keys=True)[:50000])
+          print('OBJECTIVE_VIEW_NON_HISTORY_END')
           PY
 
           echo 'EXECUTION_ATTEMPTS_BEGIN'
