@@ -50,6 +50,7 @@ jobs:
           production={
             'Highway Production Deploy',
             'Production Acceptance Highway V2',
+            'Workforce Autonomy P10 Ratification Controller',
             'Workforce Autonomy P10 Production Acceptance',
             'Workforce Autonomy P10 GS3 GS4 Production Acceptance',
             'Workforce Autonomy P10 45 Condition Ratification',
