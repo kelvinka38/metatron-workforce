@@ -11,19 +11,21 @@ import java.util.regex.Pattern;
 /**
  * Deterministic semantic bridge for the canonical explicit Objective control grammar.
  *
- * <p>This is intentionally narrow. It recognizes only the institutional control forms already
- * treated by the Telegram ingress as requiring Objective materialization. Ordinary Human language
- * remains owned by the frontier semantic boundary.</p>
+ * <p>This is intentionally narrow. It recognizes only explicit institutional "Take ownership of one
+ * ... Objective" control forms used by production acceptance and governed Human control. Ordinary
+ * Human language remains owned by the frontier semantic boundary.</p>
  */
 public final class CanonicalObjectiveControlInterpreter {
     private static final String PREFIX_OBJECTIVE = "take ownership of one objective:";
-    private static final Pattern GOVERNED_OBJECTIVE = Pattern.compile(
-            "^take ownership of one governed(?: [a-z0-9-]+){1,8} objective(?::|\\s).*");
+    private static final Pattern QUALIFIED_OBJECTIVE = Pattern.compile(
+            "^take ownership of one (?:governed|bounded(?:-[a-z0-9_-]+)?)(?: [a-z0-9_-]+){0,10} objective(?::|\\.|\\s).*");
     private static final String NAME = "[A-Za-z0-9_.-]*[A-Za-z0-9_-]";
     private static final Pattern SCOPED_REPOSITORY = Pattern.compile(
             "(?i)\\b(?:against|of|repository|repositories)\\s+(?:https://github\\.com/)?(" + NAME + "/" + NAME + ")(?:\\.git)?(?=$|[,.;:)\\s])");
     private static final Pattern REPOSITORY = Pattern.compile(
             "(?i)(?:https://github\\.com/)?(" + NAME + ")/(" + NAME + ")(?:\\.git)?(?=$|[,.;:)\\s])");
+    private static final Pattern EXPLICIT_URI_TARGET = Pattern.compile(
+            "(?i)\\b(?:against\\s+(?:exact\\s+)?target|target)\\s+([a-z][a-z0-9+.-]*://\\S+)");
     private static final Pattern DO_NOT = Pattern.compile("(?i)\\bdo\\s+not\\s+([^.;]+)");
 
     private CanonicalObjectiveControlInterpreter() {}
@@ -32,7 +34,7 @@ public final class CanonicalObjectiveControlInterpreter {
         if (humanText == null) return false;
         String normalized = humanText.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
         return normalized.startsWith(PREFIX_OBJECTIVE)
-                || GOVERNED_OBJECTIVE.matcher(normalized).matches();
+                || QUALIFIED_OBJECTIVE.matcher(normalized).matches();
     }
 
     public static Optional<NormalizedRequest> interpret(String humanText) {
@@ -40,7 +42,8 @@ public final class CanonicalObjectiveControlInterpreter {
 
         String original = humanText.trim();
         String lower = original.toLowerCase(Locale.ROOT);
-        String target = repositoryTargets(original);
+        String target = explicitUriTarget(original);
+        if (target.isBlank()) target = repositoryTargets(original);
         List<String> prohibitions = prohibitions(original);
         List<AnalyticalProtocolType> protocols = new ArrayList<>();
         if (lower.contains("audit")) protocols.add(AnalyticalProtocolType.AUDIT);
@@ -73,6 +76,16 @@ public final class CanonicalObjectiveControlInterpreter {
                 null,
                 CaseContinuity.NEW,
                 ""));
+    }
+
+    static String explicitUriTarget(String text) {
+        Matcher matcher = EXPLICIT_URI_TARGET.matcher(text == null ? "" : text);
+        if (!matcher.find()) return "";
+        String value = matcher.group(1).trim();
+        while (!value.isEmpty() && ".,;:)]}".indexOf(value.charAt(value.length() - 1)) >= 0) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
     }
 
     static String repositoryTargets(String text) {
