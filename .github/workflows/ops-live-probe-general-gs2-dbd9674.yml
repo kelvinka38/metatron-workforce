@@ -1,4 +1,4 @@
-name: Live Probe General GS2 dbd9674
+name: Live Probe General GS2 cc878c2
 
 on:
   push:
@@ -14,36 +14,70 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     steps:
-      - name: Inspect exact GS2 through sandbox workspace mount
+      - name: Inspect exact strengthened GS2 failure
         shell: bash
         env:
-          OID: objective:intelligence-case:case-1aa25553-6f82-4f31-9e01-55e41fdfce82:request:telegram:update:178868556547190977
-          WORKSPACE_KEY: df5fd07a19601634ed8fc6f6b1220c62
+          OID: objective:intelligence-case:case-324bfb8c-1859-4507-9a8a-93e86dc7f8c9:request:telegram:update:178868712519093947
         run: |
           set -euo pipefail
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          SID=$(docker ps --filter name=workforce-sandbox --format '{{.ID}}' | head -1)
+          SID=$(docker ps --filter name=deploy-workforce-sandbox-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
           test -n "$SID"
-          W="/workspaces/$WORKSPACE_KEY"
-          echo "WORKFORCE_CID=$CID"
-          echo "SANDBOX_CID=$SID"
-          echo 'IDENTITY_BEGIN'
-          docker exec --user 10001:10001 "$SID" sh -c "echo WORKSPACES_ROOT; ls -la /workspaces | tail -n 20; test -d '$W' && cat '$W/.metatron-workspace' && cat '$W/.metatron-repository'"
-          echo 'IDENTITY_END'
-          echo 'GIT_BEGIN'
-          docker exec --user 10001:10001 "$SID" sh -c "cd '$W' && echo HEAD=\$(git rev-parse HEAD) && echo ROOTS=\$(git rev-list --max-parents=0 HEAD | paste -sd, -) && echo COUNT=\$(git rev-list --count HEAD) && echo STATUS_BEGIN && git status --porcelain=v1 && echo STATUS_END && echo LOG_BEGIN && git log --oneline --decorate -8 && echo LOG_END && R=\$(git rev-list --max-parents=0 HEAD | head -1) && echo DIFF_BEGIN && git diff --name-status --no-renames \$R..HEAD -- && echo DIFF_END"
-          echo 'GIT_END'
-          echo 'ACTIONS_BEGIN'
+
+          curl -fsS "http://127.0.0.1:8080/workforce/management/objectives/$OID" > /tmp/view.json
+          python3 - /tmp/view.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          o=d.get('objective') or {}
+          w=d.get('autonomousWork') or {}
+          print('STATUS='+str(o.get('status')))
+          print('BLOCKER='+str(w.get('blocker','')))
+          print('COMPLETED_STEPS='+json.dumps(w.get('completedStepIds',[])))
+          print('HISTORY_BEGIN')
+          for row in d.get('history') or []:
+              print(json.dumps(row,sort_keys=True)[:6000])
+          print('HISTORY_END')
+          PY
+
           docker exec "$CID" sh -c "grep -R -h -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > /tmp/actions.jsonl
+          echo 'ACTIONS_BEGIN'
           python3 - /tmp/actions.jsonl <<'PY'
           import json,sys
+          rows=[]
           for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
-              try:
-                  d=json.loads(line)
-              except Exception:
-                  continue
+              try: d=json.loads(line)
+              except Exception: continue
+              rows.append(d)
               out={k:d.get(k) for k in ('workStepId','workerId','cycle','thoughtAction','thoughtInputs','actionSuccess','actionSummary','outputs','reflection','reflectionSummary')}
-              print(json.dumps(out,sort_keys=True)[:16000])
+              print(json.dumps(out,sort_keys=True)[:20000])
+          for d in rows:
+              if d.get('thoughtAction')=='workspace.repository.materialize' and d.get('actionSuccess') is True:
+                  ref=(d.get('outputs') or {}).get('workspaceRef','')
+                  if ref.startswith('objective-workspace:'):
+                      print('WORKSPACE_KEY='+ref.split(':',1)[1])
+                      break
           PY
           echo 'ACTIONS_END'
+
+          WK=$(python3 - /tmp/actions.jsonl <<'PY'
+          import json,sys
+          for line in open(sys.argv[1],encoding='utf-8',errors='ignore'):
+              try: d=json.loads(line)
+              except Exception: continue
+              if d.get('thoughtAction')=='workspace.repository.materialize' and d.get('actionSuccess') is True:
+                  ref=(d.get('outputs') or {}).get('workspaceRef','')
+                  if ref.startswith('objective-workspace:'):
+                      print(ref.split(':',1)[1]); break
+          PY
+          )
+          if [ -n "$WK" ]; then
+            echo 'GIT_BEGIN'
+            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" rev-parse HEAD
+            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" rev-list --max-parents=0 HEAD
+            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" status --porcelain=v1
+            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" log --oneline -8
+            ROOT=$(docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" rev-list --max-parents=0 HEAD | head -1)
+            docker exec --user 10001:10001 "$SID" git -C "/workspaces/$WK" diff --name-status --no-renames "$ROOT..HEAD" --
+            echo 'GIT_END'
+          fi
