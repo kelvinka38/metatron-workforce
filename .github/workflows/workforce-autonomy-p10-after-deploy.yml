@@ -7,24 +7,15 @@ on:
         description: Exact deployed production SHA to ratify through GS1/2, GS3/4, 45-condition gate and Gateway Director
         required: true
         type: string
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/workforce-autonomy-p10-after-deploy.yml'
-      - '.github/workflows/workforce-autonomy-p10-production-acceptance.yml'
-      - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
-      - 'scripts/autonomy/p10_collect.py'
-      - 'scripts/autonomy/p10_general_runtime_guard.py'
-      - 'scripts/autonomy/p10_ratify.py'
 
 permissions:
   contents: read
   actions: write
 
 # Deep L10 ratification is release evidence, not a routine per-commit deployment step.
-# Routine production deploys run only the single automatic Highway. Explicit dispatch remains
-# supported; changes to the P10 acceptance/ratification contract self-ratify after their exact SHA
-# reaches production so the gate cannot change without live evidence. This controller is itself part of that contract.
+# Routine production deploys run only the single automatic Highway. Ratification is explicitly
+# dispatched for an exact SHA that has already reached production; workflow-only changes never
+# create an impossible wait for a SHA that is not a deployable runtime revision.
 concurrency:
   group: workforce-autonomy-p10-ratification-${{ inputs.target_sha }}
   cancel-in-progress: true
