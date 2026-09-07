@@ -210,7 +210,7 @@ public final class WorkplaceMeetingService {
                 + "\nauthority_source=explicit-human-meeting-follow-up";
     }
 
-    static boolean isAuthorizedFollowUp(String text) {
+    public static boolean isAuthorizedFollowUp(String text) {
         if (text == null || text.isBlank()) return false;
         Matcher matcher = FOLLOW_UP_REFERENCE.matcher(text);
         if (!matcher.find()) return false;
@@ -241,6 +241,20 @@ public final class WorkplaceMeetingService {
         addRole(lower, roles, "Head of Sales", "sales", "commercial", "kinh doanh", "doanh thu");
         addRole(lower, roles, "Head of Product", "product", "san pham");
         addRole(lower, roles, "Head of People", "people", "human resources", "hr", "nhan su");
+        // Work/Meeting must not be limited to a hard-coded role catalog. Preserve known canonical
+        // roles above, then recognize explicit "Head of <domain>" roles supplied by the Human.
+        java.util.regex.Matcher dynamic = java.util.regex.Pattern
+                .compile("\\bhead of ([a-z0-9][a-z0-9 &/-]{1,36}?)(?=,|\\band\\b|\\bdiscuss\\b|\\bcreate\\b|\\babout\\b|\\bfor\\b|$)")
+                .matcher(lower);
+        while (dynamic.find()) {
+            String domain = dynamic.group(1).trim().replaceAll("\\s+", " ");
+            if (domain.isBlank()) continue;
+            String role = "Head of " + java.util.Arrays.stream(domain.split(" "))
+                    .filter(token -> !token.isBlank())
+                    .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
+                    .collect(java.util.stream.Collectors.joining(" "));
+            roles.add(role);
+        }
         return List.copyOf(roles);
     }
 
