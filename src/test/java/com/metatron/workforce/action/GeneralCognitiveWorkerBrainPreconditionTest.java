@@ -335,61 +335,58 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
-    void failedTestAfterLatestPatchReturnsControlToCognitionInsteadOfBlindRetry() {
+    void vagueEngineeringLeavesProjectScopedTestSelectionToCognition() {
         ExecutionWorkSpec work = iterativeRepairWork();
         CognitiveWorkerRuntime.Cycle patched = successfulCycle(
                 1, "workspace.file.patch",
-                Map.of("path", "src/main/App.java", "oldText", "broken", "newText", "attempt-one"));
-        CognitiveWorkerRuntime.CognitiveContext beforeTest = new CognitiveWorkerRuntime.CognitiveContext(
+                Map.of("path", "acceptance/example/src/main/App.java",
+                        "oldText", "broken", "newText", "attempt-one"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
                 List.of(patched), Map.of("workspaceMaterialized", "true"));
 
-        CognitiveWorkerRuntime.Thought forcedTest =
-                GeneralCognitiveWorkerBrain.governedTestPrecondition(beforeTest);
-        assertEquals("workspace.test.run", forcedTest.actionRef());
-
-        CognitiveWorkerRuntime.Cycle failedTest = new CognitiveWorkerRuntime.Cycle(
-                2,
-                new CognitiveWorkerRuntime.Thought("workspace.test.run", Map.of(), "verify repair"),
-                ActionFabric.ActionObservation.failure(
-                        "workspace.test.run", "tests failed: expected fixed but got attempt-one",
-                        List.of("test-failure")),
-                CognitiveWorkerRuntime.Reflection.continueWith("inspect failure"));
-        CognitiveWorkerRuntime.CognitiveContext afterFailedTest = new CognitiveWorkerRuntime.CognitiveContext(
-                "worker", "assignment", "authorization", "objective", work, "idempotency",
-                List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
-                List.of(patched, failedTest), Map.of("workspaceMaterialized", "true"));
-
-        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(afterFailedTest),
-                "failed verification must yield control to general cognition for diagnosis/repair");
+        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(context),
+                "unknown/nested engineering must let cognition choose the project workingDirectory");
     }
 
     @Test
-    void newPatchAfterFailedTestRequiresFreshVerificationAgain() {
+    void completionGuardRequiresFreshSuccessfulTestAfterLatestVagueRepairMutation() {
         ExecutionWorkSpec work = iterativeRepairWork();
         CognitiveWorkerRuntime.Cycle firstPatch = successfulCycle(
                 1, "workspace.file.patch",
-                Map.of("path", "src/main/App.java", "oldText", "broken", "newText", "attempt-one"));
+                Map.of("path", "acceptance/example/app.py", "oldText", "broken", "newText", "attempt-one"));
         CognitiveWorkerRuntime.Cycle failedTest = new CognitiveWorkerRuntime.Cycle(
                 2,
-                new CognitiveWorkerRuntime.Thought("workspace.test.run", Map.of(), "verify first repair"),
+                new CognitiveWorkerRuntime.Thought(
+                        "workspace.test.run", Map.of("workingDirectory", "acceptance/example"), "verify first repair"),
                 ActionFabric.ActionObservation.failure(
                         "workspace.test.run", "tests still fail", List.of("test-failure")),
                 CognitiveWorkerRuntime.Reflection.continueWith("repair again"));
         CognitiveWorkerRuntime.Cycle secondPatch = successfulCycle(
                 3, "workspace.file.patch",
-                Map.of("path", "src/main/App.java", "oldText", "attempt-one", "newText", "fixed"));
+                Map.of("path", "acceptance/example/app.py", "oldText", "attempt-one", "newText", "fixed"));
         CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
                 List.of(firstPatch, failedTest, secondPatch), Map.of("workspaceMaterialized", "true"));
 
-        CognitiveWorkerRuntime.Thought freshTest =
-                GeneralCognitiveWorkerBrain.governedTestPrecondition(context);
+        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(context),
+                "a new vague repair still leaves the correct project scope to cognition");
 
-        assertEquals("workspace.test.run", freshTest.actionRef(),
-                "every new source mutation must be verified even after an earlier failed test");
+        CognitiveWorkerRuntime.Reflection premature = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                context,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.search", "diagnostic search complete", Map.of(), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("done"));
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, premature.decision());
+
+        CognitiveWorkerRuntime.Reflection verified = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                context,
+                ActionFabric.ActionObservation.success(
+                        "workspace.test.run", "fixture tests pass", Map.of("workingDirectory", "acceptance/example"), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("done"));
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, verified.decision());
     }
 
     @Test

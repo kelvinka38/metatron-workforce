@@ -1,0 +1,47 @@
+name: General Engineering GO1 Acceptance
+
+on:
+  push:
+    paths:
+      - 'acceptance/general-engineering-go1/**'
+      - 'src/main/java/com/metatron/workforce/action/**'
+      - 'src/main/java/com/metatron/workforce/observation/**'
+      - 'src/test/java/com/metatron/workforce/action/**'
+      - 'src/test/java/com/metatron/workforce/observation/**'
+      - '.github/workflows/general-engineering-go1-acceptance.yml'
+  workflow_dispatch:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '22'
+      - name: Verify GO1 cognitive and independent Observation contracts
+        run: |
+          chmod +x gradlew
+          ./gradlew test --no-daemon --max-workers=1 \
+            --tests com.metatron.workforce.action.GeneralCognitiveWorkerBrainPreconditionTest \
+            --tests com.metatron.workforce.action.GeneralWorkspaceSearchPatchContractTest \
+            --tests com.metatron.workforce.action.GeneralWorkspacePolyglotRuntimeContractTest \
+            --tests com.metatron.workforce.observation.GeneralWorkspaceObservationVerifierProjectScopeTest
+
+      - name: Prove GO1 fixture starts with an observable unknown defect
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          path = Path("acceptance/general-engineering-go1/slugify.py")
+          spec = importlib.util.spec_from_file_location("go1_slugify", path)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          expected = "hello-metatron-world"
+          actual = module.slugify("Hello   Metatron   World")
+          assert actual != expected, "GO1 fixture unexpectedly already fixed"
+          assert "--" in actual, actual
+          print("GO1_BASELINE_DEFECT_PRESENT=PASS")
+          PY

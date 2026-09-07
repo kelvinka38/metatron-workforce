@@ -338,6 +338,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             // inspect the failure and modify the work product instead of looping the same test forever.
             return null;
         }
+        if (context.workSpec().consequence()
+                == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING
+                && governedMutationPath(context).isBlank()) {
+            // Vague/unknown engineering work may live in a nested project. Completion still requires a
+            // successful governed test after the latest mutation, but cognition must choose the correct
+            // workingDirectory instead of a deterministic root-level test that can verify the wrong project.
+            return null;
+        }
         return new CognitiveWorkerRuntime.Thought(
                 "workspace.test.run", Map.of(),
                 "Run the governed repository test suite against the latest Objective-workspace source mutation before commit/publication");
