@@ -2,6 +2,7 @@ package com.metatron.workforce.workplace;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.MetatronInteraction;
+import com.metatron.workforce.interaction.intelligence.InstitutionalIntelligenceRuntime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -24,18 +25,13 @@ public final class WorkplaceMeetingService {
 
     @Autowired
     public WorkplaceMeetingService(
-            @Value("${OPENAI_API_KEY:}") String openAiApiKey,
-            @Value("${GEMINI_API_KEY:}") String googleApiKey,
-            @Value("${ANTHROPIC_API_KEY:}") String anthropicApiKey,
-            @Value("${METATRON_LLM_PROVIDER:AUTO}") String provider,
-            @Value("${OPENAI_MODEL:}") String openAiModel,
-            @Value("${GEMINI_MODEL:}") String googleModel,
-            @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
+            InstitutionalIntelligenceRuntime intelligenceRuntime,
             @Value("${METATRON_WORKPLACE_MEETING_PATH:/var/lib/metatron-workforce/workplace/meetings}") String meetingPath,
             ObjectMapper json) {
         this(new PersistentMeetingStore(Path.of(meetingPath), json),
-                MeetingRoleDeliberator.providerBacked(openAiApiKey, googleApiKey, anthropicApiKey,
-                        provider, openAiModel, googleModel, anthropicModel, json));
+                MeetingRoleDeliberator.intelligenceBacked(
+                        Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime").fabric(),
+                        intelligenceRuntime.configuredProviders().size()));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator) {
