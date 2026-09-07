@@ -1,6 +1,7 @@
 package com.metatron.workforce.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.action.GeneralCognitiveWorkerBrain;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrainFactory;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
 import com.metatron.workforce.interaction.llm.AnthropicLlmProviderClient;
@@ -101,12 +102,44 @@ public class GeneralExecutionRuntimeConfiguration {
 
         String configured = present(workerProvider) ? workerProvider : defaultProvider;
         LlmProvider selected = selectProvider(configured, openAiApiKey, googleApiKey, anthropicApiKey);
-        String model = switch (selected) {
-            case OPENAI -> model(openAiModel, "gpt-4.1-mini");
-            case GOOGLE -> model(googleModel, "gemini-3.7-flash");
-            case ANTHROPIC -> model(anthropicModel, "claude-sonnet-4-20250514");
-        };
-        return new GeneralCognitiveWorkerBrainFactory(new LlmProviderRouter(clients), selected, model, json);
+        List<GeneralCognitiveWorkerBrain.ProviderRoute> routes = providerRoutes(
+                selected,
+                openAiApiKey, googleApiKey, anthropicApiKey,
+                openAiModel, googleModel, anthropicModel);
+        return new GeneralCognitiveWorkerBrainFactory(new LlmProviderRouter(clients), routes, json);
+    }
+
+    static List<GeneralCognitiveWorkerBrain.ProviderRoute> providerRoutes(
+            LlmProvider preferred,
+            String openAiKey,
+            String googleKey,
+            String anthropicKey,
+            String openAiModel,
+            String googleModel,
+            String anthropicModel) {
+        List<LlmProvider> configured = new ArrayList<>();
+        if (present(openAiKey)) configured.add(LlmProvider.OPENAI);
+        if (present(googleKey)) configured.add(LlmProvider.GOOGLE);
+        if (present(anthropicKey)) configured.add(LlmProvider.ANTHROPIC);
+
+        List<LlmProvider> ordered = new ArrayList<>();
+        if (configured.contains(preferred)) ordered.add(preferred);
+        for (LlmProvider provider : configured) {
+            if (!ordered.contains(provider)) ordered.add(provider);
+        }
+        if (ordered.isEmpty()) {
+            // Preserve boot-without-credentials behavior. Runtime execution will fail closed in
+            // LlmProviderRouter, but the application can still expose health/diagnostics.
+            ordered.add(preferred);
+        }
+
+        return ordered.stream().map(provider -> new GeneralCognitiveWorkerBrain.ProviderRoute(
+                provider,
+                switch (provider) {
+                    case OPENAI -> model(openAiModel, "gpt-4.1-mini");
+                    case GOOGLE -> model(googleModel, "gemini-3.7-flash");
+                    case ANTHROPIC -> model(anthropicModel, "claude-sonnet-4-20250514");
+                })).toList();
     }
 
     private static LlmProvider selectProvider(String configured,

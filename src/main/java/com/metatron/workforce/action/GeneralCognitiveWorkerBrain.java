@@ -82,16 +82,30 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "purpose", "detect Gradle/Maven, Node package scripts, or Python workspace and run tests in the isolated sandbox"))
     );
 
+    public record ProviderRoute(LlmProvider provider, String model) {
+        public ProviderRoute {
+            provider = Objects.requireNonNull(provider, "provider");
+            model = require(model, "model");
+        }
+    }
+
     private final LlmProviderRouter router;
-    private final LlmProvider provider;
-    private final String model;
+    private final List<ProviderRoute> providerRoutes;
     private final ObjectMapper json;
     private final List<String> evidence = new ArrayList<>();
+    private int activeProviderRoute;
 
     public GeneralCognitiveWorkerBrain(LlmProviderRouter router, LlmProvider provider, String model, ObjectMapper json) {
+        this(router, List.of(new ProviderRoute(provider, model)), json);
+    }
+
+    public GeneralCognitiveWorkerBrain(LlmProviderRouter router,
+                                       List<ProviderRoute> providerRoutes,
+                                       ObjectMapper json) {
         this.router = Objects.requireNonNull(router, "router");
-        this.provider = Objects.requireNonNull(provider, "provider");
-        this.model = require(model, "model");
+        Objects.requireNonNull(providerRoutes, "providerRoutes");
+        if (providerRoutes.isEmpty()) throw new IllegalArgumentException("at least one worker cognitive provider route required");
+        this.providerRoutes = List.copyOf(providerRoutes);
         this.json = Objects.requireNonNull(json, "json");
     }
 
@@ -895,11 +909,34 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private LlmResponse complete(String system, String user) {
-        LlmResponse response = router.complete(new LlmRequest(provider, model, system, user));
-        evidence.add("cognitive-provider:" + response.provider()
-                + ":model=" + response.model()
-                + ":request=" + clean(response.providerRequestReference()));
-        return response;
+        List<RuntimeException> failures = new ArrayList<>();
+        int start = Math.min(activeProviderRoute, providerRoutes.size() - 1);
+        for (int offset = 0; offset < providerRoutes.size(); offset++) {
+            int index = (start + offset) % providerRoutes.size();
+            ProviderRoute route = providerRoutes.get(index);
+            try {
+                LlmResponse response = router.complete(new LlmRequest(route.provider(), route.model(), system, user));
+                if (index != start) {
+                    evidence.add("cognitive-provider-failover:from=" + providerRoutes.get(start).provider()
+                            + ":to=" + route.provider());
+                }
+                activeProviderRoute = index;
+                evidence.add("cognitive-provider:" + response.provider()
+                        + ":model=" + response.model()
+                        + ":request=" + clean(response.providerRequestReference()));
+                return response;
+            } catch (RuntimeException failure) {
+                failures.add(failure);
+                evidence.add("cognitive-provider-failure:" + route.provider()
+                        + ":model=" + route.model()
+                        + ":reason=" + failureSummary(failure));
+            }
+        }
+        IllegalStateException exhausted = new IllegalStateException(
+                "all cognitive providers failed: "
+                        + providerRoutes.stream().map(route -> route.provider().name()).toList());
+        failures.forEach(exhausted::addSuppressed);
+        throw exhausted;
     }
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -977,6 +1014,12 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private static String clean(String value) {
         return value == null || value.isBlank() ? "unknown" : value.replace('\n', ' ').replace('\r', ' ').trim();
+    }
+
+    private static String failureSummary(RuntimeException failure) {
+        String value = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+        String clean = value.replace('\n', ' ').replace('\r', ' ').trim();
+        return clean.length() <= 600 ? clean : clean.substring(0, 600);
     }
 
     private record ExactTextReplacement(String path, String oldText, String newText) {}
