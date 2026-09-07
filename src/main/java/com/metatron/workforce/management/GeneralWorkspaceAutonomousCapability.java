@@ -18,6 +18,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -85,8 +86,9 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         ActionFabric fabric = new ActionFabric(governedActions);
         GeneralCognitiveWorkerBrain brain = brains.create();
         CognitiveWorkerRuntime.Brain contextualBrain = withObjectiveWorkspaceMemory(brain, objectiveMemory);
+        ActionJournal actionJournal = ActionJournal.runtimeEvidenceJournal();
         CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(
-                fabric, ActionJournal.runtimeEvidenceJournal(), MAX_COGNITIVE_CYCLES);
+                fabric, actionJournal, MAX_COGNITIVE_CYCLES);
         CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
                 request.allocatedWorkerId(),
                 request.assignmentReference(),
@@ -96,7 +98,10 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 request.idempotencyKey(),
                 contextualBrain);
 
-        List<String> evidence = new ArrayList<>(outcome.evidenceReferences());
+        LinkedHashSet<String> durableEvidence = new LinkedHashSet<>(
+                actionJournal.objectiveEvidenceReferences(request.objectiveId()));
+        durableEvidence.addAll(outcome.evidenceReferences());
+        List<String> evidence = new ArrayList<>(durableEvidence);
         if (outcome.success()) {
             evidence.add("general-work-output:" + outcome.summary());
         }
