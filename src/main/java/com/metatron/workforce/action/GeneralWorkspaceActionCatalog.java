@@ -261,7 +261,8 @@ public final class GeneralWorkspaceActionCatalog {
 
     private ActionFabric.Action dependenciesInstall(String worker, String auth, String objectiveId,
                                                      ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        return action("workspace.dependencies.install", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+        // Dependency installation mutates only the isolated Objective workspace/cache; it does not mutate the governed target.
+        return action("workspace.dependencies.install", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             String workingDirectory = workingDirectory(workspace, request);
             BuildCommand command = dependencyCommand(workspace, workingDirectory);
             return sandboxObservation(request.actionRef(),
