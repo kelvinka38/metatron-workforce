@@ -1,0 +1,301 @@
+name: General Autonomy GO1 Production Acceptance
+
+on:
+  workflow_run:
+    workflows: ["Highway Production Deploy"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  go1-unknown-java-bug:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '22'
+
+      - name: Gate one-shot GO1 acceptance
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git log -1 --pretty=%B "$TARGET_SHA" | grep -q 'GO1_ACCEPTANCE'; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+            echo "GO1_TARGET_SHA=$TARGET_SHA"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'GO1_ACCEPTANCE=SKIPPED_NO_MARKER'
+          fi
+
+      - name: Reproduce seeded bug before Workforce
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="/tmp/metatron-go1-seed-${GITHUB_RUN_ID}"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/out"
+          javac -d "$ROOT/out"             acceptance-fixtures/go1-java-bug/src/PriceCalculator.java             acceptance-fixtures/go1-java-bug/test/PriceCalculatorContract.java
+          set +e
+          java -cp "$ROOT/out" PriceCalculatorContract > "$ROOT/result.log" 2>&1
+          RC=$?
+          set -e
+          cat "$ROOT/result.log"
+          test "$RC" -ne 0
+          grep -q 'expected total(10,3)=13 but was 7' "$ROOT/result.log"
+          echo 'GO1_SEEDED_BUG_REPRODUCTION=PASS'
+
+      - name: Submit vague engineering Objective through production Telegram ingress
+        if: steps.gate.outputs.enabled == 'true'
+        id: objective
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          set -a
+          source "$BASE/.env"
+          set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+          test -n "${GITHUB_TOKEN:-}"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$LIVE_SHA" = "$TARGET_SHA"
+          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+
+          UPDATE_ID=$(( (GITHUB_RUN_ID % 900000000) + 100000000 ))
+          TEXT="Take ownership of one governed general engineering Objective against kelvinka38/metatron-workforce at exact source commit $TARGET_SHA. Work from that exact repository snapshot. The Java acceptance fixture under acceptance-fixtures/go1-java-bug has a defect: its documented contract says PriceCalculator.total(10, 3) must be 13, but current behavior returns 7. Diagnose the root cause yourself without being told which source file or code change. Repair the defect, run the fixture contract described in its README and the full repository test suite, review the diff, create a local Git commit, publish a reviewable unmerged GitHub pull request, verify the result independently, and complete only when both the fixture contract and repository tests pass. Do not modify tests, acceptance documentation, or fixture ignore rules. Do not merge."
+
+          BODY=$(python3 - "$UPDATE_ID" "$TEXT" "$TELEGRAM_ALLOWED_USER_ID" <<'PY'
+          import json,sys
+          u=int(sys.argv[1]); text=sys.argv[2]; uid=int(sys.argv[3])
+          print(json.dumps({
+              "update_id":u,
+              "message":{
+                  "message_id":u,
+                  "from":{"id":uid,"is_bot":False,"first_name":"Founder"},
+                  "chat":{"id":uid,"type":"private"},
+                  "date":0,
+                  "text":text
+              }
+          },ensure_ascii=False))
+          PY
+          )
+
+          OUT="/tmp/metatron-go1-${GITHUB_RUN_ID}"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          STATUS=$(curl -sS -o "$OUT/ingress.json" -w '%{http_code}'             --connect-timeout 3 --max-time 30             -X POST http://127.0.0.1:8080/telegram/webhook             -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"             -H 'Content-Type: application/json'             --data-binary "$BODY")
+          cat "$OUT/ingress.json"
+          test "$STATUS" = 200
+
+          OID=""
+          for _ in $(seq 1 120); do
+            PAYLOAD=$(curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives || true)
+            OID=$(python3 - "$PAYLOAD" "$UPDATE_ID" <<'PY'
+          import json,sys
+          try: rows=json.loads(sys.argv[1])
+          except Exception: raise SystemExit
+          needle=f"telegram:update:{sys.argv[2]}"
+          found=[]
+          for row in rows if isinstance(rows,list) else []:
+              if needle in json.dumps(row,sort_keys=True):
+                  objective=row.get("objective") or {}
+                  oid=objective.get("objectiveId") or objective.get("objective_id")
+                  if oid: found.append(oid)
+          found=list(dict.fromkeys(found))
+          if len(found)==1: print(found[0])
+          PY
+            )
+            [ -n "$OID" ] && break
+            sleep 1
+          done
+          test -n "$OID"
+          echo "objective_id=$OID" >> "$GITHUB_OUTPUT"
+          echo "update_id=$UPDATE_ID" >> "$GITHUB_OUTPUT"
+          echo "GO1_OBJECTIVE_ID=$OID"
+
+      - name: Wait for autonomous terminal outcome
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          OID='${{ steps.objective.outputs.objective_id }}'
+          OUT="/tmp/metatron-go1-${GITHUB_RUN_ID}"
+          STATE=""
+          for _ in $(seq 1 200); do
+            PAYLOAD=$(curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/$OID" || true)
+            printf '%s' "$PAYLOAD" > "$OUT/objective.json"
+            STATE=$(python3 - "$PAYLOAD" <<'PY'
+          import json,sys
+          try: d=json.loads(sys.argv[1]); print((d.get("objective") or {}).get("status",""))
+          except Exception: print("")
+          PY
+            )
+            case "$STATE" in
+              COMPLETED|DELIVERED) break;;
+              BLOCKED|ESCALATED|CANCELLED|FAILED)
+                cat "$OUT/objective.json"
+                echo "GO1_TERMINAL_FAILURE=$STATE" >&2
+                exit 1
+                ;;
+            esac
+            sleep 3
+          done
+          cat "$OUT/objective.json"
+          case "$STATE" in COMPLETED|DELIVERED) ;; *) echo "GO1_TERMINAL_TIMEOUT=$STATE" >&2; exit 1;; esac
+          echo "GO1_OBJECTIVE_TERMINAL=$STATE"
+
+      - name: Verify Cognitive Worker action journal and extract PR evidence
+        if: steps.gate.outputs.enabled == 'true'
+        id: journal
+        shell: bash
+        run: |
+          set -euo pipefail
+          OID='${{ steps.objective.outputs.objective_id }}'
+          OUT="/tmp/metatron-go1-${GITHUB_RUN_ID}"
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+
+          docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null || true" > "$OUT/journal-files.txt"
+          test -s "$OUT/journal-files.txt"
+          : > "$OUT/journal.jsonl"
+          while IFS= read -r FILE; do
+            [ -n "$FILE" ] || continue
+            docker exec "$CID" cat "$FILE" >> "$OUT/journal.jsonl"
+          done < "$OUT/journal-files.txt"
+          test -s "$OUT/journal.jsonl"
+
+          python3 - "$OUT/journal.jsonl" "$GITHUB_OUTPUT" "$TARGET_SHA" <<'PY'
+          import json,sys
+          journal,output,target_sha=sys.argv[1:]
+          rows=[json.loads(line) for line in open(journal,encoding="utf-8") if line.strip()]
+          success=[r for r in rows if r.get("actionSuccess") is True]
+          actions=[r.get("thoughtAction") for r in success]
+
+          def first(action):
+              for i,r in enumerate(success):
+                  if r.get("thoughtAction")==action: return i,r
+              raise AssertionError(f"missing successful action: {action}")
+
+          materialize_i,_=first("workspace.repository.materialize")
+          patch_i,patch=first("workspace.file.patch")
+          test_i,_=first("workspace.test.run")
+          publish_i,publish=first("workspace.github.pr.publish")
+
+          diagnostics=[
+              (i,r) for i,r in enumerate(success[:patch_i])
+              if r.get("thoughtAction") in {"workspace.file.list","workspace.file.search","workspace.file.read","workspace.process.run","workspace.shell.run"}
+          ]
+          assert len(diagnostics) >= 2, f"insufficient pre-patch diagnosis: {actions}"
+          assert any(r.get("thoughtAction")=="workspace.file.search" for _,r in diagnostics), f"no source search before patch: {actions}"
+          assert materialize_i < patch_i < test_i < publish_i, actions
+
+          patch_path=(patch.get("thoughtInputs") or {}).get("path","")
+          expected="acceptance-fixtures/go1-java-bug/src/PriceCalculator.java"
+          assert patch_path==expected, patch_path
+
+          fixture_verifications=[
+              r for r in success
+              if r.get("thoughtAction") in {"workspace.process.run","workspace.shell.run"}
+              and "GO1_JAVA_FIXTURE=PASS" in str((r.get("outputs") or {}).get("output",""))
+          ]
+          assert fixture_verifications, "worker never produced passing fixture-contract observation"
+
+          git_rows=[r for r in success if r.get("thoughtAction")=="workspace.git.run"]
+          subcommands=[]
+          for r in git_rows:
+              raw=(r.get("thoughtInputs") or {}).get("argsJson","[]")
+              try: args=json.loads(raw)
+              except Exception: args=[]
+              if args: subcommands.append(args[0])
+          assert "add" in subcommands and "commit" in subcommands, subcommands
+
+          out=publish.get("outputs") or {}
+          pr=int(out.get("pullRequestNumber","0"))
+          url=out.get("pullRequestUrl","")
+          remote=out.get("remoteCommitSha","")
+          source=out.get("sourceCommitSha","")
+          changed=json.loads(out.get("changedPathsJson","[]"))
+          assert pr > 0 and url and len(remote)==40 and len(source)==40
+          assert source==target_sha, (source,target_sha)
+          assert changed==[expected], changed
+
+          with open(output,"a",encoding="utf-8") as f:
+              f.write(f"pr_number={pr}\n")
+              f.write(f"pr_url={url}\n")
+              f.write(f"remote_sha={remote}\n")
+              f.write(f"source_sha={source}\n")
+          print("GO1_ACTION_JOURNAL=PASS")
+          print("GO1_DIAGNOSE_SEARCH_PATCH_TEST_COMMIT_PR=PASS")
+          PY
+
+      - name: Independently verify remote PR and repaired behavior
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          set +a
+          test -n "${GITHUB_TOKEN:-}"
+
+          PR='${{ steps.journal.outputs.pr_number }}'
+          REMOTE_SHA='${{ steps.journal.outputs.remote_sha }}'
+          API=https://api.github.com/repos/kelvinka38/metatron-workforce
+          AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
+
+          curl -fsS "${AUTH[@]}" "$API/pulls/$PR" > /tmp/go1-pr-${GITHUB_RUN_ID}.json
+          curl -fsS "${AUTH[@]}" "$API/pulls/$PR/files?per_page=100" > /tmp/go1-files-${GITHUB_RUN_ID}.json
+          python3 - /tmp/go1-pr-${GITHUB_RUN_ID}.json /tmp/go1-files-${GITHUB_RUN_ID}.json "$REMOTE_SHA" "$TARGET_SHA" <<'PY'
+          import json,sys
+          pr=json.load(open(sys.argv[1],encoding="utf-8"))
+          files=json.load(open(sys.argv[2],encoding="utf-8"))
+          remote,target=sys.argv[3:]
+          assert pr["state"]=="open", pr["state"]
+          assert not pr.get("merged",False)
+          assert pr["base"]["ref"]=="main"
+          assert pr["head"]["sha"]==remote, (pr["head"]["sha"],remote)
+          assert [f["filename"] for f in files]==["acceptance-fixtures/go1-java-bug/src/PriceCalculator.java"], files
+          print("GO1_REMOTE_PR_STATE=PASS")
+          PY
+
+          VERIFY="/tmp/metatron-go1-independent-${GITHUB_RUN_ID}"
+          rm -rf "$VERIFY"
+          mkdir -p "$VERIFY/out"
+          curl -fsS "${AUTH[@]}"             "$API/contents/acceptance-fixtures/go1-java-bug/src/PriceCalculator.java?ref=$REMOTE_SHA"             > "$VERIFY/source.json"
+          python3 - "$VERIFY/source.json" "$VERIFY/PriceCalculator.java" <<'PY'
+          import base64,json,sys
+          d=json.load(open(sys.argv[1],encoding="utf-8"))
+          raw=base64.b64decode(d["content"])
+          open(sys.argv[2],"wb").write(raw)
+          PY
+
+          javac -d "$VERIFY/out"             "$VERIFY/PriceCalculator.java"             acceptance-fixtures/go1-java-bug/test/PriceCalculatorContract.java
+          java -cp "$VERIFY/out" PriceCalculatorContract | tee "$VERIFY/fixture.log"
+          grep -q 'GO1_JAVA_FIXTURE=PASS' "$VERIFY/fixture.log"
+
+          cp "$VERIFY/PriceCalculator.java" acceptance-fixtures/go1-java-bug/src/PriceCalculator.java
+          chmod +x gradlew
+          ./gradlew test --no-daemon --max-workers=1
+
+          echo "GO1_REAL_MUTATION=PASS"
+          echo "GO1_REAL_REMOTE_EFFECT=PASS"
+          echo "GO1_INDEPENDENT_BEHAVIOR_VERIFICATION=PASS"
+          echo "GENERAL_AUTONOMY_GO1_UNKNOWN_JAVA_BUG=PASS"
