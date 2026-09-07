@@ -172,7 +172,9 @@ public final class TelegramWebhookController {
             TelegramIdentityResolver.Resolution identity = identityResolver.resolve(telegramUserId, parseChatId(chatId));
 
             // Human explicitly enters Task Monitoring Mode. This starts/refreshes one live Work Card.
-            if (TelegramBotGateway.MONITOR_CONTROL.equals(text.trim()) || "/monitor".equalsIgnoreCase(text.trim())) {
+            if (TelegramBotGateway.MONITOR_CONTROL.equals(text.trim())
+                    || "📊 Monitor task".equals(text.trim())
+                    || "/monitor".equalsIgnoreCase(text.trim())) {
                 String monitorChatId = chatId;
                 workCardRenderer.latestObjectiveIdForHuman(identity.human().actorId()).ifPresentOrElse(objectiveId -> {
                     long messageId = gateway.sendWorkCard(monitorChatId, workCardRenderer.render(objectiveId));

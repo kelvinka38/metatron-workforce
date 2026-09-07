@@ -92,7 +92,8 @@ public final class WorkCardRenderer {
         }
         if (!work.blocker().isBlank()) out.append("\nNOTE / BLOCKER\n  🛑 ").append(compact(work.blocker())).append('\n');
         else out.append("\nNOTE / RISK\n  No active blocker recorded.\n");
-        out.append("\nEXECUTION PROOF\n  ").append(proof(work, history, fresh)).append('\n');
+        out.append("\nREAL EXECUTION\n  ").append(executionTruth(work, history, fresh)).append('\n');
+        out.append("  ").append(proof(work, history, fresh)).append('\n');
         if (!work.evidenceReferences().isEmpty()) {
             out.append("\nEVIDENCE  ").append(work.evidenceReferences().size()).append(" refs");
             if (work.terminal()) for (String ref : work.evidenceReferences().stream().limit(5).toList()) out.append("\n  • ").append(ref);
@@ -132,6 +133,19 @@ public final class WorkCardRenderer {
             case COMPLETED -> "COMPLETED";
             case CANCELLED -> "CANCELLED";
         };
+    }
+
+    private static String executionTruth(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean fresh) {
+        if (work.status() == AutonomousObjectiveWork.Status.COMPLETED) {
+            return work.evidenceReferences().isEmpty()
+                    ? "⚠️ COMPLETED STATE EXISTS, BUT NO EXECUTION/OUTCOME EVIDENCE IS ATTACHED"
+                    : "✅ YES — completed with durable evidence";
+        }
+        if (work.status() == AutonomousObjectiveWork.Status.BLOCKED) return "🛑 NO — work is blocked";
+        if (work.status() != AutonomousObjectiveWork.Status.EXECUTING) return "🟡 NOT YET — no active execution state";
+        boolean execution = history.stream().anyMatch(e -> e.type() == ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED);
+        if (!execution) return "⚠️ UNPROVEN — state says EXECUTING but no durable execution-start evidence exists";
+        return fresh ? "🟢 YES — durable execution activity observed recently" : "⚠️ STALE — execution started, but no recent durable activity";
     }
 
     private static String proof(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean fresh) {
