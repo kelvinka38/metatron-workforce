@@ -86,6 +86,31 @@ jobs:
           python3 scripts/autonomy/p10_collect.py --self-test
           python3 scripts/autonomy/p10_general_runtime_guard.py --self-test
           python3 scripts/autonomy/p10_ratify.py --self-test
+      - name: Enforce Intelligence provider ownership boundary
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          forbidden = (
+              "interaction.llm.LlmProviderRouter",
+              "interaction.llm.OpenAiLlmProviderClient",
+              "interaction.llm.GoogleLlmProviderClient",
+              "interaction.llm.AnthropicLlmProviderClient",
+          )
+          violations = []
+          for path in Path("src/main/java").rglob("*.java"):
+              p = path.as_posix()
+              if "/interaction/intelligence/" in p or "/interaction/llm/" in p:
+                  continue
+              text = path.read_text(encoding="utf-8")
+              for token in forbidden:
+                  if token in text:
+                      violations.append(f"{p} -> {token}")
+          if violations:
+              print("INTELLIGENCE_PROVIDER_BOUNDARY=FAIL")
+              print("\n".join(violations))
+              raise SystemExit(1)
+          print("INTELLIGENCE_PROVIDER_BOUNDARY=PASS")
+          PY
       - name: Make Gradle executable
         run: chmod +x gradlew
       - name: Test and build
