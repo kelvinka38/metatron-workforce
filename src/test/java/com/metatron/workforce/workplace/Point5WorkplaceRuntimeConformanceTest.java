@@ -130,7 +130,7 @@ class Point5WorkplaceRuntimeConformanceTest {
         assertTrue(response.contains("authority_source=explicit-human-meeting-follow-up"));
 
         MeetingRecord updated = service.require(meeting.meetingId());
-        assertTrue(updated.decisionRefs().contains("objective:objective:meeting-1"));
+        assertTrue(updated.decisionRefs().contains("objective:meeting-1"));
         assertTrue(updated.evidenceRefs().stream().anyMatch(v ->
                 v.contains("meeting-work-handoff:" + meeting.followUpReference())
                         && v.contains("human-authorized=true")
