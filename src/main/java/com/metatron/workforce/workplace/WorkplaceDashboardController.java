@@ -115,11 +115,15 @@ function render(d){
     kpi('Tasks waiting',s.waitingTasks,'ready or dependency wait'),
     kpi('Tasks blocked',s.blockedTasks,'needs recovery / input'),
     kpi('Objectives active',s.activeObjectives+' / '+s.objectives,'current / total'),
-    kpi('Workers active',s.activeWorkers+' / '+s.workers,'admitted workforce')
+    kpi('Workers active',s.activeWorkers+' / '+s.workers,'admitted workforce'),
+    kpi('Mutating actions',s.mutatingActions,'real write / change effects'),
+    kpi('Read-only actions',s.readOnlyActions,'inspection / verification only')
   ].join('');
   $('objectives').innerHTML=d.objectivePulse.length?d.objectivePulse.map(o=>{
     let taskText=o.totalWork?o.completedWork+'/'+o.totalWork:'not planned';
-    return '<tr class="objRow" onclick="openObjective(\''+esc(o.objectiveId)+'\')"><td><div class="objTitle">'+esc(o.summary)+'</div><div class="muted mono">'+esc(o.objectiveId)+'</div></td><td>'+badge(o.executionState)+(o.blocker?'<div class="muted">blocked</div>':'')+'</td><td>'+esc(taskText)+'</td><td><b>'+o.progressPercent+'%</b><div class="progress"><i style="width:'+o.progressPercent+'%"></i></div></td><td>'+esc(o.ownerWorkerId)+'<div class="muted">'+esc(o.staffingState)+'</div></td><td>'+fmtTime(o.lastActivityAt)+'</td></tr>'
+    let mut=o.actionRecords.filter(a=>a.success&&a.consequence==='MUTATING').length,ro=o.actionRecords.filter(a=>a.success&&a.consequence==='READ_ONLY').length;
+    let effect=mut>0?('MUTATING '+mut):(ro>0?('READ-ONLY '+ro):'NO ACTION PROOF');
+    return '<tr class="objRow" onclick="openObjective(\''+esc(o.objectiveId)+'\')"><td><div class="objTitle">'+esc(o.summary)+'</div><div class="muted mono">'+esc(o.objectiveId)+'</div></td><td>'+badge(o.executionState)+(o.blocker?'<div class="muted">blocked</div>':'')+'</td><td>'+esc(taskText)+'</td><td><b>'+o.progressPercent+'%</b><div class="progress"><i style="width:'+o.progressPercent+'%"></i></div></td><td>'+esc(o.ownerWorkerId)+'<div class="muted">'+esc(o.staffingState)+'</div></td><td>'+esc(effect)+'</td><td>'+fmtTime(o.lastActivityAt)+'</td></tr>'
   }).join(''):'<tr><td colspan="7" class="muted">No objectives yet.</td></tr>';
   $('alertCount').textContent=d.alerts.length+' active';$('alerts').innerHTML=d.alerts.length?d.alerts.slice(0,12).map(a=>'<div class="item"><div class="itemTitle">'+esc(a.detail)+'</div><div class="itemMeta">'+badge(a.status)+' · '+esc(a.type)+' · '+esc(a.ref)+'</div></div>').join(''):'<div class="item muted">No active exceptions.</div>';
   $('workerCount').textContent=d.workers.length+' total';$('workers').innerHTML=d.workers.length?d.workers.slice(0,14).map(w=>{let av=w.availability,p=w.participations?.[0];return '<div class="item"><div class="itemTitle">'+esc(w.workerId)+' '+badge(w.status)+'</div><div class="itemMeta">'+esc(p?.positionRef||p?.roleRef||'No position')+' · '+w.assignments.length+' assignments · capacity '+esc(av?av.capacity:'unknown')+'</div></div>'}).join(''):'<div class="item muted">No workers.</div>';
