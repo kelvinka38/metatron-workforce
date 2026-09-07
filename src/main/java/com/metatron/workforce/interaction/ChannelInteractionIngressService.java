@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
+import com.metatron.workforce.interaction.intelligence.InstitutionalIntelligenceRuntime;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
 import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
 import com.metatron.workforce.workplace.WorkplaceMeetingService;
@@ -30,13 +31,8 @@ public final class ChannelInteractionIngressService {
 
     @Autowired
     public ChannelInteractionIngressService(
-            @Value("${OPENAI_API_KEY:}") String openAiApiKey,
-            @Value("${GEMINI_API_KEY:}") String googleApiKey,
-            @Value("${ANTHROPIC_API_KEY:}") String anthropicApiKey,
             @Value("${METATRON_LLM_PROVIDER:AUTO}") String provider,
-            @Value("${OPENAI_MODEL:}") String openAiModel,
-            @Value("${GEMINI_MODEL:}") String googleModel,
-            @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
+            InstitutionalIntelligenceRuntime intelligenceRuntime,
             @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
             @Value("${METATRON_CHANNEL_OBJECTIVE_HANDOFF_ENABLED:false}") boolean channelObjectiveHandoffEnabled,
@@ -48,9 +44,8 @@ public final class ChannelInteractionIngressService {
             ObjectMapper objectMapper) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         MetatronIntelligenceResponder intelligence = new MetatronIntelligenceResponder(
-                openAiApiKey, googleApiKey, anthropicApiKey, provider,
-                openAiModel, googleModel, anthropicModel, objectMapper,
-                gatewayAuditUrl, gatewayAuditToken,
+                Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime"),
+                provider, objectMapper, gatewayAuditUrl, gatewayAuditToken,
                 Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
                 Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
                 channelObjectiveHandoffEnabled);
