@@ -112,7 +112,7 @@ public final class WorkerRuntimeProfileBindingService {
                     Set.of(
                             "git", "java", "javac", "sh", "bash", "gradle", "mvn", "./gradlew", "./mvnw",
                             "node", "npm", "npx", "pnpm", "yarn",
-                            "python3", "python", "pip3", "pytest"),
+                            "python3", "python", "pip3"),
                     true, 300, 2_000_000);
         }
         // Bounded legacy profiles remain usable through their already-authorized capability adapter.
