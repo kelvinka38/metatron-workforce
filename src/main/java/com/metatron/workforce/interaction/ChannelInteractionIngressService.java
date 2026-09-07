@@ -47,7 +47,7 @@ public final class ChannelInteractionIngressService {
                 provider, objectMapper, gatewayAuditUrl, gatewayAuditToken,
                 Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
                 Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
-                false);
+                semanticChatExecutionHandoffEnabled());
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
@@ -63,6 +63,8 @@ public final class ChannelInteractionIngressService {
      * retained only for typed/explicit institutional transitions. Ordinary semantic chat is never
      * authorized to materialize durable Work from this channel ingress.
      */
+    static boolean semanticChatExecutionHandoffEnabled() { return false; }
+
     static ExecutionObjectiveHandoff channelExecutionHandoff(
             boolean enabled,
             ExecutionObjectiveHandoff configuredHandoff) {
