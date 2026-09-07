@@ -635,9 +635,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (!requiresGitCommit(context)) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("git show")
-                || text.contains("verify")
+                || text.contains("git status")
+                || text.contains("git verification")
+                || text.contains("verify git")
+                || text.contains("verify the commit")
+                || text.contains("verify commit")
                 || text.contains("commit exists")
-                || text.contains("exactly the change");
+                || text.contains("exactly the change")
+                || text.contains("inspect immutable local head");
     }
 
     private static String governedMutationPath(CognitiveWorkerRuntime.CognitiveContext context) {

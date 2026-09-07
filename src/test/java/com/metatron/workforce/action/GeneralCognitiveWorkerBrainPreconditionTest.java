@@ -390,6 +390,86 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
+    void independentObservationVerificationDoesNotInventExtraGitStatusRequirement() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "repair-and-publish",
+                "Find and repair the defect, run tests, create one local Git commit, publish a reviewable unmerged pull request, "
+                        + "and verify every acceptance criterion through independent Observation. Do not merge.",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass", "reviewable pull request exists", "independent Observation verifies outcome"),
+                List.of("general Action Fabric action journal", "fresh authoritative GitHub API Observation"));
+
+        CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
+                1, "workspace.repository.materialize", Map.of("repository", "kelvinka38/metatron-workforce"));
+        CognitiveWorkerRuntime.Cycle searched = successfulCycle(
+                2, "workspace.file.search", Map.of("query", "defect"));
+        CognitiveWorkerRuntime.Cycle read = successfulCycle(
+                3, "workspace.file.read", Map.of("path", "src/App.java"));
+        CognitiveWorkerRuntime.Cycle patched = successfulCycle(
+                4, "workspace.file.patch", Map.of("path", "src/App.java", "oldText", "broken", "newText", "fixed"));
+        CognitiveWorkerRuntime.Cycle tested = successfulCycle(
+                5, "workspace.test.run", Map.of("workingDirectory", ""));
+        CognitiveWorkerRuntime.Cycle added = successfulCycle(
+                6, "workspace.git.run", Map.of("argsJson", "[\"add\",\"-A\"]"));
+        CognitiveWorkerRuntime.Cycle committed = successfulCycle(
+                7, "workspace.git.run", Map.of("argsJson", "[\"commit\",\"-m\",\"repair\"]"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.search", "workspace.file.read",
+                        "workspace.file.patch", "workspace.test.run", "workspace.git.run",
+                        "workspace.git.status", "workspace.github.pr.publish"),
+                List.of(materialized, searched, read, patched, tested, added, committed),
+                Map.of("workspaceMaterialized", "true"));
+
+        assertNull(GeneralCognitiveWorkerBrain.governedGitPrecondition(context),
+                "Observation verification must not be reinterpreted as an extra Git-status requirement");
+
+        ActionFabric.ActionObservation published = ActionFabric.ActionObservation.success(
+                "workspace.github.pr.publish",
+                "published",
+                Map.of("pullRequestUrl", "https://github.com/example/repo/pull/1"),
+                List.of("github-general-proposal:true"));
+        CognitiveWorkerRuntime.Reflection required =
+                GeneralCognitiveWorkerBrain.governedRequiredActionReflection(context, published);
+        CognitiveWorkerRuntime.Reflection closed =
+                GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(context, published, required);
+
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, closed.decision());
+    }
+
+    @Test
+    void explicitGitVerificationStillRequiresGovernedGitStatusAfterCommit() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "repair-and-verify-commit",
+                "Repair the defect, run tests, create one local Git commit, then verify the commit with git status.",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass", "commit exists and is verified"),
+                List.of("governed Git verification"));
+
+        CognitiveWorkerRuntime.Cycle patched = successfulCycle(
+                1, "workspace.file.patch", Map.of("path", "src/App.java", "oldText", "broken", "newText", "fixed"));
+        CognitiveWorkerRuntime.Cycle tested = successfulCycle(2, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.Cycle added = successfulCycle(
+                3, "workspace.git.run", Map.of("argsJson", "[\"add\",\"-A\"]"));
+        CognitiveWorkerRuntime.Cycle committed = successfulCycle(
+                4, "workspace.git.run", Map.of("argsJson", "[\"commit\",\"-m\",\"repair\"]"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.patch", "workspace.test.run", "workspace.git.run", "workspace.git.status"),
+                List.of(patched, tested, added, committed), Map.of("workspaceMaterialized", "true"));
+
+        CognitiveWorkerRuntime.Thought status = GeneralCognitiveWorkerBrain.governedGitPrecondition(context);
+
+        assertEquals("workspace.git.status", status.actionRef());
+    }
+
+    @Test
     void exactSourceReplacementCannotJumpFromMaterializationToRemotePublish() {
         ExecutionWorkSpec work = exactReplacementAndPublishWork();
         CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
@@ -481,16 +561,15 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                         "workspace.test.run", "workspace.git.run", "workspace.git.status",
                         "workspace.github.pr.publish"),
                 List.of(materialized, read, written, tested, added, committed), Map.of());
-        CognitiveWorkerRuntime.Thought status = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeStatus);
-        assertEquals("workspace.git.status", status.actionRef());
+        assertNull(GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeStatus),
+                "independent Observation verification must not invent a redundant Git-status action");
 
-        CognitiveWorkerRuntime.Cycle verified = successfulCycle(7, "workspace.git.status", Map.of());
         CognitiveWorkerRuntime.CognitiveContext readyToPublish = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
                         "workspace.test.run", "workspace.git.run", "workspace.git.status",
                         "workspace.github.pr.publish"),
-                List.of(materialized, read, written, tested, added, committed, verified), Map.of());
+                List.of(materialized, read, written, tested, added, committed), Map.of());
         CognitiveWorkerRuntime.Thought publish =
                 GeneralCognitiveWorkerBrain.governedRemoteProposalPrecondition(readyToPublish);
         assertEquals("workspace.github.pr.publish", publish.actionRef());
