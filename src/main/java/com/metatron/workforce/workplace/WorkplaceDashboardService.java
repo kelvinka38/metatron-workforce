@@ -1,6 +1,7 @@
 package com.metatron.workforce.workplace;
 
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.action.ActionJournal;
 import com.metatron.workforce.management.ManagementAutonomyService;
 import com.metatron.workforce.management.AutonomousObjectiveWork;
 import com.metatron.workforce.management.ManagementObjective;
@@ -14,15 +15,27 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.Set;
 
 @Service
 public class WorkplaceDashboardService {
     private final WorkforceCoreService core;
     private final ManagementAutonomyService management;
     private final WorkService work;
+    private final ActionJournal actionJournal;
 
     public WorkplaceDashboardService(WorkforceCoreService core, ManagementAutonomyService management, WorkService work) {
-        this.core = core; this.management = management; this.work = work;
+        this(core, management, work, ActionJournal.runtimeEvidenceJournal());
+    }
+
+    WorkplaceDashboardService(WorkforceCoreService core, ManagementAutonomyService management, WorkService work,
+                              ActionJournal actionJournal) {
+        this.core = core;
+        this.management = management;
+        this.work = work;
+        this.actionJournal = actionJournal;
     }
 
     public Dashboard dashboard() {
@@ -77,6 +90,11 @@ public class WorkplaceDashboardService {
         String executionState;
         String blocker = autonomous == null ? "" : autonomous.blocker();
         int evidence = autonomous == null ? objective.evidenceRefs().size() : autonomous.evidenceReferences().size();
+        List<ActionPulse> actions = actionJournal.objectiveActionRecords(objective.objectiveId()).stream()
+                .map(this::actionPulse)
+                .toList();
+        Map<String, List<ActionPulse>> actionsByStep = actions.stream().collect(java.util.stream.Collectors.groupingBy(
+                ActionPulse::workStepId, LinkedHashMap::new, java.util.stream.Collectors.toList()));
         List<WorkItemPulse> steps = autonomous == null ? List.of() : autonomous.plannedWork().stream().map(step -> {
             boolean done = autonomous.completedStepIds().contains(step.stepId());
             boolean depsDone = autonomous.completedStepIds().containsAll(step.dependsOn());
@@ -86,8 +104,16 @@ public class WorkplaceDashboardService {
             else if (!depsDone) state = "WAITING";
             else if (autonomous.status() == AutonomousObjectiveWork.Status.EXECUTING) state = fresh ? "RUNNING" : "STALE";
             else state = "READY";
+            List<ActionPulse> stepActions = actionsByStep.getOrDefault(step.stepId(), List.of());
+            String performer = stepActions.stream().map(ActionPulse::workerId).filter(v -> !v.isBlank()).findFirst().orElse("UNASSIGNED");
+            boolean mutating = stepActions.stream().anyMatch(a -> "MUTATING".equals(a.consequence()) && a.success());
+            boolean readOnlyOnly = !stepActions.isEmpty() && !mutating
+                    && stepActions.stream().allMatch(a -> "READ_ONLY".equals(a.consequence()) || "UNKNOWN".equals(a.consequence()));
+            String effect = mutating ? "MUTATING_EFFECT_OBSERVED" : readOnlyOnly ? "READ_ONLY_ONLY" : "NO_EFFECT_EVIDENCE";
+            String latestAction = stepActions.isEmpty() ? "NONE" : stepActions.getFirst().actionRef();
             return new WorkItemPulse(step.stepId(), step.objective(), step.target(), step.requiredCapability(),
-                    state, step.dependsOn(), step.acceptanceCriteria(), step.evidenceRequirements());
+                    state, performer, effect, stepActions.size(), latestAction,
+                    step.dependsOn(), step.acceptanceCriteria(), step.evidenceRequirements(), stepActions);
         }).toList();
         List<EventPulse> recent = history.stream()
                 .sorted(Comparator.comparing(ManagementAutonomyService.ManagementEvent::occurredAt).reversed())
@@ -107,7 +133,43 @@ public class WorkplaceDashboardService {
         String staffing = objective.assignmentRefs().isEmpty() ? "UNASSIGNED" : "ASSIGNED";
         return new ObjectivePulse(objective.objectiveId(), objective.description(), objective.status().name(),
                 objective.ownerWorkerId(), staffing, executionState, progress, completed, total, evidence,
-                blocker, last, objective.updatedAt(), steps, recent, evidenceRefs);
+                blocker, last, objective.updatedAt(), steps, recent, evidenceRefs, actions);
+    }
+
+    private ActionPulse actionPulse(ActionJournal.ActionRecord record) {
+        return new ActionPulse(
+                record.recordedAt(),
+                record.workStepId(),
+                record.workerId(),
+                record.assignmentReference(),
+                record.cycle(),
+                record.actionRef(),
+                record.consequence(),
+                record.success(),
+                record.summary(),
+                sanitize(record.inputs()),
+                sanitize(record.outputs()),
+                record.evidenceReferences().stream().limit(20).toList(),
+                record.reflection(),
+                record.reflectionSummary());
+    }
+
+    private static Map<String, String> sanitize(Map<String, String> values) {
+        if (values == null || values.isEmpty()) return Map.of();
+        Map<String, String> safe = new LinkedHashMap<>();
+        Set<String> sensitive = Set.of("token","authorization","password","secret","apiKey","api_key","credential");
+        values.forEach((key, value) -> {
+            String lower = key.toLowerCase(java.util.Locale.ROOT);
+            boolean redact = sensitive.stream().anyMatch(lower::contains);
+            String normalized = redact ? "[REDACTED]" : compact(value, 800);
+            safe.put(key, normalized);
+        });
+        return Map.copyOf(safe);
+    }
+
+    private static String compact(String value, int limit) {
+        String clean = value == null ? "" : value.replace("\r", "").trim();
+        return clean.length() <= limit ? clean : clean.substring(0, limit) + "…";
     }
 
     public record Summary(long workers, long activeWorkers, long objectives, long activeObjectives,
@@ -117,15 +179,21 @@ public class WorkplaceDashboardService {
     public record WorkerView(String workerId, String status, List<WorkforceCoreService.Participation> participations,
                              List<WorkforceCoreService.Capability> capabilities, List<WorkforceCoreService.Qualification> qualifications,
                              WorkforceCoreService.Availability availability, List<WorkforceCoreService.Assignment> assignments) {}
+    public record ActionPulse(Instant recordedAt, String workStepId, String workerId, String assignmentReference,
+                              int cycle, String actionRef, String consequence, boolean success, String summary,
+                              Map<String,String> inputs, Map<String,String> outputs, List<String> evidenceReferences,
+                              String reflection, String reflectionSummary) {}
     public record WorkItemPulse(String stepId, String objective, String target, String requiredCapability,
-                                String state, List<String> dependsOn, List<String> acceptanceCriteria,
-                                List<String> evidenceRequirements) {}
+                                String state, String performer, String effectState, int actionCount, String latestAction,
+                                List<String> dependsOn, List<String> acceptanceCriteria,
+                                List<String> evidenceRequirements, List<ActionPulse> actions) {}
     public record EventPulse(String type, String actor, String detail, Instant at) {}
     public record ObjectivePulse(String objectiveId, String summary, String objectiveStatus, String ownerWorkerId,
                                  String staffingState, String executionState, int progressPercent,
                                  int completedWork, int totalWork, int evidenceCount, String blocker,
                                  Instant lastActivityAt, Instant objectiveUpdatedAt,
-                                 List<WorkItemPulse> workItems, List<EventPulse> recentEvents, List<String> evidenceReferences) {}
+                                 List<WorkItemPulse> workItems, List<EventPulse> recentEvents,
+                                 List<String> evidenceReferences, List<ActionPulse> actionRecords) {}
     public record Alert(String type, String status, String ref, String detail, Instant at) {}
     public record Dashboard(Instant generatedAt, String revision, String environment, Summary summary,
                             List<WorkerView> workers, List<ManagementObjective> objectives,
