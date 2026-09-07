@@ -25,7 +25,9 @@ public final class PersistentConversationSurfaceModeStore {
         if (!Files.exists(file)) return ConversationSurfaceMode.CHAT;
         try {
             String value = Files.readString(file, StandardCharsets.UTF_8).trim();
-            return value.isBlank() ? ConversationSurfaceMode.CHAT : ConversationSurfaceMode.valueOf(value);
+            if (value.isBlank()) return ConversationSurfaceMode.CHAT;
+            if ("MEETING".equals(value)) return ConversationSurfaceMode.WORK_MEETING;
+            return ConversationSurfaceMode.valueOf(value);
         } catch (Exception e) {
             throw new IllegalStateException("invalid conversation surface mode", e);
         }

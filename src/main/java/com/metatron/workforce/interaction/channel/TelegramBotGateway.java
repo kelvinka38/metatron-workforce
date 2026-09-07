@@ -23,6 +23,7 @@ public final class TelegramBotGateway implements ChannelGateway {
     static final String AUTO_CONTROL = "🤖 Auto";
     static final String MODE_CONTROL = "🎛 Mode";
     static final String CHAT_CONTROL = ConversationSurfaceModeService.CHAT_CONTROL;
+    static final String WORK_CONTROL = ConversationSurfaceModeService.WORK_CONTROL;
     static final String MEETING_CONTROL = ConversationSurfaceModeService.MEETING_CONTROL;
     static final String MONITOR_CONTROL = "📊 Monitor";
     /**
@@ -67,7 +68,7 @@ public final class TelegramBotGateway implements ChannelGateway {
             payload.put("text", chunks.get(index));
             // The keyboard is persistent. Attach it once, on the final chunk, rather than
             // redundantly to every fragment of one logical institutional response.
-            if (index == chunks.size() - 1) payload.put("reply_markup", depthControlReplyMarkup());
+            if (index == chunks.size() - 1) payload.put("reply_markup", replyMarkupFor(message.text()));
             finalResult = invoke("sendMessage", payload);
         }
         if (finalResult == null) throw new IllegalStateException("telegram_send_failed:no_message_chunks");
@@ -121,7 +122,7 @@ public final class TelegramBotGateway implements ChannelGateway {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("chat_id", chatId);
         payload.put("text", text);
-        payload.put("reply_markup", depthControlReplyMarkup());
+        payload.put("reply_markup", workReplyMarkup());
         ApiResult result = invoke("sendMessage", payload);
         long messageId = result.json().path("result").path("message_id").asLong(-1L);
         if (messageId < 0) throw new IllegalStateException("telegram_work_card_message_id_missing");
@@ -142,15 +143,34 @@ public final class TelegramBotGateway implements ChannelGateway {
         }
     }
 
-    /** Telegram owns presentation only; canonical depth/task state remains channel-neutral. */
-    static Map<String, Object> depthControlReplyMarkup() {
+    /** Telegram owns presentation only. Product hierarchy is Chat / Work; Meeting is a Work module. */
+    static Map<String, Object> depthControlReplyMarkup() { return topLevelReplyMarkup(); }
+
+    static Map<String, Object> topLevelReplyMarkup() {
         return Map.of(
-                "keyboard", List.of(
-                        List.of(CHAT_CONTROL, MEETING_CONTROL),
-                        List.of(MONITOR_CONTROL)),
+                "keyboard", List.of(List.of(CHAT_CONTROL, WORK_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,
                 "input_field_placeholder", "Chat with Metatron…");
+    }
+
+    static Map<String, Object> workReplyMarkup() {
+        return Map.of(
+                "keyboard", List.of(
+                        List.of(MEETING_CONTROL, MONITOR_CONTROL),
+                        List.of(CHAT_CONTROL)),
+                "resize_keyboard", true,
+                "is_persistent", true,
+                "input_field_placeholder", "Work with Metatron…");
+    }
+
+    static Map<String, Object> replyMarkupFor(String responseText) {
+        String text = responseText == null ? "" : responseText;
+        boolean work = text.contains("🧰 WORK ·")
+                || text.contains("METATRON MEETING")
+                || text.contains("📋 METATRON · WORK ORDER")
+                || text.contains("📊 METATRON WORK");
+        return work ? workReplyMarkup() : topLevelReplyMarkup();
     }
 
     private ApiResult invoke(String method, Map<String, Object> payload) {
