@@ -52,7 +52,8 @@ public final class ChannelInteractionIngressService {
                 openAiModel, googleModel, anthropicModel, objectMapper,
                 gatewayAuditUrl, gatewayAuditToken,
                 Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
-                channelExecutionHandoff(channelObjectiveHandoffEnabled, executionObjectiveHandoff));
+                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
+                channelObjectiveHandoffEnabled);
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
@@ -63,11 +64,16 @@ public final class ChannelInteractionIngressService {
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
     }
 
+    /**
+     * Compatibility hook for package-level tests and adapters. The configured Workforce handoff is
+     * always retained so deterministic explicit Work controls can reach Workforce even when semantic
+     * chat-to-Work routing is disabled. The enabled flag now governs semantic admission in the responder.
+     */
     static ExecutionObjectiveHandoff channelExecutionHandoff(
             boolean enabled,
             ExecutionObjectiveHandoff configuredHandoff) {
         Objects.requireNonNull(configuredHandoff, "configuredHandoff");
-        return enabled ? configuredHandoff : ExecutionObjectiveHandoff.unavailable();
+        return configuredHandoff;
     }
 
     ChannelInteractionIngressService(MetatronInteractionOrchestrator orchestrator) {
