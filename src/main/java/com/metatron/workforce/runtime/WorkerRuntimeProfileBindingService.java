@@ -104,11 +104,15 @@ public final class WorkerRuntimeProfileBindingService {
                             "research.web.search",
                             "workspace.repository.materialize",
                             "workspace.file.read", "workspace.file.list", "workspace.file.write",
+                            "workspace.dependencies.install",
                             "workspace.process.run", "workspace.shell.run",
                             "workspace.git.status", "workspace.git.diff", "workspace.git.run",
                             "workspace.github.pr.publish",
                             "workspace.build.run", "workspace.test.run"),
-                    Set.of("git", "java", "javac", "sh", "bash", "gradle", "mvn", "./gradlew", "./mvnw"),
+                    Set.of(
+                            "git", "java", "javac", "sh", "bash", "gradle", "mvn", "./gradlew", "./mvnw",
+                            "node", "npm", "npx", "pnpm", "yarn",
+                            "python3", "python", "pip3", "pytest"),
                     true, 300, 2_000_000);
         }
         // Bounded legacy profiles remain usable through their already-authorized capability adapter.
