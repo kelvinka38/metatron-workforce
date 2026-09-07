@@ -57,6 +57,7 @@ public final class MetatronIntelligenceResponder {
     private final ExternalEvidenceResponseGuard externalEvidenceGuard;
     private final DeterministicComputationEngine computationEngine;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
+    private final boolean semanticExecutionHandoffEnabled;
 
     public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
                                          String provider, String openAiModel, String googleModel,
@@ -89,9 +90,21 @@ public final class MetatronIntelligenceResponder {
                                          String gatewayAuditUrl, String gatewayAuditToken,
                                          IntelligenceCaseStore caseStore,
                                          ExecutionObjectiveHandoff executionObjectiveHandoff) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey, provider, openAiModel, googleModel, anthropicModel,
+                objectMapper, gatewayAuditUrl, gatewayAuditToken, caseStore, executionObjectiveHandoff, true);
+    }
+
+    public MetatronIntelligenceResponder(String openAiApiKey, String googleApiKey, String anthropicApiKey,
+                                         String provider, String openAiModel, String googleModel,
+                                         String anthropicModel, ObjectMapper objectMapper,
+                                         String gatewayAuditUrl, String gatewayAuditToken,
+                                         IntelligenceCaseStore caseStore,
+                                         ExecutionObjectiveHandoff executionObjectiveHandoff,
+                                         boolean semanticExecutionHandoffEnabled) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         this.caseStore = Objects.requireNonNull(caseStore, "caseStore");
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
+        this.semanticExecutionHandoffEnabled = semanticExecutionHandoffEnabled;
         HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
                 .version(HttpClient.Version.HTTP_2).build();
         List<LlmProviderClient> clients = new ArrayList<>();
@@ -241,6 +254,15 @@ public final class MetatronIntelligenceResponder {
             }
 
             if (normalized.mode() == IntelligenceMode.EXECUTION) {
+                if (!shouldAdmitExecution(deterministicControl, semanticExecutionHandoffEnabled)) {
+                    route = "semantic-execution-objective-handoff-disabled";
+                    caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
+                    return "METATRON WORK NOT ADMITTED"
+                            + "\nreason=SEMANTIC_CHAT_TO_WORKFORCE_DISABLED"
+                            + "\ncase_id=" + intelligenceCase.caseId()
+                            + "\nobjective=" + normalized.objective()
+                            + "\nnext=Use the explicit Work/Objective control surface for durable execution";
+                }
                 ExecutionObjectiveHandoff.HandoffReceipt handoff = executionObjectiveHandoff.submit(
                         humanId, organizationContextId, intelligenceCase.caseId(), conversationId,
                         externalMessageReference, channel, normalized);
@@ -347,6 +369,11 @@ public final class MetatronIntelligenceResponder {
             LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}",
                     channel, route, (System.nanoTime() - started) / 1_000_000L, text.length());
         }
+    }
+
+    static boolean shouldAdmitExecution(boolean deterministicControl,
+                                        boolean semanticExecutionHandoffEnabled) {
+        return deterministicControl || semanticExecutionHandoffEnabled;
     }
 
     private static boolean canReturnDeterministicFast(NormalizedRequest normalized) {
