@@ -26,6 +26,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Pattern RESEARCH_URL = Pattern.compile("https?://[^\\s)\\]}>;,]+");
     private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
     private static final Pattern RESEARCH_DECISION = Pattern.compile("(?i)\\b(?:KEEP|TEST|CHANGE|REJECT)\\b");
+    private static final Pattern PROVIDER_RETRY_AFTER_SECONDS = Pattern.compile(
+            "(?i)(?:retry(?:\\s+in|\\s+after)?|try again in)\\s*([0-9]+(?:\\.[0-9]+)?)\\s*s");
+    private static final long DEFAULT_TRANSIENT_PROVIDER_RETRY_MILLIS = 5_000L;
+    private static final long MAX_TRANSIENT_PROVIDER_RETRY_MILLIS = 20_000L;
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
             Map.entry(GeneralWebResearchAction.ACTION_REF, Map.of(
@@ -910,39 +914,135 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private CognitiveProviderResult completeObject(String system, String user) {
         List<RuntimeException> failures = new ArrayList<>();
+        List<String> failureDetails = new ArrayList<>();
+        List<Integer> transientRoutes = new ArrayList<>();
+        long retryDelayMillis = 0L;
         int start = Math.min(activeProviderRoute, providerRoutes.size() - 1);
+
         for (int offset = 0; offset < providerRoutes.size(); offset++) {
             int index = (start + offset) % providerRoutes.size();
             ProviderRoute route = providerRoutes.get(index);
             try {
-                LlmResponse response = router.complete(new LlmRequest(route.provider(), route.model(), system, user));
-                Map<String, Object> parsed;
-                try {
-                    parsed = parseObject(response.text());
-                } catch (RuntimeException invalidResponse) {
-                    throw new IllegalStateException("invalid cognitive provider JSON", invalidResponse);
-                }
-                if (index != start) {
-                    evidence.add("cognitive-provider-failover:from=" + providerRoutes.get(start).provider()
-                            + ":to=" + route.provider());
-                }
-                activeProviderRoute = index;
-                evidence.add("cognitive-provider:" + response.provider()
-                        + ":model=" + response.model()
-                        + ":request=" + clean(response.providerRequestReference()));
-                return new CognitiveProviderResult(response, parsed);
+                return completeObjectOnRoute(system, user, start, index, route);
             } catch (RuntimeException failure) {
                 failures.add(failure);
+                String detail = route.provider() + "/" + route.model() + "=" + failureSummary(failure);
+                failureDetails.add(detail);
                 evidence.add("cognitive-provider-failure:" + route.provider()
                         + ":model=" + route.model()
                         + ":reason=" + failureSummary(failure));
+                if (transientProviderFailure(failure)) {
+                    transientRoutes.add(index);
+                    retryDelayMillis = Math.max(retryDelayMillis, transientRetryDelayMillis(failure));
+                }
             }
         }
+
+        if (!transientRoutes.isEmpty()) {
+            long boundedDelay = Math.min(
+                    MAX_TRANSIENT_PROVIDER_RETRY_MILLIS,
+                    Math.max(DEFAULT_TRANSIENT_PROVIDER_RETRY_MILLIS, retryDelayMillis));
+            evidence.add("cognitive-provider-retry:routes="
+                    + transientRoutes.stream().map(index -> providerRoutes.get(index).provider().name()).toList()
+                    + ":delay_ms=" + boundedDelay);
+            sleepProviderRetry(boundedDelay);
+
+            for (int index : transientRoutes) {
+                ProviderRoute route = providerRoutes.get(index);
+                try {
+                    CognitiveProviderResult result = completeObjectOnRoute(system, user, start, index, route);
+                    evidence.add("cognitive-provider-retry-recovered:" + route.provider()
+                            + ":model=" + route.model());
+                    return result;
+                } catch (RuntimeException failure) {
+                    failures.add(failure);
+                    String detail = route.provider() + "/" + route.model() + "(retry)=" + failureSummary(failure);
+                    failureDetails.add(detail);
+                    evidence.add("cognitive-provider-retry-failure:" + route.provider()
+                            + ":model=" + route.model()
+                            + ":reason=" + failureSummary(failure));
+                }
+            }
+        }
+
+        String details = String.join(" | ", failureDetails);
+        if (details.length() > 2_000) details = details.substring(0, 2_000);
         IllegalStateException exhausted = new IllegalStateException(
                 "all cognitive providers failed: "
-                        + providerRoutes.stream().map(route -> route.provider().name()).toList());
+                        + providerRoutes.stream().map(route -> route.provider().name()).toList()
+                        + "; details=" + details);
         failures.forEach(exhausted::addSuppressed);
         throw exhausted;
+    }
+
+    private CognitiveProviderResult completeObjectOnRoute(String system, String user, int start,
+                                                           int index, ProviderRoute route) {
+        LlmResponse response = router.complete(new LlmRequest(route.provider(), route.model(), system, user));
+        Map<String, Object> parsed;
+        try {
+            parsed = parseObject(response.text());
+        } catch (RuntimeException invalidResponse) {
+            throw new IllegalStateException("invalid cognitive provider JSON", invalidResponse);
+        }
+        if (index != start) {
+            evidence.add("cognitive-provider-failover:from=" + providerRoutes.get(start).provider()
+                    + ":to=" + route.provider());
+        }
+        activeProviderRoute = index;
+        evidence.add("cognitive-provider:" + response.provider()
+                + ":model=" + response.model()
+                + ":request=" + clean(response.providerRequestReference()));
+        return new CognitiveProviderResult(response, parsed);
+    }
+
+    private static boolean transientProviderFailure(RuntimeException failure) {
+        String value = failureChainText(failure).toLowerCase(java.util.Locale.ROOT);
+        return value.contains("429")
+                || value.contains("rate limit")
+                || value.contains("quota")
+                || value.contains("capacity")
+                || value.contains("timeout")
+                || value.contains("timed out")
+                || value.contains("502")
+                || value.contains("503")
+                || value.contains("504")
+                || value.contains("temporarily unavailable")
+                || value.contains("connection reset")
+                || value.contains("connection refused");
+    }
+
+    private static long transientRetryDelayMillis(RuntimeException failure) {
+        Matcher matcher = PROVIDER_RETRY_AFTER_SECONDS.matcher(failureChainText(failure));
+        if (!matcher.find()) return DEFAULT_TRANSIENT_PROVIDER_RETRY_MILLIS;
+        try {
+            double seconds = Double.parseDouble(matcher.group(1));
+            if (!Double.isFinite(seconds) || seconds <= 0) return DEFAULT_TRANSIENT_PROVIDER_RETRY_MILLIS;
+            return Math.min(MAX_TRANSIENT_PROVIDER_RETRY_MILLIS, (long) Math.ceil(seconds * 1_000d));
+        } catch (NumberFormatException invalid) {
+            return DEFAULT_TRANSIENT_PROVIDER_RETRY_MILLIS;
+        }
+    }
+
+    private static String failureChainText(Throwable failure) {
+        StringBuilder out = new StringBuilder();
+        Throwable current = failure;
+        int depth = 0;
+        while (current != null && depth++ < 5) {
+            if (!out.isEmpty()) out.append(" | ");
+            out.append(current.getClass().getSimpleName()).append(':')
+                    .append(current.getMessage() == null ? "" : current.getMessage());
+            current = current.getCause();
+        }
+        return out.toString();
+    }
+
+    private static void sleepProviderRetry(long delayMillis) {
+        try {
+            Thread.sleep(delayMillis);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("cognitive provider retry interrupted", interrupted);
+        }
     }
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
