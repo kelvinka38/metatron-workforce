@@ -561,16 +561,15 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                         "workspace.test.run", "workspace.git.run", "workspace.git.status",
                         "workspace.github.pr.publish"),
                 List.of(materialized, read, written, tested, added, committed), Map.of());
-        CognitiveWorkerRuntime.Thought status = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeStatus);
-        assertEquals("workspace.git.status", status.actionRef());
+        assertNull(GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeStatus),
+                "independent Observation verification must not invent a redundant Git-status action");
 
-        CognitiveWorkerRuntime.Cycle verified = successfulCycle(7, "workspace.git.status", Map.of());
         CognitiveWorkerRuntime.CognitiveContext readyToPublish = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
                 List.of("workspace.repository.materialize", "workspace.file.read", "workspace.file.write",
                         "workspace.test.run", "workspace.git.run", "workspace.git.status",
                         "workspace.github.pr.publish"),
-                List.of(materialized, read, written, tested, added, committed, verified), Map.of());
+                List.of(materialized, read, written, tested, added, committed), Map.of());
         CognitiveWorkerRuntime.Thought publish =
                 GeneralCognitiveWorkerBrain.governedRemoteProposalPrecondition(readyToPublish);
         assertEquals("workspace.github.pr.publish", publish.actionRef());
