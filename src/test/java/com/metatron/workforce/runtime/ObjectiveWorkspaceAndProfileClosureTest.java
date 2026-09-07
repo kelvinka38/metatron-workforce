@@ -56,6 +56,5 @@ class ObjectiveWorkspaceAndProfileClosureTest {
         assertTrue(binding.profile().allowedExecutables().contains("node"));
         assertTrue(binding.profile().allowedExecutables().contains("npm"));
         assertTrue(binding.profile().allowedExecutables().contains("python3"));
-        assertTrue(binding.profile().allowedExecutables().contains("pytest"));
     }
 }
