@@ -196,6 +196,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                     deterministicGeneralEngineeringFallback, deterministicExternalResearchFallback);
         }
 
+        RuntimeException intelligenceFailure = null;
         try {
             List<LlmProvider> requestedProviders = normalized.explicitlyRequestedProvider() == null
                     ? List.of() : List.of(normalized.explicitlyRequestedProvider());
@@ -204,8 +205,8 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                     "workforce-management",
                     IntelligenceMode.REASONING,
                     CollaborationMode.SINGLE,
-                    SYSTEM,
                     input,
+                    SYSTEM,
                     List.of("intelligence-case:" + caseId),
                     "execution.work.planning",
                     IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
@@ -224,7 +225,8 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(plan);
             if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
             return plan;
-        } catch (RuntimeException intelligenceFailure) {
+        } catch (RuntimeException failure) {
+            intelligenceFailure = failure;
             // Deterministic fallbacks below remain available during Intelligence capacity failure.
         }
         if (!deterministicSingleRepositoryPlan.isEmpty()) {
@@ -243,7 +245,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicExternalResearchFallback);
             return deterministicExternalResearchFallback;
         }
-        throw new IllegalStateException("execution planning Intelligence unavailable and no deterministic fallback applies");
+        IllegalStateException all = new IllegalStateException("all execution planning providers failed through Intelligence");
+        if (intelligenceFailure != null) {
+            all.addSuppressed(new IllegalStateException(
+                    "execution planning Intelligence failed: " + intelligenceFailure.getMessage(),
+                    intelligenceFailure));
+        }
+        throw all;
     }
 
     private List<ExecutionWorkSpec> proposeViaCompatibilityTransport(
