@@ -66,12 +66,19 @@ public class WorkplaceDashboardService {
         long runningTasks = objectivePulse.stream().mapToLong(p -> p.workItems().stream().filter(w -> "RUNNING".equals(w.state())).count()).sum();
         long blockedTasks = objectivePulse.stream().mapToLong(p -> p.workItems().stream().filter(w -> "BLOCKED".equals(w.state())).count()).sum();
         long waitingTasks = Math.max(0, totalTasks - completedTasks - runningTasks - blockedTasks);
+        long mutatingActions = objectivePulse.stream().flatMap(p -> p.actionRecords().stream())
+                .filter(a -> a.success() && "MUTATING".equals(a.consequence())).count();
+        long readOnlyActions = objectivePulse.stream().flatMap(p -> p.actionRecords().stream())
+                .filter(a -> a.success() && "READ_ONLY".equals(a.consequence())).count();
+        long failedActions = objectivePulse.stream().flatMap(p -> p.actionRecords().stream())
+                .filter(a -> !a.success()).count();
         long blocked = alerts.stream().filter(a -> a.status().contains("BLOCK") || a.status().contains("ESCALAT")).count();
         String sha = System.getenv().getOrDefault("METATRON_COMMIT_SHA", "unknown");
         String env = System.getenv().getOrDefault("METATRON_ENVIRONMENT", "unknown");
         return new Dashboard(Instant.now(), sha, env,
                 new Summary(workers.size(), activeWorkers, objectives.size(), activeObjectives, executingObjectives, staleObjectives,
                         completedObjectives, totalTasks, runningTasks, completedTasks, blockedTasks, waitingTasks,
+                        mutatingActions, readOnlyActions, failedActions,
                         workItems.size(), activeWork, core.allAssignments().size(), blocked, alerts.size()),
                 workers, objectives, objectivePulse, workItems, core.allAssignments(), alerts,
                 management.allEvents().stream().limit(50).toList());
@@ -175,6 +182,7 @@ public class WorkplaceDashboardService {
     public record Summary(long workers, long activeWorkers, long objectives, long activeObjectives,
                           long executingObjectives, long staleObjectives, long completedObjectives,
                           long totalTasks, long runningTasks, long completedTasks, long blockedTasks, long waitingTasks,
+                          long mutatingActions, long readOnlyActions, long failedActions,
                           long workItems, long activeWork, long assignments, long blocked, long alerts) {}
     public record WorkerView(String workerId, String status, List<WorkforceCoreService.Participation> participations,
                              List<WorkforceCoreService.Capability> capabilities, List<WorkforceCoreService.Qualification> qualifications,
