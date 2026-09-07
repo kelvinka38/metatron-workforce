@@ -15,6 +15,7 @@ public final class MetatronConversationRuntime {
     private final IntelligenceDepthControlService depthControl;
     private final WorkplaceMeetingService meetingRoom;
     private final ConversationSurfaceModeService surfaceMode;
+    private final MetatronInstitutionalStateChatService institutionalStateChat;
     private final int maxTurns;
     private final int maxChars;
 
@@ -23,7 +24,7 @@ public final class MetatronConversationRuntime {
                                        MetatronIntelligenceResponder intelligence,
                                        int maxTurns,
                                        int maxChars) {
-        this(memory, intelligence, null, null, null, maxTurns, maxChars);
+        this(memory, intelligence, null, null, null, null, maxTurns, maxChars);
     }
 
     public MetatronConversationRuntime(ConversationMemoryStore memory,
@@ -31,7 +32,7 @@ public final class MetatronConversationRuntime {
                                        IntelligenceDepthControlService depthControl,
                                        int maxTurns,
                                        int maxChars) {
-        this(memory, intelligence, depthControl, null, null, maxTurns, maxChars);
+        this(memory, intelligence, depthControl, null, null, null, maxTurns, maxChars);
     }
 
     public MetatronConversationRuntime(ConversationMemoryStore memory,
@@ -40,7 +41,7 @@ public final class MetatronConversationRuntime {
                                        WorkplaceMeetingService meetingRoom,
                                        int maxTurns,
                                        int maxChars) {
-        this(memory, intelligence, depthControl, meetingRoom, null, maxTurns, maxChars);
+        this(memory, intelligence, depthControl, meetingRoom, null, null, maxTurns, maxChars);
     }
 
     public MetatronConversationRuntime(ConversationMemoryStore memory,
@@ -50,11 +51,23 @@ public final class MetatronConversationRuntime {
                                        ConversationSurfaceModeService surfaceMode,
                                        int maxTurns,
                                        int maxChars) {
+        this(memory, intelligence, depthControl, meetingRoom, surfaceMode, null, maxTurns, maxChars);
+    }
+
+    public MetatronConversationRuntime(ConversationMemoryStore memory,
+                                       MetatronIntelligenceResponder intelligence,
+                                       IntelligenceDepthControlService depthControl,
+                                       WorkplaceMeetingService meetingRoom,
+                                       ConversationSurfaceModeService surfaceMode,
+                                       MetatronInstitutionalStateChatService institutionalStateChat,
+                                       int maxTurns,
+                                       int maxChars) {
         this.memory = Objects.requireNonNull(memory, "memory");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
         this.depthControl = depthControl;
         this.meetingRoom = meetingRoom;
         this.surfaceMode = surfaceMode;
+        this.institutionalStateChat = institutionalStateChat;
         if (maxTurns < 1 || maxChars < 1) throw new IllegalArgumentException("memory limits must be positive");
         this.maxTurns = maxTurns;
         this.maxChars = maxChars;
@@ -99,6 +112,17 @@ public final class MetatronConversationRuntime {
         boolean workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
                 || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
         boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
+
+        if (selectedSurface == ConversationSurfaceMode.CHAT && institutionalStateChat != null) {
+            java.util.Optional<String> institutionalAnswer = institutionalStateChat.answer(interaction.text());
+            if (institutionalAnswer.isPresent()) {
+                String answer = institutionalAnswer.get();
+                memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
+                return new MetatronInteractionOrchestrator.InteractionResponse(
+                        interaction.conversationId(), answer,
+                        "chat:canonical-institutional-state:" + interaction.externalMessageReference());
+            }
+        }
 
         if (meetingRoom != null && workSurfaceSelected && WorkplaceMeetingService.isAuthorizedFollowUp(interaction.text())) {
             String meetingAnswer = meetingRoom.handle(interaction, history);
