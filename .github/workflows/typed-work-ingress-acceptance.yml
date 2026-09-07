@@ -1,0 +1,26 @@
+name: Typed Work Ingress Acceptance
+
+on:
+  push:
+    paths:
+      - 'src/main/java/com/metatron/workforce/interaction/**'
+      - 'src/test/java/com/metatron/workforce/interaction/**'
+      - '.github/workflows/typed-work-ingress-acceptance.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '22'
+      - name: Verify explicit Work admission and semantic chat isolation
+        run: |
+          chmod +x gradlew
+          ./gradlew test --no-daemon --max-workers=1 \
+            --tests com.metatron.workforce.interaction.ChannelInteractionIngressServiceTest \
+            --tests com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreterTest \
+            --tests com.metatron.workforce.interaction.channel.TelegramObjectiveAdmissionPriorityTest
