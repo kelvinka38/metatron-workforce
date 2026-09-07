@@ -36,6 +36,9 @@ class WorkplaceDashboardServiceTest {
         assertTrue(d.summary().alerts() >= 2);
         assertEquals("W-DIR", d.workers().getFirst().workerId());
         assertEquals("BLOCKED", d.objectives().getFirst().status().name());
+        assertEquals(1, d.objectivePulse().size());
+        assertEquals("OBJ-1", d.objectivePulse().getFirst().objectiveId());
+        assertEquals("NOT_MATERIALIZED", d.objectivePulse().getFirst().executionState());
         assertEquals("BLOCKED", d.work().getFirst().status().name());
     }
 }
