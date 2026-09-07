@@ -32,6 +32,26 @@ public interface ActionJournal {
      */
     default List<String> objectiveEvidenceReferences(String objectiveId) { return List.of(); }
 
+    /** Durable action-level execution truth for one Objective, newest first. */
+    default List<ActionRecord> objectiveActionRecords(String objectiveId) { return List.of(); }
+
+    record ActionRecord(
+            Instant recordedAt,
+            String objectiveId,
+            String workStepId,
+            String workerId,
+            String assignmentReference,
+            int cycle,
+            String actionRef,
+            String consequence,
+            boolean success,
+            String summary,
+            Map<String, String> inputs,
+            Map<String, String> outputs,
+            List<String> evidenceReferences,
+            String reflection,
+            String reflectionSummary) {}
+
     static ActionJournal noop() { return (a, b, c, d, e, f, g) -> { }; }
 
     static ActionJournal runtimeEvidenceJournal() {
@@ -81,6 +101,75 @@ public interface ActionJournal {
             } catch (IOException failure) {
                 throw new IllegalStateException("action-journal-persistence-failed", failure);
             }
+        }
+
+        @Override
+        public synchronized List<ActionRecord> objectiveActionRecords(String objectiveId) {
+            Path directory = root.resolve(safe(objectiveId));
+            if (!Files.exists(directory)) return List.of();
+            if (!Files.isDirectory(directory)) {
+                throw new IllegalStateException("action-journal-objective-path-is-not-directory");
+            }
+            List<ActionRecord> records = new ArrayList<>();
+            try (var files = Files.list(directory)) {
+                for (Path file : files.filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName().toString().endsWith(".jsonl"))
+                        .sorted().toList()) {
+                    for (String line : Files.readAllLines(file)) {
+                        if (line.isBlank()) continue;
+                        JsonNode row = JSON.readTree(line);
+                        if (!objectiveId.equals(row.path("objectiveId").asText())) {
+                            throw new IllegalStateException("action-journal-objective-mismatch");
+                        }
+                        List<String> refs = new ArrayList<>();
+                        JsonNode evidence = row.path("evidenceReferences");
+                        if (evidence.isArray()) for (JsonNode ref : evidence) if (ref.isTextual()) refs.add(ref.asText());
+                        String consequence = refs.stream()
+                                .filter(ref -> ref.startsWith("action-fabric:"))
+                                .map(ref -> field(ref, ":consequence="))
+                                .filter(value -> !value.isBlank())
+                                .findFirst().orElse("UNKNOWN");
+                        records.add(new ActionRecord(
+                                Instant.parse(row.path("recordedAt").asText()),
+                                objectiveId,
+                                row.path("workStepId").asText(),
+                                row.path("workerId").asText(),
+                                row.path("assignmentReference").asText(),
+                                row.path("cycle").asInt(),
+                                row.path("thoughtAction").asText(),
+                                consequence,
+                                row.path("actionSuccess").asBoolean(false),
+                                row.path("actionSummary").asText(),
+                                stringMap(row.path("thoughtInputs")),
+                                stringMap(row.path("outputs")),
+                                List.copyOf(refs),
+                                row.path("reflection").asText(),
+                                row.path("reflectionSummary").asText()));
+                        if (records.size() >= 5_000) break;
+                    }
+                    if (records.size() >= 5_000) break;
+                }
+            } catch (IOException failure) {
+                throw new IllegalStateException("action-journal-record-read-failed", failure);
+            }
+            records.sort(java.util.Comparator.comparing(ActionRecord::recordedAt).reversed());
+            return List.copyOf(records);
+        }
+
+        private static Map<String, String> stringMap(JsonNode node) {
+            if (!node.isObject()) return Map.of();
+            Map<String, String> values = new LinkedHashMap<>();
+            node.fields().forEachRemaining(entry -> values.put(entry.getKey(),
+                    entry.getValue().isTextual() ? entry.getValue().asText() : entry.getValue().toString()));
+            return Map.copyOf(values);
+        }
+
+        private static String field(String ref, String marker) {
+            int start = ref.indexOf(marker);
+            if (start < 0) return "";
+            start += marker.length();
+            int end = ref.indexOf(':', start);
+            return (end < 0 ? ref.substring(start) : ref.substring(start, end)).trim();
         }
 
         @Override
