@@ -92,31 +92,48 @@ public final class MetatronConversationRuntime {
                 interaction.conversationId(), interaction.text(), maxTurns,
                 Math.max(4, maxTurns / 4), maxChars);
 
-        // Workplace semantics are first class and channel-independent. A Meeting is not an Intelligence prompt
-        // and must not be accidentally materialized as an execution Objective. The durable Meeting surface lets
-        // Human select Meeting explicitly; natural-language Meeting invocation remains backward compatible.
-        boolean meetingSurfaceSelected = surfaceMode != null
-                && surfaceMode.mode(interaction.conversationId()) == ConversationSurfaceMode.MEETING;
-        if (meetingRoom != null && meetingSurfaceSelected && !meetingRoom.supportsInMeetingMode(interaction.text())) {
-            String answer = "🏛 MEETING · METATRON\nName at least two institutional roles and the topic (for example: Head of Technology + Head of Operations).";
+        // Product hierarchy: Chat and Work are top-level surfaces. Meeting lives inside Work.
+        ConversationSurfaceMode selectedSurface = surfaceMode == null
+                ? ConversationSurfaceMode.CHAT
+                : surfaceMode.mode(interaction.conversationId());
+        boolean workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
+                || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
+        boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
+
+        if (meetingRoom != null && workSurfaceSelected && WorkplaceMeetingService.isAuthorizedFollowUp(interaction.text())) {
+            String meetingAnswer = meetingRoom.handle(interaction, history);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), meetingAnswer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), meetingAnswer, "work:meeting-follow-up");
+        }
+
+        if (meetingRoom != null && meetingModuleSelected && !meetingRoom.supportsInMeetingMode(interaction.text())) {
+            String answer = "🧰 WORK · MEETING\nDescribe the meeting naturally and include the institutional roles involved. "
+                    + "Example: Head of Technology and Head of Gateway discuss creating the Gateway leadership role.";
             memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
             return new MetatronInteractionOrchestrator.InteractionResponse(
                     interaction.conversationId(), answer,
-                    "meeting-surface-guidance:" + interaction.externalMessageReference());
+                    "work:meeting-guidance:" + interaction.externalMessageReference());
         }
-        if (meetingRoom != null && (meetingSurfaceSelected
-                ? meetingRoom.supportsInMeetingMode(interaction.text())
-                : meetingRoom.supports(interaction.text()))) {
+
+        if (meetingRoom != null && meetingModuleSelected && meetingRoom.supportsInMeetingMode(interaction.text())) {
             String meetingAnswer = meetingRoom.handle(interaction, history);
-            String answer = depthControl == null
-                    ? meetingAnswer
-                    : depthControl.responseSignature(interaction.conversationId()) + "\n\n" + meetingAnswer;
+            String answer = meetingAnswer;
             memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
             MeetingRoomReference reference = meetingRoom.findByExternalMessageReference(interaction.externalMessageReference())
                     .map(m -> new MeetingRoomReference(m.meetingId()))
                     .orElse(new MeetingRoomReference("meeting:unresolved"));
             return new MetatronInteractionOrchestrator.InteractionResponse(
                     interaction.conversationId(), answer, reference.meetingId());
+        }
+
+        if (workSurfaceSelected) {
+            String answer = "🧰 WORK · METATRON\nChoose a Work module: 🏛 Meeting or 📊 Monitor. "
+                    + "Work commands stay out of normal Chat and do not silently create Objectives.";
+            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), answer,
+                    "work:module-menu:" + interaction.externalMessageReference());
         }
 
         IntelligenceDepthContract contract = depthControl == null
