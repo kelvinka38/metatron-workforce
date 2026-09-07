@@ -43,11 +43,16 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             Map.entry("workspace.file.write", Map.of(
                     "inputs", Map.of("path", "required workspace-relative path", "content", "required file content; empty allowed"),
                     "purpose", "create or replace one workspace file")),
+            Map.entry("workspace.dependencies.install", Map.of(
+                    "inputs", Map.of("workingDirectory", "optional workspace-relative project directory; empty means workspace root"),
+                    "purpose", "detect Node or Python dependency metadata and install dependencies inside the isolated Objective workspace")),
             Map.entry("workspace.process.run", Map.of(
-                    "inputs", Map.of("executable", "required executable from runtime allowlist", "argsJson", "JSON string array of arguments"),
+                    "inputs", Map.of("executable", "required executable from runtime allowlist", "argsJson", "JSON string array of arguments",
+                            "workingDirectory", "optional workspace-relative working directory"),
                     "purpose", "run one allowlisted process in the isolated Objective sandbox")),
             Map.entry("workspace.shell.run", Map.of(
-                    "inputs", Map.of("command", "required constrained command; no pipes, redirects, chaining or substitution"),
+                    "inputs", Map.of("command", "required constrained command; no pipes, redirects, chaining or substitution",
+                            "workingDirectory", "optional workspace-relative working directory"),
                     "purpose", "run one constrained allowlisted command in the isolated Objective sandbox")),
             Map.entry("workspace.git.status", Map.of(
                     "inputs", Map.of(), "purpose", "read-only inspection of local Git status, immutable HEAD SHA and bounded recent commit log")),
@@ -60,11 +65,13 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "inputs", Map.of("title", "optional pull-request title", "body", "optional pull-request body"),
                     "purpose", "publish the clean committed Objective-workspace delta as an Objective-scoped reviewable GitHub proposal branch and unmerged pull request; no merge authority")),
             Map.entry("workspace.build.run", Map.of(
-                    "inputs", Map.of("tasksJson", "optional JSON string array of build tasks"),
-                    "purpose", "detect Gradle/Maven project and run its build in the isolated sandbox")),
+                    "inputs", Map.of("tasksJson", "optional JSON string array of build tasks/scripts/paths",
+                            "workingDirectory", "optional workspace-relative project directory"),
+                    "purpose", "detect Gradle/Maven, Node package scripts, or Python workspace and run its build in the isolated sandbox")),
             Map.entry("workspace.test.run", Map.of(
-                    "inputs", Map.of("tasksJson", "optional JSON string array of test tasks"),
-                    "purpose", "detect Gradle/Maven project and run tests in the isolated sandbox"))
+                    "inputs", Map.of("tasksJson", "optional JSON string array of test tasks/scripts/pytest arguments",
+                            "workingDirectory", "optional workspace-relative project directory"),
+                    "purpose", "detect Gradle/Maven, Node package scripts, or Python workspace and run tests in the isolated sandbox"))
     );
 
     private final LlmProviderRouter router;
