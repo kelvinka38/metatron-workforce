@@ -40,7 +40,7 @@ LOG_ROOT = Path("/tmp/metatron-sandbox-logs")
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 ALLOWED = {x.strip() for x in os.environ.get(
     "SANDBOX_ALLOWED_EXECUTABLES",
-    "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw,node,npm,npx,pnpm,yarn,python3,python,pip3,pytest"
+    "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw,node,npm,npx,pnpm,yarn,python3,python,pip3"
 ).split(",") if x.strip()}
 WORKSPACE_RE = re.compile(r"^[0-9a-f]{32}$")
 SHELL_DENY = re.compile(r"[;&|><`$\n\r]|\$\(")
