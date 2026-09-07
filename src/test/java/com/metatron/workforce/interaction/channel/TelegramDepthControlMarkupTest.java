@@ -15,9 +15,7 @@ class TelegramDepthControlMarkupTest {
 
         assertEquals(List.of(
                 List.of("💬 Chat", "🏛 Meeting"),
-                List.of("⚡ Fast", "🧠 Analyze", "🔬 Deep"),
-                List.of("🤖 Auto", "🎛 Mode"),
-                List.of("📊 Monitor task")), markup.get("keyboard"));
+                List.of("📊 Monitor")), markup.get("keyboard"));
         assertEquals(true, markup.get("resize_keyboard"));
         assertEquals(true, markup.get("is_persistent"));
         assertTrue(markup.containsKey("input_field_placeholder"));
