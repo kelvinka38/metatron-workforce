@@ -35,7 +35,6 @@ public final class ChannelInteractionIngressService {
             InstitutionalIntelligenceRuntime intelligenceRuntime,
             @Value("${METATRON_GATEWAY_AUDIT_URL:}") String gatewayAuditUrl,
             @Value("${METATRON_GATEWAY_AUDIT_TOKEN:}") String gatewayAuditToken,
-            @Value("${METATRON_CHANNEL_OBJECTIVE_HANDOFF_ENABLED:false}") boolean channelObjectiveHandoffEnabled,
             IntelligenceCaseStore intelligenceCaseStore,
             IntelligenceDepthControlService intelligenceDepthControlService,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
@@ -48,7 +47,7 @@ public final class ChannelInteractionIngressService {
                 provider, objectMapper, gatewayAuditUrl, gatewayAuditToken,
                 Objects.requireNonNull(intelligenceCaseStore, "intelligenceCaseStore"),
                 Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
-                channelObjectiveHandoffEnabled);
+                false);
         MetatronConversationRuntime conversationRuntime = new MetatronConversationRuntime(
                 new PersistentConversationMemoryStore(Path.of(conversationMemoryPath), objectMapper),
                 intelligence,
@@ -61,8 +60,8 @@ public final class ChannelInteractionIngressService {
 
     /**
      * Compatibility hook for package-level tests and adapters. The configured Workforce handoff is
-     * always retained so deterministic explicit Work controls can reach Workforce even when semantic
-     * chat-to-Work routing is disabled. The enabled flag now governs semantic admission in the responder.
+     * retained only for typed/explicit institutional transitions. Ordinary semantic chat is never
+     * authorized to materialize durable Work from this channel ingress.
      */
     static ExecutionObjectiveHandoff channelExecutionHandoff(
             boolean enabled,
