@@ -41,5 +41,5 @@ jobs:
           docker run --rm --entrypoint npm metatron-polyglot-sandbox --version
           docker run --rm --entrypoint pnpm metatron-polyglot-sandbox --version
           docker run --rm --entrypoint python3 metatron-polyglot-sandbox --version
-          docker run --rm --entrypoint pytest metatron-polyglot-sandbox --version
+          docker run --rm --entrypoint python3 metatron-polyglot-sandbox -m pytest --version
           echo "GENERAL_RUNTIME_POLYGLOT_IMAGE=PASS"
