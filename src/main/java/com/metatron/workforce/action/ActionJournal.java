@@ -8,7 +8,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 
 /** Durable append-only journal for Cognitive Worker action observations and reflections. */
@@ -21,6 +24,12 @@ public interface ActionJournal {
                 String authorizationReference,
                 String idempotencyKey,
                 CognitiveWorkerRuntime.Cycle cycle);
+
+    /**
+     * Rehydrates durable action evidence accumulated across prior Worker attempts/replans for one Objective.
+     * Implementations must return only evidence that was actually journaled by governed Action Fabric cycles.
+     */
+    default List<String> objectiveEvidenceReferences(String objectiveId) { return List.of(); }
 
     static ActionJournal noop() { return (a, b, c, d, e, f, g) -> { }; }
 
@@ -38,6 +47,50 @@ public interface ActionJournal {
 
         public FileJournal(Path root) {
             this.root = root;
+        }
+
+        @Override
+        public synchronized List<String> objectiveEvidenceReferences(String objectiveId) {
+            Path directory = root.resolve(safe(objectiveId));
+            if (!Files.isDirectory(directory)) return List.of();
+
+            LinkedHashSet<String> evidence = new LinkedHashSet<>();
+            try (var files = Files.list(directory)) {
+                for (Path file : files
+                        .filter(path -> Files.isRegularFile(path) && path.getFileName().toString().endsWith(".jsonl"))
+                        .sorted()
+                        .toList()) {
+                    for (String line : Files.readAllLines(file)) {
+                        if (line == null || line.isBlank()) continue;
+                        Map<?, ?> row;
+                        try {
+                            row = JSON.readValue(line, Map.class);
+                        } catch (Exception invalid) {
+                            throw new IllegalStateException("action-journal-read-invalid-json:" + file.getFileName(), invalid);
+                        }
+                        Object refs = row.get("evidenceReferences");
+                        if (refs instanceof List<?> list) {
+                            for (Object ref : list) {
+                                if (ref != null && !String.valueOf(ref).isBlank()) evidence.add(String.valueOf(ref));
+                            }
+                        }
+                        String action = String.valueOf(row.getOrDefault("thoughtAction", ""));
+                        String step = String.valueOf(row.getOrDefault("workStepId", ""));
+                        String cycle = String.valueOf(row.getOrDefault("cycle", ""));
+                        String success = String.valueOf(row.getOrDefault("actionSuccess", ""));
+                        if (!action.isBlank()) {
+                            evidence.add("action-journal:action=" + action
+                                    + ":success=" + success
+                                    + ":step=" + step
+                                    + ":cycle=" + cycle);
+                        }
+                        if (evidence.size() >= 5_000) return List.copyOf(evidence);
+                    }
+                }
+            } catch (IOException failure) {
+                throw new IllegalStateException("action-journal-read-failed", failure);
+            }
+            return List.copyOf(evidence);
         }
 
         @Override
