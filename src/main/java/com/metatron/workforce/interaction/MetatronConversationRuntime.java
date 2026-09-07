@@ -142,9 +142,9 @@ public final class MetatronConversationRuntime {
         String rawAnswer = intelligence.respond(
                 interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
                 channel, interaction.conversationId(), interaction.organizationContextId(), history, contract);
-        String answer = depthControl == null
-                ? rawAnswer
-                : depthControl.responseSignature(interaction.conversationId()) + "\n\n" + rawAnswer;
+        // Depth remains an internal execution preference until differentiated mode flows are completed.
+        // Do not surface FAST/ANALYZE/DEEP labels in the Chat product UI.
+        String answer = rawAnswer;
         memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
 
         return new MetatronInteractionOrchestrator.InteractionResponse(
