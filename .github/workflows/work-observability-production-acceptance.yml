@@ -2,7 +2,7 @@ name: Work Observability Production Acceptance
 
 on:
   workflow_run:
-    workflows: ["Production Deploy"]
+    workflows: ["Highway Production Deploy"]
     types: [completed]
 
 permissions:
