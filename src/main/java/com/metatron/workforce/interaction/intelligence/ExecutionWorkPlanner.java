@@ -120,6 +120,12 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicGeneralEngineeringFallback);
             return deterministicGeneralEngineeringFallback;
         }
+        List<ExecutionWorkSpec> deterministicExplicitGeneralWorkspace =
+                deterministicExplicitGeneralWorkspace(normalized, availableExecutionCapabilities);
+        if (!deterministicExplicitGeneralWorkspace.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicExplicitGeneralWorkspace);
+            return deterministicExplicitGeneralWorkspace;
+        }
         List<ExecutionWorkSpec> deterministicExternalResearchFallback = deterministicExternalResearchWork(
                 normalized, availableExecutionCapabilities);
         if (!deterministicExternalResearchFallback.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
@@ -138,6 +144,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             if (!deterministicGeneralEngineeringFallback.isEmpty()) {
                 validate(deterministicGeneralEngineeringFallback);
                 return deterministicGeneralEngineeringFallback;
+            }
+            if (!deterministicExplicitGeneralWorkspace.isEmpty()) {
+                validate(deterministicExplicitGeneralWorkspace);
+                return deterministicExplicitGeneralWorkspace;
             }
             if (!deterministicExternalResearchFallback.isEmpty()) {
                 validate(deterministicExternalResearchFallback);
@@ -186,6 +196,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         if (!deterministicGeneralEngineeringFallback.isEmpty()) {
             validate(deterministicGeneralEngineeringFallback);
             return deterministicGeneralEngineeringFallback;
+        }
+        if (!deterministicExplicitGeneralWorkspace.isEmpty()) {
+            validate(deterministicExplicitGeneralWorkspace);
+            return deterministicExplicitGeneralWorkspace;
         }
         if (!deterministicExternalResearchFallback.isEmpty()) {
             validate(deterministicExternalResearchFallback);
@@ -546,6 +560,79 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 ExecutionWorkSpec.Consequence.READ_ONLY,
                 acceptance,
                 evidence));
+    }
+
+
+    /**
+     * Explicit selection of execution.general.workspace is already a capability-routing decision.
+     * The general Cognitive Worker owns decomposition inside its governed action loop, so management
+     * planning must not depend on a frontier provider merely to wrap the Human outcome in one Work item.
+     */
+    private static List<ExecutionWorkSpec> deterministicExplicitGeneralWorkspace(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, GENERAL_WORKSPACE)) return List.of();
+
+        List<String> repositories = requestedRepositoryTargets(normalized.target());
+        if (repositories.size() != 1) return List.of();
+
+        StringBuilder request = new StringBuilder(normalized.objective().trim());
+        if (!normalized.constraints().isEmpty()) {
+            request.append("\nConstraints: ").append(String.join("; ", normalized.constraints()));
+        }
+        if (!normalized.explicitProhibitions().isEmpty()) {
+            request.append("\nProhibitions: ").append(String.join("; ", normalized.explicitProhibitions()));
+        }
+        if (!normalized.requestedOutput().isBlank()) {
+            request.append("\nRequested output: ").append(normalized.requestedOutput().trim());
+        }
+        String semantic = request.toString();
+        String lower = semantic.toLowerCase(Locale.ROOT);
+        if (!lower.contains(GENERAL_WORKSPACE.toLowerCase(Locale.ROOT))) return List.of();
+
+        boolean mutationIntent = lower.contains(" fix") || lower.contains("repair")
+                || lower.contains(" change") || lower.contains(" modify") || lower.contains(" update")
+                || lower.contains(" write") || lower.contains(" create") || lower.contains(" delete")
+                || lower.contains(" commit") || lower.contains(" pull request") || lower.contains(" open pr")
+                || lower.contains(" deploy") || lower.contains(" publish");
+        boolean explicitReadOnly = lower.contains("read-only") || lower.contains("read only")
+                || lower.contains("do not mutate") || lower.contains("without mutation")
+                || lower.contains("without mutating");
+        ExecutionWorkSpec.Consequence consequence = mutationIntent && !explicitReadOnly
+                ? ExecutionWorkSpec.Consequence.MUTATING
+                : ExecutionWorkSpec.Consequence.READ_ONLY;
+
+        List<String> acceptance = new ArrayList<>();
+        acceptance.add("Normalized Objective outcome is satisfied: " + bounded(normalized.objective(), 1_500));
+        if (consequence == ExecutionWorkSpec.Consequence.MUTATING) {
+            acceptance.add("requested source/workspace change is present in the governed work product");
+        }
+        boolean testRequested = lower.contains("test") || lower.contains("verify");
+        if (testRequested) acceptance.add("tests pass after the latest source mutation");
+        boolean pullRequested = lower.contains("pull request") || lower.contains("open pr")
+                || lower.contains("proposal branch") || lower.contains("publish") && lower.contains("github");
+        if (pullRequested) acceptance.add("reviewable pull request exists for the committed Objective work product");
+        if (lower.contains("do not merge")
+                || normalized.explicitProhibitions().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).anyMatch(value -> value.contains("merge"))) {
+            acceptance.add("remote proposal remains unmerged");
+        }
+
+        List<String> evidence = new ArrayList<>();
+        evidence.add("requested-capability:" + GENERAL_WORKSPACE);
+        evidence.add("general Action Fabric action journal");
+        if (testRequested) evidence.add("successful workspace.test.run evidence");
+        if (pullRequested) evidence.add("fresh authoritative GitHub API Observation");
+
+        return List.of(new ExecutionWorkSpec(
+                "general-explicit-workspace",
+                semantic,
+                repositories.getFirst(),
+                GENERAL_WORKSPACE,
+                List.of(),
+                consequence,
+                List.copyOf(acceptance),
+                List.copyOf(evidence)));
     }
 
 
