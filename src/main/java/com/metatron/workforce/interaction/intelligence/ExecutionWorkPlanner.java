@@ -4,8 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.interaction.llm.LlmProviderRouter;
-import com.metatron.workforce.interaction.llm.LlmRequest;
-import com.metatron.workforce.interaction.llm.LlmResponse;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -68,20 +66,40 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             - Dependencies may only refer to earlier steps.
             """;
 
-    private final LlmProviderRouter router;
-    private final Function<LlmProvider, String> modelSelector;
-    private final List<LlmProvider> providers;
+    private final IntelligenceFabric fabric;
+    private final int providerBudget;
     private final ObjectMapper mapper;
 
+    /** Compatibility constructor; provider transport remains contained inside Intelligence. */
     public ExecutionWorkPlanner(LlmProviderRouter router,
                                 Function<LlmProvider, String> modelSelector,
                                 List<LlmProvider> configuredProviders,
                                 ObjectMapper mapper) {
-        this.router = Objects.requireNonNull(router, "router");
-        this.modelSelector = Objects.requireNonNull(modelSelector, "modelSelector");
-        Objects.requireNonNull(configuredProviders, "configuredProviders");
-        this.providers = configuredProviders.stream().distinct().toList();
+        this(compatibilityFabric(router, modelSelector, configuredProviders),
+                configuredProviders == null ? 0 : configuredProviders.stream().distinct().toList().size(),
+                mapper);
+    }
+
+    public ExecutionWorkPlanner(IntelligenceFabric fabric, int providerBudget, ObjectMapper mapper) {
+        this.fabric = Objects.requireNonNull(fabric, "fabric");
+        this.providerBudget = Math.max(0, providerBudget);
         this.mapper = Objects.requireNonNull(mapper, "mapper");
+    }
+
+    private static IntelligenceFabric compatibilityFabric(
+            LlmProviderRouter router,
+            Function<LlmProvider, String> modelSelector,
+            List<LlmProvider> configuredProviders) {
+        Objects.requireNonNull(router, "router");
+        Objects.requireNonNull(modelSelector, "modelSelector");
+        Objects.requireNonNull(configuredProviders, "configuredProviders");
+        List<LlmProvider> providers = configuredProviders.stream().distinct().toList();
+        RouterBackedIntelligenceEngine engine = new RouterBackedIntelligenceEngine(router, modelSelector);
+        return new IntelligenceFabric(
+                new IntelligencePlanner(new AdaptiveProviderRoutingPolicy(providers, router.telemetry())),
+                engine,
+                new EvidencePreservingIntelligenceSynthesizer(),
+                new EvidenceBackedGovernance());
     }
 
     @Override
@@ -126,7 +144,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicExternalResearchFallback);
             return deterministicExternalResearchFallback;
         }
-        if (providers.isEmpty()) {
+        if (providerBudget < 1) {
             if (!deterministicSingleRepositoryPlan.isEmpty()) {
                 validate(deterministicSingleRepositoryPlan);
                 return deterministicSingleRepositoryPlan;
@@ -159,21 +177,36 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             throw new IllegalStateException("execution_planning_input_exceeds_bound");
         }
 
-        List<LlmProvider> orderedProviders = providersFor(normalized);
-        List<RuntimeException> failures = new ArrayList<>();
-        for (LlmProvider provider : orderedProviders) {
-            try {
-                LlmResponse response = router.complete(new LlmRequest(provider, modelSelector.apply(provider), SYSTEM, input));
-                List<ExecutionWorkSpec> plan = parse(response);
-                plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
-                plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
-                plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
-                validate(plan);
-                if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
-                return plan;
-            } catch (RuntimeException failure) {
-                failures.add(new IllegalStateException("execution planning provider failed: " + provider + ": " + failure.getMessage(), failure));
-            }
+        try {
+            List<LlmProvider> requestedProviders = normalized.explicitlyRequestedProvider() == null
+                    ? List.of() : List.of(normalized.explicitlyRequestedProvider());
+            IntelligenceRequest request = new IntelligenceRequest(
+                    "execution-planning-" + caseId,
+                    "workforce-management",
+                    IntelligenceMode.REASONING,
+                    CollaborationMode.SINGLE,
+                    SYSTEM,
+                    input,
+                    List.of("intelligence-case:" + caseId),
+                    "execution.work.planning",
+                    IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
+                    "management-planning",
+                    "bounded",
+                    "",
+                    "one strict execution_work_plan JSON object",
+                    requestedProviders,
+                    requestedProviders.isEmpty() ? providerBudget : 1,
+                    false);
+            IntelligenceResult result = fabric.execute(request);
+            List<ExecutionWorkSpec> plan = parse(result.text(), "IntelligenceFabric");
+            plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
+            plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
+            plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
+            validate(plan);
+            if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
+            return plan;
+        } catch (RuntimeException intelligenceFailure) {
+            // Deterministic fallbacks below remain available during Intelligence capacity failure.
         }
         if (!deterministicSingleRepositoryPlan.isEmpty()) {
             validate(deterministicSingleRepositoryPlan);
@@ -191,20 +224,12 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             validate(deterministicExternalResearchFallback);
             return deterministicExternalResearchFallback;
         }
-        IllegalStateException all = new IllegalStateException("all execution planning providers failed: " + orderedProviders);
-        failures.forEach(all::addSuppressed);
-        throw all;
+        throw new IllegalStateException("execution planning Intelligence unavailable and no deterministic fallback applies");
     }
 
     public List<ExecutionWorkSpec> plan(String caseId, NormalizedRequest normalized,
                                         List<String> availableExecutionCapabilities) {
         return propose(caseId, normalized, availableExecutionCapabilities);
-    }
-
-    private List<LlmProvider> providersFor(NormalizedRequest normalized) {
-        LlmProvider explicit = normalized.explicitlyRequestedProvider();
-        if (explicit != null) return providers.contains(explicit) ? List.of(explicit) : List.of();
-        return AdaptiveProviderRoutingPolicy.rankConfiguredProviders(providers, router.telemetry());
     }
 
     private static String render(NormalizedRequest request) {
@@ -251,9 +276,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         return trimmed.length() <= maxChars ? trimmed : trimmed.substring(0, maxChars);
     }
 
-    private List<ExecutionWorkSpec> parse(LlmResponse response) {
+    private List<ExecutionWorkSpec> parse(String responseText, String source) {
         try {
-            JsonNode root = mapper.readTree(unwrapJson(response.text()));
+            JsonNode root = mapper.readTree(unwrapJson(responseText));
             JsonNode node = root.path("execution_work_plan");
             if (!node.isArray()) return List.of();
             List<ExecutionWorkSpec> values = new ArrayList<>();
@@ -275,7 +300,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         } catch (RuntimeException failure) {
             throw failure;
         } catch (Exception failure) {
-            throw new IllegalStateException("invalid execution plan from " + response.provider(), failure);
+            throw new IllegalStateException("invalid execution plan from " + source, failure);
         }
     }
 
