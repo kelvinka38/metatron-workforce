@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.interaction.llm.LlmProviderRouter;
+import com.metatron.workforce.interaction.llm.LlmRequest;
+import com.metatron.workforce.interaction.llm.LlmResponse;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -69,21 +71,31 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private final IntelligenceFabric fabric;
     private final int providerBudget;
     private final ObjectMapper mapper;
+    private final LlmProviderRouter compatibilityRouter;
+    private final Function<LlmProvider, String> compatibilityModelSelector;
+    private final List<LlmProvider> compatibilityProviders;
 
     /** Compatibility constructor; provider transport remains contained inside Intelligence. */
     public ExecutionWorkPlanner(LlmProviderRouter router,
                                 Function<LlmProvider, String> modelSelector,
                                 List<LlmProvider> configuredProviders,
                                 ObjectMapper mapper) {
-        this(compatibilityFabric(router, modelSelector, configuredProviders),
-                configuredProviders == null ? 0 : configuredProviders.stream().distinct().toList().size(),
-                mapper);
+        this.compatibilityRouter = Objects.requireNonNull(router, "router");
+        this.compatibilityModelSelector = Objects.requireNonNull(modelSelector, "modelSelector");
+        Objects.requireNonNull(configuredProviders, "configuredProviders");
+        this.compatibilityProviders = configuredProviders.stream().distinct().toList();
+        this.fabric = compatibilityFabric(router, modelSelector, configuredProviders);
+        this.providerBudget = this.compatibilityProviders.size();
+        this.mapper = Objects.requireNonNull(mapper, "mapper");
     }
 
     public ExecutionWorkPlanner(IntelligenceFabric fabric, int providerBudget, ObjectMapper mapper) {
         this.fabric = Objects.requireNonNull(fabric, "fabric");
         this.providerBudget = Math.max(0, providerBudget);
         this.mapper = Objects.requireNonNull(mapper, "mapper");
+        this.compatibilityRouter = null;
+        this.compatibilityModelSelector = null;
+        this.compatibilityProviders = List.of();
     }
 
     private static IntelligenceFabric compatibilityFabric(
@@ -177,6 +189,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             throw new IllegalStateException("execution_planning_input_exceeds_bound");
         }
 
+        if (compatibilityRouter != null) {
+            return proposeViaCompatibilityTransport(
+                    normalized, availableExecutionCapabilities, input,
+                    deterministicSingleRepositoryPlan, deterministicCrossRepositoryFallback,
+                    deterministicGeneralEngineeringFallback, deterministicExternalResearchFallback);
+        }
+
         try {
             List<LlmProvider> requestedProviders = normalized.explicitlyRequestedProvider() == null
                     ? List.of() : List.of(normalized.explicitlyRequestedProvider());
@@ -225,6 +244,56 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             return deterministicExternalResearchFallback;
         }
         throw new IllegalStateException("execution planning Intelligence unavailable and no deterministic fallback applies");
+    }
+
+    private List<ExecutionWorkSpec> proposeViaCompatibilityTransport(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities,
+            String input,
+            List<ExecutionWorkSpec> deterministicSingleRepositoryPlan,
+            List<ExecutionWorkSpec> deterministicCrossRepositoryFallback,
+            List<ExecutionWorkSpec> deterministicGeneralEngineeringFallback,
+            List<ExecutionWorkSpec> deterministicExternalResearchFallback) {
+        List<LlmProvider> orderedProviders = providersForCompatibility(normalized);
+        List<RuntimeException> failures = new ArrayList<>();
+        for (LlmProvider provider : orderedProviders) {
+            try {
+                LlmResponse response = compatibilityRouter.complete(new LlmRequest(
+                        provider, compatibilityModelSelector.apply(provider), SYSTEM, input));
+                List<ExecutionWorkSpec> plan = parse(response.text(), provider.name());
+                plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
+                plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
+                plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
+                validate(plan);
+                if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
+                return plan;
+            } catch (RuntimeException failure) {
+                failures.add(new IllegalStateException(
+                        "execution planning provider failed: " + provider + ": " + failure.getMessage(), failure));
+            }
+        }
+        if (!deterministicSingleRepositoryPlan.isEmpty()) return validated(deterministicSingleRepositoryPlan);
+        if (!deterministicCrossRepositoryFallback.isEmpty()) return validated(deterministicCrossRepositoryFallback);
+        if (!deterministicGeneralEngineeringFallback.isEmpty()) return validated(deterministicGeneralEngineeringFallback);
+        if (!deterministicExternalResearchFallback.isEmpty()) return validated(deterministicExternalResearchFallback);
+        IllegalStateException all = new IllegalStateException(
+                "all execution planning providers failed: " + orderedProviders);
+        failures.forEach(all::addSuppressed);
+        throw all;
+    }
+
+    private List<LlmProvider> providersForCompatibility(NormalizedRequest normalized) {
+        LlmProvider explicit = normalized.explicitlyRequestedProvider();
+        if (explicit != null) {
+            return compatibilityProviders.contains(explicit) ? List.of(explicit) : List.of();
+        }
+        return AdaptiveProviderRoutingPolicy.rankConfiguredProviders(
+                compatibilityProviders, compatibilityRouter.telemetry());
+    }
+
+    private static List<ExecutionWorkSpec> validated(List<ExecutionWorkSpec> plan) {
+        validate(plan);
+        return plan;
     }
 
     public List<ExecutionWorkSpec> plan(String caseId, NormalizedRequest normalized,
