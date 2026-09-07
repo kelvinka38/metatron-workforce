@@ -335,6 +335,64 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
+    void failedTestAfterLatestPatchReturnsControlToCognitionInsteadOfBlindRetry() {
+        ExecutionWorkSpec work = iterativeRepairWork();
+        CognitiveWorkerRuntime.Cycle patched = successfulCycle(
+                1, "workspace.file.patch",
+                Map.of("path", "src/main/App.java", "oldText", "broken", "newText", "attempt-one"));
+        CognitiveWorkerRuntime.CognitiveContext beforeTest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
+                List.of(patched), Map.of("workspaceMaterialized", "true"));
+
+        CognitiveWorkerRuntime.Thought forcedTest =
+                GeneralCognitiveWorkerBrain.governedTestPrecondition(beforeTest);
+        assertEquals("workspace.test.run", forcedTest.actionRef());
+
+        CognitiveWorkerRuntime.Cycle failedTest = new CognitiveWorkerRuntime.Cycle(
+                2,
+                new CognitiveWorkerRuntime.Thought("workspace.test.run", Map.of(), "verify repair"),
+                ActionFabric.ActionObservation.failure(
+                        "workspace.test.run", "tests failed: expected fixed but got attempt-one",
+                        List.of("test-failure")),
+                CognitiveWorkerRuntime.Reflection.continueWith("inspect failure"));
+        CognitiveWorkerRuntime.CognitiveContext afterFailedTest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
+                List.of(patched, failedTest), Map.of("workspaceMaterialized", "true"));
+
+        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(afterFailedTest),
+                "failed verification must yield control to general cognition for diagnosis/repair");
+    }
+
+    @Test
+    void newPatchAfterFailedTestRequiresFreshVerificationAgain() {
+        ExecutionWorkSpec work = iterativeRepairWork();
+        CognitiveWorkerRuntime.Cycle firstPatch = successfulCycle(
+                1, "workspace.file.patch",
+                Map.of("path", "src/main/App.java", "oldText", "broken", "newText", "attempt-one"));
+        CognitiveWorkerRuntime.Cycle failedTest = new CognitiveWorkerRuntime.Cycle(
+                2,
+                new CognitiveWorkerRuntime.Thought("workspace.test.run", Map.of(), "verify first repair"),
+                ActionFabric.ActionObservation.failure(
+                        "workspace.test.run", "tests still fail", List.of("test-failure")),
+                CognitiveWorkerRuntime.Reflection.continueWith("repair again"));
+        CognitiveWorkerRuntime.Cycle secondPatch = successfulCycle(
+                3, "workspace.file.patch",
+                Map.of("path", "src/main/App.java", "oldText", "attempt-one", "newText", "fixed"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
+                List.of(firstPatch, failedTest, secondPatch), Map.of("workspaceMaterialized", "true"));
+
+        CognitiveWorkerRuntime.Thought freshTest =
+                GeneralCognitiveWorkerBrain.governedTestPrecondition(context);
+
+        assertEquals("workspace.test.run", freshTest.actionRef(),
+                "every new source mutation must be verified even after an earlier failed test");
+    }
+
+    @Test
     void exactSourceReplacementCannotJumpFromMaterializationToRemotePublish() {
         ExecutionWorkSpec work = exactReplacementAndPublishWork();
         CognitiveWorkerRuntime.Cycle materialized = successfulCycle(
@@ -464,6 +522,18 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
 
         assertThrows(IllegalStateException.class,
                 () -> GeneralCognitiveWorkerBrain.governedExactTextReplacementPrecondition(context));
+    }
+
+    private static ExecutionWorkSpec iterativeRepairWork() {
+        return new ExecutionWorkSpec(
+                "repair-unknown-defect",
+                "Inspect an unfamiliar defect, repair the source, run tests, diagnose failures, and keep iterating until tests pass",
+                "kelvinka38/example",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("defect repaired", "tests pass after the latest source mutation"),
+                List.of("governed workspace.test.run evidence"));
     }
 
     private static ExecutionWorkSpec exactReplacementAndPublishWork() {

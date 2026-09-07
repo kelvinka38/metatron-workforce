@@ -47,6 +47,8 @@ class ObjectiveWorkspaceAndProfileClosureTest {
         assertTrue(binding.profile().actionRefs().contains("research.web.search"));
         assertTrue(binding.profile().actionRefs().contains("workspace.repository.materialize"));
         assertTrue(binding.profile().actionRefs().contains("workspace.file.write"));
+        assertTrue(binding.profile().actionRefs().contains("workspace.file.search"));
+        assertTrue(binding.profile().actionRefs().contains("workspace.file.patch"));
         assertTrue(binding.profile().actionRefs().contains("workspace.dependencies.install"));
         assertTrue(binding.profile().actionRefs().contains("workspace.git.run"));
         assertTrue(binding.profile().actionRefs().contains("workspace.build.run"));

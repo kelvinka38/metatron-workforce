@@ -26,6 +26,8 @@ jobs:
           chmod +x gradlew
           ./gradlew test --no-daemon --max-workers=1 \
             --tests com.metatron.workforce.action.GeneralWorkspacePolyglotRuntimeContractTest \
+            --tests com.metatron.workforce.action.GeneralWorkspaceSearchPatchContractTest \
+            --tests com.metatron.workforce.action.GeneralCognitiveWorkerBrainPreconditionTest \
             --tests com.metatron.workforce.runtime.ObjectiveWorkspaceAndProfileClosureTest \
             --tests com.metatron.workforce.action.GeneralWorkspaceBuildResourceContractTest
 

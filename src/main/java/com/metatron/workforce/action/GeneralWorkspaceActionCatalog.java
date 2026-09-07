@@ -52,6 +52,8 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, repositoryMaterialize(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, fileRead(workerId, authorizationReference, workspace));
         add(profile, actions, fileList(workerId, authorizationReference, workspace));
+        add(profile, actions, fileSearch(workerId, authorizationReference, workspace));
+        add(profile, actions, filePatch(workerId, authorizationReference, workspace));
         add(profile, actions, fileWrite(workerId, authorizationReference, workspace));
         add(profile, actions, dependenciesInstall(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, process(workerId, authorizationReference, objectiveId));
@@ -245,6 +247,86 @@ public final class GeneralWorkspaceActionCatalog {
             List<String> files = workspaces.list(workspace, path);
             return observation(request.actionRef(), true, "workspace listed",
                     Map.of("path", path, "filesJson", write(files)), workspaceEvidence(workspace, request.actionRef()));
+        });
+    }
+
+    private ActionFabric.Action fileSearch(String worker, String auth, ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        return action("workspace.file.search", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
+            String query = input(request, "query");
+            String path = request.inputs().getOrDefault("path", "").trim();
+            int maxMatches;
+            try {
+                maxMatches = Integer.parseInt(request.inputs().getOrDefault("maxMatches", "100"));
+            } catch (NumberFormatException invalid) {
+                throw new IllegalArgumentException("maxMatches must be an integer", invalid);
+            }
+            if (maxMatches < 1 || maxMatches > 500) throw new IllegalArgumentException("maxMatches must be between 1 and 500");
+            Path start = path.isBlank() ? workspace.path() : workspaces.resolve(workspace, path);
+            if (!Files.isDirectory(start, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalArgumentException("workspace search path is not a directory: " + path);
+            }
+            List<Map<String, Object>> matches = new ArrayList<>();
+            try (var stream = Files.walk(start, 12)) {
+                for (Path candidate : stream
+                        .filter(p -> Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                        .filter(p -> !Files.isSymbolicLink(p))
+                        .toList()) {
+                    if (matches.size() >= maxMatches) break;
+                    String relative = workspace.path().relativize(candidate).toString().replace('\\', '/');
+                    if (relative.equals(".git") || relative.startsWith(".git/")
+                            || relative.startsWith(".gradle/") || relative.startsWith("node_modules/")
+                            || relative.contains("/node_modules/") || relative.startsWith("build/")
+                            || relative.contains("/build/")) continue;
+                    if (Files.size(candidate) > 1_000_000L) continue;
+                    List<String> lines;
+                    try {
+                        lines = Files.readAllLines(candidate);
+                    } catch (java.nio.charset.MalformedInputException binary) {
+                        continue;
+                    }
+                    for (int i = 0; i < lines.size() && matches.size() < maxMatches; i++) {
+                        String line = lines.get(i);
+                        if (!line.contains(query)) continue;
+                        String excerpt = line.strip();
+                        if (excerpt.length() > 500) excerpt = excerpt.substring(0, 500);
+                        matches.add(Map.of("path", relative, "line", i + 1, "excerpt", excerpt));
+                    }
+                }
+            } catch (IOException failure) {
+                throw new IllegalStateException("workspace search failed", failure);
+            }
+            return observation(request.actionRef(), true, "workspace text search completed",
+                    Map.of("query", query, "matchCount", Integer.toString(matches.size()), "matchesJson", write(matches)),
+                    workspaceEvidence(workspace, request.actionRef()));
+        });
+    }
+
+    private ActionFabric.Action filePatch(String worker, String auth, ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        return action("workspace.file.patch", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+            String path = input(request, "path");
+            String oldText = input(request, "oldText");
+            String newText = request.inputs().getOrDefault("newText", "");
+            int expected;
+            try {
+                expected = Integer.parseInt(request.inputs().getOrDefault("expectedOccurrences", "1"));
+            } catch (NumberFormatException invalid) {
+                throw new IllegalArgumentException("expectedOccurrences must be an integer", invalid);
+            }
+            if (expected < 1 || expected > 100) {
+                throw new IllegalArgumentException("expectedOccurrences must be between 1 and 100");
+            }
+            String content = workspaces.read(workspace, path);
+            int actual = 0;
+            for (int offset = 0; (offset = content.indexOf(oldText, offset)) >= 0; offset += oldText.length()) actual++;
+            if (actual != expected) {
+                throw new IllegalStateException("workspace patch expected " + expected + " occurrences but found " + actual);
+            }
+            String updated = content.replace(oldText, newText);
+            workspaces.write(workspace, path, updated);
+            return observation(request.actionRef(), true, "workspace file patch applied",
+                    Map.of("path", path, "occurrences", Integer.toString(actual),
+                            "bytes", Integer.toString(updated.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)),
+                    workspaceEvidence(workspace, request.actionRef()));
         });
     }
 

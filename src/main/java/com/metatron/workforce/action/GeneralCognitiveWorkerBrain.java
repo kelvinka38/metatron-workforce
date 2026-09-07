@@ -40,6 +40,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             Map.entry("workspace.file.list", Map.of(
                     "inputs", Map.of("path", "optional workspace-relative directory; empty means root"),
                     "purpose", "list bounded workspace paths")),
+            Map.entry("workspace.file.search", Map.of(
+                    "inputs", Map.of("query", "required exact text fragment", "path", "optional workspace-relative directory",
+                            "maxMatches", "optional integer 1..500; default 100"),
+                    "purpose", "search source text across the bounded Objective workspace and return path/line/excerpt matches")),
+            Map.entry("workspace.file.patch", Map.of(
+                    "inputs", Map.of("path", "required workspace-relative file", "oldText", "required exact existing text",
+                            "newText", "replacement text; empty allowed", "expectedOccurrences", "optional integer; default 1"),
+                    "purpose", "apply one bounded exact patch after inspection; fails closed if occurrence count differs")),
             Map.entry("workspace.file.write", Map.of(
                     "inputs", Map.of("path", "required workspace-relative path", "content", "required file content; empty allowed"),
                     "purpose", "create or replace one workspace file")),
@@ -110,6 +118,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 You are the action-selection brain for a governed Metatron Cognitive Worker.
                 You have no authority to execute outside the supplied action catalog.
                 Select exactly one next action that advances the actual Work using current observations.
+                For unfamiliar code, inspect before editing: list/search/read the relevant source, reproduce or run focused tests when useful, then patch.
+                After a failed test/build/action, do not blindly repeat it. Inspect the failure, search/read relevant code, change state, then retry verification.
+                Prefer workspace.file.patch for bounded edits after you have observed the exact source; use workspace.file.write when creating files or replacing complete content.
                 Do not invent action names or input keys. Follow the supplied actionContracts exactly.
                 If the Work targets a repository and the workspace has not yet been materialized, use workspace.repository.materialize before any Git, build, test or repository-file action.
                 Repository materialization creates a local baseline commit. The authoritative source snapshot identity is sourceCommitSha from materialization provenance; localBaselineCommitSha and later local HEAD identify the mutable Objective workspace and need not equal sourceCommitSha.
@@ -322,9 +333,28 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING
                 && !hasWorkspaceSourceMutation(context)) return null;
         if (governedTestSatisfied(context)) return null;
+        if (testAttemptedAfterLatestMutation(context)) {
+            // A failed verification after the latest mutation must return control to cognition so it can
+            // inspect the failure and modify the work product instead of looping the same test forever.
+            return null;
+        }
         return new CognitiveWorkerRuntime.Thought(
                 "workspace.test.run", Map.of(),
                 "Run the governed repository test suite against the latest Objective-workspace source mutation before commit/publication");
+    }
+
+    private static boolean testAttemptedAfterLatestMutation(CognitiveWorkerRuntime.CognitiveContext context) {
+        int latestMutation = -1;
+        int latestTest = -1;
+        for (int i = 0; i < context.history().size(); i++) {
+            String action = context.history().get(i).thought().actionRef();
+            if ("workspace.file.write".equals(action)
+                    || "workspace.file.patch".equals(action)
+                    || "workspace.shell.run".equals(action)
+                    || "workspace.process.run".equals(action)) latestMutation = i;
+            if ("workspace.test.run".equals(action)) latestTest = i;
+        }
+        return latestMutation >= 0 && latestTest > latestMutation;
     }
 
     static CognitiveWorkerRuntime.Thought governedGitPrecondition(
@@ -404,6 +434,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static boolean hasWorkspaceSourceMutation(CognitiveWorkerRuntime.CognitiveContext context) {
         return context.history().stream().anyMatch(cycle -> cycle.observation().success()
                 && ("workspace.file.write".equals(cycle.thought().actionRef())
+                || "workspace.file.patch".equals(cycle.thought().actionRef())
                 || "workspace.shell.run".equals(cycle.thought().actionRef())
                 || "workspace.process.run".equals(cycle.thought().actionRef())));
     }
@@ -417,6 +448,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             if (!cycle.observation().success()) continue;
             String action = cycle.thought().actionRef();
             if ("workspace.file.write".equals(action)
+                    || "workspace.file.patch".equals(action)
                     || "workspace.shell.run".equals(action)
                     || "workspace.process.run".equals(action)) latestMutation = i;
             if ("workspace.test.run".equals(action)) latestTest = i;
@@ -719,6 +751,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 COMPLETE only when every acceptance requirement can be supported by actual observations already obtained.
                 CONTINUE if another governed action can advance or verify the Work.
                 FAILED only when the observed state makes bounded recovery impossible.
+                A failed test/build/tool observation is normally recoverable: CONTINUE when search/read/patch/retry can still advance the Work.
+                Do not repeat the identical failed action without an intervening state-changing or diagnostic action.
                 Never treat a successful intermediate action as completion of unrelated acceptance criteria.
                 Repository source identity is proven by workspace.repository.materialize output sourceCommitSha. localBaselineCommitSha and workspace.git.status headSha are local Objective-workspace identities and may intentionally differ from sourceCommitSha.
                 For external research/synthesis Work, a COMPLETE summary is the durable Work output, not a status sentence. It MUST contain the requested substantive deliverable, preserve source URLs or canonical identifiers from observations, distinguish evidence from inference, and explicitly state uncertainty.

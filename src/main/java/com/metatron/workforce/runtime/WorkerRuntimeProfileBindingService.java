@@ -103,7 +103,7 @@ public final class WorkerRuntimeProfileBindingService {
                     Set.of(
                             "research.web.search",
                             "workspace.repository.materialize",
-                            "workspace.file.read", "workspace.file.list", "workspace.file.write",
+                            "workspace.file.read", "workspace.file.list", "workspace.file.search", "workspace.file.patch", "workspace.file.write",
                             "workspace.dependencies.install",
                             "workspace.process.run", "workspace.shell.run",
                             "workspace.git.status", "workspace.git.diff", "workspace.git.run",
