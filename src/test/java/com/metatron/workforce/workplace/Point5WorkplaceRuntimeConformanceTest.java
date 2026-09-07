@@ -2,12 +2,14 @@ package com.metatron.workforce.workplace;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.MetatronInteraction;
+import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.phase3.ActorRef;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -74,6 +76,68 @@ class Point5WorkplaceRuntimeConformanceTest {
         assertEquals(3, reloaded.contributions().size());
         assertFalse(reloaded.authorityCreated());
     }
+
+
+    @Test
+    void explicitMeetingFollowUpSeedsWorkforceWhileOrdinaryChatDoesNot() {
+        ObjectMapper json = new ObjectMapper();
+        PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("handoff"), json);
+        AtomicInteger submissions = new AtomicInteger();
+        ExecutionObjectiveHandoff handoff = (humanId, organizationContextId, caseId, conversationId,
+                                             externalMessageReference, channel, request) -> {
+            submissions.incrementAndGet();
+            assertTrue(caseId.startsWith("meeting-case:meeting:"));
+            assertTrue(request.objective().contains("meeting-derived objective"));
+            return new ExecutionObjectiveHandoff.HandoffReceipt(
+                    true, "objective:meeting-1", "worker:head", "queue:meeting-1",
+                    "ACCEPTED", "ADMITTED", "meeting-follow-up");
+        };
+        MeetingRoleDeliberator fake = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                return new Deliberation(role + " assessment", "provider:test:" + role);
+            }
+            @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                return new Deliberation("Implement the agreed gateway routing correction with tests.", "provider:test:synthesis");
+            }
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(store, fake, handoff);
+
+        String meetingRequest = "Mời Head of Technology và Head of Operations họp về Telegram routing.";
+        MetatronInteraction meetingInteraction = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:founder:handoff", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:meeting-create", meetingRequest);
+        service.handle(meetingInteraction, "");
+
+        MeetingRecord meeting = service.findByExternalMessageReference("telegram:update:meeting-create").orElseThrow();
+        String followUp = "Triển khai " + meeting.followUpReference() + " cho Workforce thực hiện.";
+        assertTrue(service.supports(followUp));
+        assertFalse(service.supports(meeting.followUpReference()));
+        assertFalse(service.supports("Fix Telegram routing now"));
+        assertEquals(0, submissions.get());
+
+        MetatronInteraction followUpInteraction = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:founder:handoff", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:meeting-follow-up", followUp);
+        String response = service.handle(followUpInteraction, "");
+
+        assertEquals(1, submissions.get());
+        assertTrue(response.startsWith("METATRON MEETING WORK ACCEPTED"));
+        assertTrue(response.contains("objective_id=objective:meeting-1"));
+        assertTrue(response.contains("authority_source=explicit-human-meeting-follow-up"));
+
+        MeetingRecord updated = service.require(meeting.meetingId());
+        assertTrue(updated.decisionRefs().contains("objective:objective:meeting-1"));
+        assertTrue(updated.evidenceRefs().stream().anyMatch(v ->
+                v.contains("meeting-work-handoff:" + meeting.followUpReference())
+                        && v.contains("human-authorized=true")
+                        && v.contains("meeting-authority-created=false")));
+        assertFalse(updated.authorityCreated());
+    }
+
 
     @Test
     void meetingIntentIsChannelIndependentAndRequiresExplicitRoles() {
