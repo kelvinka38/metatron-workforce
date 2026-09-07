@@ -86,7 +86,7 @@ public interface MeetingRoleDeliberator {
                         CollaborationMode.SINGLE,
                         objective,
                         instructions,
-                        List.of(),
+                        List.of("workplace-meeting-input:" + requestId),
                         capability,
                         IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
                         "meeting",
