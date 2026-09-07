@@ -2,7 +2,10 @@ package com.metatron.workforce.workplace;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.MetatronInteraction;
+import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
+import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.interaction.intelligence.InstitutionalIntelligenceRuntime;
+import com.metatron.workforce.interaction.intelligence.NormalizedRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -16,32 +19,45 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** First-class Workplace Meeting Room. It coordinates deliberation and durable outputs, never authority. */
 @Service
 public final class WorkplaceMeetingService {
+    private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
     private final PersistentMeetingStore store;
     private final MeetingRoleDeliberator deliberator;
+    private final ExecutionObjectiveHandoff executionObjectiveHandoff;
 
     @Autowired
     public WorkplaceMeetingService(
             InstitutionalIntelligenceRuntime intelligenceRuntime,
+            ExecutionObjectiveHandoff executionObjectiveHandoff,
             @Value("${METATRON_WORKPLACE_MEETING_PATH:/var/lib/metatron-workforce/workplace/meetings}") String meetingPath,
             ObjectMapper json) {
         this(new PersistentMeetingStore(Path.of(meetingPath), json),
                 MeetingRoleDeliberator.intelligenceBacked(
                         Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime").fabric(),
-                        intelligenceRuntime.configuredProviders().size()));
+                        intelligenceRuntime.configuredProviders().size()),
+                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator) {
-        this.store = Objects.requireNonNull(store, "store");
-        this.deliberator = Objects.requireNonNull(deliberator, "deliberator");
+        this(store, deliberator, ExecutionObjectiveHandoff.unavailable());
     }
 
-    /** Conservative first-class route: meeting marker plus at least two explicit institutional roles. */
+    WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
+                            ExecutionObjectiveHandoff executionObjectiveHandoff) {
+        this.store = Objects.requireNonNull(store, "store");
+        this.deliberator = Objects.requireNonNull(deliberator, "deliberator");
+        this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
+    }
+
+    /** Conservative first-class route: create a Meeting or explicitly authorize a durable Meeting follow-up. */
     public boolean supports(String text) {
         if (text == null || text.isBlank()) return false;
+        if (isAuthorizedFollowUp(text)) return true;
         String lower = normalize(text);
         boolean meetingMarker = lower.contains("meeting") || lower.contains("meeting room")
                 || lower.contains("hop ") || lower.startsWith("hop")
@@ -54,6 +70,7 @@ public final class WorkplaceMeetingService {
 
     public String handle(MetatronInteraction interaction, String conversationContext) {
         Objects.requireNonNull(interaction, "interaction");
+        if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
         List<String> roles = requestedRoles(interaction.text());
         if (roles.size() < 2) throw new IllegalArgumentException("Meeting Room requires at least two explicit roles");
 
@@ -117,6 +134,85 @@ public final class WorkplaceMeetingService {
                 lifecycle, MeetingRecord.Status.FOLLOW_UP, now, closedAt, false);
         store.save(current);
         return render(current);
+    }
+
+
+    private String handoffFollowUp(MetatronInteraction interaction) {
+        Matcher matcher = FOLLOW_UP_REFERENCE.matcher(interaction.text());
+        if (!matcher.find()) throw new IllegalArgumentException("Meeting follow-up reference required");
+        String meetingId = matcher.group(1);
+        MeetingRecord meeting = require(meetingId);
+        String expectedOrganizer = "human:" + interaction.human().actorId();
+        if (!expectedOrganizer.equals(meeting.organizer())) {
+            throw new SecurityException("meeting follow-up organizer mismatch");
+        }
+        if (!interaction.organizationContextId().equals(meeting.organizationContextId())) {
+            throw new SecurityException("meeting follow-up organization mismatch");
+        }
+
+        String canonicalControl = "Take ownership of one governed meeting-derived objective: "
+                + meeting.recommendation()
+                + " Source meeting " + meeting.meetingId()
+                + ". Preserve evidence " + meeting.followUpReference()
+                + ". Do not treat the Meeting itself as execution authority.";
+        NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(canonicalControl)
+                .orElseThrow(() -> new IllegalStateException("meeting follow-up normalization failed"));
+
+        ExecutionObjectiveHandoff.HandoffReceipt handoff = executionObjectiveHandoff.submit(
+                interaction.human().actorId(),
+                interaction.organizationContextId(),
+                "meeting-case:" + meeting.meetingId(),
+                interaction.conversationId(),
+                interaction.externalMessageReference(),
+                interaction.channelProvider(),
+                request);
+        if (!handoff.accepted()) {
+            return "METATRON MEETING WORK BLOCKED"
+                    + "\nmeeting_id=" + meeting.meetingId()
+                    + "\nfollow_up_ref=" + meeting.followUpReference()
+                    + "\nreason=" + handoff.reason();
+        }
+
+        List<String> updatedActions = new ArrayList<>(meeting.actionItems());
+        updatedActions.add("objective_id=" + handoff.objectiveId()
+                + "; source=" + meeting.followUpReference()
+                + "; authorized_by=" + expectedOrganizer);
+        List<String> updatedEvidence = new ArrayList<>(meeting.evidenceRefs());
+        updatedEvidence.add("meeting-work-handoff:" + meeting.followUpReference()
+                + ":objective=" + handoff.objectiveId()
+                + ":human-authorized=true:meeting-authority-created=false");
+        List<String> updatedDecisionRefs = new ArrayList<>(meeting.decisionRefs());
+        updatedDecisionRefs.add("objective:" + handoff.objectiveId());
+
+        MeetingRecord updated = new MeetingRecord(
+                meeting.meetingId(), meeting.organizationContextId(), meeting.conversationId(),
+                meeting.channelProvider(), meeting.externalMessageReference(), meeting.title(), meeting.purpose(),
+                meeting.organizer(), meeting.participants(), meeting.agenda(), meeting.contributions(),
+                meeting.recommendation(), updatedActions, updatedDecisionRefs, updatedEvidence,
+                meeting.lifecycle(), MeetingRecord.Status.FOLLOW_UP, meeting.openedAt(), meeting.closedAt(), false);
+        store.save(updated);
+
+        return "METATRON MEETING WORK ACCEPTED"
+                + "\nmeeting_id=" + meeting.meetingId()
+                + "\nfollow_up_ref=" + meeting.followUpReference()
+                + "\nobjective_id=" + handoff.objectiveId()
+                + "\nowner_worker=" + handoff.ownerWorkerId()
+                + "\nqueue_item=" + handoff.queueItemId()
+                + "\nobjective_status=" + handoff.objectiveStatus()
+                + "\nexecution_state=" + handoff.executionAdmissionState()
+                + "\nauthority_source=explicit-human-meeting-follow-up";
+    }
+
+    static boolean isAuthorizedFollowUp(String text) {
+        if (text == null || text.isBlank()) return false;
+        Matcher matcher = FOLLOW_UP_REFERENCE.matcher(text);
+        if (!matcher.find()) return false;
+        String lower = normalize(text);
+        return lower.contains("execute") || lower.contains("implement")
+                || lower.contains("proceed") || lower.contains("approve")
+                || lower.contains("giao workforce") || lower.contains("cho workforce")
+                || lower.contains("thuc hien") || lower.contains("trien khai")
+                || lower.contains("lam di") || lower.contains("tiep tuc");
     }
 
     public List<MeetingRecord> list() { return store.list(); }
