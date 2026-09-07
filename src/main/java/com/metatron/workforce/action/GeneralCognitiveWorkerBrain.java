@@ -18,6 +18,8 @@ import java.util.regex.Pattern;
 
 /** Provider-backed general Cognitive Worker brain. Action authority remains entirely in ActionFabric. */
 public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime.Brain {
+    private static final int PROVIDER_ATTEMPT_ROUNDS = 2;
+    private static final long PROVIDER_RETRY_COOLDOWN_MILLIS = 15_000L;
     private static final Pattern OWNER_REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
     private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
     private static final Pattern EXACT_TEXT_REPLACEMENT = Pattern.compile(
@@ -631,9 +633,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (!requiresGitCommit(context)) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("git show")
-                || text.contains("verify")
+                || text.contains("git status")
+                || text.contains("git verification")
+                || text.contains("verify git")
+                || text.contains("verify the commit")
+                || text.contains("verify commit")
                 || text.contains("commit exists")
-                || text.contains("exactly the change");
+                || text.contains("exactly the change")
+                || text.contains("inspect immutable local head");
     }
 
     private static String governedMutationPath(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -910,39 +917,62 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private CognitiveProviderResult completeObject(String system, String user) {
         List<RuntimeException> failures = new ArrayList<>();
+        List<String> failureDetails = new ArrayList<>();
         int start = Math.min(activeProviderRoute, providerRoutes.size() - 1);
-        for (int offset = 0; offset < providerRoutes.size(); offset++) {
-            int index = (start + offset) % providerRoutes.size();
-            ProviderRoute route = providerRoutes.get(index);
-            try {
-                LlmResponse response = router.complete(new LlmRequest(route.provider(), route.model(), system, user));
-                Map<String, Object> parsed;
+        for (int round = 1; round <= PROVIDER_ATTEMPT_ROUNDS; round++) {
+            for (int offset = 0; offset < providerRoutes.size(); offset++) {
+                int index = (start + offset) % providerRoutes.size();
+                ProviderRoute route = providerRoutes.get(index);
                 try {
-                    parsed = parseObject(response.text());
-                } catch (RuntimeException invalidResponse) {
-                    throw new IllegalStateException("invalid cognitive provider JSON", invalidResponse);
+                    LlmResponse response = router.complete(new LlmRequest(route.provider(), route.model(), system, user));
+                    Map<String, Object> parsed;
+                    try {
+                        parsed = parseObject(response.text());
+                    } catch (RuntimeException invalidResponse) {
+                        throw new IllegalStateException("invalid cognitive provider JSON", invalidResponse);
+                    }
+                    if (index != start || round > 1) {
+                        evidence.add("cognitive-provider-failover:from=" + providerRoutes.get(start).provider()
+                                + ":to=" + route.provider() + ":round=" + round);
+                    }
+                    activeProviderRoute = index;
+                    evidence.add("cognitive-provider:" + response.provider()
+                            + ":model=" + response.model()
+                            + ":request=" + clean(response.providerRequestReference())
+                            + ":round=" + round);
+                    return new CognitiveProviderResult(response, parsed);
+                } catch (RuntimeException failure) {
+                    failures.add(failure);
+                    String detail = route.provider() + "/" + route.model() + "=" + failureSummary(failure);
+                    failureDetails.add(detail);
+                    evidence.add("cognitive-provider-failure:" + route.provider()
+                            + ":model=" + route.model()
+                            + ":round=" + round
+                            + ":reason=" + failureSummary(failure));
                 }
-                if (index != start) {
-                    evidence.add("cognitive-provider-failover:from=" + providerRoutes.get(start).provider()
-                            + ":to=" + route.provider());
-                }
-                activeProviderRoute = index;
-                evidence.add("cognitive-provider:" + response.provider()
-                        + ":model=" + response.model()
-                        + ":request=" + clean(response.providerRequestReference()));
-                return new CognitiveProviderResult(response, parsed);
-            } catch (RuntimeException failure) {
-                failures.add(failure);
-                evidence.add("cognitive-provider-failure:" + route.provider()
-                        + ":model=" + route.model()
-                        + ":reason=" + failureSummary(failure));
+            }
+            if (round < PROVIDER_ATTEMPT_ROUNDS) {
+                evidence.add("cognitive-provider-retry:round=" + (round + 1)
+                        + ":cooldownMillis=" + PROVIDER_RETRY_COOLDOWN_MILLIS);
+                providerCooldown(PROVIDER_RETRY_COOLDOWN_MILLIS);
             }
         }
+        String detail = String.join(" | ", failureDetails);
+        if (detail.length() > 2_000) detail = detail.substring(0, 2_000);
         IllegalStateException exhausted = new IllegalStateException(
-                "all cognitive providers failed: "
-                        + providerRoutes.stream().map(route -> route.provider().name()).toList());
+                "all cognitive providers failed after " + PROVIDER_ATTEMPT_ROUNDS + " rounds: "
+                        + detail);
         failures.forEach(exhausted::addSuppressed);
         throw exhausted;
+    }
+
+    private static void providerCooldown(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("cognitive provider retry interrupted", interrupted);
+        }
     }
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
