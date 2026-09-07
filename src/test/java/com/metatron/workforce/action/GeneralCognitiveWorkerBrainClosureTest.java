@@ -218,6 +218,42 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void transientProviderFailureIsRetriedWithinSameWorkerExecution() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                int call = calls.incrementAndGet();
+                if (call == 1) {
+                    throw new IllegalStateException("status=429 quota exceeded; retry in 0.001s");
+                }
+                return new LlmResponse(provider(), request.model(),
+                        "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"src/App.java\"},\"rationale\":\"inspect\"}",
+                        "google-recovered");
+            }
+        };
+
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
+                new LlmProviderRouter(List.of(google)),
+                List.of(new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.GOOGLE, "gemini-primary")),
+                new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "repair defect", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("defect repaired"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.patch"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals(2, calls.get());
+        assertTrue(brain.evidenceReferences().stream().anyMatch(v -> v.contains("cognitive-provider-retry:")));
+        assertTrue(brain.evidenceReferences().stream().anyMatch(v -> v.contains("cognitive-provider-retry-recovered:GOOGLE")));
+    }
+
+    @Test
     void topNResearchCannotCompleteWithNarrativeClaimOrTooFewObservedSources() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
                 "general-external-research",
