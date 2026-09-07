@@ -2,6 +2,7 @@ package com.metatron.workforce.interaction.channel;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.ConversationSurfaceModeService;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,6 +22,8 @@ public final class TelegramBotGateway implements ChannelGateway {
     static final String DEEP_CONTROL = "🔬 Deep";
     static final String AUTO_CONTROL = "🤖 Auto";
     static final String MODE_CONTROL = "🎛 Mode";
+    static final String CHAT_CONTROL = ConversationSurfaceModeService.CHAT_CONTROL;
+    static final String MEETING_CONTROL = ConversationSurfaceModeService.MEETING_CONTROL;
     static final String MONITOR_CONTROL = "📊 Monitor task";
     /**
      * Telegram sendMessage accepts at most 4096 characters. Stay below the hard limit so
@@ -143,12 +146,13 @@ public final class TelegramBotGateway implements ChannelGateway {
     static Map<String, Object> depthControlReplyMarkup() {
         return Map.of(
                 "keyboard", List.of(
+                        List.of(CHAT_CONTROL, MEETING_CONTROL),
                         List.of(FAST_CONTROL, ANALYZE_CONTROL, DEEP_CONTROL),
                         List.of(AUTO_CONTROL, MODE_CONTROL),
                         List.of(MONITOR_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,
-                "input_field_placeholder", "Ask Metatron…");
+                "input_field_placeholder", "Chat or open a Meeting…");
     }
 
     private ApiResult invoke(String method, Map<String, Object> payload) {

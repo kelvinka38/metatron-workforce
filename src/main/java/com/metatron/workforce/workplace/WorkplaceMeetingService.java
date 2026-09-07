@@ -54,7 +54,13 @@ public final class WorkplaceMeetingService {
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
     }
 
-    /** Conservative first-class route: create a Meeting or explicitly authorize a durable Meeting follow-up. */
+    /** Meeting-mode route: explicit follow-up or at least two requested institutional roles. */
+    public boolean supportsInMeetingMode(String text) {
+        if (text == null || text.isBlank()) return false;
+        return isAuthorizedFollowUp(text) || requestedRoles(text).size() >= 2;
+    }
+
+    /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
     public boolean supports(String text) {
         if (text == null || text.isBlank()) return false;
         if (isAuthorizedFollowUp(text)) return true;

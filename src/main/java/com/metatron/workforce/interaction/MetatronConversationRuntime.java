@@ -14,6 +14,7 @@ public final class MetatronConversationRuntime {
     private final MetatronIntelligenceResponder intelligence;
     private final IntelligenceDepthControlService depthControl;
     private final WorkplaceMeetingService meetingRoom;
+    private final ConversationSurfaceModeService surfaceMode;
     private final int maxTurns;
     private final int maxChars;
 
@@ -22,7 +23,7 @@ public final class MetatronConversationRuntime {
                                        MetatronIntelligenceResponder intelligence,
                                        int maxTurns,
                                        int maxChars) {
-        this(memory, intelligence, null, null, maxTurns, maxChars);
+        this(memory, intelligence, null, null, null, maxTurns, maxChars);
     }
 
     public MetatronConversationRuntime(ConversationMemoryStore memory,
@@ -30,7 +31,7 @@ public final class MetatronConversationRuntime {
                                        IntelligenceDepthControlService depthControl,
                                        int maxTurns,
                                        int maxChars) {
-        this(memory, intelligence, depthControl, null, maxTurns, maxChars);
+        this(memory, intelligence, depthControl, null, null, maxTurns, maxChars);
     }
 
     public MetatronConversationRuntime(ConversationMemoryStore memory,
@@ -39,10 +40,21 @@ public final class MetatronConversationRuntime {
                                        WorkplaceMeetingService meetingRoom,
                                        int maxTurns,
                                        int maxChars) {
+        this(memory, intelligence, depthControl, meetingRoom, null, maxTurns, maxChars);
+    }
+
+    public MetatronConversationRuntime(ConversationMemoryStore memory,
+                                       MetatronIntelligenceResponder intelligence,
+                                       IntelligenceDepthControlService depthControl,
+                                       WorkplaceMeetingService meetingRoom,
+                                       ConversationSurfaceModeService surfaceMode,
+                                       int maxTurns,
+                                       int maxChars) {
         this.memory = Objects.requireNonNull(memory, "memory");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
         this.depthControl = depthControl;
         this.meetingRoom = meetingRoom;
+        this.surfaceMode = surfaceMode;
         if (maxTurns < 1 || maxChars < 1) throw new IllegalArgumentException("memory limits must be positive");
         this.maxTurns = maxTurns;
         this.maxChars = maxChars;
@@ -53,6 +65,17 @@ public final class MetatronConversationRuntime {
         Objects.requireNonNull(interaction, "interaction");
         String channel = interaction.channelProvider();
         if (channel.isBlank()) throw new IllegalArgumentException("channelProvider must not be blank");
+
+        if (surfaceMode != null) {
+            ConversationSurfaceModeService.ControlResult surfaceControl = surfaceMode.handle(
+                    interaction.conversationId(), interaction.text());
+            if (surfaceControl.handled()) {
+                memory.appendTurn(interaction.conversationId(), interaction.text(), surfaceControl.response());
+                return new MetatronInteractionOrchestrator.InteractionResponse(
+                        interaction.conversationId(), surfaceControl.response(),
+                        "conversation-surface-control:" + interaction.externalMessageReference());
+            }
+        }
 
         if (depthControl != null) {
             IntelligenceDepthControlService.ControlResult control = depthControl.handle(
@@ -70,8 +93,20 @@ public final class MetatronConversationRuntime {
                 Math.max(4, maxTurns / 4), maxChars);
 
         // Workplace semantics are first class and channel-independent. A Meeting is not an Intelligence prompt
-        // and must not be accidentally materialized as an execution Objective.
-        if (meetingRoom != null && meetingRoom.supports(interaction.text())) {
+        // and must not be accidentally materialized as an execution Objective. The durable Meeting surface lets
+        // Human select Meeting explicitly; natural-language Meeting invocation remains backward compatible.
+        boolean meetingSurfaceSelected = surfaceMode != null
+                && surfaceMode.mode(interaction.conversationId()) == ConversationSurfaceMode.MEETING;
+        if (meetingRoom != null && meetingSurfaceSelected && !meetingRoom.supportsInMeetingMode(interaction.text())) {
+            String answer = "🏛 MEETING · METATRON\nName at least two institutional roles and the topic (for example: Head of Technology + Head of Operations).";
+            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), answer,
+                    "meeting-surface-guidance:" + interaction.externalMessageReference());
+        }
+        if (meetingRoom != null && (meetingSurfaceSelected
+                ? meetingRoom.supportsInMeetingMode(interaction.text())
+                : meetingRoom.supports(interaction.text()))) {
             String meetingAnswer = meetingRoom.handle(interaction, history);
             String answer = depthControl == null
                     ? meetingAnswer

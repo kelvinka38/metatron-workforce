@@ -40,6 +40,7 @@ public final class ChannelInteractionIngressService {
             ExecutionObjectiveHandoff executionObjectiveHandoff,
             WorkplaceMeetingService workplaceMeetingService,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/conversations}}") String conversationMemoryPath,
+            @Value("${METATRON_CONVERSATION_SURFACE_MODE_PATH:/var/lib/metatron-workforce/conversation-surface-mode}") String conversationSurfaceModePath,
             ObjectMapper objectMapper) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         MetatronIntelligenceResponder intelligence = new MetatronIntelligenceResponder(
@@ -53,6 +54,7 @@ public final class ChannelInteractionIngressService {
                 intelligence,
                 Objects.requireNonNull(intelligenceDepthControlService, "intelligenceDepthControlService"),
                 Objects.requireNonNull(workplaceMeetingService, "workplaceMeetingService"),
+                new ConversationSurfaceModeService(new PersistentConversationSurfaceModeStore(Path.of(conversationSurfaceModePath))),
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
