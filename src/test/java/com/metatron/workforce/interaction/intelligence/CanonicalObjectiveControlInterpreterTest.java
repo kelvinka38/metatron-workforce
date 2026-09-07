@@ -173,6 +173,16 @@ final class CanonicalObjectiveControlInterpreterTest {
     }
 
     @Test
+    void explicitWorkAdmissionBypassesSemanticChatKillSwitchButSemanticExecutionDoesNot() {
+        assertTrue(MetatronIntelligenceResponder.shouldAdmitExecution(true, false),
+                "deterministic explicit Objective controls must remain executable");
+        assertFalse(MetatronIntelligenceResponder.shouldAdmitExecution(false, false),
+                "semantic chat-to-Work remains disabled by default");
+        assertTrue(MetatronIntelligenceResponder.shouldAdmitExecution(false, true),
+                "an explicit product configuration may enable semantic durable Work admission");
+    }
+
+    @Test
     void ordinaryNaturalLanguageDoesNotBypassSemanticBoundary() {
         assertFalse(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(
                 "Please audit the four repositories and tell me what you find."));
