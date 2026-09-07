@@ -14,6 +14,7 @@ class TelegramDepthControlMarkupTest {
         Map<String, Object> markup = TelegramBotGateway.depthControlReplyMarkup();
 
         assertEquals(List.of(
+                List.of("💬 Chat", "🏛 Meeting"),
                 List.of("⚡ Fast", "🧠 Analyze", "🔬 Deep"),
                 List.of("🤖 Auto", "🎛 Mode"),
                 List.of("📊 Monitor task")), markup.get("keyboard"));
