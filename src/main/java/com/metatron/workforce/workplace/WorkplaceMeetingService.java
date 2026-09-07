@@ -182,7 +182,7 @@ public final class WorkplaceMeetingService {
                 + ":objective=" + handoff.objectiveId()
                 + ":human-authorized=true:meeting-authority-created=false");
         List<String> updatedDecisionRefs = new ArrayList<>(meeting.decisionRefs());
-        updatedDecisionRefs.add("objective:" + handoff.objectiveId());
+        updatedDecisionRefs.add(handoff.objectiveId());
 
         MeetingRecord updated = new MeetingRecord(
                 meeting.meetingId(), meeting.organizationContextId(), meeting.conversationId(),
