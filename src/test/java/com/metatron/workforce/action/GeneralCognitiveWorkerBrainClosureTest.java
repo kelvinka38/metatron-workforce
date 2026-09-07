@@ -2,11 +2,7 @@ package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
-import com.metatron.workforce.interaction.llm.LlmProvider;
-import com.metatron.workforce.interaction.llm.LlmProviderClient;
-import com.metatron.workforce.interaction.llm.LlmProviderRouter;
-import com.metatron.workforce.interaction.llm.LlmRequest;
-import com.metatron.workforce.interaction.llm.LlmResponse;
+import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -18,25 +14,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GeneralCognitiveWorkerBrainClosureTest {
     @Test
-    void providerBackedBrainUsesActualRuntimeCatalogAndCanReachCompleteReflection() {
-        LlmProviderClient client = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                if (request.systemContext().contains("action-selection")) {
-                    assertTrue(request.userInput().contains("workspace.file.write"));
-                    assertTrue(request.userInput().contains("repair defect"));
-                    return new LlmResponse(provider(), request.model(),
-                            "{\"actionRef\":\"workspace.file.write\",\"inputs\":{\"path\":\"result.txt\",\"content\":\"fixed\"},\"rationale\":\"write required work product\"}",
-                            "req-think");
-                }
-                assertTrue(request.userInput().contains("workspace file written"));
-                return new LlmResponse(provider(), request.model(),
-                        "{\"decision\":\"COMPLETE\",\"summary\":\"required work product is now observed\"}",
-                        "req-reflect");
+    void intelligenceBackedBrainUsesActualRuntimeCatalogAndCanReachCompleteReflection() {
+        AtomicInteger calls = new AtomicInteger();
+        WorkerIntelligenceService intelligence = request -> {
+            int call = calls.incrementAndGet();
+            assertEquals("worker.cognition", request.capability());
+            if (call == 1) {
+                assertTrue(request.instructions().contains("action-selection"));
+                assertTrue(request.context().contains("workspace.file.write"));
+                assertTrue(request.context().contains("repair defect"));
+                return new WorkerIntelligenceService.Response(
+                        "intelligence-think",
+                        "{\"actionRef\":\"workspace.file.write\",\"inputs\":{\"path\":\"result.txt\",\"content\":\"fixed\"},\"rationale\":\"write required work product\"}",
+                        List.of("intelligence-provider:test"));
             }
+            assertTrue(request.context().contains("workspace file written"));
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-reflect",
+                    "{\"decision\":\"COMPLETE\",\"summary\":\"required work product is now observed\"}",
+                    List.of("intelligence-provider:test"));
         };
-        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
-                new LlmProviderRouter(List.of(client)), LlmProvider.GOOGLE, "gemini-test", new ObjectMapper());
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
         ExecutionWorkSpec work = new ExecutionWorkSpec(
                 "step-1", "repair defect", "workspace", "execution.general.workspace",
                 List.of(), ExecutionWorkSpec.Consequence.MUTATING,
@@ -54,203 +52,25 @@ class GeneralCognitiveWorkerBrainClosureTest {
                 Map.of("path", "result.txt"), List.of("objective-workspace:evidence"), Instant.now());
         CognitiveWorkerRuntime.Reflection reflection = brain.reflect(context, observation);
         assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, reflection.decision());
-        assertEquals(2, brain.evidenceReferences().size());
-        assertTrue(brain.evidenceReferences().stream().allMatch(value -> value.contains("GOOGLE")));
-    }
-    @Test
-    void cognitiveProviderFailureFallsThroughAndHealthyRouteStaysActiveForSameExecution() {
-        AtomicInteger googleCalls = new AtomicInteger();
-        AtomicInteger openAiCalls = new AtomicInteger();
-
-        LlmProviderClient google = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                googleCalls.incrementAndGet();
-                throw new IllegalStateException("google_capacity_exhausted:test-quota");
-            }
-        };
-        LlmProviderClient openAi = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.OPENAI; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                openAiCalls.incrementAndGet();
-                if (request.systemContext().contains("action-selection")) {
-                    return new LlmResponse(provider(), request.model(),
-                            "{\"actionRef\":\"workspace.file.write\",\"inputs\":{\"path\":\"result.txt\",\"content\":\"fixed\"},\"rationale\":\"repair\"}",
-                            "req-openai-think");
-                }
-                return new LlmResponse(provider(), request.model(),
-                        "{\"decision\":\"COMPLETE\",\"summary\":\"repair observed\"}",
-                        "req-openai-reflect");
-            }
-        };
-
-        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
-                new LlmProviderRouter(List.of(google, openAi)),
-                List.of(
-                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.GOOGLE, "gemini-test"),
-                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.OPENAI, "gpt-test")),
-                new ObjectMapper());
-        ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "step-1", "repair defect", "workspace", "execution.general.workspace",
-                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("result exists"), List.of("workspace-state"));
-        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
-                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
-                List.of("workspace.file.read", "workspace.file.write"), List.of(), Map.of());
-
-        CognitiveWorkerRuntime.Thought thought = brain.think(context);
-        assertEquals("workspace.file.write", thought.actionRef());
-        assertEquals(1, googleCalls.get());
-        assertEquals(1, openAiCalls.get());
-
-        ActionFabric.ActionObservation observation = new ActionFabric.ActionObservation(
-                "workspace.file.write", true, "workspace file written",
-                Map.of("path", "result.txt"), List.of("objective-workspace:evidence"), Instant.now());
-        CognitiveWorkerRuntime.Reflection reflection = brain.reflect(context, observation);
-
-        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, reflection.decision());
-        assertEquals(1, googleCalls.get(), "healthy fallback must remain active rather than hammering failed provider");
-        assertEquals(2, openAiCalls.get());
-        assertTrue(brain.evidenceReferences().stream().anyMatch(value ->
-                value.contains("cognitive-provider-failure:GOOGLE")));
-        assertTrue(brain.evidenceReferences().stream().anyMatch(value ->
-                value.contains("cognitive-provider-failover:from=GOOGLE:to=OPENAI")));
-        assertTrue(brain.evidenceReferences().stream().filter(value ->
-                value.startsWith("cognitive-provider:OPENAI")).count() >= 2);
-    }
-
-    @Test
-    void cognitiveWorkerFailsOverToAnotherConfiguredProviderWithoutLosingWorkContext() {
-        java.util.concurrent.atomic.AtomicInteger googleCalls = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicInteger openAiCalls = new java.util.concurrent.atomic.AtomicInteger();
-
-        LlmProviderClient google = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                googleCalls.incrementAndGet();
-                throw new IllegalStateException("google_capacity_exhausted:status=429");
-            }
-        };
-        LlmProviderClient openAi = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.OPENAI; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                openAiCalls.incrementAndGet();
-                assertTrue(request.userInput().contains("repair defect"));
-                return new LlmResponse(provider(), request.model(),
-                        "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"src/App.java\"},\"rationale\":\"inspect before repair\"}",
-                        "openai-fallback-request");
-            }
-        };
-
-        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
-                new LlmProviderRouter(List.of(google, openAi)),
-                List.of(
-                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.GOOGLE, "gemini-primary"),
-                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.OPENAI, "gpt-fallback")),
-                new ObjectMapper());
-        ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "step-1", "repair defect", "workspace", "execution.general.workspace",
-                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("defect repaired"), List.of("workspace evidence"));
-        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
-                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
-                List.of("workspace.file.read", "workspace.file.patch"), List.of(), Map.of());
-
-        CognitiveWorkerRuntime.Thought thought = brain.think(context);
-
-        assertEquals("workspace.file.read", thought.actionRef());
-        assertEquals(1, googleCalls.get());
-        assertEquals(1, openAiCalls.get());
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v ->
-                v.contains("cognitive-provider-failure:GOOGLE") && v.contains("429")));
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v ->
-                v.contains("cognitive-provider-failover:from=GOOGLE:to=OPENAI")));
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v ->
-                v.contains("cognitive-provider:OPENAI:model=gpt-fallback")));
-    }
-
-    @Test
-    void malformedPrimaryCognitiveResponseFailsOverToNextProvider() {
-        java.util.concurrent.atomic.AtomicInteger googleCalls = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicInteger openAiCalls = new java.util.concurrent.atomic.AtomicInteger();
-
-        LlmProviderClient google = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                googleCalls.incrementAndGet();
-                return new LlmResponse(provider(), request.model(),
-                        "Here is the action: {not valid json}", "google-malformed");
-            }
-        };
-        LlmProviderClient openAi = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.OPENAI; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                openAiCalls.incrementAndGet();
-                return new LlmResponse(provider(), request.model(),
-                        "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"src/App.java\"},\"rationale\":\"inspect\"}",
-                        "openai-valid");
-            }
-        };
-
-        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
-                new LlmProviderRouter(List.of(google, openAi)),
-                List.of(
-                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.GOOGLE, "gemini-primary"),
-                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.OPENAI, "gpt-fallback")),
-                new ObjectMapper());
-        ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "step-1", "repair defect", "workspace", "execution.general.workspace",
-                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("defect repaired"), List.of("workspace evidence"));
-        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
-                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
-                List.of("workspace.file.read", "workspace.file.patch"), List.of(), Map.of());
-
-        CognitiveWorkerRuntime.Thought thought = brain.think(context);
-
-        assertEquals("workspace.file.read", thought.actionRef());
-        assertEquals(1, googleCalls.get());
-        assertEquals(1, openAiCalls.get());
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v ->
-                v.contains("cognitive-provider-failure:GOOGLE") && v.contains("invalid cognitive provider JSON")));
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v ->
-                v.contains("cognitive-provider-failover:from=GOOGLE:to=OPENAI")));
-    }
-
-    @Test
-    void transientProviderFailureIsRetriedWithinSameWorkerExecution() {
-        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
-        LlmProviderClient google = new LlmProviderClient() {
-            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
-            @Override public LlmResponse complete(LlmRequest request) {
-                int call = calls.incrementAndGet();
-                if (call == 1) {
-                    throw new IllegalStateException("status=429 quota exceeded; retry in 0.001s");
-                }
-                return new LlmResponse(provider(), request.model(),
-                        "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"src/App.java\"},\"rationale\":\"inspect\"}",
-                        "google-recovered");
-            }
-        };
-
-        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
-                new LlmProviderRouter(List.of(google)),
-                List.of(new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.GOOGLE, "gemini-primary")),
-                new ObjectMapper());
-        ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "step-1", "repair defect", "workspace", "execution.general.workspace",
-                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("defect repaired"), List.of("workspace evidence"));
-        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
-                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
-                List.of("workspace.file.read", "workspace.file.patch"), List.of(), Map.of());
-
-        CognitiveWorkerRuntime.Thought thought = brain.think(context);
-
-        assertEquals("workspace.file.read", thought.actionRef());
         assertEquals(2, calls.get());
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v -> v.contains("cognitive-provider-retry:")));
-        assertTrue(brain.evidenceReferences().stream().anyMatch(v -> v.contains("cognitive-provider-retry-recovered:GOOGLE")));
+        assertTrue(brain.evidenceReferences().stream().anyMatch(value ->
+                value.startsWith("cognitive-intelligence-request:")));
+    }
+
+    @Test
+    void malformedIntelligenceResponseFailsClosedAtWorkerBoundary() {
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "intelligence-malformed", "not-json", List.of("intelligence-provider:test"));
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "repair defect", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("defect repaired"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.patch"), List.of(), Map.of());
+
+        assertThrows(IllegalStateException.class, () -> brain.think(context));
     }
 
     @Test
