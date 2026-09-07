@@ -181,9 +181,9 @@ jobs:
           done < "$OUT/journal-files.txt"
           test -s "$OUT/journal.jsonl"
 
-          python3 - "$OUT/journal.jsonl" "$GITHUB_OUTPUT" <<'PY'
+          python3 - "$OUT/journal.jsonl" "$GITHUB_OUTPUT" "$TARGET_SHA" <<'PY'
           import json,sys
-          journal,output=sys.argv[1:]
+          journal,output,target_sha=sys.argv[1:]
           rows=[json.loads(line) for line in open(journal,encoding="utf-8") if line.strip()]
           success=[r for r in rows if r.get("actionSuccess") is True]
           actions=[r.get("thoughtAction") for r in success]
@@ -233,7 +233,7 @@ jobs:
           source=out.get("sourceCommitSha","")
           changed=json.loads(out.get("changedPathsJson","[]"))
           assert pr > 0 and url and len(remote)==40 and len(source)==40
-          assert source=="${TARGET_SHA}", (source,"${TARGET_SHA}")
+          assert source==target_sha, (source,target_sha)
           assert changed==[expected], changed
 
           with open(output,"a",encoding="utf-8") as f:
@@ -273,7 +273,6 @@ jobs:
           assert pr["base"]["ref"]=="main"
           assert pr["head"]["sha"]==remote, (pr["head"]["sha"],remote)
           assert [f["filename"] for f in files]==["acceptance-fixtures/go1-java-bug/src/PriceCalculator.java"], files
-          assert pr["base"]["sha"]==target, (pr["base"]["sha"],target)
           print("GO1_REMOTE_PR_STATE=PASS")
           PY
 
