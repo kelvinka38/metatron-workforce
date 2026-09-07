@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -56,6 +57,68 @@ class GeneralCognitiveWorkerBrainClosureTest {
         assertEquals(2, brain.evidenceReferences().size());
         assertTrue(brain.evidenceReferences().stream().allMatch(value -> value.contains("GOOGLE")));
     }
+    @Test
+    void cognitiveProviderFailureFallsThroughAndHealthyRouteStaysActiveForSameExecution() {
+        AtomicInteger googleCalls = new AtomicInteger();
+        AtomicInteger openAiCalls = new AtomicInteger();
+
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                googleCalls.incrementAndGet();
+                throw new IllegalStateException("google_capacity_exhausted:test-quota");
+            }
+        };
+        LlmProviderClient openAi = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.OPENAI; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                openAiCalls.incrementAndGet();
+                if (request.systemContext().contains("action-selection")) {
+                    return new LlmResponse(provider(), request.model(),
+                            "{\"actionRef\":\"workspace.file.write\",\"inputs\":{\"path\":\"result.txt\",\"content\":\"fixed\"},\"rationale\":\"repair\"}",
+                            "req-openai-think");
+                }
+                return new LlmResponse(provider(), request.model(),
+                        "{\"decision\":\"COMPLETE\",\"summary\":\"repair observed\"}",
+                        "req-openai-reflect");
+            }
+        };
+
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
+                new LlmProviderRouter(List.of(google, openAi)),
+                List.of(
+                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.GOOGLE, "gemini-test"),
+                        new GeneralCognitiveWorkerBrain.ProviderRoute(LlmProvider.OPENAI, "gpt-test")),
+                new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "repair defect", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("result exists"), List.of("workspace-state"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.write"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+        assertEquals("workspace.file.write", thought.actionRef());
+        assertEquals(1, googleCalls.get());
+        assertEquals(1, openAiCalls.get());
+
+        ActionFabric.ActionObservation observation = new ActionFabric.ActionObservation(
+                "workspace.file.write", true, "workspace file written",
+                Map.of("path", "result.txt"), List.of("objective-workspace:evidence"), Instant.now());
+        CognitiveWorkerRuntime.Reflection reflection = brain.reflect(context, observation);
+
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, reflection.decision());
+        assertEquals(1, googleCalls.get(), "healthy fallback must remain active rather than hammering failed provider");
+        assertEquals(2, openAiCalls.get());
+        assertTrue(brain.evidenceReferences().stream().anyMatch(value ->
+                value.contains("cognitive-provider-failure:GOOGLE")));
+        assertTrue(brain.evidenceReferences().stream().anyMatch(value ->
+                value.contains("cognitive-provider-failover:from=GOOGLE:to=OPENAI")));
+        assertTrue(brain.evidenceReferences().stream().filter(value ->
+                value.startsWith("cognitive-provider:OPENAI")).count() >= 2);
+    }
+
     @Test
     void topNResearchCannotCompleteWithNarrativeClaimOrTooFewObservedSources() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
