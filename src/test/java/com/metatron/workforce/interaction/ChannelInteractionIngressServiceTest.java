@@ -11,39 +11,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 final class ChannelInteractionIngressServiceTest {
     @Test
-    void channelObjectiveHandoffIsDisabledByDefaultBoundaryAndNeverCallsWorkforce() {
+    void semanticRoutingFlagNeverRemovesTypedWorkforceHandoffBoundary() {
         AtomicInteger submits = new AtomicInteger();
         ExecutionObjectiveHandoff configured = (humanId, organizationContextId, caseId, conversationId,
                                                  externalMessageReference, channel, request) -> {
             submits.incrementAndGet();
             return new ExecutionObjectiveHandoff.HandoffReceipt(
-                    true, "objective:should-not-exist", "worker", "queue", "ACCEPTED", "ADMITTED", "unexpected");
+                    true, "objective:typed", "worker", "queue", "ACCEPTED", "ADMITTED", "typed");
         };
 
-        ExecutionObjectiveHandoff disabled =
-                ChannelInteractionIngressService.channelExecutionHandoff(false, configured);
-        NormalizedRequest request = new NormalizedRequest(
-                "do work", "", List.of(), com.metatron.workforce.interaction.intelligence.IntelligenceDepth.FAST,
-                "", List.of(), List.of(), "", "",
-                IntelligenceMode.EXECUTION,
-                com.metatron.workforce.interaction.intelligence.CollaborationMode.SINGLE,
-                List.of(),
-                com.metatron.workforce.interaction.intelligence.DeterministicCapability.NONE,
-                false, null, null, "");
-
-        ExecutionObjectiveHandoff.HandoffReceipt receipt = disabled.submit(
-                "human", "org", "case", "conversation", "message", "telegram", request);
-
-        assertFalse(receipt.accepted());
-        assertEquals("EXECUTION_OBJECTIVE_HANDOFF_UNAVAILABLE", receipt.reason());
-        assertEquals(0, submits.get());
+        assertSame(configured, ChannelInteractionIngressService.channelExecutionHandoff(false, configured));
         assertSame(configured, ChannelInteractionIngressService.channelExecutionHandoff(true, configured));
+        assertEquals(0, submits.get(),
+                "retaining the handoff must not itself submit Work; responder admission owns that decision");
     }
 
     @Test
