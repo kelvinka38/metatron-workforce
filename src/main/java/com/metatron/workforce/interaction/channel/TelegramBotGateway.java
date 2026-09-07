@@ -24,7 +24,7 @@ public final class TelegramBotGateway implements ChannelGateway {
     static final String MODE_CONTROL = "🎛 Mode";
     static final String CHAT_CONTROL = ConversationSurfaceModeService.CHAT_CONTROL;
     static final String MEETING_CONTROL = ConversationSurfaceModeService.MEETING_CONTROL;
-    static final String MONITOR_CONTROL = "📊 Monitor task";
+    static final String MONITOR_CONTROL = "📊 Monitor";
     /**
      * Telegram sendMessage accepts at most 4096 characters. Stay below the hard limit so
      * multi-byte/supplementary Unicode, future presentation changes, and upstream counting
@@ -147,12 +147,10 @@ public final class TelegramBotGateway implements ChannelGateway {
         return Map.of(
                 "keyboard", List.of(
                         List.of(CHAT_CONTROL, MEETING_CONTROL),
-                        List.of(FAST_CONTROL, ANALYZE_CONTROL, DEEP_CONTROL),
-                        List.of(AUTO_CONTROL, MODE_CONTROL),
                         List.of(MONITOR_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,
-                "input_field_placeholder", "Chat or open a Meeting…");
+                "input_field_placeholder", "Chat with Metatron…");
     }
 
     private ApiResult invoke(String method, Map<String, Object> payload) {
