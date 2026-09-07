@@ -136,6 +136,38 @@ public final class MetatronIntelligenceResponder {
         this.computationEngine = new DeterministicComputationEngine();
     }
 
+    /** Production composition: consume the shared institutional Intelligence runtime. */
+    public MetatronIntelligenceResponder(
+            InstitutionalIntelligenceRuntime runtime,
+            String provider,
+            ObjectMapper objectMapper,
+            String gatewayAuditUrl,
+            String gatewayAuditToken,
+            IntelligenceCaseStore caseStore,
+            ExecutionObjectiveHandoff executionObjectiveHandoff,
+            boolean semanticExecutionHandoffEnabled) {
+        Objects.requireNonNull(runtime, "runtime");
+        Objects.requireNonNull(objectMapper, "objectMapper");
+        this.caseStore = Objects.requireNonNull(caseStore, "caseStore");
+        this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
+        this.semanticExecutionHandoffEnabled = semanticExecutionHandoffEnabled;
+        this.configuredProvider = normalizeProvider(provider);
+        this.configuredProviderCount = runtime.configuredProviders().size();
+        this.semanticInterpreter = runtime.semanticInterpreter();
+        this.toolFabric = runtime.toolFabric();
+        this.fabric = runtime.fabric();
+        if (present(gatewayAuditUrl)) {
+            this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of(
+                    "gateway.audit.read", new GatewayAuditCapability(gatewayAuditUrl, gatewayAuditToken)));
+        } else {
+            this.capabilityRegistry = new ExecutionCapabilityRegistry(Map.of());
+        }
+        this.acquisitionService = new InformationRequirementAcquisitionService(
+                defaultKnowledgeRetrievalService(), this.toolFabric);
+        this.externalEvidenceGuard = new ExternalEvidenceResponseGuard();
+        this.computationEngine = new DeterministicComputationEngine();
+    }
+
     public String respond(String humanId, String text, String externalMessageReference, String channel, String conversationContext) {
         return respond(humanId, text, externalMessageReference, channel,
                 "conversation:" + channel + ":human:" + humanId, "organization:unspecified", conversationContext,
