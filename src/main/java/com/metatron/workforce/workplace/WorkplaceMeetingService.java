@@ -151,8 +151,9 @@ public final class WorkplaceMeetingService {
         }
 
         String canonicalControl = "Take ownership of one governed meeting-derived objective: "
-                + meeting.recommendation()
-                + " Source meeting " + meeting.meetingId()
+                + "Meeting purpose: " + meeting.purpose()
+                + ". Meeting recommendation: " + meeting.recommendation()
+                + ". Source meeting " + meeting.meetingId()
                 + ". Preserve evidence " + meeting.followUpReference()
                 + ". Do not treat the Meeting itself as execution authority.";
         NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(canonicalControl)

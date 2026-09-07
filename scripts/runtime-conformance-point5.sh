@@ -115,7 +115,7 @@ echo 'POINT5_CURRENT_INFORMATION_ROUTE=PASS'
 
 echo 'POINT5_PHASE=MULTI_ROLE_MEETING'
 MEETING_UPDATE=$(date +%s%N | cut -c1-18)
-MEETING_TEXT='Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn kế hoạch tăng trưởng Metatron và đưa recommendation. Hãy giữ rõ disagreement, risk và follow-up.'
+MEETING_TEXT='Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn cách thực hiện một governed single-repository read-only audit of kelvinka38/bios using the available repository audit capability, verify it through Observation, and deliver resulting evidence. Hãy giữ rõ disagreement, risk và follow-up; không mutate repository.'
 send_public "$MEETING_UPDATE" "$MEETING_TEXT"
 test "$(wait_receipt_delivered "$MEETING_UPDATE" 0)" = NONE
 no_objective_for_update "$MEETING_UPDATE"
@@ -173,9 +173,9 @@ echo "POINT5_MEETING_ID=$MEETING_ID"
 echo 'POINT5_MEETING_SAME_CONVERSATION_DELIVERY=PASS'
 echo 'POINT5_MULTI_ROLE_MEETING_ROUTE=PASS'
 
-echo 'POINT5_PHASE=REAL_OBJECTIVE'
+echo 'POINT5_PHASE=MEETING_DERIVED_REAL_OBJECTIVE'
 OBJECTIVE_UPDATE=$(($(date +%s%N | cut -c1-18)+17))
-OBJECTIVE_TEXT='Take ownership of one Objective: perform a governed single-repository read-only audit of kelvinka38/bios using the available repository audit capability, verify it through Observation, and deliver the resulting evidence. Do not mutate anything and do not perform cross-repository analysis.'
+OBJECTIVE_TEXT="Triển khai meeting-follow-up:$MEETING_ID cho Workforce thực hiện."
 send_public "$OBJECTIVE_UPDATE" "$OBJECTIVE_TEXT"
 
 OID=''
@@ -248,7 +248,7 @@ echo "POINT5_OBJECTIVE_TERMINAL=$TERMINAL"
 echo 'POINT5_OBJECTIVE_REAL_TOOL_EVIDENCE=PASS'
 echo 'POINT5_OBJECTIVE_INDEPENDENT_OBSERVATION=PASS'
 echo 'POINT5_OBJECTIVE_SAME_CONVERSATION_DELIVERY=PASS'
-echo 'POINT5_REAL_OBJECTIVE_ROUTE=PASS'
+echo 'POINT5_MEETING_DERIVED_OBJECTIVE_ROUTE=PASS'
 
 echo 'POINT5_PHASE=RUNTIME_ACTUAL_EFFECT_CONSUMER'
 WORKER_VIEW=$(curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/core/workers/WORKER-REPOSITORY-AUDITOR)
