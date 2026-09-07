@@ -1,5 +1,6 @@
 package com.metatron.workforce.action;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
@@ -8,7 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 
 /** Durable append-only journal for Cognitive Worker action observations and reflections. */
@@ -21,6 +25,12 @@ public interface ActionJournal {
                 String authorizationReference,
                 String idempotencyKey,
                 CognitiveWorkerRuntime.Cycle cycle);
+
+    /**
+     * Rehydrates durable evidence from every action attempt for one Objective.
+     * Replanning may replace WorkGraph attempts, but it must never erase observed history.
+     */
+    default List<String> objectiveEvidenceReferences(String objectiveId) { return List.of(); }
 
     static ActionJournal noop() { return (a, b, c, d, e, f, g) -> { }; }
 
@@ -70,6 +80,50 @@ public interface ActionJournal {
                         StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
             } catch (IOException failure) {
                 throw new IllegalStateException("action-journal-persistence-failed", failure);
+            }
+        }
+
+        @Override
+        public synchronized List<String> objectiveEvidenceReferences(String objectiveId) {
+            Path directory = root.resolve(safe(objectiveId));
+            if (!Files.exists(directory)) return List.of();
+            if (!Files.isDirectory(directory)) {
+                throw new IllegalStateException("action-journal-objective-path-is-not-directory");
+            }
+            LinkedHashSet<String> evidence = new LinkedHashSet<>();
+            try (var files = Files.list(directory)) {
+                for (Path file : files.filter(Files::isRegularFile)
+                        .filter(path -> path.getFileName().toString().endsWith(".jsonl"))
+                        .sorted().toList()) {
+                    for (String line : Files.readAllLines(file)) {
+                        if (line.isBlank()) continue;
+                        JsonNode row = JSON.readTree(line);
+                        if (!objectiveId.equals(row.path("objectiveId").asText())) {
+                            throw new IllegalStateException("action-journal-objective-mismatch");
+                        }
+                        JsonNode refs = row.path("evidenceReferences");
+                        if (refs.isArray()) {
+                            for (JsonNode ref : refs) {
+                                if (ref.isTextual() && !ref.asText().isBlank()) evidence.add(ref.asText().trim());
+                                if (evidence.size() >= 5_000) return List.copyOf(evidence);
+                            }
+                        }
+                        String action = row.path("thoughtAction").asText("");
+                        String success = row.path("actionSuccess").asText("");
+                        String step = row.path("workStepId").asText("");
+                        String cycle = row.path("cycle").asText("");
+                        if (!action.isBlank()) {
+                            evidence.add("action-journal:action=" + action
+                                    + ":success=" + success
+                                    + ":step=" + step
+                                    + ":cycle=" + cycle);
+                        }
+                        if (evidence.size() >= 5_000) return List.copyOf(evidence);
+                    }
+                }
+                return List.copyOf(evidence);
+            } catch (IOException failure) {
+                throw new IllegalStateException("action-journal-rehydration-failed", failure);
             }
         }
 

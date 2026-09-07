@@ -1,15 +1,9 @@
 package com.metatron.workforce.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.metatron.workforce.action.GeneralCognitiveWorkerBrain;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrainFactory;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
-import com.metatron.workforce.interaction.llm.AnthropicLlmProviderClient;
-import com.metatron.workforce.interaction.llm.GoogleLlmProviderClient;
-import com.metatron.workforce.interaction.llm.LlmProvider;
-import com.metatron.workforce.interaction.llm.LlmProviderClient;
-import com.metatron.workforce.interaction.llm.LlmProviderRouter;
-import com.metatron.workforce.interaction.llm.OpenAiLlmProviderClient;
+import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,9 +12,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
 
 /** Production composition for general Worker runtime profiles, Objective workspaces, sandbox and cognition. */
 @Configuration
@@ -84,89 +75,9 @@ public class GeneralExecutionRuntimeConfiguration {
 
     @Bean
     GeneralCognitiveWorkerBrainFactory generalCognitiveWorkerBrainFactory(
-            @Value("${OPENAI_API_KEY:}") String openAiApiKey,
-            @Value("${GEMINI_API_KEY:}") String googleApiKey,
-            @Value("${ANTHROPIC_API_KEY:}") String anthropicApiKey,
-            @Value("${METATRON_WORKER_LLM_PROVIDER:}") String workerProvider,
-            @Value("${METATRON_LLM_PROVIDER:AUTO}") String defaultProvider,
-            @Value("${OPENAI_MODEL:gpt-4.1-mini}") String openAiModel,
-            @Value("${GEMINI_MODEL:gemini-3.7-flash}") String googleModel,
-            @Value("${ANTHROPIC_MODEL:claude-sonnet-4-20250514}") String anthropicModel,
+            WorkerIntelligenceService intelligence,
             ObjectMapper json) {
-        HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
-                .version(HttpClient.Version.HTTP_2).build();
-        List<LlmProviderClient> clients = new ArrayList<>();
-        if (present(openAiApiKey)) clients.add(new OpenAiLlmProviderClient(openAiApiKey, http, json));
-        if (present(googleApiKey)) clients.add(new GoogleLlmProviderClient(googleApiKey, http, json));
-        if (present(anthropicApiKey)) clients.add(new AnthropicLlmProviderClient(anthropicApiKey, http, json));
-
-        String configured = present(workerProvider) ? workerProvider : defaultProvider;
-        LlmProvider selected = selectProvider(configured, openAiApiKey, googleApiKey, anthropicApiKey);
-        List<GeneralCognitiveWorkerBrain.ProviderRoute> routes = providerRoutes(
-                selected,
-                openAiApiKey, googleApiKey, anthropicApiKey,
-                openAiModel, googleModel, anthropicModel);
-        return new GeneralCognitiveWorkerBrainFactory(new LlmProviderRouter(clients), routes, json);
+        return new GeneralCognitiveWorkerBrainFactory(intelligence, json);
     }
 
-    static List<GeneralCognitiveWorkerBrain.ProviderRoute> providerRoutes(
-            LlmProvider preferred,
-            String openAiKey,
-            String googleKey,
-            String anthropicKey,
-            String openAiModel,
-            String googleModel,
-            String anthropicModel) {
-        List<LlmProvider> configured = new ArrayList<>();
-        if (present(openAiKey)) configured.add(LlmProvider.OPENAI);
-        if (present(googleKey)) configured.add(LlmProvider.GOOGLE);
-        if (present(anthropicKey)) configured.add(LlmProvider.ANTHROPIC);
-
-        List<LlmProvider> ordered = new ArrayList<>();
-        if (configured.contains(preferred)) ordered.add(preferred);
-        for (LlmProvider provider : configured) {
-            if (!ordered.contains(provider)) ordered.add(provider);
-        }
-        if (ordered.isEmpty()) {
-            // Preserve boot-without-credentials behavior. Runtime execution will fail closed in
-            // LlmProviderRouter, but the application can still expose health/diagnostics.
-            ordered.add(preferred);
-        }
-
-        return ordered.stream().map(provider -> new GeneralCognitiveWorkerBrain.ProviderRoute(
-                provider,
-                switch (provider) {
-                    case OPENAI -> model(openAiModel, "gpt-4.1-mini");
-                    case GOOGLE -> model(googleModel, "gemini-3.7-flash");
-                    case ANTHROPIC -> model(anthropicModel, "claude-sonnet-4-20250514");
-                })).toList();
-    }
-
-    private static LlmProvider selectProvider(String configured,
-                                              String openAiKey,
-                                              String googleKey,
-                                              String anthropicKey) {
-        String value = configured == null ? "AUTO" : configured.trim().toUpperCase(Locale.ROOT);
-        if (value.isBlank() || value.equals("AUTO")) {
-            if (present(googleKey)) return LlmProvider.GOOGLE;
-            if (present(openAiKey)) return LlmProvider.OPENAI;
-            if (present(anthropicKey)) return LlmProvider.ANTHROPIC;
-            // Keep application bootable without provider credentials; actual general cognitive execution fails closed in the router.
-            return LlmProvider.OPENAI;
-        }
-        return switch (value) {
-            case "GOOGLE", "GEMINI" -> LlmProvider.GOOGLE;
-            case "OPENAI", "GPT" -> LlmProvider.OPENAI;
-            case "ANTHROPIC", "CLAUDE" -> LlmProvider.ANTHROPIC;
-            default -> throw new IllegalArgumentException("unsupported worker LLM provider: " + configured);
-        };
-    }
-
-    private static String model(String configured, String fallback) {
-        return present(configured) ? configured.trim() : fallback;
-    }
-
-    private static boolean present(String value) {
-        return value != null && !value.isBlank();
-    }
 }
