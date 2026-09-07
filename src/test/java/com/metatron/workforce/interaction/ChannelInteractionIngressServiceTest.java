@@ -11,10 +11,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 final class ChannelInteractionIngressServiceTest {
+    @Test
+    void ordinarySemanticChatCanNeverBeConfiguredToMaterializeObjectives() {
+        assertFalse(ChannelInteractionIngressService.semanticChatExecutionHandoffEnabled(),
+                "channel ingress must never turn ordinary semantic chat into Workforce Objectives");
+    }
+
     @Test
     void semanticRoutingFlagNeverRemovesTypedWorkforceHandoffBoundary() {
         AtomicInteger submits = new AtomicInteger();
