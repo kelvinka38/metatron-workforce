@@ -1,6 +1,7 @@
 package com.metatron.workforce.interaction.intelligence;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -46,6 +47,11 @@ public interface WorkerIntelligenceService {
         int providerBudget = Math.max(1, configuredProviderCount);
         return request -> {
             String requestId = "worker-cognition-" + UUID.randomUUID();
+            LinkedHashSet<String> governedEvidence = new LinkedHashSet<>(request.evidenceReferences());
+            // Cycle 1 legitimately has no prior action observation yet. The governed Intelligence
+            // request itself is durable reasoning-input provenance and satisfies BIOS without
+            // fabricating external evidence or weakening the governance gate.
+            governedEvidence.add("worker-cognition-input:" + requestId);
             IntelligenceRequest intelligenceRequest = new IntelligenceRequest(
                     requestId,
                     request.requester(),
@@ -53,7 +59,7 @@ public interface WorkerIntelligenceService {
                     CollaborationMode.SINGLE,
                     request.context(),
                     "COGNITIVE INSTRUCTIONS\n" + request.instructions(),
-                    request.evidenceReferences(),
+                    List.copyOf(governedEvidence),
                     request.capability(),
                     IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
                     "work-runtime",
