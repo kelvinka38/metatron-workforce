@@ -142,8 +142,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 Inputs must be concrete strings. For list arguments use a JSON array encoded as a string in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
                 """;
-        LlmResponse response = complete(system, contextPrompt(context));
-        Map<String, Object> parsed = parseObject(response.text());
+        CognitiveProviderResult providerResult = completeObject(system, contextPrompt(context));
+        Map<String, Object> parsed = providerResult.parsed();
         String actionRef = text(parsed.get("actionRef"), "actionRef");
         String rationale = text(parsed.get("rationale"), "rationale");
         Map<String, String> inputs = stringMap(parsed.get("inputs"));
@@ -789,8 +789,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "summary", observation.summary(),
                 "outputs", observation.outputs(),
                 "evidence", observation.evidenceReferences()));
-        LlmResponse response = complete(system, user);
-        Map<String, Object> parsed = parseObject(response.text());
+        CognitiveProviderResult providerResult = completeObject(system, user);
+        Map<String, Object> parsed = providerResult.parsed();
         String decision = text(parsed.get("decision"), "decision").toUpperCase(java.util.Locale.ROOT);
         String summary = text(parsed.get("summary"), "summary");
         CognitiveWorkerRuntime.Reflection proposed = switch (decision) {
@@ -908,7 +908,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return List.copyOf(evidence);
     }
 
-    private LlmResponse complete(String system, String user) {
+    private CognitiveProviderResult completeObject(String system, String user) {
         List<RuntimeException> failures = new ArrayList<>();
         int start = Math.min(activeProviderRoute, providerRoutes.size() - 1);
         for (int offset = 0; offset < providerRoutes.size(); offset++) {
@@ -916,6 +916,12 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             ProviderRoute route = providerRoutes.get(index);
             try {
                 LlmResponse response = router.complete(new LlmRequest(route.provider(), route.model(), system, user));
+                Map<String, Object> parsed;
+                try {
+                    parsed = parseObject(response.text());
+                } catch (RuntimeException invalidResponse) {
+                    throw new IllegalStateException("invalid cognitive provider JSON", invalidResponse);
+                }
                 if (index != start) {
                     evidence.add("cognitive-provider-failover:from=" + providerRoutes.get(start).provider()
                             + ":to=" + route.provider());
@@ -924,7 +930,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 evidence.add("cognitive-provider:" + response.provider()
                         + ":model=" + response.model()
                         + ":request=" + clean(response.providerRequestReference()));
-                return response;
+                return new CognitiveProviderResult(response, parsed);
             } catch (RuntimeException failure) {
                 failures.add(failure);
                 evidence.add("cognitive-provider-failure:" + route.provider()
@@ -1021,6 +1027,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         String clean = value.replace('\n', ' ').replace('\r', ' ').trim();
         return clean.length() <= 600 ? clean : clean.substring(0, 600);
     }
+
+    private record CognitiveProviderResult(LlmResponse response, Map<String, Object> parsed) {}
 
     private record ExactTextReplacement(String path, String oldText, String newText) {}
 
