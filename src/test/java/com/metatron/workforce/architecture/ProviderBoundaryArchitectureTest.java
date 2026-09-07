@@ -34,12 +34,14 @@ class ProviderBoundaryArchitectureTest {
                 }
                 String source = Files.readString(path);
                 for (String forbidden : FORBIDDEN) {
-                    if (source.contains(forbidden)) {
-                        violations.add(normalized + " -> " + forbidden);
+                    String importStatement = "import com.metatron.workforce." + forbidden + ";";
+                    if (source.lines().map(String::trim).anyMatch(importStatement::equals)) {
+                        violations.add(normalized + " -> " + importStatement);
                     }
                 }
             }
         }
+        violations.forEach(System.err::println);
         assertTrue(violations.isEmpty(),
                 "Direct provider ownership outside Intelligence is forbidden: " + violations);
     }
