@@ -42,7 +42,7 @@ services:
     environment:
       SANDBOX_TOKEN: "${METATRON_SANDBOX_TOKEN:-}"
       SANDBOX_WORKSPACE_ROOT: "/workspaces"
-      SANDBOX_ALLOWED_EXECUTABLES: "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw"
+      SANDBOX_ALLOWED_EXECUTABLES: "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw,node,npm,npx,pnpm,yarn,python3,python,pip3"
     volumes:
       - workforce-objective-workspaces:/workspaces
     healthcheck:

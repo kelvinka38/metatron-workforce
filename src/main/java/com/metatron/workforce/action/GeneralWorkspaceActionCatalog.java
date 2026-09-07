@@ -1,6 +1,7 @@
 package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
@@ -52,6 +53,7 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, fileRead(workerId, authorizationReference, workspace));
         add(profile, actions, fileList(workerId, authorizationReference, workspace));
         add(profile, actions, fileWrite(workerId, authorizationReference, workspace));
+        add(profile, actions, dependenciesInstall(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, process(workerId, authorizationReference, objectiveId));
         add(profile, actions, shell(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitStatus(workerId, authorizationReference, objectiveId));
@@ -257,18 +259,33 @@ public final class GeneralWorkspaceActionCatalog {
         });
     }
 
+    private ActionFabric.Action dependenciesInstall(String worker, String auth, String objectiveId,
+                                                     ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        // Dependency installation mutates only the isolated Objective workspace/cache; it does not mutate the governed target.
+        return action("workspace.dependencies.install", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
+            String workingDirectory = workingDirectory(workspace, request);
+            BuildCommand command = dependencyCommand(workspace, workingDirectory);
+            return sandboxObservation(request.actionRef(),
+                    sandbox.run(worker, objectiveId, workingDirectory, command.executable(), command.args()));
+        });
+    }
+
     private ActionFabric.Action process(String worker, String auth, String objectiveId) {
         return action("workspace.process.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             String executable = input(request, "executable");
             List<String> args = stringList(request.inputs().getOrDefault("argsJson", "[]"));
-            return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, executable, args));
+            String workingDirectory = request.inputs().getOrDefault("workingDirectory", "").trim();
+            return sandboxObservation(request.actionRef(),
+                    sandbox.run(worker, objectiveId, workingDirectory, executable, args));
         });
     }
 
     private ActionFabric.Action shell(String worker, String auth, String objectiveId) {
         return action("workspace.shell.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             String command = input(request, "command");
-            return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, "sh", List.of("-lc", command)));
+            String workingDirectory = request.inputs().getOrDefault("workingDirectory", "").trim();
+            return sandboxObservation(request.actionRef(),
+                    sandbox.run(worker, objectiveId, workingDirectory, "sh", List.of("-lc", command)));
         });
     }
 
@@ -349,8 +366,11 @@ public final class GeneralWorkspaceActionCatalog {
         // Build outputs are confined to the Objective scratch workspace. Building verifies the source
         // but does not mutate the governed external target, so READ_ONLY Work must be able to invoke it.
         return action("workspace.build.run", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
-            BuildCommand command = buildCommand(workspace, request.inputs().getOrDefault("tasksJson", "[]"), false);
-            return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, command.executable(), command.args()));
+            String workingDirectory = workingDirectory(workspace, request);
+            BuildCommand command = buildCommand(
+                    workspace, workingDirectory, request.inputs().getOrDefault("tasksJson", "[]"), false);
+            return sandboxObservation(request.actionRef(),
+                    sandbox.run(worker, objectiveId, workingDirectory, command.executable(), command.args()));
         });
     }
 
@@ -358,37 +378,146 @@ public final class GeneralWorkspaceActionCatalog {
                                      ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         // Test outputs are likewise local verification artifacts rather than mutations of the governed target.
         return action("workspace.test.run", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
-            BuildCommand command = buildCommand(workspace, request.inputs().getOrDefault("tasksJson", "[]"), true);
-            return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, command.executable(), command.args()));
+            String workingDirectory = workingDirectory(workspace, request);
+            BuildCommand command = buildCommand(
+                    workspace, workingDirectory, request.inputs().getOrDefault("tasksJson", "[]"), true);
+            return sandboxObservation(request.actionRef(),
+                    sandbox.run(worker, objectiveId, workingDirectory, command.executable(), command.args()));
         });
     }
 
     private BuildCommand buildCommand(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                      String workingDirectory,
                                       String tasksJson,
                                       boolean test) {
         List<String> tasks = stringList(tasksJson);
-        if (Files.exists(workspaces.resolve(workspace, "gradlew"))) {
+        Path root = workingRoot(workspace, workingDirectory);
+        if (Files.exists(root.resolve("gradlew"), LinkOption.NOFOLLOW_LINKS)) {
             List<String> args = new ArrayList<>();
             args.add("--no-daemon");
             args.add("--max-workers=1");
             args.addAll(tasks.isEmpty() ? List.of(test ? "test" : "build") : tasks);
             return new BuildCommand("./gradlew", args);
         }
-        if (Files.exists(workspaces.resolve(workspace, "build.gradle"))
-                || Files.exists(workspaces.resolve(workspace, "build.gradle.kts"))) {
+        if (Files.exists(root.resolve("build.gradle"), LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(root.resolve("build.gradle.kts"), LinkOption.NOFOLLOW_LINKS)) {
             List<String> args = new ArrayList<>();
             args.add("--no-daemon");
             args.add("--max-workers=1");
             args.addAll(tasks.isEmpty() ? List.of(test ? "test" : "build") : tasks);
             return new BuildCommand("gradle", args);
         }
-        if (Files.exists(workspaces.resolve(workspace, "mvnw"))) {
+        if (Files.exists(root.resolve("mvnw"), LinkOption.NOFOLLOW_LINKS)) {
             return new BuildCommand("./mvnw", tasks.isEmpty() ? List.of(test ? "test" : "verify") : tasks);
         }
-        if (Files.exists(workspaces.resolve(workspace, "pom.xml"))) {
+        if (Files.exists(root.resolve("pom.xml"), LinkOption.NOFOLLOW_LINKS)) {
             return new BuildCommand("mvn", tasks.isEmpty() ? List.of(test ? "test" : "verify") : tasks);
         }
+        if (Files.exists(root.resolve("package.json"), LinkOption.NOFOLLOW_LINKS)) {
+            String script = tasks.isEmpty() ? (test ? "test" : "build") : singleTask(tasks, "Node package script");
+            Set<String> scripts = nodeScripts(workspace, workingDirectory);
+            if (!scripts.contains(script)) {
+                throw new IllegalStateException("package.json does not define requested script: " + script);
+            }
+            return new BuildCommand(nodePackageManager(root), List.of("run", script));
+        }
+        if (isPythonWorkspace(root)) {
+            List<String> args = new ArrayList<>();
+            if (test) {
+                args.add("-m");
+                args.add("pytest");
+                args.add("-q");
+                args.addAll(tasks);
+            } else {
+                args.add("-m");
+                args.add("compileall");
+                args.add("-q");
+                args.addAll(tasks.isEmpty() ? List.of(".") : tasks);
+            }
+            return new BuildCommand("python3", args);
+        }
         throw new IllegalStateException("workspace build system not detected");
+    }
+
+    private BuildCommand dependencyCommand(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                           String workingDirectory) {
+        Path root = workingRoot(workspace, workingDirectory);
+        if (Files.exists(root.resolve("package.json"), LinkOption.NOFOLLOW_LINKS)) {
+            String manager = nodePackageManager(root);
+            if ("pnpm".equals(manager)) return new BuildCommand("pnpm", List.of("install", "--frozen-lockfile"));
+            if ("yarn".equals(manager)) return new BuildCommand("yarn", List.of("install", "--frozen-lockfile"));
+            if (Files.exists(root.resolve("package-lock.json"), LinkOption.NOFOLLOW_LINKS)
+                    || Files.exists(root.resolve("npm-shrinkwrap.json"), LinkOption.NOFOLLOW_LINKS)) {
+                return new BuildCommand("npm", List.of("ci"));
+            }
+            return new BuildCommand("npm", List.of("install"));
+        }
+        if (Files.exists(root.resolve("requirements.txt"), LinkOption.NOFOLLOW_LINKS)) {
+            return new BuildCommand("python3",
+                    List.of("-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"));
+        }
+        if (Files.exists(root.resolve("pyproject.toml"), LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(root.resolve("setup.py"), LinkOption.NOFOLLOW_LINKS)) {
+            return new BuildCommand("python3",
+                    List.of("-m", "pip", "install", "--disable-pip-version-check", "-e", "."));
+        }
+        throw new IllegalStateException("workspace dependency system not detected");
+    }
+
+    private String workingDirectory(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                    ActionFabric.ActionRequest request) {
+        String requested = request.inputs().getOrDefault("workingDirectory", "").trim();
+        if (requested.isBlank()) return "";
+        Path resolved = workspaces.resolve(workspace, requested);
+        if (!Files.isDirectory(resolved, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException("workspace working directory not found: " + requested);
+        }
+        return workspace.path().relativize(resolved).toString().replace('\\', '/');
+    }
+
+    private Path workingRoot(ObjectiveWorkspaceService.ObjectiveWorkspace workspace, String workingDirectory) {
+        if (workingDirectory == null || workingDirectory.isBlank()) return workspace.path();
+        Path root = workspaces.resolve(workspace, workingDirectory);
+        if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException("workspace working directory not found: " + workingDirectory);
+        }
+        return root;
+    }
+
+    private Set<String> nodeScripts(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                    String workingDirectory) {
+        String path = workingDirectory == null || workingDirectory.isBlank()
+                ? "package.json" : workingDirectory + "/package.json";
+        try {
+            JsonNode scripts = json.readTree(workspaces.read(workspace, path)).path("scripts");
+            if (!scripts.isObject()) return Set.of();
+            Set<String> names = new java.util.LinkedHashSet<>();
+            scripts.fieldNames().forEachRemaining(names::add);
+            return Set.copyOf(names);
+        } catch (Exception failure) {
+            throw new IllegalStateException("cannot inspect package.json scripts", failure);
+        }
+    }
+
+    private static String nodePackageManager(Path root) {
+        if (Files.exists(root.resolve("pnpm-lock.yaml"), LinkOption.NOFOLLOW_LINKS)) return "pnpm";
+        if (Files.exists(root.resolve("yarn.lock"), LinkOption.NOFOLLOW_LINKS)) return "yarn";
+        return "npm";
+    }
+
+    private static boolean isPythonWorkspace(Path root) {
+        return Files.exists(root.resolve("pyproject.toml"), LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(root.resolve("requirements.txt"), LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(root.resolve("setup.py"), LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(root.resolve("pytest.ini"), LinkOption.NOFOLLOW_LINKS)
+                || Files.isDirectory(root.resolve("tests"), LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static String singleTask(List<String> tasks, String label) {
+        if (tasks.size() != 1 || tasks.getFirst().isBlank()) {
+            throw new IllegalArgumentException(label + " requires exactly one script name");
+        }
+        return tasks.getFirst();
     }
 
     private ActionFabric.Action action(String ref,

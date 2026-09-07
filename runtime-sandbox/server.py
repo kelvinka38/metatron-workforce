@@ -40,7 +40,7 @@ LOG_ROOT = Path("/tmp/metatron-sandbox-logs")
 LOG_ROOT.mkdir(parents=True, exist_ok=True)
 ALLOWED = {x.strip() for x in os.environ.get(
     "SANDBOX_ALLOWED_EXECUTABLES",
-    "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw"
+    "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw,node,npm,npx,pnpm,yarn,python3,python,pip3"
 ).split(",") if x.strip()}
 WORKSPACE_RE = re.compile(r"^[0-9a-f]{32}$")
 SHELL_DENY = re.compile(r"[;&|><`$\n\r]|\$\(")
@@ -58,7 +58,21 @@ def workspace_for(key: str) -> Path:
     return path
 
 
-def executable_command(workspace: Path, executable: str, args):
+def working_directory_for(workspace: Path, relative: str) -> Path:
+    value = (relative or "").strip()
+    if not value:
+        return workspace
+    if value.startswith("/") or "\\" in value:
+        raise ValueError("invalid working directory")
+    path = (workspace / value).resolve()
+    if path != workspace and workspace not in path.parents:
+        raise ValueError("working directory escaped workspace")
+    if not path.is_dir():
+        raise ValueError("working directory does not exist")
+    return path
+
+
+def executable_command(working_directory: Path, executable: str, args):
     if executable not in ALLOWED:
         raise PermissionError("executable denied")
     args = [str(x) for x in (args or [])]
@@ -85,8 +99,8 @@ def executable_command(workspace: Path, executable: str, args):
         args = tokens[1:]
 
     if executable.startswith("./"):
-        candidate = (workspace / executable[2:]).resolve()
-        if workspace not in candidate.parents or not candidate.is_file():
+        candidate = (working_directory / executable[2:]).resolve()
+        if working_directory not in candidate.parents or not candidate.is_file():
             raise PermissionError("workspace executable missing or escaped")
         return [str(candidate)] + args
     return [executable] + args
@@ -118,6 +132,10 @@ def child_environment(workspace: Path):
             "-Xms32m -Xmx256m -XX:MaxMetaspaceSize=160m "
             "-Dmaven.repo.local=" + str(workspace / ".m2/repository")
         ),
+        "PYTHONUNBUFFERED": "1",
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        "PIP_CACHE_DIR": str(workspace / ".cache/pip"),
+        "NPM_CONFIG_CACHE": str(workspace / ".cache/npm"),
     }
 
 
@@ -125,8 +143,9 @@ def run_process(payload):
     started = time.monotonic()
     workspace_key = str(payload.get("workspaceKey", ""))
     workspace = workspace_for(workspace_key)
+    working_directory = working_directory_for(workspace, str(payload.get("workingDirectory", "")))
     executable = str(payload.get("executable", ""))
-    command = executable_command(workspace, executable, payload.get("args") or [])
+    command = executable_command(working_directory, executable, payload.get("args") or [])
     timeout = max(1, min(int(payload.get("timeoutSeconds", 60)), 300))
     max_output = max(1024, min(int(payload.get("maxOutputBytes", 512000)), 4_000_000))
     # Process output is sandbox transport state, not Objective work product. Keeping this log out of
@@ -137,7 +156,7 @@ def run_process(payload):
     with log.open("wb") as stream:
         process = subprocess.Popen(
             command,
-            cwd=workspace,
+            cwd=working_directory,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=stream,

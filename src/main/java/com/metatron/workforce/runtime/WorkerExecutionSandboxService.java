@@ -60,6 +60,11 @@ public final class WorkerExecutionSandboxService {
     }
 
     public SandboxResult run(String workerId, String objectiveId, String executable, List<String> args) {
+        return run(workerId, objectiveId, "", executable, args);
+    }
+
+    public SandboxResult run(String workerId, String objectiveId, String workingDirectory,
+                             String executable, List<String> args) {
         if (!provisioned()) throw new IllegalStateException("sandbox-execution-token-not-provisioned");
         WorkerRuntimeProfileBindingService.Binding binding = profiles.requireBinding(workerId);
         WorkerRuntimeProfileBindingService.ToolProfile profile = binding.profile();
@@ -69,6 +74,7 @@ public final class WorkerExecutionSandboxService {
                 "workerId", workerId,
                 "objectiveId", objectiveId,
                 "workspaceKey", workspace.workspaceKey(),
+                "workingDirectory", workingDirectory == null ? "" : workingDirectory.trim(),
                 "executable", executable,
                 "args", args == null ? List.of() : List.copyOf(args),
                 "timeoutSeconds", profile.maxProcessSeconds(),
