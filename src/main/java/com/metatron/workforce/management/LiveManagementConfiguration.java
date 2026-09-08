@@ -17,6 +17,7 @@ import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -139,6 +140,45 @@ public class LiveManagementConfiguration {
                                                          List<AutonomousStaffingPolicy> policies,
                                                          WorkerRuntimeProfileBindingService runtimeProfiles) {
         return new AutonomousStaffingService(core, policies, runtimeProfiles);
+    }
+
+    /**
+     * Reconcile the canonical Gateway Director through the governed staffing service.
+     * This intentionally uses the existing formation policy instead of inventing a second Worker identity.
+     */
+    @Bean
+    ApplicationRunner canonicalGatewayDirectorReconciliation(
+            AutonomousStaffingService staffing,
+            GatewayDirectorAppointmentCapability capability,
+            WorkforceCoreService core,
+            @Value("${METATRON_BOOTSTRAP_GATEWAY_HEAD:true}") boolean enabled) {
+        return args -> {
+            if (!enabled) return;
+            staffing.ensureStaffed(capability, Clock.systemUTC().instant());
+
+            // Retire the short-lived parallel identity introduced by the earlier Meeting bootstrap.
+            final String legacyWorkerId = "worker:head-of-gateway:primary";
+            core.allWorkers().stream()
+                    .filter(w -> legacyWorkerId.equals(w.workerId()))
+                    .findFirst()
+                    .ifPresent(legacy -> {
+                        for (WorkforceCoreService.Participation p : core.participations(legacyWorkerId)) {
+                            if (p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE) {
+                                try {
+                                    core.setParticipationStatus(p.participationId(),
+                                            WorkforceCoreService.ParticipationStatus.ENDED);
+                                } catch (RuntimeException ignored) {
+                                    // Meeting resolution prefers the canonical Worker even if a legacy reservation delays cleanup.
+                                }
+                            }
+                        }
+                        try {
+                            core.setWorkerStatus(legacyWorkerId, WorkforceCoreService.WorkerStatus.RETIRED);
+                        } catch (RuntimeException ignored) {
+                            // Canonical resolution below remains deterministic; cleanup can complete after reservations release.
+                        }
+                    });
+        };
     }
 
     @Bean
