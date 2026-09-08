@@ -192,6 +192,11 @@ public final class WorkplaceMeetingService {
         return findActiveConversationMeeting(conversationId).isPresent();
     }
 
+    /** Leaving Meeting closes any active one-to-one room so stale sessions cannot hijack later Work turns. */
+    public void closeActiveConversation(String conversationId) {
+        closePriorConversationMeetings(conversationId);
+    }
+
     private java.util.Optional<MeetingRecord> findActiveConversationMeeting(String conversationId) {
         if (conversationId == null || conversationId.isBlank()) return java.util.Optional.empty();
         return store.list().stream()
