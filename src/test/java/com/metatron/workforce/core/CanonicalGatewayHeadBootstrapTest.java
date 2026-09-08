@@ -1,39 +1,44 @@
 package com.metatron.workforce.core;
 
+import com.metatron.workforce.management.AutonomousStaffingService;
+import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
+import com.metatron.workforce.management.GatewayDirectorStaffingPolicy;
+import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class CanonicalGatewayHeadBootstrapTest {
-    @TempDir Path temp;
-
     @Test
-    void bootstrapsOneDurableCanonicalGatewayHeadIdempotently() throws Exception {
-        WorkforceCoreStateStore store = new FileWorkforceCoreStateStore(temp.resolve("core.json"));
-        WorkforceCoreService core = new WorkforceCoreService(store);
-        WorkforceCoreConfiguration config = new WorkforceCoreConfiguration();
+    void governedStaffingProducesTheExistingCanonicalGatewayDirectorIdentity() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        WorkerRuntimeProfileBindingService runtimeProfiles = WorkerRuntimeProfileBindingService.inMemory();
+        GatewayDirectorAppointmentCapability capability =
+                new GatewayDirectorAppointmentCapability(core, runtimeProfiles);
+        AutonomousStaffingService staffing = new AutonomousStaffingService(
+                core, List.of(new GatewayDirectorStaffingPolicy()), runtimeProfiles);
 
-        var runner = config.canonicalGatewayHeadBootstrap(core, true);
-        runner.run(null);
-        runner.run(null);
+        var first = staffing.ensureStaffed(capability, Instant.parse("2026-09-08T00:00:00Z"));
+        var second = staffing.ensureStaffed(capability, Instant.parse("2026-09-08T00:00:01Z"));
 
-        WorkforceCoreService.Worker worker = core.worker("worker:head-of-gateway:primary");
+        assertEquals(GatewayDirectorAppointmentCapability.WORKER_ID, first.workerId());
+        assertEquals(first.workerId(), second.workerId());
+        assertNotEquals("worker:head-of-gateway:primary", first.workerId());
+
+        WorkforceCoreService.Worker worker = core.worker(GatewayDirectorAppointmentCapability.WORKER_ID);
         assertEquals(WorkforceCoreService.WorkerStatus.ACTIVE, worker.status());
-        assertEquals("participant:head-of-gateway", worker.participantId());
-        assertEquals(1, core.participations(worker.workerId()).stream()
-                .filter(p -> p.participationId().equals("participation:head-of-gateway:primary")).count());
         assertTrue(core.participations(worker.workerId()).stream().anyMatch(p ->
                 p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE
-                        && p.roleRef().equals("ROLE-HEAD-OF-GATEWAY")));
+                        && GatewayDirectorAppointmentCapability.ROLE_REF.equals(p.roleRef())
+                        && GatewayDirectorAppointmentCapability.POSITION_REF.equals(p.positionRef())));
         assertTrue(core.capabilities(worker.workerId()).stream().anyMatch(c ->
-                c.capabilityRef().equals("gateway.audit.read")));
+                GatewayDirectorAppointmentCapability.CAPABILITY.equals(c.capabilityRef())));
+        assertTrue(core.capabilities(worker.workerId()).stream().anyMatch(c ->
+                GatewayDirectorAppointmentCapability.GATEWAY_AUDIT_CAPABILITY.equals(c.capabilityRef())));
         assertTrue(core.availability(worker.workerId()).orElseThrow().available());
-
-        WorkforceCoreService reloaded = new WorkforceCoreService(store);
-        assertEquals(WorkforceCoreService.WorkerStatus.ACTIVE,
-                reloaded.worker("worker:head-of-gateway:primary").status());
+        assertDoesNotThrow(() -> runtimeProfiles.requireBinding(worker.workerId()));
     }
 }
