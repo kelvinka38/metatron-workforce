@@ -119,16 +119,30 @@ PY
 fresh_case() {
   local update="$1" text="$2" pattern="$3" result_prefix="$4" transport="${5:-public}" require_numeric="${6:-1}" since case_file log
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  send_update "$update" "$text" "$transport"
-  wait_answer "$since" "$update"
+  send_update "$update" "$text" "$transport" || return 1
+  wait_answer "$since" "$update" || return 1
   log="$OUT/intelligence-${update}-runtime.log"
-  persist_candidate_cases "$update" "$result_prefix"
-  ! grep -q "telegram_interaction_failed update_id=$update" "$log"
-  ! grep -Eq "execution-objective-workforce-accepted.*$update|METATRON WORK ACCEPTED.*$update|telegram_answer_ready update_id=$update.*objective_id=[^[:space:]]+" "$log"
-  case_file=$(case_file_for_update "$update" "$pattern"); test -n "$case_file"
+  persist_candidate_cases "$update" "$result_prefix" || return 1
+  if grep -q "telegram_interaction_failed update_id=$update" "$log"; then
+    echo "FRESH_CASE_RUNTIME_FAILURE update_id=$update" >&2
+    return 1
+  fi
+  if grep -Eq "execution-objective-workforce-accepted.*$update|METATRON WORK ACCEPTED.*$update|telegram_answer_ready update_id=$update.*objective_id=[^[:space:]]+" "$log"; then
+    echo "FRESH_CASE_WRONG_OBJECTIVE_ROUTE update_id=$update" >&2
+    return 1
+  fi
+  case_file=$(case_file_for_update "$update" "$pattern") || {
+    echo "FRESH_CASE_NO_MATCHING_CASE update_id=$update pattern=$pattern" >&2
+    return 1
+  }
+  [ -n "$case_file" ] || {
+    echo "FRESH_CASE_EMPTY_CASE_PATH update_id=$update" >&2
+    return 1
+  }
   printf '%s\n' "$case_file" > "${result_prefix}.case"
-  docker exec "$CID" cat "$case_file" > "${result_prefix}.json"; test -s "${result_prefix}.json"
-  validate_case "${result_prefix}.json" "$pattern" "$require_numeric"
+  docker exec "$CID" cat "$case_file" > "${result_prefix}.json" || return 1
+  test -s "${result_prefix}.json" || return 1
+  validate_case "${result_prefix}.json" "$pattern" "$require_numeric" || return 1
   echo "FRESH_CASE_PASS update_id=$update transport=$transport case_file=$case_file"
   # The public edge is itself verified below, but repeated synthetic acceptance messages do not
   # need to traverse Cloudflare. Give the interaction executor a bounded settle interval before
