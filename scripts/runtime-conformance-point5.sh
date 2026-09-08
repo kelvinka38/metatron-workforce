@@ -231,7 +231,13 @@ PY
   )
   case "$TERMINAL" in
     COMPLETED|DELIVERED) break ;;
-    BLOCKED|ESCALATED|CANCELLED|FAILED) echo "POINT5_BAD_OBJECTIVE_TERMINAL=$TERMINAL" >&2; exit 2 ;;
+    BLOCKED|ESCALATED|CANCELLED|FAILED)
+      echo "POINT5_BAD_OBJECTIVE_TERMINAL=$TERMINAL" >&2
+      echo 'POINT5_OBJECTIVE_DIAGNOSTIC_BEGIN' >&2
+      cat "$OUT/objective.json" >&2 || true
+      echo 'POINT5_OBJECTIVE_DIAGNOSTIC_END' >&2
+      exit 2
+      ;;
   esac
   sleep 2
 done
