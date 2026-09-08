@@ -50,7 +50,7 @@ jobs:
           python3 - "$EVIDENCE/active-before.json" > "$EVIDENCE/legacy.tsv" <<'PY'
           import json,re,sys
           data=json.load(open(sys.argv[1],encoding='utf-8'))
-          pattern=re.compile(r'^W-([0-9a-f]{12}|[0-9a-f]{8}-[0-9]+-[0-9]+)
+          pattern=re.compile(r'^W-([0-9a-f]{12}|[0-9a-f]{8}-[0-9]+-[0-9]+)$')
           for view in data:
               worker=view.get('worker') or {}
               wid=worker.get('workerId','')
