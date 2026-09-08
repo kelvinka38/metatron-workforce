@@ -391,6 +391,8 @@ public final class WorkplaceMeetingService {
         if (text == null) return List.of();
         String lower = normalize(text);
         Set<String> roles = new LinkedHashSet<>();
+        addRole(lower, roles, "Head of Gateway",
+                "head of gateway", "gateway head", "gateway director", "director of gateway");
         addRole(lower, roles, "Head of Strategy", "strategy", "chien luoc");
         addRole(lower, roles, "Head of Finance", "finance", "financial", "tai chinh", "cfo");
         addRole(lower, roles, "Head of Operations", "operations", "operation", "ops", "van hanh");
@@ -401,7 +403,7 @@ public final class WorkplaceMeetingService {
         // Work/Meeting must not be limited to a hard-coded role catalog. Preserve known canonical
         // roles above, then recognize explicit "Head of <domain>" roles supplied by the Human.
         java.util.regex.Matcher dynamic = java.util.regex.Pattern
-                .compile("\\bhead of ([a-z0-9][a-z0-9 &/-]{1,36}?)(?=,|\\band\\b|\\bdiscuss\\b|\\bcreate\\b|\\babout\\b|\\bfor\\b|$)")
+                .compile("\\b(?:head|director) of ([a-z0-9][a-z0-9 &/-]{1,36}?)(?=,|\\band\\b|\\bdiscuss\\b|\\bcreate\\b|\\babout\\b|\\bfor\\b|$)")
                 .matcher(lower);
         while (dynamic.find()) {
             String domain = dynamic.group(1).trim().replaceAll("\\s+", " ");
