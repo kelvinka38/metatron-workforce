@@ -1,6 +1,7 @@
 package com.metatron.workforce.workplace;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.phase3.ActorRef;
@@ -17,71 +18,99 @@ class Point5WorkplaceRuntimeConformanceTest {
     @TempDir Path temp;
 
     @Test
-    void multiRoleMeetingIsFirstClassDurableAndDoesNotCreateAuthority() {
+    void multiRoleMeetingUsesOnlyRealWorkersAndStaysLive() {
         ObjectMapper json = new ObjectMapper();
         PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("meetings"), json);
-        MeetingRoleDeliberator fake = new MeetingRoleDeliberator() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        staff(core, "WORKER-STRATEGY", "role:head-of-strategy", "position:head-of-strategy");
+        staff(core, "WORKER-FINANCE", "role:head-of-finance", "position:head-of-finance");
+        staff(core, "WORKER-OPERATIONS", "role:head-of-operations", "position:head-of-operations");
+
+        AtomicInteger shadowCalls = new AtomicInteger();
+        MeetingRoleDeliberator forbiddenShadowPath = new MeetingRoleDeliberator() {
             @Override public Deliberation deliberate(String role, String purpose, String context) {
-                return new Deliberation("Assessment from " + role + "; risk and recommendation are explicit.",
-                        "provider:test:role:" + role.replace(' ', '-'));
+                shadowCalls.incrementAndGet();
+                throw new AssertionError("multi-role Meeting must never fabricate a role contribution");
             }
             @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
-                return new Deliberation("Shared ground exists; disagreements remain explicit; Founder review is recommended.",
-                        "provider:test:synthesis");
+                shadowCalls.incrementAndGet();
+                throw new AssertionError("live Meeting must not auto-synthesize or close");
             }
         };
-        WorkplaceMeetingService service = new WorkplaceMeetingService(store, fake);
+        WorkerConversationGateway workerConversation = (workerId, role, message, context) ->
+                new WorkerConversationGateway.Reply(
+                        "Live reply from " + workerId,
+                        "worker-cognition:" + workerId + ":" + message.hashCode(),
+                        List.of("worker-cognition-evidence:" + workerId));
 
-        String request = "Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn kế hoạch mở thị trường rồi đưa recommendation.";
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                store, forbiddenShadowPath, ExecutionObjectiveHandoff.unavailable(),
+                new MeetingWorkerDirectory(core), workerConversation);
+
+        String request = "Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn kế hoạch mở thị trường.";
         assertTrue(service.supports(request));
         assertFalse(service.supports("Giá Bitcoin hôm nay là bao nhiêu?"));
         assertFalse(service.supports("Take ownership of one Objective: audit kelvinka38/bios and deliver verified evidence."));
 
-        MetatronInteraction interaction = new MetatronInteraction(
-                new ActorRef("founder", ActorRef.ActorType.HUMAN),
-                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
-                "organization:metatron", "conversation:founder:1", "telegram",
-                "telegram:user:1", "telegram:chat:1", "telegram:update:point5-1", request);
+        MetatronInteraction interaction = interaction(
+                "conversation:founder:1", "telegram:update:point5-1", request);
 
         String response = service.handle(interaction, "prior conversation context");
-        assertTrue(response.startsWith("METATRON MEETING COMPLETED"));
-        assertTrue(response.contains("authority_created=false"));
-        assertTrue(response.contains("follow_up_ref=meeting-follow-up:meeting:"));
-        assertTrue(response.contains("[Head of Strategy]"));
-        assertTrue(response.contains("[Head of Finance]"));
-        assertTrue(response.contains("[Head of Operations]"));
+        assertEquals(0, shadowCalls.get());
+        assertTrue(response.contains("WORKER-STRATEGY"));
+        assertTrue(response.contains("WORKER-FINANCE"));
+        assertTrue(response.contains("WORKER-OPERATIONS"));
+        assertFalse(response.contains("METATRON MEETING COMPLETED"));
+        assertFalse(response.contains("MEETING SYNTHESIS"));
+        assertFalse(response.contains("Follow-up:"));
 
         MeetingRecord meeting = service.findByExternalMessageReference("telegram:update:point5-1").orElseThrow();
-        assertEquals(MeetingRecord.Status.FOLLOW_UP, meeting.status());
-        assertEquals(List.of("PROPOSED", "OPEN", "ACTIVE", "DECISION_PENDING", "CLOSED", "FOLLOW_UP"), meeting.lifecycle());
-        assertEquals(4, meeting.participants().size()); // Human organizer + three requested roles.
+        assertEquals(MeetingRecord.Status.ACTIVE, meeting.status());
+        assertEquals(List.of("PROPOSED", "OPEN", "ACTIVE"), meeting.lifecycle());
+        assertEquals(List.of(
+                "human:founder",
+                "WORKER-STRATEGY",
+                "WORKER-FINANCE",
+                "WORKER-OPERATIONS"), meeting.participants());
         assertEquals(3, meeting.contributions().size());
-        assertEquals(3, meeting.contributions().stream().map(MeetingRecord.Contribution::participant).distinct().count());
-        assertFalse(meeting.recommendation().isBlank());
-        assertFalse(meeting.actionItems().isEmpty());
-        assertTrue(meeting.actionItems().getFirst().contains("handoff_ref=" + meeting.followUpReference()));
-        assertTrue(meeting.evidenceRefs().stream().anyMatch(v ->
-                v.contains("meeting-handoff:" + meeting.followUpReference())
-                        && v.contains("authority-created=false")));
+        assertEquals(List.of("WORKER-STRATEGY", "WORKER-FINANCE", "WORKER-OPERATIONS"),
+                meeting.contributions().stream().map(MeetingRecord.Contribution::participant).toList());
+        assertTrue(meeting.recommendation().isBlank());
+        assertTrue(meeting.actionItems().isEmpty());
         assertTrue(meeting.decisionRefs().isEmpty());
         assertFalse(meeting.authorityCreated());
-        assertEquals("telegram", meeting.channelProvider());
-        assertEquals("conversation:founder:1", meeting.conversationId());
-        assertTrue(meeting.evidenceRefs().stream().anyMatch(v -> v.equals("interaction:telegram:update:point5-1")));
+        assertTrue(meeting.evidenceRefs().contains(
+                "meeting-worker:WORKER-STRATEGY:participation=participation:worker-strategy"));
+        assertTrue(meeting.evidenceRefs().contains(
+                "meeting-worker:WORKER-FINANCE:participation=participation:worker-finance"));
+        assertTrue(meeting.evidenceRefs().contains(
+                "meeting-worker:WORKER-OPERATIONS:participation=participation:worker-operations"));
 
-        MeetingRecord reloaded = new PersistentMeetingStore(temp.resolve("meetings"), json).find(meeting.meetingId()).orElseThrow();
-        assertEquals(meeting.meetingId(), reloaded.meetingId());
-        assertEquals(meeting.followUpReference(), reloaded.followUpReference());
-        assertEquals(MeetingRecord.Status.FOLLOW_UP, reloaded.status());
-        assertEquals(3, reloaded.contributions().size());
-        assertFalse(reloaded.authorityCreated());
+        String second = service.handle(interaction(
+                "conversation:founder:1",
+                "telegram:update:point5-2",
+                "Ba đứa thấy rủi ro lớn nhất là gì?"), "recent live room context");
+        assertTrue(second.contains("WORKER-STRATEGY"));
+        assertTrue(second.contains("WORKER-FINANCE"));
+        assertTrue(second.contains("WORKER-OPERATIONS"));
+        assertEquals(6, service.require(meeting.meetingId()).contributions().size());
+        assertEquals(0, shadowCalls.get());
+
+        MeetingRecord reloaded = new PersistentMeetingStore(temp.resolve("meetings"), json)
+                .find(meeting.meetingId()).orElseThrow();
+        assertEquals(MeetingRecord.Status.ACTIVE, reloaded.status());
+        assertEquals(meeting.participants(), reloaded.participants());
+        assertEquals(6, reloaded.contributions().size());
     }
 
-
     @Test
-    void explicitMeetingFollowUpSeedsWorkforceWhileOrdinaryChatDoesNot() {
+    void explicitMeetingFollowUpSeedsWorkforceWhileOrdinaryConversationDoesNot() {
         ObjectMapper json = new ObjectMapper();
         PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("handoff"), json);
+        WorkforceCoreService core = new WorkforceCoreService();
+        staff(core, "WORKER-TECHNOLOGY", "role:head-of-technology", "position:head-of-technology");
+        staff(core, "WORKER-OPERATIONS", "role:head-of-operations", "position:head-of-operations");
+
         AtomicInteger submissions = new AtomicInteger();
         ExecutionObjectiveHandoff handoff = (humanId, organizationContextId, caseId, conversationId,
                                              externalMessageReference, channel, request) -> {
@@ -92,37 +121,44 @@ class Point5WorkplaceRuntimeConformanceTest {
                     true, "objective:meeting-1", "worker:head", "queue:meeting-1",
                     "ACCEPTED", "ADMITTED", "meeting-follow-up");
         };
-        MeetingRoleDeliberator fake = new MeetingRoleDeliberator() {
+        MeetingRoleDeliberator forbiddenShadowPath = new MeetingRoleDeliberator() {
             @Override public Deliberation deliberate(String role, String purpose, String context) {
-                return new Deliberation(role + " assessment", "provider:test:" + role);
+                throw new AssertionError("role simulation must not run");
             }
             @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
-                return new Deliberation("Implement the agreed gateway routing correction with tests.", "provider:test:synthesis");
+                throw new AssertionError("automatic synthesis must not run");
             }
         };
-        WorkplaceMeetingService service = new WorkplaceMeetingService(store, fake, handoff);
+        WorkerConversationGateway workerConversation = (workerId, role, message, context) ->
+                new WorkerConversationGateway.Reply(
+                        "Live reply from " + workerId,
+                        "worker-cognition:" + workerId,
+                        List.of("worker-cognition-evidence:" + workerId));
+
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                store, forbiddenShadowPath, handoff, new MeetingWorkerDirectory(core), workerConversation);
 
         String meetingRequest = "Mời Head of Technology và Head of Operations họp về Telegram routing.";
-        MetatronInteraction meetingInteraction = new MetatronInteraction(
-                new ActorRef("founder", ActorRef.ActorType.HUMAN),
-                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
-                "organization:metatron", "conversation:founder:handoff", "telegram",
-                "telegram:user:1", "telegram:chat:1", "telegram:update:meeting-create", meetingRequest);
-        service.handle(meetingInteraction, "");
+        service.handle(interaction(
+                "conversation:founder:handoff",
+                "telegram:update:meeting-create",
+                meetingRequest), "");
 
         MeetingRecord meeting = service.findByExternalMessageReference("telegram:update:meeting-create").orElseThrow();
+        assertEquals(MeetingRecord.Status.ACTIVE, meeting.status());
+        assertEquals(List.of("human:founder", "WORKER-OPERATIONS", "WORKER-TECHNOLOGY").stream().sorted().toList(),
+                meeting.participants().stream().sorted().toList());
+
         String followUp = "Triển khai " + meeting.followUpReference() + " cho Workforce thực hiện.";
         assertTrue(service.supports(followUp));
         assertFalse(service.supports(meeting.followUpReference()));
         assertFalse(service.supports("Fix Telegram routing now"));
         assertEquals(0, submissions.get());
 
-        MetatronInteraction followUpInteraction = new MetatronInteraction(
-                new ActorRef("founder", ActorRef.ActorType.HUMAN),
-                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
-                "organization:metatron", "conversation:founder:handoff", "telegram",
-                "telegram:user:1", "telegram:chat:1", "telegram:update:meeting-follow-up", followUp);
-        String response = service.handle(followUpInteraction, "");
+        String response = service.handle(interaction(
+                "conversation:founder:handoff",
+                "telegram:update:meeting-follow-up",
+                followUp), "");
 
         assertEquals(1, submissions.get());
         assertTrue(response.startsWith("METATRON MEETING WORK ACCEPTED"));
@@ -138,37 +174,43 @@ class Point5WorkplaceRuntimeConformanceTest {
         assertFalse(updated.authorityCreated());
     }
 
-
-
     @Test
     void singleRoleMeetingIsPersistentNaturalConversationWithoutMemoBoilerplate() {
         ObjectMapper json = new ObjectMapper();
         PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("conversation"), json);
-        MeetingRoleDeliberator fake = new MeetingRoleDeliberator() {
-            @Override public Deliberation deliberate(String role, String purpose, String context) {
-                return new Deliberation("legacy deliberation", "provider:test:legacy");
+        WorkforceCoreService core = new WorkforceCoreService();
+        staff(core, "WORKER-GATEWAY", "role:head-of-gateway", "position:head-of-gateway");
+
+        WorkerConversationGateway workerConversation = (workerId, role, message, context) -> {
+            if (message.toLowerCase().contains("trò chuyện") || message.toLowerCase().contains("tro chuyen")) {
+                return new WorkerConversationGateway.Reply(
+                        "Có tao đây. Mày muốn bàn gì về Gateway?",
+                        "worker-cognition:gateway:1",
+                        List.of("worker-evidence:gateway:1"));
             }
-            @Override public Deliberation converse(String role, String userMessage, String context) {
-                if (userMessage.toLowerCase().contains("trò chuyện") || userMessage.toLowerCase().contains("tro chuyen")) {
-                    return new Deliberation("Có tao đây. Mày muốn bàn gì về Gateway?", "provider:test:conversation:1");
-                }
-                return new Deliberation("Ừ, tao đang nghe. Vấn đề routing mày muốn đào sâu chỗ nào?", "provider:test:conversation:2");
+            return new WorkerConversationGateway.Reply(
+                    "Ừ, tao đang nghe. Vấn đề routing mày muốn đào sâu chỗ nào?",
+                    "worker-cognition:gateway:2",
+                    List.of("worker-evidence:gateway:2"));
+        };
+        MeetingRoleDeliberator forbiddenShadowPath = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                throw new AssertionError("shadow role path must not run");
             }
             @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
-                return new Deliberation("must not run for live one-role conversation", "provider:test:synthesis");
+                throw new AssertionError("auto synthesis must not run");
             }
         };
-        WorkplaceMeetingService service = new WorkplaceMeetingService(store, fake);
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                store, forbiddenShadowPath, ExecutionObjectiveHandoff.unavailable(),
+                new MeetingWorkerDirectory(core), workerConversation);
 
-        MetatronInteraction open = new MetatronInteraction(
-                new ActorRef("founder", ActorRef.ActorType.HUMAN),
-                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
-                "organization:metatron", "conversation:live:gateway", "telegram",
-                "telegram:user:1", "telegram:chat:1", "telegram:update:live-1",
-                "Cho tao trò chuyện với Head of Gateway");
-
-        String first = service.handle(open, "old unrelated bios audit context");
+        String first = service.handle(interaction(
+                "conversation:live:gateway",
+                "telegram:update:live-1",
+                "Cho tao trò chuyện với Head of Gateway"), "old unrelated bios audit context");
         assertTrue(first.startsWith("🏛 **Head of Gateway**"));
+        assertTrue(first.contains("WORKER-GATEWAY"));
         assertTrue(first.contains("Có tao đây"));
         assertFalse(first.contains("COMMUNICATION INITIATION"));
         assertFalse(first.contains("GOVERNANCE OBJECTIVES"));
@@ -177,19 +219,17 @@ class Point5WorkplaceRuntimeConformanceTest {
 
         MeetingRecord active = service.findByExternalMessageReference("telegram:update:live-1").orElseThrow();
         assertEquals(MeetingRecord.Status.ACTIVE, active.status());
-        assertEquals(2, active.participants().size());
+        assertEquals(List.of("human:founder", "WORKER-GATEWAY"), active.participants());
         assertTrue(active.recommendation().isBlank());
         assertTrue(active.actionItems().isEmpty());
 
-        MetatronInteraction next = new MetatronInteraction(
-                new ActorRef("founder", ActorRef.ActorType.HUMAN),
-                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
-                "organization:metatron", "conversation:live:gateway", "telegram",
-                "telegram:user:1", "telegram:chat:1", "telegram:update:live-2",
-                "Tao thấy Telegram routing vẫn ngu. Mày thấy root cause ở đâu?");
-
-        String second = service.handle(next, "recent live meeting context");
+        String second = service.handle(interaction(
+                "conversation:live:gateway",
+                "telegram:update:live-2",
+                "Tao thấy Telegram routing vẫn ngu. Mày thấy root cause ở đâu?"),
+                "recent live meeting context");
         assertTrue(second.startsWith("🏛 **Head of Gateway**"));
+        assertTrue(second.contains("WORKER-GATEWAY"));
         assertTrue(second.contains("tao đang nghe"));
         MeetingRecord continued = service.require(active.meetingId());
         assertEquals(MeetingRecord.Status.ACTIVE, continued.status());
@@ -221,5 +261,22 @@ class Point5WorkplaceRuntimeConformanceTest {
                 .stream().anyMatch(role -> role.equals("Head of Gateway")));
         assertFalse(service.supports("Let's have a meeting sometime."));
         assertFalse(service.supports("Finance outlook this week?"));
+    }
+
+    private static MetatronInteraction interaction(String conversationId, String externalRef, String text) {
+        return new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", conversationId, "telegram",
+                "telegram:user:1", "telegram:chat:1", externalRef, text);
+    }
+
+    private static void staff(WorkforceCoreService core, String workerId, String roleRef, String positionRef) {
+        String slug = workerId.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
+        String participantId = "participant:" + slug;
+        core.recognizeParticipant(participantId, WorkforceCoreService.ParticipantType.AI, "test:" + workerId);
+        core.admitWorker(workerId, participantId);
+        core.participate("participation:" + slug, workerId,
+                "organization:metatron", positionRef, roleRef);
     }
 }
