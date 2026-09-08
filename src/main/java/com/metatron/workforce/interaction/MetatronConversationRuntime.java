@@ -176,11 +176,13 @@ public final class MetatronConversationRuntime {
             String meetingAnswer = meetingRoom.handle(interaction, history);
             String answer = meetingAnswer;
             memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
-            MeetingRoomReference reference = meetingRoom.findByExternalMessageReference(interaction.externalMessageReference())
-                    .map(m -> new MeetingRoomReference(m.meetingId()))
-                    .orElse(new MeetingRoomReference("meeting:unresolved"));
+            java.util.Optional<MeetingRoomReference> reference =
+                    meetingRoom.findByExternalMessageReference(interaction.externalMessageReference())
+                            .map(m -> new MeetingRoomReference(m.meetingId()));
             return new MetatronInteractionOrchestrator.InteractionResponse(
-                    interaction.conversationId(), answer, reference.meetingId());
+                    interaction.conversationId(), answer,
+                    reference.map(MeetingRoomReference::meetingId)
+                            .orElse("work:meeting-no-room:" + interaction.externalMessageReference()));
         }
 
         IntelligenceDepthContract contract = depthControl == null
