@@ -1,5 +1,6 @@
 package com.metatron.workforce.interaction;
 
+import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
 import com.metatron.workforce.workplace.WorkplaceDashboardService;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +21,9 @@ public final class MetatronInstitutionalStateChatService {
     }
 
     public Optional<String> answer(String text) {
+        if (CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(text)) {
+            return Optional.empty();
+        }
         String q = normalize(text);
         if (!q.contains("metatron")) return Optional.empty();
         boolean institutional = q.contains("workforce") || q.contains("worker")

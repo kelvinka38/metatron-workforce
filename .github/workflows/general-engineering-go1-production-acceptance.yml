@@ -185,7 +185,14 @@ jobs:
             [ -n "$OID" ] && break
             sleep 1
           done
-          test -n "$OID"
+          if [ -z "$OID" ]; then
+            echo '=== GO1 OBJECTIVE MATERIALIZATION DIAGNOSTICS ===' >&2
+            cat "$OBJECTIVES_FILE" >&2 || true
+            docker logs --tail 500 "$CID" >&2 || true
+            docker exec "$CID" sh -c 'cat /var/lib/metatron-workforce/telegram-ingress-state.json 2>/dev/null || true' >&2 || true
+            docker exec "$CID" sh -c 'find /var/lib/metatron-workforce/intelligence-cases -maxdepth 3 -type f -print 2>/dev/null | tail -50' >&2 || true
+            exit 1
+          fi
           echo "GO1_OBJECTIVE_ID=$OID"
 
           TERMINAL=""
