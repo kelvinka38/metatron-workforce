@@ -17,7 +17,12 @@ public interface MeetingRoleDeliberator {
     Deliberation deliberate(String role, String purpose, String conversationContext);
     Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String conversationContext);
 
-    /** Live Meeting conversation: role speaks as a persistent institutional counterpart, not as a report generator. */
+    /** Live Meeting conversation: a real canonical Worker speaks from its institutional role. */
+    default Deliberation converse(String workerId, String role, String userMessage, String meetingContext) {
+        return converse(role, userMessage, meetingContext);
+    }
+
+    /** Compatibility shape for existing test doubles. Production Meeting calls the worker-bound overload above. */
     default Deliberation converse(String role, String userMessage, String meetingContext) {
         return deliberate(role, userMessage, meetingContext);
     }
@@ -57,11 +62,11 @@ public interface MeetingRoleDeliberator {
                     """.formatted(role);
             String objective = "MEETING PURPOSE:\n" + purpose
                     + "\n\nCONVERSATION CONTEXT:\n" + safeContext(conversationContext);
-            return complete("meeting.role.deliberation", instructions, objective);
+            return complete("meeting.role.deliberation", "workplace:meeting-room", instructions, objective);
         }
 
         @Override
-        public Deliberation converse(String role, String userMessage, String meetingContext) {
+        public Deliberation converse(String workerId, String role, String userMessage, String meetingContext) {
             String instructions = """
                     You are the named institutional Metatron role in a live conversation with the Human.
                     Speak directly as that role, like a real colleague in the room. This is NOT a memo, report, meeting minutes, governance notice, or formal communication.
@@ -74,7 +79,7 @@ public interface MeetingRoleDeliberator {
                     """.formatted(role);
             String objective = "HUMAN MESSAGE:\n" + userMessage
                     + "\n\nLIVE MEETING CONTEXT:\n" + safeContext(meetingContext);
-            return complete("meeting.role.conversation", instructions, objective);
+            return complete("meeting.role.conversation", workerId, instructions, objective);
         }
 
         @Override
@@ -95,15 +100,15 @@ public interface MeetingRoleDeliberator {
             String objective = "MEETING PURPOSE:\n" + purpose
                     + "\n\nATTRIBUTED CONTRIBUTIONS:\n" + transcript
                     + "\n\nCONVERSATION CONTEXT:\n" + safeContext(conversationContext);
-            return complete("meeting.synthesis", instructions, objective);
+            return complete("meeting.synthesis", "workplace:meeting-room", instructions, objective);
         }
 
-        private Deliberation complete(String capability, String instructions, String objective) {
+        private Deliberation complete(String capability, String requester, String instructions, String objective) {
             String requestId = "meeting-intelligence-" + UUID.randomUUID();
             try {
                 IntelligenceResult result = fabric.execute(new IntelligenceRequest(
                         requestId,
-                        "workplace:meeting-room",
+                        requester,
                         IntelligenceMode.REASONING,
                         CollaborationMode.SINGLE,
                         objective,

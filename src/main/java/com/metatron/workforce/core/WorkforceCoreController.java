@@ -42,8 +42,20 @@ public class WorkforceCoreController {
     }
     @PostMapping("/assignments/{id}/status/{status}")
     public WorkforceCoreService.Assignment transition(@PathVariable String id, @PathVariable WorkforceCoreService.AssignmentStatus status) { return core.transitionAssignment(id, status); }
+    @GetMapping("/workers") public List<WorkerView> workers() {
+        return core.allWorkers().stream().map(this::view).toList();
+    }
+    @GetMapping("/workers/active") public List<WorkerView> activeWorkers() {
+        return core.allWorkers().stream()
+                .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
+                .map(this::view).toList();
+    }
     @GetMapping("/workers/{id}") public WorkerView view(@PathVariable String id) {
-        return new WorkerView(core.worker(id), core.participations(id), core.assignments(id), core.capabilities(id),
+        return view(core.worker(id));
+    }
+    private WorkerView view(WorkforceCoreService.Worker worker) {
+        String id = worker.workerId();
+        return new WorkerView(worker, core.participations(id), core.assignments(id), core.capabilities(id),
                 core.qualifications(id), core.availability(id).orElse(null));
     }
 

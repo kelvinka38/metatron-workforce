@@ -26,38 +26,49 @@ import java.util.regex.Pattern;
 @Service
 public final class WorkplaceMeetingService {
     private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
+    private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b(worker:[a-zA-Z0-9._:-]+)\\b");
     private final PersistentMeetingStore store;
     private final MeetingRoleDeliberator deliberator;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
+    private final MeetingWorkerDirectory workerDirectory;
 
     @Autowired
     public WorkplaceMeetingService(
             InstitutionalIntelligenceRuntime intelligenceRuntime,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
+            MeetingWorkerDirectory workerDirectory,
             @Value("${METATRON_WORKPLACE_MEETING_PATH:/var/lib/metatron-workforce/workplace/meetings}") String meetingPath,
             ObjectMapper json) {
         this(new PersistentMeetingStore(Path.of(meetingPath), json),
                 MeetingRoleDeliberator.intelligenceBacked(
                         Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime").fabric(),
                         intelligenceRuntime.configuredProviders().size()),
-                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"));
+                Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
+                Objects.requireNonNull(workerDirectory, "workerDirectory"));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator) {
-        this(store, deliberator, ExecutionObjectiveHandoff.unavailable());
+        this(store, deliberator, ExecutionObjectiveHandoff.unavailable(), null);
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff) {
+        this(store, deliberator, executionObjectiveHandoff, null);
+    }
+
+    WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
+                            ExecutionObjectiveHandoff executionObjectiveHandoff,
+                            MeetingWorkerDirectory workerDirectory) {
         this.store = Objects.requireNonNull(store, "store");
         this.deliberator = Objects.requireNonNull(deliberator, "deliberator");
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
+        this.workerDirectory = workerDirectory;
     }
 
     /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
     public boolean supportsInMeetingMode(String text) {
         if (text == null || text.isBlank()) return false;
-        return isAuthorizedFollowUp(text) || requestedRoles(text).size() >= 1;
+        return isAuthorizedFollowUp(text) || requestedWorkerId(text).isPresent() || requestedRoles(text).size() >= 1;
     }
 
     /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
@@ -77,6 +88,11 @@ public final class WorkplaceMeetingService {
     public String handle(MetatronInteraction interaction, String conversationContext) {
         Objects.requireNonNull(interaction, "interaction");
         if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
+        java.util.Optional<String> directWorker = requestedWorkerId(interaction.text());
+        if (directWorker.isPresent()) {
+            if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
+            return openConversation(interaction, workerDirectory.resolveActiveById(directWorker.get()));
+        }
         List<String> roles = requestedRoles(interaction.text());
         if (roles.isEmpty()) {
             MeetingRecord active = findActiveConversationMeeting(interaction.conversationId())
@@ -162,18 +178,24 @@ public final class WorkplaceMeetingService {
     }
 
     private String openConversation(MetatronInteraction interaction, String role) {
+        return openConversation(interaction, requireBoundWorker(role));
+    }
+
+    private String openConversation(MetatronInteraction interaction, MeetingWorkerDirectory.ResolvedWorker bound) {
+        String role = bound.role();
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
         String now = Instant.now().toString();
         String organizer = "human:" + interaction.human().actorId();
-        List<String> participants = List.of(organizer, "role:" + slug(role));
+        List<String> participants = List.of(organizer, bound.workerId());
         List<String> lifecycle = List.of(
                 MeetingRecord.Status.PROPOSED.name(),
                 MeetingRecord.Status.OPEN.name(),
                 MeetingRecord.Status.ACTIVE.name());
-        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(role, interaction.text(), "");
+        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(bound.workerId(), role, interaction.text(), "");
         List<MeetingRecord.Contribution> contributions = List.of(
-                new MeetingRecord.Contribution("role:" + slug(role), role, reply.text(), reply.providerReference()));
+                new MeetingRecord.Contribution(bound.workerId(), role, reply.text(), reply.providerReference()));
         List<String> evidence = new ArrayList<>(baseEvidence(interaction));
+        evidence.add("meeting-worker:" + bound.workerId() + ":participation=" + bound.participationId());
         if (!reply.providerReference().isBlank()) evidence.add(reply.providerReference());
         MeetingRecord meeting = new MeetingRecord(
                 id, interaction.organizationContextId(), interaction.conversationId(),
@@ -194,9 +216,16 @@ public final class WorkplaceMeetingService {
         String role = meeting.contributions().isEmpty()
                 ? roleFromParticipant(meeting.participants().get(1))
                 : meeting.contributions().getLast().role();
-        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(role, interaction.text(), conversationContext);
+        String workerId = meeting.participants().get(1);
+        if (workerDirectory != null) {
+            MeetingWorkerDirectory.ResolvedWorker current = requireBoundWorker(role);
+            if (!current.workerId().equals(workerId)) {
+                throw new IllegalStateException("meeting_worker_binding_changed: expected " + workerId + " but role now resolves to " + current.workerId());
+            }
+        }
+        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(workerId, role, interaction.text(), conversationContext);
         List<MeetingRecord.Contribution> contributions = new ArrayList<>(meeting.contributions());
-        contributions.add(new MeetingRecord.Contribution("role:" + slug(role), role, reply.text(), reply.providerReference()));
+        contributions.add(new MeetingRecord.Contribution(workerId, role, reply.text(), reply.providerReference()));
         List<String> evidence = new ArrayList<>(meeting.evidenceRefs());
         evidence.add("interaction:" + interaction.externalMessageReference());
         if (!reply.providerReference().isBlank()) evidence.add(reply.providerReference());
@@ -208,6 +237,13 @@ public final class WorkplaceMeetingService {
                 meeting.lifecycle(), MeetingRecord.Status.ACTIVE, meeting.openedAt(), "", false);
         store.save(updated);
         return renderConversation(role, reply.text());
+    }
+
+    private MeetingWorkerDirectory.ResolvedWorker requireBoundWorker(String role) {
+        if (workerDirectory == null) {
+            return new MeetingWorkerDirectory.ResolvedWorker("role:" + slug(role), "test-unbound", role, "", "");
+        }
+        return workerDirectory.resolveActive(role);
     }
 
     private static String roleFromParticipant(String participant) {
@@ -308,6 +344,12 @@ public final class WorkplaceMeetingService {
     }
     public java.util.Optional<MeetingRecord> findByExternalMessageReference(String ref) {
         return store.findByExternalMessageReference(ref);
+    }
+
+    static java.util.Optional<String> requestedWorkerId(String text) {
+        if (text == null || text.isBlank()) return java.util.Optional.empty();
+        Matcher matcher = WORKER_REFERENCE.matcher(text);
+        return matcher.find() ? java.util.Optional.of(matcher.group(1)) : java.util.Optional.empty();
     }
 
     static List<String> requestedRoles(String text) {
