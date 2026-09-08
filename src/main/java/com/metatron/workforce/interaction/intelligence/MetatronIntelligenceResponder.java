@@ -195,6 +195,13 @@ public final class MetatronIntelligenceResponder {
     public String respond(String humanId, String text, String externalMessageReference, String channel,
                           String conversationId, String organizationContextId, String conversationContext,
                           IntelligenceDepthContract depthContract) {
+        return respond(humanId, text, externalMessageReference, channel, conversationId,
+                organizationContextId, conversationContext, depthContract, false);
+    }
+
+    public String respond(String humanId, String text, String externalMessageReference, String channel,
+                          String conversationId, String organizationContextId, String conversationContext,
+                          IntelligenceDepthContract depthContract, boolean executionSurfaceAuthorized) {
         Objects.requireNonNull(humanId, "humanId");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(externalMessageReference, "externalMessageReference");
@@ -289,7 +296,8 @@ public final class MetatronIntelligenceResponder {
             }
 
             if (normalized.mode() == IntelligenceMode.EXECUTION) {
-                if (!shouldAdmitExecution(deterministicControl, semanticExecutionHandoffEnabled)) {
+                if (!shouldAdmitExecution(deterministicControl,
+                        semanticExecutionHandoffEnabled || executionSurfaceAuthorized)) {
                     route = "semantic-execution-objective-handoff-disabled";
                     caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
                     return "METATRON WORK NOT ADMITTED"
