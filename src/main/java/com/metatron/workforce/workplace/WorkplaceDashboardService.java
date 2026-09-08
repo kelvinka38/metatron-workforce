@@ -8,6 +8,7 @@ import com.metatron.workforce.management.ManagementObjective;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.work.InstitutionalWork;
 import com.metatron.workforce.work.WorkService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -26,6 +27,7 @@ public class WorkplaceDashboardService {
     private final WorkService work;
     private final ActionJournal actionJournal;
 
+    @Autowired
     public WorkplaceDashboardService(WorkforceCoreService core, ManagementAutonomyService management, WorkService work) {
         this(core, management, work, ActionJournal.runtimeEvidenceJournal());
     }
