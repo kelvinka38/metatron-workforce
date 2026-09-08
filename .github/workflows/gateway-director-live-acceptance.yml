@@ -2,9 +2,6 @@ name: Gateway Director Live Acceptance
 run-name: Gateway Director live acceptance
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -16,12 +13,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-production-state
+  group: metatron-production-lane
   cancel-in-progress: false
 
 jobs:
   accept-live-gateway-director:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 20
@@ -29,7 +25,7 @@ jobs:
       - name: Prove exact Founder Telegram appointment creates a real Gateway Director Worker
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.event.workflow_run.head_sha }}
+          TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           set -euo pipefail
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
