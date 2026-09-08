@@ -36,10 +36,14 @@ jobs:
           grep -q 'Work Breakdown' <<<"$DASH"
           grep -q 'Reports to' <<<"$DASH"
           grep -q 'Staffing' <<<"$DASH"
-          API=$(curl -fsS -H 'X-Metatron-Actor: human-primary' http://127.0.0.1:8080/workforce/monitor/api/objectives)
-          python3 - "$API" <<'PY'
+          API_FILE=$(mktemp)
+          trap 'rm -f "$API_FILE"' EXIT
+          curl -fsS -H 'X-Metatron-Actor: human-primary' http://127.0.0.1:8080/workforce/monitor/api/objectives > "$API_FILE"
+          python3 - "$API_FILE" <<'PY'
           import json,sys
-          rows=json.loads(sys.argv[1]); assert isinstance(rows,list)
+          with open(sys.argv[1],encoding='utf-8') as fh:
+              rows=json.load(fh)
+          assert isinstance(rows,list)
           for row in rows:
               for key in ('objectiveId','humanStatus','progressPercent','ownerWorker','reportsTo','workload','etaCommitment','staffingState','workItems','recentEvents','executionProof'):
                   assert key in row, (key,row)
