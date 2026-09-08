@@ -19,12 +19,12 @@ public interface MeetingRoleDeliberator {
 
     /** Live Meeting conversation: a real canonical Worker speaks from its institutional role. */
     default Deliberation converse(String workerId, String role, String userMessage, String meetingContext) {
-        return deliberate(role, userMessage, meetingContext);
+        return converse(role, userMessage, meetingContext);
     }
 
-    /** Legacy test-only shape. Production Meeting must call the worker-bound overload above. */
+    /** Compatibility shape for existing test doubles. Production Meeting calls the worker-bound overload above. */
     default Deliberation converse(String role, String userMessage, String meetingContext) {
-        return converse("unbound-worker", role, userMessage, meetingContext);
+        return deliberate(role, userMessage, meetingContext);
     }
 
     record Deliberation(String text, String providerReference) {
