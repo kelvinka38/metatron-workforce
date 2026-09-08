@@ -78,11 +78,9 @@ public final class MeetingWorkerDirectory {
         if (ref == null || ref.isBlank()) return false;
         String candidate = normalize(ref);
         if (candidate.equals(wanted)) return true;
-        String wantedSlug = wanted.replace(' ', '-');
-        return candidate.endsWith(":" + wantedSlug)
-                || candidate.endsWith("/" + wantedSlug)
-                || candidate.endsWith("-" + wantedSlug)
-                || candidate.contains(wantedSlug);
+        return candidate.equals(wanted)
+                || candidate.endsWith(" " + wanted)
+                || candidate.contains(" " + wanted + " ");
     }
 
     private static String normalize(String value) {
