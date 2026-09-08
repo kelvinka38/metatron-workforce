@@ -241,30 +241,49 @@ public final class InformationRequirementAcquisitionService {
                                        String requester,
                                        String caseId) {
         String requirementQuestion = requirement.question().trim();
-        String query = requirementQuestion.isBlank()
+        String primaryQuery = requirementQuestion.isBlank()
                 || requirementQuestion.equalsIgnoreCase(LEGACY_GENERIC_CURRENT_QUERY)
                 ? normalized.objective().trim()
                 : requirementQuestion;
-        query = searchOptimizedExternalQuery(canonicalExternalQuery(query));
-        if (query.isBlank()) {
-            return ToolResult.failure(new ToolRequest(
+        primaryQuery = searchOptimizedExternalQuery(canonicalExternalQuery(primaryQuery));
+
+        String objectiveQuery = searchOptimizedExternalQuery(canonicalExternalQuery(normalized.objective()));
+        List<String> queries = new ArrayList<>();
+        if (!primaryQuery.isBlank()) queries.add(primaryQuery);
+        if (!objectiveQuery.isBlank() && queries.stream().noneMatch(q -> q.equalsIgnoreCase(objectiveQuery))) {
+            queries.add(objectiveQuery);
+        }
+        if (queries.isEmpty()) {
+            ToolRequest empty = new ToolRequest(
                     "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
-                    requester, WebSearchToolAdapter.CAPABILITY, "internet:web-search", "search", "", List.of()),
-                    "fresh_semantic_query_missing");
+                    requester, WebSearchToolAdapter.CAPABILITY, "internet:web-search", "search", "", List.of());
+            return ToolResult.failure(empty, "fresh_semantic_query_missing");
         }
-        ToolRequest request = new ToolRequest(
-                "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + System.nanoTime(),
-                requester,
-                WebSearchToolAdapter.CAPABILITY,
-                "internet:web-search",
-                "search",
-                query,
-                List.of());
-        try {
-            return tools.execute(request);
-        } catch (RuntimeException failure) {
-            return ToolResult.failure(request, "information_acquisition_failed:" + failure.getClass().getSimpleName());
+
+        ToolResult lastFailure = null;
+        for (String query : queries) {
+            // One bounded retry per semantic query protects current-information routing from transient
+            // provider/network/search-relevance misses without hiding persistent evidence failure.
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                ToolRequest request = new ToolRequest(
+                        "ir-web-" + caseId + "-" + requirement.requirementId() + "-" + attempt + "-" + System.nanoTime(),
+                        requester,
+                        WebSearchToolAdapter.CAPABILITY,
+                        "internet:web-search",
+                        "search",
+                        query,
+                        List.of());
+                try {
+                    ToolResult result = tools.execute(request);
+                    if (result.success()) return result;
+                    lastFailure = result;
+                } catch (RuntimeException failure) {
+                    lastFailure = ToolResult.failure(
+                            request, "information_acquisition_failed:" + failure.getClass().getSimpleName());
+                }
+            }
         }
+        return lastFailure;
     }
 
     static String canonicalExternalQuery(String value) {
