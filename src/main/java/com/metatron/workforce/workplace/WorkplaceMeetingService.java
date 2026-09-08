@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 @Service
 public final class WorkplaceMeetingService {
     private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
+    private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b(worker:[a-zA-Z0-9._:-]+)\\b");
     private final PersistentMeetingStore store;
     private final MeetingRoleDeliberator deliberator;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
@@ -67,7 +68,7 @@ public final class WorkplaceMeetingService {
     /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
     public boolean supportsInMeetingMode(String text) {
         if (text == null || text.isBlank()) return false;
-        return isAuthorizedFollowUp(text) || requestedRoles(text).size() >= 1;
+        return isAuthorizedFollowUp(text) || requestedWorkerId(text).isPresent() || requestedRoles(text).size() >= 1;
     }
 
     /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
@@ -87,6 +88,11 @@ public final class WorkplaceMeetingService {
     public String handle(MetatronInteraction interaction, String conversationContext) {
         Objects.requireNonNull(interaction, "interaction");
         if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
+        java.util.Optional<String> directWorker = requestedWorkerId(interaction.text());
+        if (directWorker.isPresent()) {
+            if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
+            return openConversation(interaction, workerDirectory.resolveActiveById(directWorker.get()));
+        }
         List<String> roles = requestedRoles(interaction.text());
         if (roles.isEmpty()) {
             MeetingRecord active = findActiveConversationMeeting(interaction.conversationId())
@@ -172,7 +178,11 @@ public final class WorkplaceMeetingService {
     }
 
     private String openConversation(MetatronInteraction interaction, String role) {
-        MeetingWorkerDirectory.ResolvedWorker bound = requireBoundWorker(role);
+        return openConversation(interaction, requireBoundWorker(role));
+    }
+
+    private String openConversation(MetatronInteraction interaction, MeetingWorkerDirectory.ResolvedWorker bound) {
+        String role = bound.role();
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
         String now = Instant.now().toString();
         String organizer = "human:" + interaction.human().actorId();
@@ -334,6 +344,12 @@ public final class WorkplaceMeetingService {
     }
     public java.util.Optional<MeetingRecord> findByExternalMessageReference(String ref) {
         return store.findByExternalMessageReference(ref);
+    }
+
+    static java.util.Optional<String> requestedWorkerId(String text) {
+        if (text == null || text.isBlank()) return java.util.Optional.empty();
+        Matcher matcher = WORKER_REFERENCE.matcher(text);
+        return matcher.find() ? java.util.Optional.of(matcher.group(1)) : java.util.Optional.empty();
     }
 
     static List<String> requestedRoles(String text) {
