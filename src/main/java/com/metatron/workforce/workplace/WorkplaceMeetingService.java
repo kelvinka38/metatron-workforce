@@ -156,9 +156,14 @@ public final class WorkplaceMeetingService {
             throw new SecurityException("meeting follow-up organization mismatch");
         }
 
+        // The Human authorizes the durable meeting follow-up, but the Meeting recommendation is
+        // advisory reasoning, not execution authority. Derive the canonical Objective from the
+        // Human-authored meeting purpose and durable follow-up reference only. This prevents a
+        // model-produced recommendation from widening consequence/capability scope (for example,
+        // turning an explicitly read-only audit into mutating work) while preserving the full
+        // recommendation on the Meeting record as evidence/context.
         String canonicalControl = "Take ownership of one governed meeting-derived objective: "
                 + "Meeting purpose: " + meeting.purpose()
-                + ". Meeting recommendation: " + meeting.recommendation()
                 + ". Source meeting " + meeting.meetingId()
                 + ". Preserve evidence " + meeting.followUpReference()
                 + ". Do not treat the Meeting itself as execution authority.";

@@ -88,6 +88,7 @@ class Point5WorkplaceRuntimeConformanceTest {
             submissions.incrementAndGet();
             assertTrue(caseId.startsWith("meeting-case:meeting:"));
             assertTrue(request.objective().contains("meeting-derived objective"));
+            assertFalse(request.objective().contains("Implement the agreed gateway routing correction with tests."));
             return new ExecutionObjectiveHandoff.HandoffReceipt(
                     true, "objective:meeting-1", "worker:head", "queue:meeting-1",
                     "ACCEPTED", "ADMITTED", "meeting-follow-up");

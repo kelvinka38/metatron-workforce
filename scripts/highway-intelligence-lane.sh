@@ -101,6 +101,9 @@ assert any(str(r.get('status'))=='SATISFIED' for r in matching),'REQUIREMENT_NOT
 refs=[str(x) for r in matching for x in (r.get('evidenceReferences') or [])]
 assert any(x.startswith(('http://','https://')) for x in refs),'NO_EXTERNAL_REFS'
 answer=str(case.get('latestConclusion') or '').strip(); assert answer,'EMPTY_ANSWER'
+first_line=answer.splitlines()[0].upper() if answer else ''
+assert not any(marker in first_line for marker in ('FAST · METATRON','ANALYZE · METATRON','DEEP · METATRON',
+                                                   'FAST • METATRON','ANALYZE • METATRON','DEEP • METATRON')), 'INTERNAL_DEPTH_BANNER_LEAK'
 low=answer.lower()
 refusals=(
   'i cannot provide','i can\'t provide','i am unable','i\'m unable','insufficient information',
