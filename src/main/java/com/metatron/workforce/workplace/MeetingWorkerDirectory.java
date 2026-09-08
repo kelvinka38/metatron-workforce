@@ -20,23 +20,29 @@ public final class MeetingWorkerDirectory {
     }
 
     public ResolvedWorker resolveActiveById(String workerId) {
-        WorkforceCoreService.Worker worker;
-        try { worker = core.worker(workerId); }
-        catch (java.util.NoSuchElementException missing) {
-            throw new IllegalStateException("meeting_worker_not_found: " + workerId);
+        if (workerId == null || workerId.isBlank()) {
+            throw new IllegalStateException("meeting_worker_not_found: blank worker id");
         }
+        String canonicalId = core.allWorkers().stream()
+                .map(WorkforceCoreService.Worker::workerId)
+                .filter(id -> id.equalsIgnoreCase(workerId.trim()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("meeting_worker_not_found: " + workerId));
+        WorkforceCoreService.Worker worker = core.worker(canonicalId);
         if (worker.status() != WorkforceCoreService.WorkerStatus.ACTIVE) {
             throw new IllegalStateException("meeting_worker_not_active: " + workerId + " status=" + worker.status());
         }
-        List<WorkforceCoreService.Participation> active = core.participations(workerId).stream()
+        List<WorkforceCoreService.Participation> active = core.participations(canonicalId).stream()
                 .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
                 .toList();
         if (active.isEmpty()) {
-            throw new IllegalStateException("meeting_worker_has_no_active_participation: " + workerId);
+            throw new IllegalStateException("meeting_worker_has_no_active_participation: " + canonicalId);
         }
-        WorkforceCoreService.Participation participation = active.getFirst();
+        WorkforceCoreService.Participation participation = active.stream()
+                .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
+                .findFirst().orElseThrow();
         String role = humanizeRole(!blank(participation.roleRef()) ? participation.roleRef() : participation.positionRef());
-        return new ResolvedWorker(workerId, participation.participationId(), role,
+        return new ResolvedWorker(canonicalId, participation.participationId(), role,
                 participation.positionRef(), participation.roleRef());
     }
 
@@ -88,6 +94,12 @@ public final class MeetingWorkerDirectory {
 
     private static String humanizeRole(String ref) {
         if (ref == null || ref.isBlank()) return "Institutional Worker";
+        String normalized = normalize(ref);
+        if (normalized.equals("role head of gateway")
+                || normalized.equals("position head of gateway")
+                || normalized.equals("position gateway director")) {
+            return "Head of Gateway";
+        }
         String v = ref;
         int colon = Math.max(v.lastIndexOf(':'), v.lastIndexOf('/'));
         if (colon >= 0 && colon + 1 < v.length()) v = v.substring(colon + 1);
