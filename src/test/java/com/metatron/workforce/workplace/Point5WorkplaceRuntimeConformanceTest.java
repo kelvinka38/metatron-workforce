@@ -256,6 +256,12 @@ class Point5WorkplaceRuntimeConformanceTest {
         assertEquals(List.of("Head of Gateway"), WorkplaceMeetingService.requestedRoles("Head of gateway"));
         assertTrue(service.supportsInMeetingMode("Head of gateway and me (human)"));
         assertTrue(service.supports("Meeting with Head of Gateway"));
+        assertEquals(List.of("Head of Gateway"),
+                WorkplaceMeetingService.requestedRoles(
+                        "Meeting with Head of Gateway about finance strategy and operations"));
+        assertEquals(List.of("Head of Strategy", "Head of Finance", "Head of Operations"),
+                WorkplaceMeetingService.requestedRoles(
+                        "Mời Strategy, Finance và Operations họp về P&L."));
         assertTrue(service.supportsInMeetingMode("Head of tech, create for me head of gateway"));
         assertTrue(WorkplaceMeetingService.requestedRoles("Head of tech, create for me head of gateway")
                 .stream().anyMatch(role -> role.equals("Head of Gateway")));
