@@ -97,6 +97,14 @@ print("SOURCE_LEVEL_EVIDENCE_PASS",validated[:5])
 ' "$subject" "$require_numeric" "$source_terms"
 }
 
+# Point2 validates Chat semantics. The founder may have left the durable conversation in Work,
+# so normalize the synthetic acceptance conversation back to Chat before asserting Chat invariants.
+SURFACE_UPDATE=$(date +%s%N | cut -c1-18)
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+send_update "$SURFACE_UPDATE" '/chat'
+wait_terminal "$SINCE" "$SURFACE_UPDATE"
+echo 'POINT2_CHAT_SURFACE_NORMALIZATION=PASS'
+
 BASE_ID=$(date +%s%N | cut -c1-14)
 CASUAL="${BASE_ID}41"; VERSION="${BASE_ID}42"; LEADER="${BASE_ID}43"
 SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
