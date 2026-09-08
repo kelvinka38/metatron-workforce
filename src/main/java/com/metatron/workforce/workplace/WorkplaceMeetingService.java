@@ -26,17 +26,19 @@ import java.util.regex.Pattern;
 @Service
 public final class WorkplaceMeetingService {
     private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
-    private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b(worker:[a-zA-Z0-9._:-]+)\\b");
+    private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b((?:worker:[a-zA-Z0-9._:-]+|WORKER-[a-zA-Z0-9._:-]+))\\b", Pattern.CASE_INSENSITIVE);
     private final PersistentMeetingStore store;
     private final MeetingRoleDeliberator deliberator;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
     private final MeetingWorkerDirectory workerDirectory;
+    private final WorkerConversationGateway workerConversation;
 
     @Autowired
     public WorkplaceMeetingService(
             InstitutionalIntelligenceRuntime intelligenceRuntime,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
             MeetingWorkerDirectory workerDirectory,
+            WorkerConversationGateway workerConversation,
             @Value("${METATRON_WORKPLACE_MEETING_PATH:/var/lib/metatron-workforce/workplace/meetings}") String meetingPath,
             ObjectMapper json) {
         this(new PersistentMeetingStore(Path.of(meetingPath), json),
@@ -44,25 +46,45 @@ public final class WorkplaceMeetingService {
                         Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime").fabric(),
                         intelligenceRuntime.configuredProviders().size()),
                 Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
-                Objects.requireNonNull(workerDirectory, "workerDirectory"));
+                Objects.requireNonNull(workerDirectory, "workerDirectory"),
+                Objects.requireNonNull(workerConversation, "workerConversation"));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator) {
-        this(store, deliberator, ExecutionObjectiveHandoff.unavailable(), null);
+        this(store, deliberator, ExecutionObjectiveHandoff.unavailable(), null, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff) {
-        this(store, deliberator, executionObjectiveHandoff, null);
+        this(store, deliberator, executionObjectiveHandoff, null, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff,
                             MeetingWorkerDirectory workerDirectory) {
+        this(store, deliberator, executionObjectiveHandoff, workerDirectory, legacyWorkerConversation(deliberator));
+    }
+
+    WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
+                            ExecutionObjectiveHandoff executionObjectiveHandoff,
+                            MeetingWorkerDirectory workerDirectory,
+                            WorkerConversationGateway workerConversation) {
         this.store = Objects.requireNonNull(store, "store");
         this.deliberator = Objects.requireNonNull(deliberator, "deliberator");
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
         this.workerDirectory = workerDirectory;
+        this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+    }
+
+    private static WorkerConversationGateway legacyWorkerConversation(MeetingRoleDeliberator deliberator) {
+        Objects.requireNonNull(deliberator, "deliberator");
+        return (workerId, role, userMessage, context) -> {
+            MeetingRoleDeliberator.Deliberation reply = deliberator.converse(workerId, role, userMessage, context);
+            List<String> evidence = reply.providerReference().isBlank()
+                    ? List.of()
+                    : List.of(reply.providerReference());
+            return new WorkerConversationGateway.Reply(reply.text(), reply.providerReference(), evidence);
+        };
     }
 
     /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
@@ -75,6 +97,7 @@ public final class WorkplaceMeetingService {
     public boolean supports(String text) {
         if (text == null || text.isBlank()) return false;
         if (isAuthorizedFollowUp(text)) return true;
+        if (requestedWorkerId(text).isPresent()) return true;
         String lower = normalize(text);
         boolean meetingMarker = lower.contains("meeting") || lower.contains("meeting room")
                 || lower.contains("hop ") || lower.startsWith("hop")
@@ -175,6 +198,8 @@ public final class WorkplaceMeetingService {
                 .filter(m -> conversationId.equals(m.conversationId()))
                 .filter(m -> m.status() == MeetingRecord.Status.ACTIVE)
                 .filter(m -> m.participants().size() == 2)
+                .sorted(java.util.Comparator.comparing(MeetingRecord::openedAt).reversed()
+                        .thenComparing(MeetingRecord::meetingId).reversed())
                 .findFirst();
     }
 
@@ -183,6 +208,7 @@ public final class WorkplaceMeetingService {
     }
 
     private String openConversation(MetatronInteraction interaction, MeetingWorkerDirectory.ResolvedWorker bound) {
+        closePriorConversationMeetings(interaction.conversationId());
         String role = bound.role();
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
         String now = Instant.now().toString();
@@ -192,12 +218,16 @@ public final class WorkplaceMeetingService {
                 MeetingRecord.Status.PROPOSED.name(),
                 MeetingRecord.Status.OPEN.name(),
                 MeetingRecord.Status.ACTIVE.name());
-        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(bound.workerId(), role, interaction.text(), "");
+        WorkerConversationGateway.Reply reply = workerConversation.converse(
+                bound.workerId(), role, interaction.text(), "");
         List<MeetingRecord.Contribution> contributions = List.of(
-                new MeetingRecord.Contribution(bound.workerId(), role, reply.text(), reply.providerReference()));
+                new MeetingRecord.Contribution(bound.workerId(), role, reply.text(), reply.requestReference()));
         List<String> evidence = new ArrayList<>(baseEvidence(interaction));
         evidence.add("meeting-worker:" + bound.workerId() + ":participation=" + bound.participationId());
-        if (!reply.providerReference().isBlank()) evidence.add(reply.providerReference());
+        reply.evidenceReferences().stream()
+                .filter(ref -> ref != null && !ref.isBlank())
+                .filter(ref -> !evidence.contains(ref))
+                .forEach(evidence::add);
         MeetingRecord meeting = new MeetingRecord(
                 id, interaction.organizationContextId(), interaction.conversationId(),
                 interaction.channelProvider(), interaction.externalMessageReference(),
@@ -229,12 +259,16 @@ public final class WorkplaceMeetingService {
                 participants = List.of(meeting.organizer(), workerId);
             }
         }
-        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(workerId, role, interaction.text(), conversationContext);
+        WorkerConversationGateway.Reply reply = workerConversation.converse(
+                workerId, role, interaction.text(), conversationContext);
         List<MeetingRecord.Contribution> contributions = new ArrayList<>(meeting.contributions());
-        contributions.add(new MeetingRecord.Contribution(workerId, role, reply.text(), reply.providerReference()));
+        contributions.add(new MeetingRecord.Contribution(workerId, role, reply.text(), reply.requestReference()));
         List<String> evidence = new ArrayList<>(meeting.evidenceRefs());
         evidence.add("interaction:" + interaction.externalMessageReference());
-        if (!reply.providerReference().isBlank()) evidence.add(reply.providerReference());
+        reply.evidenceReferences().stream()
+                .filter(ref -> ref != null && !ref.isBlank())
+                .filter(ref -> !evidence.contains(ref))
+                .forEach(evidence::add);
         MeetingRecord updated = new MeetingRecord(
                 meeting.meetingId(), meeting.organizationContextId(), meeting.conversationId(),
                 meeting.channelProvider(), meeting.externalMessageReference(), meeting.title(), meeting.purpose(),
@@ -243,6 +277,29 @@ public final class WorkplaceMeetingService {
                 meeting.lifecycle(), MeetingRecord.Status.ACTIVE, meeting.openedAt(), "", false);
         store.save(updated);
         return renderConversation(role, reply.text());
+    }
+
+    private void closePriorConversationMeetings(String conversationId) {
+        if (conversationId == null || conversationId.isBlank()) return;
+        String closedAt = Instant.now().toString();
+        for (MeetingRecord prior : store.list()) {
+            if (!conversationId.equals(prior.conversationId())
+                    || prior.status() != MeetingRecord.Status.ACTIVE
+                    || prior.participants().size() != 2) {
+                continue;
+            }
+            List<String> lifecycle = new ArrayList<>(prior.lifecycle());
+            if (!lifecycle.contains(MeetingRecord.Status.CLOSED.name())) {
+                lifecycle.add(MeetingRecord.Status.CLOSED.name());
+            }
+            MeetingRecord closed = new MeetingRecord(
+                    prior.meetingId(), prior.organizationContextId(), prior.conversationId(),
+                    prior.channelProvider(), prior.externalMessageReference(), prior.title(), prior.purpose(),
+                    prior.organizer(), prior.participants(), prior.agenda(), prior.contributions(),
+                    prior.recommendation(), prior.actionItems(), prior.decisionRefs(), prior.evidenceRefs(),
+                    lifecycle, MeetingRecord.Status.CLOSED, prior.openedAt(), closedAt, false);
+            store.save(closed);
+        }
     }
 
     private MeetingWorkerDirectory.ResolvedWorker requireBoundWorker(String role) {
