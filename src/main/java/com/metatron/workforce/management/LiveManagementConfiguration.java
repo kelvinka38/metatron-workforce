@@ -16,6 +16,7 @@ import com.metatron.workforce.runtime.RuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -29,10 +30,8 @@ import java.util.Locale;
 @Configuration
 public class LiveManagementConfiguration {
     @Bean
-    ManagementStateStore managementStateStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_MANAGEMENT_STATE_PATH",
-                "/var/lib/metatron-workforce/management-state.json");
+    ManagementStateStore managementStateStore(
+            @Value("${METATRON_MANAGEMENT_STATE_PATH:/var/lib/metatron-workforce/management-state.json}") String configured) {
         return new FileManagementStateStore(Path.of(configured));
     }
 
@@ -42,10 +41,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    AutonomyCoordinationStateStore autonomyCoordinationStateStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_AUTONOMY_COORDINATION_STATE_PATH",
-                "/var/lib/metatron-workforce/autonomy-coordination-state.json");
+    AutonomyCoordinationStateStore autonomyCoordinationStateStore(
+            @Value("${METATRON_AUTONOMY_COORDINATION_STATE_PATH:/var/lib/metatron-workforce/autonomy-coordination-state.json}") String configured) {
         return new FileAutonomyCoordinationStateStore(Path.of(configured));
     }
 
@@ -55,10 +52,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    AutonomySafetyStateStore autonomySafetyStateStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_AUTONOMY_SAFETY_STATE_PATH",
-                "/var/lib/metatron-workforce/autonomy-safety-state.json");
+    AutonomySafetyStateStore autonomySafetyStateStore(
+            @Value("${METATRON_AUTONOMY_SAFETY_STATE_PATH:/var/lib/metatron-workforce/autonomy-safety-state.json}") String configured) {
         return new FileAutonomySafetyStateStore(Path.of(configured));
     }
 
@@ -79,10 +74,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    AutonomySchedulingStateStore autonomySchedulingStateStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_AUTONOMY_SCHEDULING_STATE_PATH",
-                "/var/lib/metatron-workforce/autonomy-scheduling-state.json");
+    AutonomySchedulingStateStore autonomySchedulingStateStore(
+            @Value("${METATRON_AUTONOMY_SCHEDULING_STATE_PATH:/var/lib/metatron-workforce/autonomy-scheduling-state.json}") String configured) {
         return new FileAutonomySchedulingStateStore(Path.of(configured));
     }
 
@@ -98,10 +91,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    ObservationStateStore observationStateStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_OBSERVATION_STATE_PATH",
-                "/var/lib/metatron-workforce/observation-state.json");
+    ObservationStateStore observationStateStore(
+            @Value("${METATRON_OBSERVATION_STATE_PATH:/var/lib/metatron-workforce/observation-state.json}") String configured) {
         return new FileObservationStateStore(Path.of(configured));
     }
 
@@ -117,10 +108,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    ExecutionAttemptStore executionAttemptStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_EXECUTION_ATTEMPT_STATE_PATH",
-                "/var/lib/metatron-workforce/execution-attempts.json");
+    ExecutionAttemptStore executionAttemptStore(
+            @Value("${METATRON_EXECUTION_ATTEMPT_STATE_PATH:/var/lib/metatron-workforce/execution-attempts.json}") String configured) {
         return new FileExecutionAttemptStore(Path.of(configured));
     }
 
@@ -130,10 +119,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    RuntimePersistenceStore runtimePersistenceStore() {
-        String configured = System.getenv().getOrDefault(
-                "METATRON_RUNTIME_STATE_DIR",
-                "/var/lib/metatron-workforce/runtime-state");
+    RuntimePersistenceStore runtimePersistenceStore(
+            @Value("${METATRON_RUNTIME_STATE_DIR:/var/lib/metatron-workforce/runtime-state}") String configured) {
         return new FileRuntimePersistenceStore(Path.of(configured));
     }
 
