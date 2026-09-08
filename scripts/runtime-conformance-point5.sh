@@ -114,7 +114,21 @@ grep -q 'INTELLIGENCE_FRESH_INFORMATION_NOT_OBJECTIVE=PASS' "$OUT/current-inform
 echo 'POINT5_CURRENT_INFORMATION_ROUTE=PASS'
 
 echo 'POINT5_PHASE=MULTI_ROLE_MEETING'
-MEETING_UPDATE=$(date +%s%N | cut -c1-18)
+# Product hierarchy is Chat | Work, with Meeting nested inside Work. Normalize the
+# synthetic founder acceptance conversation onto the canonical Work > Meeting module
+# before sending the natural-language meeting request.
+WORK_SURFACE_UPDATE=$(date +%s%N | cut -c1-18)
+send_public "$WORK_SURFACE_UPDATE" '/work'
+test "$(wait_receipt_delivered "$WORK_SURFACE_UPDATE" 0)" = NONE
+no_objective_for_update "$WORK_SURFACE_UPDATE"
+
+MEETING_SURFACE_UPDATE=$((WORK_SURFACE_UPDATE + 1))
+send_public "$MEETING_SURFACE_UPDATE" '/meeting'
+test "$(wait_receipt_delivered "$MEETING_SURFACE_UPDATE" 0)" = NONE
+no_objective_for_update "$MEETING_SURFACE_UPDATE"
+echo 'POINT5_MEETING_SURFACE_NORMALIZATION=PASS'
+
+MEETING_UPDATE=$((WORK_SURFACE_UPDATE + 2))
 MEETING_TEXT='Gọi Head of Strategy, Head of Finance và Head of Operations vào bàn cách thực hiện một governed single-repository read-only audit of kelvinka38/bios using the available repository audit capability, verify it through Observation, and deliver resulting evidence. Hãy giữ rõ disagreement, risk và follow-up; không mutate repository.'
 send_public "$MEETING_UPDATE" "$MEETING_TEXT"
 test "$(wait_receipt_delivered "$MEETING_UPDATE" 0)" = NONE
