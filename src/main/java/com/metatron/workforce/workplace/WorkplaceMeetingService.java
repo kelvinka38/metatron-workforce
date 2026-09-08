@@ -94,14 +94,14 @@ public final class WorkplaceMeetingService {
     /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
     public boolean supportsInMeetingMode(String text) {
         if (text == null || text.isBlank()) return false;
-        return isAuthorizedFollowUp(text) || isWorkerDirectoryRequest(text) || requestedWorkerId(text).isPresent() || requestedRoles(text).size() >= 1;
+        return isAuthorizedFollowUp(text) || isWorkerDirectoryRequest(text) || !requestedWorkerIds(text).isEmpty() || requestedRoles(text).size() >= 1;
     }
 
     /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
     public boolean supports(String text) {
         if (text == null || text.isBlank()) return false;
         if (isAuthorizedFollowUp(text)) return true;
-        if (requestedWorkerId(text).isPresent()) return true;
+        if (!requestedWorkerIds(text).isEmpty()) return true;
         String lower = normalize(text);
         boolean meetingMarker = lower.contains("meeting") || lower.contains("meeting room")
                 || lower.contains("hop ") || lower.startsWith("hop")
@@ -118,19 +118,26 @@ public final class WorkplaceMeetingService {
         if (isWorkerDirectoryRequest(interaction.text())) return renderActiveWorkers();
 
         java.util.Optional<MeetingRecord> active = findActiveConversationMeeting(interaction.conversationId());
-        java.util.Optional<String> directWorker = requestedWorkerId(interaction.text());
-        if (directWorker.isPresent()) {
+        List<String> directWorkerIds = requestedWorkerIds(interaction.text());
+        if (!directWorkerIds.isEmpty()) {
             if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
-            MeetingWorkerDirectory.ResolvedWorker resolved;
-            try {
-                resolved = workerDirectory.resolveActiveById(directWorker.get());
-            } catch (RuntimeException unavailable) {
-                return renderWorkerUnavailable(List.of(directWorker.get() + " — " + safeFailure(unavailable)));
+            List<MeetingWorkerDirectory.ResolvedWorker> resolved = new ArrayList<>();
+            List<String> unavailable = new ArrayList<>();
+            for (String workerId : directWorkerIds) {
+                try {
+                    MeetingWorkerDirectory.ResolvedWorker worker = workerDirectory.resolveActiveById(workerId);
+                    if (resolved.stream().noneMatch(existing -> existing.workerId().equals(worker.workerId()))) {
+                        resolved.add(worker);
+                    }
+                } catch (RuntimeException failure) {
+                    unavailable.add(workerId + " — " + safeFailure(failure));
+                }
             }
+            if (!unavailable.isEmpty()) return renderWorkerUnavailable(unavailable);
             if (active.isPresent()) {
-                return continueConversation(active.get(), interaction, conversationContext, List.of(resolved));
+                return continueConversation(active.get(), interaction, conversationContext, List.copyOf(resolved));
             }
-            return openConversation(interaction, List.of(resolved));
+            return openConversation(interaction, List.copyOf(resolved));
         }
 
         List<String> roles = requestedRoles(interaction.text());
@@ -524,9 +531,16 @@ public final class WorkplaceMeetingService {
     }
 
     static java.util.Optional<String> requestedWorkerId(String text) {
-        if (text == null || text.isBlank()) return java.util.Optional.empty();
+        List<String> workers = requestedWorkerIds(text);
+        return workers.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(workers.getFirst());
+    }
+
+    static List<String> requestedWorkerIds(String text) {
+        if (text == null || text.isBlank()) return List.of();
         Matcher matcher = WORKER_REFERENCE.matcher(text);
-        return matcher.find() ? java.util.Optional.of(matcher.group(1)) : java.util.Optional.empty();
+        LinkedHashSet<String> workers = new LinkedHashSet<>();
+        while (matcher.find()) workers.add(matcher.group(1));
+        return List.copyOf(workers);
     }
 
     static List<String> requestedRoles(String text) {
