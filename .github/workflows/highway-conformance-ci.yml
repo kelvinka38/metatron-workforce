@@ -22,6 +22,8 @@ on:
       - '.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml'
       - '.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml'
       - '.github/workflows/gateway-director-live-acceptance.yml'
+      - '.github/workflows/workforce-live-acceptance.yml'
+      - '.github/workflows/production-worker-state-hygiene.yml'
       - '.github/workflows/ops-bootstrap-current-p10-ratification.yml'
       - '.github/workflows/founder-authorized-deep-p10-25b9a6b.yml'
       - '.github/workflows/ops-one-shot-p10-closure-71f2973.yml'
@@ -61,6 +63,8 @@ jobs:
           P10GS34=.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml
           P10R=.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml
           GDIR=.github/workflows/gateway-director-live-acceptance.yml
+          LEGACYWF=.github/workflows/workforce-live-acceptance.yml
+          HYGIENE=.github/workflows/production-worker-state-hygiene.yml
           P10BOOT=.github/workflows/ops-bootstrap-current-p10-ratification.yml
           FOUNDERP10=.github/workflows/founder-authorized-deep-p10-25b9a6b.yml
           P10ONESHOT=.github/workflows/ops-one-shot-p10-closure-71f2973.yml
@@ -93,6 +97,17 @@ jobs:
           grep -q 'group: metatron-production-lane' "$P10R"
           grep -q 'runs-on: ubuntu-latest' "$P10R"
           grep -q 'group: metatron-production-lane' "$GDIR"
+          ! grep -q 'workflow_run:' "$LEGACYWF"
+          ! grep -q 'runs-on: \[self-hosted, linux, x64, metatron-prod\]' "$LEGACYWF"
+          grep -q 'WORKFORCE_LIVE_ACCEPTANCE=DISABLED' "$LEGACYWF"
+          grep -q 'production_mutation=PROHIBITED' "$LEGACYWF"
+          grep -q 'workflows: \["Highway Production Deploy"\]' "$HYGIENE"
+          grep -q 'group: metatron-production-state' "$HYGIENE"
+          grep -q 'SUSPENDED' "$HYGIENE"
+          grep -q 'W-\[0-9a-f\]{8}' "$HYGIENE"
+          grep -q 'ROLE-DIRECTOR' "$HYGIENE"
+          grep -q 'LEGACY_ACCEPTANCE_WORKER_RECONCILIATION=PASS' "$HYGIENE"
+          grep -q 'CANONICAL_GATEWAY_DIRECTOR_PRESERVED=PASS' "$HYGIENE"
           ! grep -q '^  push:' "$P10BOOT"
           grep -q 'P10_BOOTSTRAP_AUTORUN=DISABLED' "$P10BOOT"
           ! grep -q '^  push:' "$FOUNDERP10"
