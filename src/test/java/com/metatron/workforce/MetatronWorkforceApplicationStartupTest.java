@@ -9,7 +9,11 @@ import org.springframework.boot.test.context.SpringBootTest;
  */
 @SpringBootTest(
         classes = MetatronWorkforceApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.NONE)
+        webEnvironment = SpringBootTest.WebEnvironment.NONE,
+        properties = {
+                "METATRON_INTELLIGENCE_CASE_PATH=build/test-runtime/intelligence-cases",
+                "METATRON_INTELLIGENCE_DEPTH_PATH=build/test-runtime/intelligence-depth"
+        })
 class MetatronWorkforceApplicationStartupTest {
 
     @Test
