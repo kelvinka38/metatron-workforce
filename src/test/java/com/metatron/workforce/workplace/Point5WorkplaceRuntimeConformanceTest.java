@@ -139,6 +139,64 @@ class Point5WorkplaceRuntimeConformanceTest {
     }
 
 
+
+    @Test
+    void singleRoleMeetingIsPersistentNaturalConversationWithoutMemoBoilerplate() {
+        ObjectMapper json = new ObjectMapper();
+        PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("conversation"), json);
+        MeetingRoleDeliberator fake = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                return new Deliberation("legacy deliberation", "provider:test:legacy");
+            }
+            @Override public Deliberation converse(String role, String userMessage, String context) {
+                if (userMessage.toLowerCase().contains("trò chuyện") || userMessage.toLowerCase().contains("tro chuyen")) {
+                    return new Deliberation("Có tao đây. Mày muốn bàn gì về Gateway?", "provider:test:conversation:1");
+                }
+                return new Deliberation("Ừ, tao đang nghe. Vấn đề routing mày muốn đào sâu chỗ nào?", "provider:test:conversation:2");
+            }
+            @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                return new Deliberation("must not run for live one-role conversation", "provider:test:synthesis");
+            }
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(store, fake);
+
+        MetatronInteraction open = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:live:gateway", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:live-1",
+                "Cho tao trò chuyện với Head of Gateway");
+
+        String first = service.handle(open, "old unrelated bios audit context");
+        assertTrue(first.startsWith("🏛 **Head of Gateway**"));
+        assertTrue(first.contains("Có tao đây"));
+        assertFalse(first.contains("COMMUNICATION INITIATION"));
+        assertFalse(first.contains("GOVERNANCE OBJECTIVES"));
+        assertFalse(first.contains("case-"));
+        assertTrue(service.hasActiveConversationMeeting("conversation:live:gateway"));
+
+        MeetingRecord active = service.findByExternalMessageReference("telegram:update:live-1").orElseThrow();
+        assertEquals(MeetingRecord.Status.ACTIVE, active.status());
+        assertEquals(2, active.participants().size());
+        assertTrue(active.recommendation().isBlank());
+        assertTrue(active.actionItems().isEmpty());
+
+        MetatronInteraction next = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:live:gateway", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:live-2",
+                "Tao thấy Telegram routing vẫn ngu. Mày thấy root cause ở đâu?");
+
+        String second = service.handle(next, "recent live meeting context");
+        assertTrue(second.startsWith("🏛 **Head of Gateway**"));
+        assertTrue(second.contains("tao đang nghe"));
+        MeetingRecord continued = service.require(active.meetingId());
+        assertEquals(MeetingRecord.Status.ACTIVE, continued.status());
+        assertEquals(2, continued.contributions().size());
+        assertTrue(continued.evidenceRefs().contains("interaction:telegram:update:live-2"));
+    }
+
     @Test
     void meetingIntentIsChannelIndependentAndRequiresExplicitRoles() {
         ObjectMapper json = new ObjectMapper();
