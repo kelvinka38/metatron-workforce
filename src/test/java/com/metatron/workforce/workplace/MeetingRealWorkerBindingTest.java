@@ -4,11 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
+import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
+import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
+import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.metatron.workforce.phase3.ActorRef;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -100,6 +104,100 @@ class MeetingRealWorkerBindingTest {
         assertTrue(response.contains("Tao đây."));
     }
 
+
+    @Test
+    void canonicalUppercaseWorkerIdCanBeCalledDirectly() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-DIRECTOR", "participant:gateway-director-ai");
+        core.participate("participation:gateway-director:metatron", "WORKER-GATEWAY-DIRECTOR",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        AtomicReference<String> requester = new AtomicReference<>();
+        MeetingRoleDeliberator deliberator = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                return new Deliberation("unused", "");
+            }
+            @Override public Deliberation converse(String workerId, String role, String message, String context) {
+                requester.set(workerId);
+                return new Deliberation("Tao đây.", "provider:test");
+            }
+            @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                return new Deliberation("unused", "");
+            }
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("uppercase-direct"), new ObjectMapper()),
+                deliberator, ExecutionObjectiveHandoff.unavailable(), new MeetingWorkerDirectory(core));
+
+        assertTrue(service.supportsInMeetingMode("WORKER-GATEWAY-DIRECTOR"));
+        assertTrue(service.supports("WORKER-GATEWAY-DIRECTOR"));
+
+        MetatronInteraction interaction = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:direct-uppercase", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:direct-uppercase",
+                "WORKER-GATEWAY-DIRECTOR");
+
+        String response = service.handle(interaction, "");
+        assertEquals("WORKER-GATEWAY-DIRECTOR", requester.get());
+        assertTrue(response.contains("Tao đây."));
+        assertEquals("WORKER-GATEWAY-DIRECTOR",
+                service.findByExternalMessageReference("telegram:update:direct-uppercase")
+                        .orElseThrow().participants().get(1));
+    }
+
+    @Test
+    void canonicalWorkerConversationRequiresRuntimeBindingAndUsesWorkerCognitionBoundary() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker(GatewayDirectorAppointmentCapability.WORKER_ID, "participant:gateway-director-ai");
+        core.participate("participation:gateway-director:metatron", GatewayDirectorAppointmentCapability.WORKER_ID,
+                "organization:metatron", GatewayDirectorAppointmentCapability.POSITION_REF,
+                GatewayDirectorAppointmentCapability.ROLE_REF);
+        core.attestCapability(GatewayDirectorAppointmentCapability.WORKER_ID,
+                GatewayDirectorAppointmentCapability.GATEWAY_AUDIT_CAPABILITY, 1.0, "evidence:test");
+        core.setAvailability(GatewayDirectorAppointmentCapability.WORKER_ID, true, 1.0);
+
+        WorkerRuntimeProfileBindingService runtimeProfiles = WorkerRuntimeProfileBindingService.inMemory();
+        AtomicReference<WorkerIntelligenceService.Request> cognition = new AtomicReference<>();
+        WorkerIntelligenceService workerIntelligence = request -> {
+            cognition.set(request);
+            return new WorkerIntelligenceService.Response(
+                    "worker-cognition-test",
+                    "Có tao đây.",
+                    List.of("worker-intelligence-provider:test"));
+        };
+        CanonicalWorkerConversationService service =
+                new CanonicalWorkerConversationService(core, runtimeProfiles, workerIntelligence);
+
+        IllegalStateException unbound = assertThrows(IllegalStateException.class, () ->
+                service.converse(GatewayDirectorAppointmentCapability.WORKER_ID,
+                        "Head of Gateway", "Mày ở đây không?", ""));
+        assertTrue(unbound.getMessage().contains("worker-runtime-profile-unbound"));
+
+        runtimeProfiles.bind(
+                GatewayDirectorAppointmentCapability.WORKER_ID,
+                WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
+                GatewayDirectorAppointmentCapability.CAPABILITY,
+                Instant.parse("2026-09-08T00:00:00Z"));
+
+        WorkerConversationGateway.Reply reply = service.converse(
+                GatewayDirectorAppointmentCapability.WORKER_ID,
+                "Head of Gateway",
+                "Mày ở đây không?",
+                "recent meeting turn");
+
+        assertEquals("Có tao đây.", reply.text());
+        assertEquals(GatewayDirectorAppointmentCapability.WORKER_ID, cognition.get().requester());
+        assertEquals("worker.live.conversation", cognition.get().capability());
+        assertTrue(cognition.get().context().contains("worker_id=WORKER-GATEWAY-DIRECTOR"));
+        assertTrue(cognition.get().context().contains(
+                "runtime_profile=" + WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE));
+        assertTrue(reply.evidenceReferences().contains("worker-intelligence-provider:test"));
+        assertTrue(reply.evidenceReferences().contains("worker-conversation-request:worker-cognition-test"));
+    }
 
     @Test
     void staleRoleBoundMeetingReconcilesToCanonicalWorkerInsteadOfFailing() {

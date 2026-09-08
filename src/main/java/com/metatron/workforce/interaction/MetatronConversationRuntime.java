@@ -83,6 +83,9 @@ public final class MetatronConversationRuntime {
             ConversationSurfaceModeService.ControlResult surfaceControl = surfaceMode.handle(
                     interaction.conversationId(), interaction.text());
             if (surfaceControl.handled()) {
+                if (meetingRoom != null && surfaceControl.mode() != ConversationSurfaceMode.WORK_MEETING) {
+                    meetingRoom.closeActiveConversation(interaction.conversationId());
+                }
                 memory.appendTurn(interaction.conversationId(), interaction.text(), surfaceControl.response());
                 return new MetatronInteractionOrchestrator.InteractionResponse(
                         interaction.conversationId(), surfaceControl.response(),
@@ -109,6 +112,18 @@ public final class MetatronConversationRuntime {
         ConversationSurfaceMode selectedSurface = surfaceMode == null
                 ? ConversationSurfaceMode.CHAT
                 : surfaceMode.mode(interaction.conversationId());
+
+        // A natural Meeting request made from Work must enter the Meeting module and process
+        // the same utterance through Meeting. Never fall through to generic Intelligence and ask
+        // the Human to clarify an already unambiguous request.
+        if (selectedSurface == ConversationSurfaceMode.WORK
+                && surfaceMode != null
+                && meetingRoom != null
+                && meetingRoom.supports(interaction.text())) {
+            surfaceMode.enterMeeting(interaction.conversationId());
+            selectedSurface = ConversationSurfaceMode.WORK_MEETING;
+        }
+
         boolean workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
                 || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
         boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
