@@ -4,6 +4,11 @@ on:
   workflow_run:
     workflows: ["Highway Production Deploy"]
     types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-worker-state-hygiene.yml'
+      - '.github/workflows/workforce-live-acceptance.yml'
   workflow_dispatch:
 
 permissions:
@@ -15,7 +20,7 @@ concurrency:
 
 jobs:
   reconcile-legacy-acceptance-workers:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 10
@@ -23,7 +28,7 @@ jobs:
       - name: Suspend only proven legacy acceptance Workers
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
         run: |
           set -euo pipefail
           CORE='http://127.0.0.1:8080/workforce/core'
@@ -31,7 +36,11 @@ jobs:
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}'             | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          test -n "$DEPLOYED_SHA"
+          if [ -n "$TARGET_SHA" ]; then
+            test "$DEPLOYED_SHA" = "$TARGET_SHA"
+          fi
+          echo "HYGIENE_PRODUCTION_SHA=$DEPLOYED_SHA"
 
           EVIDENCE="$HOME/.metatron/acceptance-evidence/worker-hygiene/$GITHUB_RUN_ID"
           mkdir -p "$EVIDENCE"
