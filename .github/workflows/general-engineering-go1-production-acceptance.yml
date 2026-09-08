@@ -161,12 +161,16 @@ jobs:
           echo 'GO1_TYPED_TELEGRAM_INGRESS=PASS'
 
           OID=""
+          OBJECTIVES_FILE="$OUT/objectives.json"
           for _ in $(seq 1 120); do
-            PAYLOAD=$(curl -fsS --max-time 3 "http://127.0.0.1:$HOST_PORT/workforce/management/objectives" || true)
-            OID=$(python3 - "$PAYLOAD" "$UPDATE_ID" <<'PY'
+            if curl -fsS --max-time 3 "http://127.0.0.1:$HOST_PORT/workforce/management/objectives" > "$OBJECTIVES_FILE"; then
+              OID=$(python3 - "$OBJECTIVES_FILE" "$UPDATE_ID" <<'PY'
           import json,sys
-          try: rows=json.loads(sys.argv[1])
-          except Exception: raise SystemExit
+          try:
+              with open(sys.argv[1],encoding='utf-8') as fh:
+                  rows=json.load(fh)
+          except Exception:
+              raise SystemExit
           needle=f'telegram:update:{sys.argv[2]}'
           found=[]
           for row in rows if isinstance(rows,list) else []:
@@ -176,7 +180,8 @@ jobs:
           found=list(dict.fromkeys(found))
           if len(found)==1: print(found[0])
           PY
-            )
+              )
+            fi
             [ -n "$OID" ] && break
             sleep 1
           done
