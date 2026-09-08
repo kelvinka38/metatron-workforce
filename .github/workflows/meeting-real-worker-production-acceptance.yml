@@ -32,9 +32,9 @@ jobs:
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
 
-          WORKER_ID='worker:head-of-gateway:primary'
-          PARTICIPANT_ID='participant:head-of-gateway'
-          PARTICIPATION_ID='participation:head-of-gateway:primary'
+          WORKER_ID='WORKER-GATEWAY-DIRECTOR'
+          PARTICIPANT_ID='participant:gateway-director-ai'
+          PARTICIPATION_ID='participation:gateway-director:metatron'
 
           docker exec "$CID" sh -c "test -s /var/lib/metatron-workforce/workforce-core-state.json"
           docker exec "$CID" sh -c "grep -q '$WORKER_ID' /var/lib/metatron-workforce/workforce-core-state.json"
