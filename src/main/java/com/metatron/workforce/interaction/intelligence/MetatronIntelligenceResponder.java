@@ -398,12 +398,20 @@ public final class MetatronIntelligenceResponder {
 
             List<String> resultEvidence = mergeEvidenceReferences(
                     request.evidenceReferences(), result.evidenceReferences());
-            caseStore.save(intelligenceCase.withResult(result.text(), resultEvidence));
-            return result.text();
+            String finalText = stripInternalDepthBanner(result.text());
+            caseStore.save(intelligenceCase.withResult(finalText, resultEvidence));
+            return finalText;
         } finally {
             LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}",
                     channel, route, (System.nanoTime() - started) / 1_000_000L, text.length());
         }
+    }
+
+    static String stripInternalDepthBanner(String value) {
+        if (value == null || value.isBlank()) return value;
+        return value.replaceFirst(
+                "(?is)^\\s*(?:[\\p{So}\\p{Sk}]\\s*)?(?:\\*\\*\\s*)?(?:FAST|ANALYZE|DEEP)\\s*[·•|:-]\\s*METATRON(?:\\s*\\*\\*)?\\s*(?:\\R+|$)",
+                "").stripLeading();
     }
 
     static IntelligenceCase bindInteractionProvenance(IntelligenceCase intelligenceCase,
