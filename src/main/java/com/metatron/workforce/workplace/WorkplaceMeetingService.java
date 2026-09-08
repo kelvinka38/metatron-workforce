@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
-import com.metatron.workforce.interaction.intelligence.InstitutionalIntelligenceRuntime;
 import com.metatron.workforce.interaction.intelligence.NormalizedRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,49 +27,54 @@ public final class WorkplaceMeetingService {
     private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
     private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b((?:worker:[a-zA-Z0-9._:-]+|WORKER-[a-zA-Z0-9._:-]+))\\b", Pattern.CASE_INSENSITIVE);
     private final PersistentMeetingStore store;
-    private final MeetingRoleDeliberator deliberator;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
     private final MeetingWorkerDirectory workerDirectory;
     private final WorkerConversationGateway workerConversation;
 
     @Autowired
     public WorkplaceMeetingService(
-            InstitutionalIntelligenceRuntime intelligenceRuntime,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
             MeetingWorkerDirectory workerDirectory,
             WorkerConversationGateway workerConversation,
             @Value("${METATRON_WORKPLACE_MEETING_PATH:/var/lib/metatron-workforce/workplace/meetings}") String meetingPath,
             ObjectMapper json) {
         this(new PersistentMeetingStore(Path.of(meetingPath), json),
-                MeetingRoleDeliberator.intelligenceBacked(
-                        Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime").fabric(),
-                        intelligenceRuntime.configuredProviders().size()),
                 Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
                 Objects.requireNonNull(workerDirectory, "workerDirectory"),
                 Objects.requireNonNull(workerConversation, "workerConversation"));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator) {
-        this(store, deliberator, ExecutionObjectiveHandoff.unavailable(), null, legacyWorkerConversation(deliberator));
+        this(store, ExecutionObjectiveHandoff.unavailable(), null, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff) {
-        this(store, deliberator, executionObjectiveHandoff, null, legacyWorkerConversation(deliberator));
+        this(store, executionObjectiveHandoff, null, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff,
                             MeetingWorkerDirectory workerDirectory) {
-        this(store, deliberator, executionObjectiveHandoff, workerDirectory, legacyWorkerConversation(deliberator));
+        this(store, executionObjectiveHandoff, workerDirectory, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff,
                             MeetingWorkerDirectory workerDirectory,
                             WorkerConversationGateway workerConversation) {
+        Objects.requireNonNull(deliberator, "deliberator");
         this.store = Objects.requireNonNull(store, "store");
-        this.deliberator = Objects.requireNonNull(deliberator, "deliberator");
+        this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
+        this.workerDirectory = workerDirectory;
+        this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+    }
+
+    private WorkplaceMeetingService(PersistentMeetingStore store,
+                                    ExecutionObjectiveHandoff executionObjectiveHandoff,
+                                    MeetingWorkerDirectory workerDirectory,
+                                    WorkerConversationGateway workerConversation) {
+        this.store = Objects.requireNonNull(store, "store");
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
         this.workerDirectory = workerDirectory;
         this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
@@ -90,14 +94,14 @@ public final class WorkplaceMeetingService {
     /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
     public boolean supportsInMeetingMode(String text) {
         if (text == null || text.isBlank()) return false;
-        return isAuthorizedFollowUp(text) || isWorkerDirectoryRequest(text) || requestedWorkerId(text).isPresent() || requestedRoles(text).size() >= 1;
+        return isAuthorizedFollowUp(text) || isWorkerDirectoryRequest(text) || !requestedWorkerIds(text).isEmpty() || requestedRoles(text).size() >= 1;
     }
 
     /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
     public boolean supports(String text) {
         if (text == null || text.isBlank()) return false;
         if (isAuthorizedFollowUp(text)) return true;
-        if (requestedWorkerId(text).isPresent()) return true;
+        if (!requestedWorkerIds(text).isEmpty()) return true;
         String lower = normalize(text);
         boolean meetingMarker = lower.contains("meeting") || lower.contains("meeting room")
                 || lower.contains("hop ") || lower.startsWith("hop")
@@ -112,79 +116,48 @@ public final class WorkplaceMeetingService {
         Objects.requireNonNull(interaction, "interaction");
         if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
         if (isWorkerDirectoryRequest(interaction.text())) return renderActiveWorkers();
-        java.util.Optional<String> directWorker = requestedWorkerId(interaction.text());
-        if (directWorker.isPresent()) {
+
+        java.util.Optional<MeetingRecord> active = findActiveConversationMeeting(interaction.conversationId());
+        List<String> directWorkerIds = requestedWorkerIds(interaction.text());
+        if (!directWorkerIds.isEmpty()) {
             if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
-            return openConversation(interaction, workerDirectory.resolveActiveById(directWorker.get()));
+            List<MeetingWorkerDirectory.ResolvedWorker> resolved = new ArrayList<>();
+            List<String> unavailable = new ArrayList<>();
+            for (String workerId : directWorkerIds) {
+                try {
+                    MeetingWorkerDirectory.ResolvedWorker worker = workerDirectory.resolveActiveById(workerId);
+                    if (resolved.stream().noneMatch(existing -> existing.workerId().equals(worker.workerId()))) {
+                        resolved.add(worker);
+                    }
+                } catch (RuntimeException failure) {
+                    unavailable.add(workerId + " — " + safeFailure(failure));
+                }
+            }
+            if (!unavailable.isEmpty()) return renderWorkerUnavailable(unavailable);
+            if (active.isPresent()) {
+                return continueConversation(active.get(), interaction, conversationContext, List.copyOf(resolved));
+            }
+            return openConversation(interaction, List.copyOf(resolved));
         }
+
         List<String> roles = requestedRoles(interaction.text());
+        if (active.isPresent()) {
+            if (roles.isEmpty()) {
+                return continueConversation(active.get(), interaction, conversationContext, List.of());
+            }
+            RoleResolution requested = resolveRoles(roles);
+            if (!requested.unavailable().isEmpty()) return renderWorkerUnavailable(requested.unavailable());
+            return continueConversation(active.get(), interaction, conversationContext, requested.workers());
+        }
+
         if (roles.isEmpty()) {
-            MeetingRecord active = findActiveConversationMeeting(interaction.conversationId())
-                    .orElseThrow(() -> new IllegalArgumentException("Meeting Room requires at least one explicit institutional role; the Human organizer is the other participant"));
-            return continueConversation(active, interaction, conversationContext);
-        }
-        if (roles.size() == 1) return openConversation(interaction, roles.getFirst());
-
-        String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
-        String followUpRef = "meeting-follow-up:" + id;
-        String now = Instant.now().toString();
-        String organizer = "human:" + interaction.human().actorId();
-        List<String> participants = new ArrayList<>();
-        participants.add(organizer);
-        participants.addAll(roles.stream().map(r -> "role:" + slug(r)).toList());
-        List<String> agenda = List.of("Role assessments", "Material disagreements", "Recommendation and follow-up");
-        List<String> lifecycle = new ArrayList<>();
-        lifecycle.add(MeetingRecord.Status.PROPOSED.name());
-
-        MeetingRecord current = snapshot(id, interaction, organizer, participants, agenda, List.of(), "",
-                List.of(), List.of(), baseEvidence(interaction), lifecycle,
-                MeetingRecord.Status.PROPOSED, now, "");
-        store.save(current);
-
-        lifecycle.add(MeetingRecord.Status.OPEN.name());
-        current = copy(current, List.of(), "", List.of(), lifecycle, MeetingRecord.Status.OPEN, "");
-        store.save(current);
-
-        List<MeetingRecord.Contribution> contributions = new ArrayList<>();
-        lifecycle.add(MeetingRecord.Status.ACTIVE.name());
-        for (String role : roles) {
-            MeetingRoleDeliberator.Deliberation result = deliberator.deliberate(role, interaction.text(), conversationContext);
-            contributions.add(new MeetingRecord.Contribution("role:" + slug(role), role, result.text(), result.providerReference()));
-            current = copy(current, contributions, "", List.of(), lifecycle, MeetingRecord.Status.ACTIVE, "");
-            store.save(current);
+            throw new IllegalArgumentException(
+                    "Meeting Room requires at least one ACTIVE Worker role or explicit worker ID; the Human organizer is the other participant");
         }
 
-        lifecycle.add(MeetingRecord.Status.DECISION_PENDING.name());
-        current = copy(current, contributions, "", List.of(), lifecycle, MeetingRecord.Status.DECISION_PENDING, "");
-        store.save(current);
-
-        MeetingRoleDeliberator.Deliberation synthesis = deliberator.synthesize(interaction.text(), contributions, conversationContext);
-        List<String> actionItems = List.of(
-                "handoff_ref=" + followUpRef
-                        + "; Founder may use this durable reference for a separately authorized Objective/Decision. "
-                        + "The Meeting itself creates no execution authority.");
-        lifecycle.add(MeetingRecord.Status.CLOSED.name());
-        String closedAt = Instant.now().toString();
-        List<String> evidence = new ArrayList<>(baseEvidence(interaction));
-        for (MeetingRecord.Contribution c : contributions) {
-            if (!c.providerReference().isBlank()) evidence.add(c.providerReference());
-        }
-        if (!synthesis.providerReference().isBlank()) evidence.add(synthesis.providerReference());
-        evidence.add("meeting-handoff:" + followUpRef
-                + ":route=authorized-objective-or-decision:authority-created=false");
-        current = new MeetingRecord(id, interaction.organizationContextId(), interaction.conversationId(),
-                interaction.channelProvider(), interaction.externalMessageReference(), "Institutional multi-role meeting",
-                interaction.text(), organizer, participants, agenda, contributions, synthesis.text(), actionItems,
-                List.of(), evidence, lifecycle, MeetingRecord.Status.CLOSED, now, closedAt, false);
-        store.save(current);
-
-        lifecycle.add(MeetingRecord.Status.FOLLOW_UP.name());
-        current = new MeetingRecord(id, interaction.organizationContextId(), interaction.conversationId(),
-                interaction.channelProvider(), interaction.externalMessageReference(), current.title(), current.purpose(),
-                organizer, participants, agenda, contributions, synthesis.text(), actionItems, List.of(), evidence,
-                lifecycle, MeetingRecord.Status.FOLLOW_UP, now, closedAt, false);
-        store.save(current);
-        return render(current);
+        RoleResolution requested = resolveRoles(roles);
+        if (!requested.unavailable().isEmpty()) return renderWorkerUnavailable(requested.unavailable());
+        return openConversation(interaction, requested.workers());
     }
 
 
@@ -192,7 +165,7 @@ public final class WorkplaceMeetingService {
         return findActiveConversationMeeting(conversationId).isPresent();
     }
 
-    /** Leaving Meeting closes any active one-to-one room so stale sessions cannot hijack later Work turns. */
+    /** Leaving Meeting closes any active room so stale sessions cannot hijack later Work turns. */
     public void closeActiveConversation(String conversationId) {
         closePriorConversationMeetings(conversationId);
     }
@@ -202,86 +175,167 @@ public final class WorkplaceMeetingService {
         return store.list().stream()
                 .filter(m -> conversationId.equals(m.conversationId()))
                 .filter(m -> m.status() == MeetingRecord.Status.ACTIVE)
-                .filter(m -> m.participants().size() == 2)
+                .filter(m -> m.participants().size() >= 2)
                 .sorted(java.util.Comparator.comparing(MeetingRecord::openedAt).reversed()
                         .thenComparing(java.util.Comparator.comparing(MeetingRecord::meetingId).reversed()))
                 .findFirst();
     }
 
-    private String openConversation(MetatronInteraction interaction, String role) {
-        return openConversation(interaction, requireBoundWorker(role));
+    private RoleResolution resolveRoles(List<String> roles) {
+        List<MeetingWorkerDirectory.ResolvedWorker> workers = new ArrayList<>();
+        List<String> unavailable = new ArrayList<>();
+        for (String role : roles) {
+            try {
+                MeetingWorkerDirectory.ResolvedWorker worker = requireBoundWorker(role);
+                if (workers.stream().noneMatch(existing -> existing.workerId().equals(worker.workerId()))) {
+                    workers.add(worker);
+                }
+            } catch (RuntimeException failure) {
+                unavailable.add(role + " — " + safeFailure(failure));
+            }
+        }
+        return new RoleResolution(List.copyOf(workers), List.copyOf(unavailable));
     }
 
-    private String openConversation(MetatronInteraction interaction, MeetingWorkerDirectory.ResolvedWorker bound) {
+    private String openConversation(MetatronInteraction interaction,
+                                    List<MeetingWorkerDirectory.ResolvedWorker> requestedWorkers) {
+        if (requestedWorkers == null || requestedWorkers.isEmpty()) {
+            throw new IllegalArgumentException("Meeting requires at least one real ACTIVE Worker");
+        }
         closePriorConversationMeetings(interaction.conversationId());
-        String role = bound.role();
+
+        List<MeetingWorkerDirectory.ResolvedWorker> workers = requestedWorkers.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        MeetingWorkerDirectory.ResolvedWorker::workerId,
+                        worker -> worker,
+                        (first, ignored) -> first,
+                        java.util.LinkedHashMap::new))
+                .values().stream().toList();
+
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
         String now = Instant.now().toString();
         String organizer = "human:" + interaction.human().actorId();
-        List<String> participants = List.of(organizer, bound.workerId());
+        List<String> participants = new ArrayList<>();
+        participants.add(organizer);
+        workers.forEach(worker -> participants.add(worker.workerId()));
+
         List<String> lifecycle = List.of(
                 MeetingRecord.Status.PROPOSED.name(),
                 MeetingRecord.Status.OPEN.name(),
                 MeetingRecord.Status.ACTIVE.name());
-        WorkerConversationGateway.Reply reply = workerConversation.converse(
-                bound.workerId(), role, interaction.text(), "");
-        List<MeetingRecord.Contribution> contributions = List.of(
-                new MeetingRecord.Contribution(bound.workerId(), role, reply.text(), reply.requestReference()));
+        List<MeetingRecord.Contribution> contributions = new ArrayList<>();
         List<String> evidence = new ArrayList<>(baseEvidence(interaction));
-        evidence.add("meeting-worker:" + bound.workerId() + ":participation=" + bound.participationId());
-        reply.evidenceReferences().stream()
-                .filter(ref -> ref != null && !ref.isBlank())
-                .filter(ref -> !evidence.contains(ref))
-                .forEach(evidence::add);
+        List<WorkerReply> replies = new ArrayList<>();
+
+        for (MeetingWorkerDirectory.ResolvedWorker worker : workers) {
+            WorkerConversationGateway.Reply reply = workerConversation.converse(
+                    worker.workerId(), worker.role(), interaction.text(), "");
+            contributions.add(new MeetingRecord.Contribution(
+                    worker.workerId(), worker.role(), reply.text(), reply.requestReference()));
+            evidence.add("meeting-worker:" + worker.workerId() + ":participation=" + worker.participationId());
+            reply.evidenceReferences().stream()
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .filter(ref -> !evidence.contains(ref))
+                    .forEach(evidence::add);
+            replies.add(new WorkerReply(worker, reply.text()));
+        }
+
         MeetingRecord meeting = new MeetingRecord(
                 id, interaction.organizationContextId(), interaction.conversationId(),
                 interaction.channelProvider(), interaction.externalMessageReference(),
-                "Conversation with " + role, interaction.text(), organizer, participants,
-                List.of("Live conversation"), contributions, "", List.of(), List.of(),
-                evidence, lifecycle, MeetingRecord.Status.ACTIVE, now, "", false);
+                workers.size() == 1 ? "Conversation with " + workers.getFirst().role() : "Live Worker Meeting",
+                interaction.text(), organizer, List.copyOf(participants),
+                List.of("Live conversation"), List.copyOf(contributions), "", List.of(), List.of(),
+                List.copyOf(evidence), lifecycle, MeetingRecord.Status.ACTIVE, now, "", false);
         store.save(meeting);
-        return renderConversation(role, reply.text());
+        return renderWorkerReplies(replies);
     }
 
-    private String continueConversation(MeetingRecord meeting, MetatronInteraction interaction, String conversationContext) {
+    private String continueConversation(MeetingRecord meeting,
+                                        MetatronInteraction interaction,
+                                        String conversationContext,
+                                        List<MeetingWorkerDirectory.ResolvedWorker> explicitlyRequestedWorkers) {
         String expectedOrganizer = "human:" + interaction.human().actorId();
         if (!expectedOrganizer.equals(meeting.organizer())) throw new SecurityException("meeting organizer mismatch");
         if (!interaction.organizationContextId().equals(meeting.organizationContextId())) {
             throw new SecurityException("meeting organization mismatch");
         }
-        String role = meeting.contributions().isEmpty()
-                ? roleFromParticipant(meeting.participants().get(1))
-                : meeting.contributions().getLast().role();
-        String workerId = meeting.participants().get(1);
-        List<String> participants = meeting.participants();
-        if (workerDirectory != null) {
-            MeetingWorkerDirectory.ResolvedWorker current = requireBoundWorker(role);
-            if (!current.workerId().equals(workerId)) {
-                // Durable rooms created before canonical Worker binding used role:* or the short-lived
-                // legacy Gateway worker id. Reconcile the room to the currently canonical Worker
-                // instead of failing every subsequent Human turn.
-                workerId = current.workerId();
-                participants = List.of(meeting.organizer(), workerId);
+        if (workerDirectory == null) {
+            throw new IllegalStateException("meeting_worker_directory_unavailable");
+        }
+
+        java.util.LinkedHashMap<String, MeetingWorkerDirectory.ResolvedWorker> roomWorkers =
+                new java.util.LinkedHashMap<>();
+        for (int i = 1; i < meeting.participants().size(); i++) {
+            String participant = meeting.participants().get(i);
+            try {
+                MeetingWorkerDirectory.ResolvedWorker current;
+                if (participant.startsWith("role:")) {
+                    current = workerDirectory.resolveActive(latestRoleForParticipant(meeting, participant));
+                } else {
+                    current = workerDirectory.resolveActiveById(participant);
+                }
+                roomWorkers.put(current.workerId(), current);
+            } catch (RuntimeException unavailable) {
+                return renderWorkerUnavailable(List.of(participant + " — " + safeFailure(unavailable)));
             }
         }
-        WorkerConversationGateway.Reply reply = workerConversation.converse(
-                workerId, role, interaction.text(), conversationContext);
+
+        List<MeetingWorkerDirectory.ResolvedWorker> requested =
+                explicitlyRequestedWorkers == null ? List.of() : explicitlyRequestedWorkers;
+        for (MeetingWorkerDirectory.ResolvedWorker worker : requested) {
+            roomWorkers.put(worker.workerId(), worker);
+        }
+
+        List<MeetingWorkerDirectory.ResolvedWorker> targets = requested.isEmpty()
+                ? List.copyOf(roomWorkers.values())
+                : requested.stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                MeetingWorkerDirectory.ResolvedWorker::workerId,
+                                worker -> worker,
+                                (first, ignored) -> first,
+                                java.util.LinkedHashMap::new))
+                        .values().stream().toList();
+        if (targets.isEmpty()) throw new IllegalStateException("meeting_has_no_live_workers");
+
+        List<String> participants = new ArrayList<>();
+        participants.add(meeting.organizer());
+        roomWorkers.values().forEach(worker -> participants.add(worker.workerId()));
+
         List<MeetingRecord.Contribution> contributions = new ArrayList<>(meeting.contributions());
-        contributions.add(new MeetingRecord.Contribution(workerId, role, reply.text(), reply.requestReference()));
         List<String> evidence = new ArrayList<>(meeting.evidenceRefs());
         evidence.add("interaction:" + interaction.externalMessageReference());
-        reply.evidenceReferences().stream()
-                .filter(ref -> ref != null && !ref.isBlank())
-                .filter(ref -> !evidence.contains(ref))
-                .forEach(evidence::add);
+        List<WorkerReply> replies = new ArrayList<>();
+
+        String roomContext = conversationContext
+                + "\n\nLIVE MEETING WORKER IDS="
+                + roomWorkers.keySet();
+        for (MeetingWorkerDirectory.ResolvedWorker worker : targets) {
+            WorkerConversationGateway.Reply reply = workerConversation.converse(
+                    worker.workerId(), worker.role(), interaction.text(), roomContext);
+            contributions.add(new MeetingRecord.Contribution(
+                    worker.workerId(), worker.role(), reply.text(), reply.requestReference()));
+            String bindingEvidence = "meeting-worker:" + worker.workerId()
+                    + ":participation=" + worker.participationId();
+            if (!evidence.contains(bindingEvidence)) evidence.add(bindingEvidence);
+            reply.evidenceReferences().stream()
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .filter(ref -> !evidence.contains(ref))
+                    .forEach(evidence::add);
+            replies.add(new WorkerReply(worker, reply.text()));
+        }
+
         MeetingRecord updated = new MeetingRecord(
                 meeting.meetingId(), meeting.organizationContextId(), meeting.conversationId(),
-                meeting.channelProvider(), meeting.externalMessageReference(), meeting.title(), meeting.purpose(),
-                meeting.organizer(), participants, meeting.agenda(), contributions,
-                meeting.recommendation(), meeting.actionItems(), meeting.decisionRefs(), evidence,
+                meeting.channelProvider(), meeting.externalMessageReference(),
+                roomWorkers.size() == 1 ? "Conversation with " + roomWorkers.values().iterator().next().role()
+                        : "Live Worker Meeting",
+                meeting.purpose(), meeting.organizer(), List.copyOf(participants),
+                meeting.agenda(), List.copyOf(contributions), meeting.recommendation(),
+                meeting.actionItems(), meeting.decisionRefs(), List.copyOf(evidence),
                 meeting.lifecycle(), MeetingRecord.Status.ACTIVE, meeting.openedAt(), "", false);
         store.save(updated);
-        return renderConversation(role, reply.text());
+        return renderWorkerReplies(replies);
     }
 
     private void closePriorConversationMeetings(String conversationId) {
@@ -290,7 +344,7 @@ public final class WorkplaceMeetingService {
         for (MeetingRecord prior : store.list()) {
             if (!conversationId.equals(prior.conversationId())
                     || prior.status() != MeetingRecord.Status.ACTIVE
-                    || prior.participants().size() != 2) {
+                    || prior.participants().size() < 2) {
                 continue;
             }
             List<String> lifecycle = new ArrayList<>(prior.lifecycle());
@@ -314,18 +368,51 @@ public final class WorkplaceMeetingService {
         return workerDirectory.resolveActive(role);
     }
 
-    private static String roleFromParticipant(String participant) {
+    private static String latestRoleForParticipant(MeetingRecord meeting, String participant) {
+        for (int i = meeting.contributions().size() - 1; i >= 0; i--) {
+            MeetingRecord.Contribution contribution = meeting.contributions().get(i);
+            if (participant.equals(contribution.participant()) && !contribution.role().isBlank()) {
+                return contribution.role();
+            }
+        }
         String value = participant == null ? "" : participant;
-        if (!value.startsWith("role:")) return "Institutional Role";
-        return java.util.Arrays.stream(value.substring(5).split("-"))
-                .filter(token -> !token.isBlank())
-                .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
-                .collect(java.util.stream.Collectors.joining(" "));
+        if (value.startsWith("role:")) {
+            return java.util.Arrays.stream(value.substring(5).split("-"))
+                    .filter(token -> !token.isBlank())
+                    .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
+                    .collect(java.util.stream.Collectors.joining(" "));
+        }
+        return "Institutional Worker";
     }
 
-    private static String renderConversation(String role, String text) {
-        return "🏛 **" + role + "**\n\n" + text;
+    private static String renderWorkerReplies(List<WorkerReply> replies) {
+        StringBuilder out = new StringBuilder();
+        for (WorkerReply reply : replies) {
+            if (!out.isEmpty()) out.append("\n\n");
+            out.append("🏛 **").append(reply.worker().role()).append("** · [")
+                    .append(reply.worker().workerId()).append("]\n\n")
+                    .append(reply.text());
+        }
+        return out.toString();
     }
+
+    private static String renderWorkerUnavailable(List<String> unavailable) {
+        StringBuilder out = new StringBuilder("🏛 **WORKER NOT AVAILABLE**\n\n");
+        for (String item : unavailable) out.append("- ").append(item).append('\n');
+        out.append("\nNo role/persona simulation was used. Create or activate a real Worker first, then call its Worker ID.");
+        return out.toString().trim();
+    }
+
+    private static String safeFailure(RuntimeException failure) {
+        if (failure == null || failure.getMessage() == null || failure.getMessage().isBlank()) {
+            return "worker resolution failed";
+        }
+        return failure.getMessage().replace('\n', ' ').replace('\r', ' ').trim();
+    }
+
+    private record RoleResolution(List<MeetingWorkerDirectory.ResolvedWorker> workers,
+                                  List<String> unavailable) {}
+    private record WorkerReply(MeetingWorkerDirectory.ResolvedWorker worker, String text) {}
 
     private String handoffFollowUp(MetatronInteraction interaction) {
         Matcher matcher = FOLLOW_UP_REFERENCE.matcher(interaction.text());
@@ -421,7 +508,7 @@ public final class WorkplaceMeetingService {
         return out.toString();
     }
 
-    static boolean isWorkerDirectoryRequest(String text) {
+    public static boolean isWorkerDirectoryRequest(String text) {
         if (text == null || text.isBlank()) return false;
         String lower = normalize(text);
         return lower.equals("workers")
@@ -444,39 +531,112 @@ public final class WorkplaceMeetingService {
     }
 
     static java.util.Optional<String> requestedWorkerId(String text) {
-        if (text == null || text.isBlank()) return java.util.Optional.empty();
+        List<String> workers = requestedWorkerIds(text);
+        return workers.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(workers.getFirst());
+    }
+
+    static List<String> requestedWorkerIds(String text) {
+        if (text == null || text.isBlank()) return List.of();
         Matcher matcher = WORKER_REFERENCE.matcher(text);
-        return matcher.find() ? java.util.Optional.of(matcher.group(1)) : java.util.Optional.empty();
+        LinkedHashSet<String> workers = new LinkedHashSet<>();
+        while (matcher.find()) workers.add(matcher.group(1));
+        return List.copyOf(workers);
     }
 
     static List<String> requestedRoles(String text) {
         if (text == null) return List.of();
         String lower = normalize(text);
+
+        // Full institutional titles are always explicit. Domain words such as "finance" or
+        // "operations" are not automatically participants merely because the Human discusses them.
         Set<String> roles = new LinkedHashSet<>();
         addRole(lower, roles, "Head of Gateway",
                 "head of gateway", "gateway head", "gateway director", "director of gateway");
-        addRole(lower, roles, "Head of Strategy", "strategy", "chien luoc");
-        addRole(lower, roles, "Head of Finance", "finance", "financial", "tai chinh", "cfo");
-        addRole(lower, roles, "Head of Operations", "operations", "operation", "ops", "van hanh");
-        addRole(lower, roles, "Head of Technology", "technology", "technical", "tech", "ky thuat", "cto");
-        addRole(lower, roles, "Head of Sales", "sales", "commercial", "kinh doanh", "doanh thu");
-        addRole(lower, roles, "Head of Product", "product", "san pham");
-        addRole(lower, roles, "Head of People", "people", "human resources", "hr", "nhan su");
-        // Work/Meeting must not be limited to a hard-coded role catalog. Preserve known canonical
-        // roles above, then recognize explicit "Head of <domain>" roles supplied by the Human.
+        addRole(lower, roles, "Head of Strategy",
+                "head of strategy", "strategy head", "director of strategy");
+        addRole(lower, roles, "Head of Finance",
+                "head of finance", "finance head", "finance director", "director of finance", "cfo");
+        addRole(lower, roles, "Head of Operations",
+                "head of operations", "operations head", "operations director", "director of operations",
+                "head of ops", "ops head", "director of ops", "coo");
+        addRole(lower, roles, "Head of Technology",
+                "head of technology", "technology head", "technology director", "director of technology",
+                "head of tech", "tech head", "director of tech", "cto");
+        addRole(lower, roles, "Head of Sales",
+                "head of sales", "sales head", "sales director", "director of sales");
+        addRole(lower, roles, "Head of Product",
+                "head of product", "product head", "product director", "director of product");
+        addRole(lower, roles, "Head of People",
+                "head of people", "people head", "people director", "director of people",
+                "head of human resources", "hr director");
+
+        // Dynamic explicit institutional titles remain supported.
         java.util.regex.Matcher dynamic = java.util.regex.Pattern
                 .compile("\\b(?:head|director) of ([a-z0-9][a-z0-9 &/-]{1,36}?)(?=,|\\band\\b|\\bdiscuss\\b|\\bcreate\\b|\\babout\\b|\\bfor\\b|$)")
                 .matcher(lower);
         while (dynamic.find()) {
             String domain = dynamic.group(1).trim().replaceAll("\\s+", " ");
             if (domain.isBlank()) continue;
-            String role = "Head of " + java.util.Arrays.stream(domain.split(" "))
-                    .filter(token -> !token.isBlank())
-                    .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
-                    .collect(java.util.stream.Collectors.joining(" "));
+            String canonical = switch (domain) {
+                case "gateway" -> "Head of Gateway";
+                case "strategy" -> "Head of Strategy";
+                case "finance", "financial" -> "Head of Finance";
+                case "operations", "operation", "ops" -> "Head of Operations";
+                case "technology", "technical", "tech" -> "Head of Technology";
+                case "sales", "commercial" -> "Head of Sales";
+                case "product" -> "Head of Product";
+                case "people", "human resources", "hr" -> "Head of People";
+                default -> "";
+            };
+            String role = canonical.isBlank()
+                    ? "Head of " + java.util.Arrays.stream(domain.split(" "))
+                            .filter(token -> !token.isBlank())
+                            .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
+                            .collect(java.util.stream.Collectors.joining(" "))
+                    : canonical;
             roles.add(role);
         }
+
+        // Bare department names are promoted to participants only inside the invitation/roster span,
+        // never from the discussion topic. Example:
+        // "Meeting with Head of Gateway about finance strategy" => Gateway only.
+        // "Mời Strategy, Finance và Operations họp về P&L" => three requested Workers.
+        String roster = invitationRoster(lower);
+        if (!roster.isBlank()) {
+            addRole(roster, roles, "Head of Strategy", "strategy", "chien luoc");
+            addRole(roster, roles, "Head of Finance", "finance", "financial", "tai chinh");
+            addRole(roster, roles, "Head of Operations", "operations", "operation", "ops", "van hanh");
+            addRole(roster, roles, "Head of Technology", "technology", "technical", "tech", "ky thuat");
+            addRole(roster, roles, "Head of Sales", "sales", "commercial", "kinh doanh", "doanh thu");
+            addRole(roster, roles, "Head of Product", "product", "san pham");
+            addRole(roster, roles, "Head of People", "people", "human resources", "hr", "nhan su");
+        }
         return List.copyOf(roles);
+    }
+
+    private static String invitationRoster(String lower) {
+        if (lower == null || lower.isBlank()) return "";
+        String[] starts = {
+                "moi ", "goi ", "summon ", "bring ", "call ",
+                "meeting with ", "meet with ", "hop voi ", "hop ", "meeting "
+        };
+        int start = Integer.MAX_VALUE;
+        for (String marker : starts) {
+            int at = lower.indexOf(marker);
+            if (at >= 0 && at < start) start = at;
+        }
+        if (start == Integer.MAX_VALUE) return "";
+
+        String[] ends = {
+                " about ", " discuss ", " to discuss ", " regarding ",
+                " vao ban ", " ban ve ", " hop ve ", " de ban "
+        };
+        int end = lower.length();
+        for (String marker : ends) {
+            int at = lower.indexOf(marker, start + 1);
+            if (at >= 0 && at < end) end = at;
+        }
+        return lower.substring(start, end);
     }
 
     private static void addRole(String lower, Set<String> roles, String role, String... tokens) {
@@ -499,38 +659,5 @@ public final class WorkplaceMeetingService {
                 "channel:" + i.channelProvider());
     }
 
-    private static MeetingRecord snapshot(String id, MetatronInteraction i, String organizer,
-                                          List<String> participants, List<String> agenda,
-                                          List<MeetingRecord.Contribution> contributions, String recommendation,
-                                          List<String> actionItems, List<String> decisionRefs, List<String> evidence,
-                                          List<String> lifecycle, MeetingRecord.Status status,
-                                          String openedAt, String closedAt) {
-        return new MeetingRecord(id, i.organizationContextId(), i.conversationId(), i.channelProvider(),
-                i.externalMessageReference(), "Institutional multi-role meeting", i.text(), organizer,
-                participants, agenda, contributions, recommendation, actionItems, decisionRefs, evidence,
-                lifecycle, status, openedAt, closedAt, false);
-    }
-    private static MeetingRecord copy(MeetingRecord prior, List<MeetingRecord.Contribution> contributions,
-                                      String recommendation, List<String> actionItems, List<String> lifecycle,
-                                      MeetingRecord.Status status, String closedAt) {
-        return new MeetingRecord(prior.meetingId(), prior.organizationContextId(), prior.conversationId(),
-                prior.channelProvider(), prior.externalMessageReference(), prior.title(), prior.purpose(), prior.organizer(),
-                prior.participants(), prior.agenda(), contributions, recommendation, actionItems, prior.decisionRefs(),
-                prior.evidenceRefs(), lifecycle, status, prior.openedAt(), closedAt, false);
-    }
 
-    private static String render(MeetingRecord m) {
-        StringBuilder out = new StringBuilder("METATRON MEETING COMPLETED\n")
-                .append("meeting_id=").append(m.meetingId()).append('\n')
-                .append("status=").append(m.status()).append('\n')
-                .append("participants=").append(String.join(", ", m.participants())).append('\n')
-                .append("authority_created=false\n")
-                .append("follow_up_ref=").append(m.followUpReference()).append("\n\n");
-        for (MeetingRecord.Contribution c : m.contributions()) {
-            out.append("[").append(c.role()).append("]\n").append(c.text()).append("\n\n");
-        }
-        out.append("[MEETING SYNTHESIS]\n").append(m.recommendation())
-                .append("\n\nFollow-up: ").append(String.join(" ", m.actionItems()));
-        return out.toString();
-    }
 }

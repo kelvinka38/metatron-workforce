@@ -128,6 +128,15 @@ public final class MetatronConversationRuntime {
                 || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
         boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
 
+        if (meetingRoom != null && workSurfaceSelected
+                && WorkplaceMeetingService.isWorkerDirectoryRequest(interaction.text())) {
+            String directoryAnswer = meetingRoom.handle(interaction, history);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), directoryAnswer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), directoryAnswer,
+                    "work:worker-directory:" + interaction.externalMessageReference());
+        }
+
         if (selectedSurface == ConversationSurfaceMode.CHAT && institutionalStateChat != null) {
             java.util.Optional<String> institutionalAnswer = institutionalStateChat.answer(interaction.text());
             if (institutionalAnswer.isPresent()) {
@@ -167,11 +176,13 @@ public final class MetatronConversationRuntime {
             String meetingAnswer = meetingRoom.handle(interaction, history);
             String answer = meetingAnswer;
             memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
-            MeetingRoomReference reference = meetingRoom.findByExternalMessageReference(interaction.externalMessageReference())
-                    .map(m -> new MeetingRoomReference(m.meetingId()))
-                    .orElse(new MeetingRoomReference("meeting:unresolved"));
+            java.util.Optional<MeetingRoomReference> reference =
+                    meetingRoom.findByExternalMessageReference(interaction.externalMessageReference())
+                            .map(m -> new MeetingRoomReference(m.meetingId()));
             return new MetatronInteractionOrchestrator.InteractionResponse(
-                    interaction.conversationId(), answer, reference.meetingId());
+                    interaction.conversationId(), answer,
+                    reference.map(MeetingRoomReference::meetingId)
+                            .orElse("work:meeting-no-room:" + interaction.externalMessageReference()));
         }
 
         IntelligenceDepthContract contract = depthControl == null

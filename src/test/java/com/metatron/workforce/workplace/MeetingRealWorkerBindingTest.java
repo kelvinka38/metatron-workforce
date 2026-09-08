@@ -149,6 +149,66 @@ class MeetingRealWorkerBindingTest {
     }
 
     @Test
+    void multipleCanonicalWorkerIdsOpenOneLiveRoomAndCallEachExactWorker() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-DIRECTOR", "participant:gateway-director-ai");
+        core.participate("participation:gateway-director:metatron", "WORKER-GATEWAY-DIRECTOR",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        core.recognizeParticipant("participant:operations-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-OPERATIONS", "participant:operations-ai");
+        core.participate("participation:operations:metatron", "WORKER-OPERATIONS",
+                "organization:metatron", "position:head-of-operations", "role:head-of-operations");
+
+        java.util.ArrayList<String> called = new java.util.ArrayList<>();
+        WorkerConversationGateway workerConversation = (workerId, role, message, context) -> {
+            called.add(workerId);
+            return new WorkerConversationGateway.Reply(
+                    "reply:" + workerId,
+                    "worker-cognition:" + workerId,
+                    List.of("evidence:" + workerId));
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("multi-direct"), new ObjectMapper()),
+                new MeetingRoleDeliberator() {
+                    @Override public Deliberation deliberate(String role, String purpose, String context) {
+                        fail("shadow role deliberation must not run");
+                        return new Deliberation("never", "");
+                    }
+                    @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                        fail("shadow synthesis must not run");
+                        return new Deliberation("never", "");
+                    }
+                },
+                ExecutionObjectiveHandoff.unavailable(),
+                new MeetingWorkerDirectory(core),
+                workerConversation);
+
+        assertEquals(List.of("WORKER-GATEWAY-DIRECTOR", "WORKER-OPERATIONS"),
+                WorkplaceMeetingService.requestedWorkerIds(
+                        "WORKER-GATEWAY-DIRECTOR and WORKER-OPERATIONS"));
+
+        MetatronInteraction open = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:multi-direct", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:multi-direct",
+                "WORKER-GATEWAY-DIRECTOR and WORKER-OPERATIONS");
+
+        String response = service.handle(open, "");
+        assertEquals(List.of("WORKER-GATEWAY-DIRECTOR", "WORKER-OPERATIONS"), called);
+        assertTrue(response.contains("WORKER-GATEWAY-DIRECTOR"));
+        assertTrue(response.contains("WORKER-OPERATIONS"));
+
+        MeetingRecord room = service.findByExternalMessageReference("telegram:update:multi-direct").orElseThrow();
+        assertEquals(List.of("human:founder", "WORKER-GATEWAY-DIRECTOR", "WORKER-OPERATIONS"),
+                room.participants());
+        assertEquals(2, room.contributions().size());
+        assertEquals(MeetingRecord.Status.ACTIVE, room.status());
+    }
+
+    @Test
     void canonicalWorkerConversationRequiresRuntimeBindingAndUsesWorkerCognitionBoundary() {
         WorkforceCoreService core = new WorkforceCoreService();
         core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
@@ -287,16 +347,18 @@ class MeetingRealWorkerBindingTest {
     }
 
     @Test
-    void missingRealWorkerFailsClosedInsteadOfSimulatingRole() {
+    void missingRealWorkerReturnsExplicitUnavailableInsteadOfSimulatingRoleOrDeadLettering() {
         WorkforceCoreService core = new WorkforceCoreService();
+        AtomicReference<Boolean> shadowCalled = new AtomicReference<>(false);
         WorkplaceMeetingService service = new WorkplaceMeetingService(
                 new PersistentMeetingStore(temp.resolve("missing"), new ObjectMapper()),
                 new MeetingRoleDeliberator() {
                     @Override public Deliberation deliberate(String role, String purpose, String context) {
-                        fail("must not simulate missing worker");
+                        shadowCalled.set(true);
                         return new Deliberation("never", "");
                     }
                     @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                        shadowCalled.set(true);
                         return new Deliberation("never", "");
                     }
                 },
@@ -310,7 +372,55 @@ class MeetingRealWorkerBindingTest {
                 "telegram:user:1", "telegram:chat:1", "telegram:update:missing",
                 "Head of Gateway");
 
-        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> service.handle(interaction, ""));
-        assertTrue(failure.getMessage().startsWith("meeting_worker_not_found:"));
+        String response = service.handle(interaction, "");
+        assertTrue(response.startsWith("🏛 **WORKER NOT AVAILABLE**"));
+        assertTrue(response.contains("Head of Gateway"));
+        assertTrue(response.contains("No role/persona simulation was used"));
+        assertFalse(shadowCalled.get());
+        assertTrue(service.list().isEmpty());
+    }
+
+    @Test
+    void multiRoleMeetingFailsClosedIfAnyRequestedRoleHasNoLiveWorker() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-DIRECTOR", "participant:gateway-director-ai");
+        core.participate("participation:gateway-director:metatron", "WORKER-GATEWAY-DIRECTOR",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        AtomicReference<Boolean> cognitionCalled = new AtomicReference<>(false);
+        WorkerConversationGateway workerConversation = (workerId, role, message, context) -> {
+            cognitionCalled.set(true);
+            return new WorkerConversationGateway.Reply("never", "never", List.of());
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("partial-multi"), new ObjectMapper()),
+                new MeetingRoleDeliberator() {
+                    @Override public Deliberation deliberate(String role, String purpose, String context) {
+                        fail("shadow deliberation must not run");
+                        return new Deliberation("never", "");
+                    }
+                    @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                        fail("shadow synthesis must not run");
+                        return new Deliberation("never", "");
+                    }
+                },
+                ExecutionObjectiveHandoff.unavailable(),
+                new MeetingWorkerDirectory(core),
+                workerConversation);
+
+        MetatronInteraction interaction = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:partial-multi", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:partial-multi",
+                "Meeting with Head of Gateway and Head of Finance");
+
+        String response = service.handle(interaction, "");
+        assertTrue(response.startsWith("🏛 **WORKER NOT AVAILABLE**"));
+        assertTrue(response.contains("Head of Finance"));
+        assertFalse(response.contains("METATRON MEETING COMPLETED"));
+        assertFalse(cognitionCalled.get(), "must resolve the full requested roster before calling any worker");
+        assertTrue(service.list().isEmpty());
     }
 }

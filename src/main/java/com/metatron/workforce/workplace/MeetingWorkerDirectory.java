@@ -49,16 +49,17 @@ public final class MeetingWorkerDirectory {
     public List<ResolvedWorker> listActive() {
         return core.allWorkers().stream()
                 .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
+                .sorted(Comparator.comparing(WorkforceCoreService.Worker::workerId))
                 .flatMap(w -> core.participations(w.workerId()).stream()
                         .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
+                        .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
+                        .findFirst().stream()
                         .map(p -> new ResolvedWorker(
                                 w.workerId(),
                                 p.participationId(),
                                 humanizeRole(!blank(p.roleRef()) ? p.roleRef() : p.positionRef()),
                                 p.positionRef(),
                                 p.roleRef())))
-                .sorted(Comparator.comparing(ResolvedWorker::workerId)
-                        .thenComparing(ResolvedWorker::participationId))
                 .toList();
     }
 

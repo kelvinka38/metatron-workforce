@@ -71,13 +71,16 @@ jobs:
           U3="${BASE_ID}03"
           U4="${BASE_ID}04"
           U5="${BASE_ID}05"
+          U6="${BASE_ID}06"
+          U7="${BASE_ID}07"
+          U8="${BASE_ID}08"
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           MEETING_FILE=''
 
           dump_diagnostics() {
             echo '--- MEETING ACCEPTANCE DIAGNOSTICS ---' >&2
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4|$U5)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
+            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4|$U5|$U6|$U7|$U8)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
             if [ -n "$MEETING_FILE" ]; then
               echo "meeting_file=$MEETING_FILE" >&2
               docker exec "$CID" sh -c "cat '$MEETING_FILE'" >&2 || true
@@ -239,6 +242,43 @@ jobs:
           grep -q "telegram_send_success update_id=$U5" <<<"$LOGS"
           ! grep -q "telegram_interaction_dead_letter update_id=$U5" <<<"$LOGS"
 
+          # A requested institutional role with no ACTIVE Worker must never be simulated.
+          # The entire requested roster is resolved before any Worker cognition or Meeting record is created.
+          send_update "Meeting with Head of Gateway and Head of Shadow Fiction" "$U6"
+          for i in $(seq 1 45); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"; then break; fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U6" <<<"$LOGS"; then
+              echo 'SHADOW_ROLE_REQUEST_DEAD_LETTERED' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U6" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U6.*provenance=work:meeting-no-room:telegram:update:$U6" <<<"$LOGS"
+          ! docker exec "$CID" sh -c             "grep -R -q 'interaction:telegram:update:$U6' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"
+
+          # Restore Work after the rejected no-shadow Meeting request.
+          send_update "/work" "$U7"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"
+
+          # Worker discovery is a real Work directory read, not generic Intelligence and not a Meeting.
+          send_update "active workers" "$U8"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U8.*provenance=work:worker-directory:telegram:update:$U8" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U8" <<<"$LOGS"
+
           trap - ERR
           echo 'CANONICAL_GATEWAY_WORKER=PASS'
           echo 'WORKER_RUNTIME_BINDING=PASS'
@@ -249,4 +289,6 @@ jobs:
           echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
           echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
           echo 'GATEWAY_DIRECTOR_WORK_ORDER_END_TO_END=PASS'
+          echo 'NO_SHADOW_ROLE_SIMULATION=PASS'
+          echo 'ACTIVE_WORKER_DIRECTORY=PASS'
           echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'
