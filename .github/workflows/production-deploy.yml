@@ -24,6 +24,7 @@ permissions:
 
 env:
   METATRON_VERSION: "0.1.0"
+  # Acceptance-harness closure candidate: runtime application code is unchanged; redeploy exact main to ratify post-deploy workflows.
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
 jobs:
