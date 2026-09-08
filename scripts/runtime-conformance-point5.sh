@@ -131,6 +131,51 @@ docker logs --since 10m "$CID" > "$WORK_ROOT_LOG" 2>&1 || true
 echo "POINT5_WORK_ROOT_OBJECTIVE_ID=$WORK_ROOT_OID"
 echo 'POINT5_WORK_ROOT_NATURAL_EXECUTION=PASS'
 
+echo 'POINT5_PHASE=WORK_ROOT_GATEWAY_DIRECTOR'
+GATEWAY_HEAD_UPDATE=$((WORK_ROOT_UPDATE + 1))
+GATEWAY_HEAD_TEXT='Create for me a head of gateway'
+send_public "$GATEWAY_HEAD_UPDATE" "$GATEWAY_HEAD_TEXT"
+GATEWAY_HEAD_OID=$(wait_receipt_delivered "$GATEWAY_HEAD_UPDATE" 1)
+test -n "$GATEWAY_HEAD_OID"
+test "$GATEWAY_HEAD_OID" != NONE
+
+GATEWAY_HEAD_TERMINAL=''
+for _ in $(seq 1 180); do
+  curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/$GATEWAY_HEAD_OID" > "$OUT/gateway-head-objective.json" || true
+  GATEWAY_HEAD_TERMINAL=$(python3 - "$OUT/gateway-head-objective.json" <<'PY'
+import json,sys
+try:
+    print((json.load(open(sys.argv[1])).get('objective') or {}).get('status',''))
+except Exception:
+    print('')
+PY
+  )
+  case "$GATEWAY_HEAD_TERMINAL" in
+    COMPLETED|DELIVERED) break ;;
+    BLOCKED|ESCALATED|CANCELLED|FAILED) echo "POINT5_GATEWAY_HEAD_BAD_TERMINAL=$GATEWAY_HEAD_TERMINAL" >&2; exit 2 ;;
+  esac
+  sleep 2
+done
+case "$GATEWAY_HEAD_TERMINAL" in COMPLETED|DELIVERED) ;; *) echo "POINT5_GATEWAY_HEAD_TIMEOUT=$GATEWAY_HEAD_OID" >&2; exit 1 ;; esac
+
+curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/core/workers/WORKER-GATEWAY-DIRECTOR > "$OUT/gateway-head-worker.json"
+python3 - "$OUT/gateway-head-worker.json" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1],encoding='utf-8'))
+assert v.get('workerId')=='WORKER-GATEWAY-DIRECTOR', v
+assert v.get('status')=='ACTIVE', v.get('status')
+parts=v.get('participations') or []
+assert any(p.get('status')=='ACTIVE' and p.get('roleRef')=='ROLE-HEAD-OF-GATEWAY' for p in parts), parts
+caps=v.get('capabilities') or []
+assert any(c.get('capabilityRef')=='workforce.staffing.gateway-director' for c in caps), caps
+assert any(c.get('capabilityRef')=='gateway.audit.read' for c in caps), caps
+print('POINT5_GATEWAY_HEAD_ACTIVE_ROLE=PASS')
+print('POINT5_GATEWAY_HEAD_CAPABILITY_BUNDLE=PASS')
+PY
+echo "POINT5_GATEWAY_HEAD_OBJECTIVE_ID=$GATEWAY_HEAD_OID"
+echo "POINT5_GATEWAY_HEAD_TERMINAL=$GATEWAY_HEAD_TERMINAL"
+echo 'POINT5_WORK_ROOT_EXACT_FOUNDER_REQUEST=PASS'
+
 echo 'POINT5_PHASE=MULTI_ROLE_MEETING'
 # Product hierarchy is Chat | Work, with Meeting nested inside Work. Normalize the
 # synthetic founder acceptance conversation onto the canonical Work > Meeting module
