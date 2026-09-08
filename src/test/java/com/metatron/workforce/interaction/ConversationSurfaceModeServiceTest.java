@@ -45,6 +45,24 @@ class ConversationSurfaceModeServiceTest {
     }
 
     @Test
+    void naturalMeetingRequestInsideWorkEntersMeetingWithoutConsumingTheTurn() {
+        String conversation = "conversation:human:founder";
+        ConversationSurfaceModeService service = new ConversationSurfaceModeService(
+                new PersistentConversationSurfaceModeStore(temp));
+
+        assertTrue(service.handle(conversation, "🧰 Work").handled());
+        var routed = service.handle(conversation, "Meeting, call for me director of gateway");
+
+        assertFalse(routed.handled(), "same natural-language turn must continue into Meeting runtime");
+        assertEquals(ConversationSurfaceMode.WORK_MEETING, routed.mode());
+        assertEquals(ConversationSurfaceMode.WORK_MEETING, service.mode(conversation));
+
+        var second = service.handle(conversation, "I want to have a meeting with director of gateway");
+        assertFalse(second.handled());
+        assertEquals(ConversationSurfaceMode.WORK_MEETING, second.mode());
+    }
+
+    @Test
     void ordinaryTextDoesNotChangeMode() {
         String conversation = "conversation:human:founder";
         ConversationSurfaceModeService service = new ConversationSurfaceModeService(

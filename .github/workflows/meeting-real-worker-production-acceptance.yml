@@ -60,20 +60,17 @@ jobs:
           U1="${BASE_ID}01"
           U2="${BASE_ID}02"
           U3="${BASE_ID}03"
-          U4="${BASE_ID}04"
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           send_update "/work" "$U1"
           sleep 2
-          send_update "/meeting" "$U2"
-          sleep 2
-          send_update "active workers" "$U3"
+          send_update "Meeting, call for me director of gateway" "$U2"
           sleep 3
-          send_update "$WORKER_ID" "$U4"
+          send_update "I want to have a meeting with director of gateway" "$U3"
 
           for i in $(seq 1 60); do
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"               && docker exec "$CID" sh -c "grep -R -q '$WORKER_ID' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"; then
+            if grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"               && docker exec "$CID" sh -c "grep -R -q '$WORKER_ID' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"; then
               break
             fi
             if [ "$i" -eq 60 ]; then
@@ -92,11 +89,15 @@ jobs:
           grep -q "telegram_send_success update_id=$U1" <<<"$LOGS"
           grep -q "telegram_send_success update_id=$U2" <<<"$LOGS"
           grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"
-          grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U2" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U3" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U2.*provenance=meeting:" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U3.*provenance=work:meeting-conversation" <<<"$LOGS"
 
-          echo 'CANONICAL_GATEWAY_WORKER_BOOTSTRAP=PASS'
-          echo 'ACTIVE_WORKER_DIRECTORY=PASS'
-          echo 'DIRECT_WORKER_ID_MEETING_CALL=PASS'
+          echo 'CANONICAL_GATEWAY_WORKER=PASS'
+          echo 'NATURAL_WORK_TO_MEETING_ROUTING=PASS'
+          echo 'GATEWAY_DIRECTOR_ALIAS_RESOLUTION=PASS'
           echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
           echo 'WORKER_BOUND_INTELLIGENCE_REPLY=PASS'
+          echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
           echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'

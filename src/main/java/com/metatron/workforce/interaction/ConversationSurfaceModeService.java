@@ -38,7 +38,37 @@ public final class ConversationSurfaceModeService {
             return new ControlResult(true, ConversationSurfaceMode.WORK_MEETING,
                     "🧰 WORK · MEETING\nMeeting room ready. Invite a role, for example: Head of Gateway. Then talk naturally like they are in the room with you. Deliberation, minutes, decisions, and execution happen only when you explicitly ask for them.");
         }
-        return new ControlResult(false, store.get(conversationId), "");
+        ConversationSurfaceMode current = store.get(conversationId);
+        if (current == ConversationSurfaceMode.WORK && requestsMeetingModule(normalized)) {
+            // Natural-language Work intent should enter Meeting and continue processing the SAME utterance.
+            // Do not consume the turn with a mode-switch acknowledgement and force the Human to repeat themselves.
+            store.set(conversationId, ConversationSurfaceMode.WORK_MEETING);
+            return new ControlResult(false, ConversationSurfaceMode.WORK_MEETING, "");
+        }
+        return new ControlResult(false, current, "");
+    }
+
+    static boolean requestsMeetingModule(String normalized) {
+        if (normalized == null || normalized.isBlank()) return false;
+        String value = normalized.toLowerCase(Locale.ROOT);
+        boolean meetingWord = value.contains("meeting")
+                || value.contains("cuoc hop")
+                || value.contains("họp")
+                || value.contains("hop ")
+                || value.startsWith("hop");
+        if (!meetingWord) return false;
+        return value.startsWith("meeting")
+                || value.contains("have a meeting")
+                || value.contains("call for me")
+                || value.contains("call ")
+                || value.contains("meet with")
+                || value.contains("meeting with")
+                || value.contains("meeting,")
+                || value.contains("meeting ")
+                || value.contains("muon hop")
+                || value.contains("muốn họp")
+                || value.contains("goi ")
+                || value.contains("gọi ");
     }
 
     public ConversationSurfaceMode mode(String conversationId) {
