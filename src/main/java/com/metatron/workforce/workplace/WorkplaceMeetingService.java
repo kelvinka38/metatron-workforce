@@ -557,9 +557,11 @@ public final class WorkplaceMeetingService {
         addRole(lower, roles, "Head of Finance",
                 "head of finance", "finance head", "finance director", "director of finance", "cfo");
         addRole(lower, roles, "Head of Operations",
-                "head of operations", "operations head", "operations director", "director of operations", "coo");
+                "head of operations", "operations head", "operations director", "director of operations",
+                "head of ops", "ops head", "director of ops", "coo");
         addRole(lower, roles, "Head of Technology",
-                "head of technology", "technology head", "technology director", "director of technology", "cto");
+                "head of technology", "technology head", "technology director", "director of technology",
+                "head of tech", "tech head", "director of tech", "cto");
         addRole(lower, roles, "Head of Sales",
                 "head of sales", "sales head", "sales director", "director of sales");
         addRole(lower, roles, "Head of Product",
@@ -575,10 +577,23 @@ public final class WorkplaceMeetingService {
         while (dynamic.find()) {
             String domain = dynamic.group(1).trim().replaceAll("\\s+", " ");
             if (domain.isBlank()) continue;
-            String role = "Head of " + java.util.Arrays.stream(domain.split(" "))
-                    .filter(token -> !token.isBlank())
-                    .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
-                    .collect(java.util.stream.Collectors.joining(" "));
+            String canonical = switch (domain) {
+                case "gateway" -> "Head of Gateway";
+                case "strategy" -> "Head of Strategy";
+                case "finance", "financial" -> "Head of Finance";
+                case "operations", "operation", "ops" -> "Head of Operations";
+                case "technology", "technical", "tech" -> "Head of Technology";
+                case "sales", "commercial" -> "Head of Sales";
+                case "product" -> "Head of Product";
+                case "people", "human resources", "hr" -> "Head of People";
+                default -> "";
+            };
+            String role = canonical.isBlank()
+                    ? "Head of " + java.util.Arrays.stream(domain.split(" "))
+                            .filter(token -> !token.isBlank())
+                            .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
+                            .collect(java.util.stream.Collectors.joining(" "))
+                    : canonical;
             roles.add(role);
         }
 
