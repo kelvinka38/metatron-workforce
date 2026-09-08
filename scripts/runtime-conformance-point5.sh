@@ -162,8 +162,9 @@ curl -fsS --max-time 10 http://127.0.0.1:8080/workforce/core/workers/WORKER-GATE
 python3 - "$OUT/gateway-head-worker.json" <<'PY'
 import json,sys
 v=json.load(open(sys.argv[1],encoding='utf-8'))
-assert v.get('workerId')=='WORKER-GATEWAY-DIRECTOR', v
-assert v.get('status')=='ACTIVE', v.get('status')
+worker=v.get('worker') or {}
+assert worker.get('workerId')=='WORKER-GATEWAY-DIRECTOR', v
+assert worker.get('status')=='ACTIVE', worker.get('status')
 parts=v.get('participations') or []
 assert any(p.get('status')=='ACTIVE' and p.get('roleRef')=='ROLE-HEAD-OF-GATEWAY' for p in parts), parts
 caps=v.get('capabilities') or []
