@@ -70,13 +70,14 @@ jobs:
           U2="${BASE_ID}02"
           U3="${BASE_ID}03"
           U4="${BASE_ID}04"
+          U5="${BASE_ID}05"
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           MEETING_FILE=''
 
           dump_diagnostics() {
             echo '--- MEETING ACCEPTANCE DIAGNOSTICS ---' >&2
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
+            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4|$U5)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
             if [ -n "$MEETING_FILE" ]; then
               echo "meeting_file=$MEETING_FILE" >&2
               docker exec "$CID" sh -c "cat '$MEETING_FILE'" >&2 || true
@@ -147,6 +148,97 @@ jobs:
           done
           grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
 
+          # Prove the exact Founder-style "create Worker Head of Gateway" Work request no longer
+          # sits at PLANNING 0/0. It must materialize one exact Objective and reach terminal success.
+          send_update "Create worker head of gateway" "$U5"
+          OBJECTIVE_ID=''
+          for i in $(seq 1 90); do
+            curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives               > /tmp/meeting-gateway-objectives.json || true
+            OBJECTIVE_ID=$(python3 - /tmp/meeting-gateway-objectives.json "$U5" <<'PY'
+          import json,sys
+          path,update=sys.argv[1],sys.argv[2]
+          try:
+              data=json.load(open(path))
+          except Exception:
+              print('')
+              raise SystemExit(0)
+          needle=f"telegram:update:{update}"
+          found=[]
+          for item in data if isinstance(data,list) else []:
+              if needle not in json.dumps(item,sort_keys=True):
+                  continue
+              objective=item.get('objective') or {}
+              oid=objective.get('objectiveId') or objective.get('objective_id')
+              if oid:
+                  found.append(oid)
+          found=list(dict.fromkeys(found))
+          print(found[0] if len(found)==1 else '')
+          PY
+            )
+            if [ -n "$OBJECTIVE_ID" ]; then break; fi
+            sleep 2
+          done
+          test -n "$OBJECTIVE_ID"
+          echo "GATEWAY_DIRECTOR_OBJECTIVE_ID=$OBJECTIVE_ID"
+
+          TERMINAL=''
+          for i in $(seq 1 120); do
+            curl -fsS --max-time 5               "http://127.0.0.1:8080/workforce/management/objectives/$OBJECTIVE_ID"               > /tmp/meeting-gateway-objective.json || true
+            TERMINAL=$(python3 - /tmp/meeting-gateway-objective.json <<'PY'
+          import json,sys
+          try:
+              d=json.load(open(sys.argv[1]))
+              print((d.get('objective') or {}).get('status',''))
+          except Exception:
+              print('')
+          PY
+            )
+            case "$TERMINAL" in
+              COMPLETED|DELIVERED) break ;;
+              BLOCKED|ESCALATED|CANCELLED)
+                echo "GATEWAY_DIRECTOR_BAD_TERMINAL=$TERMINAL" >&2
+                cat /tmp/meeting-gateway-objective.json >&2 || true
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          case "$TERMINAL" in
+            COMPLETED|DELIVERED) ;;
+            *)
+              echo "GATEWAY_DIRECTOR_TERMINAL_TIMEOUT=$TERMINAL" >&2
+              cat /tmp/meeting-gateway-objective.json >&2 || true
+              exit 1
+              ;;
+          esac
+
+          python3 - /tmp/meeting-gateway-objective.json "$OBJECTIVE_ID" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); oid=sys.argv[2]
+          objective=d.get('objective') or {}
+          assert objective.get('objectiveId')==oid, objective
+          assert objective.get('status') in ('COMPLETED','DELIVERED'), objective
+          work=d.get('autonomousWork') or d.get('work') or {}
+          planned=work.get('plannedWork') or work.get('planned_work') or []
+          completed=work.get('completedStepIds') or work.get('completed_step_ids') or []
+          blob=json.dumps(d,sort_keys=True)
+          assert planned, 'gateway_director_plan_empty'
+          assert len(completed) >= len(planned), (planned,completed)
+          for marker in (
+              'workforce.staffing.gateway-director',
+              'ROLE-HEAD-OF-GATEWAY',
+              'WORKER-GATEWAY-DIRECTOR',
+              'runtime-profile:general-engineering-worker:v1'):
+              assert marker in blob, f'missing_gateway_director_evidence:{marker}'
+          print('GATEWAY_DIRECTOR_WORK_ORDER_PLAN=PASS')
+          print('GATEWAY_DIRECTOR_WORK_ORDER_EXECUTION=PASS')
+          print('GATEWAY_DIRECTOR_WORK_ORDER_COMPLETION=PASS')
+          PY
+
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          grep -q "telegram_send_success update_id=$U5" <<<"$LOGS"
+          ! grep -q "telegram_interaction_dead_letter update_id=$U5" <<<"$LOGS"
+
           trap - ERR
           echo 'CANONICAL_GATEWAY_WORKER=PASS'
           echo 'WORKER_RUNTIME_BINDING=PASS'
@@ -156,4 +248,5 @@ jobs:
           echo 'REAL_WORKER_COGNITION_BOUNDARY=PASS'
           echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
           echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
+          echo 'GATEWAY_DIRECTOR_WORK_ORDER_END_TO_END=PASS'
           echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'
