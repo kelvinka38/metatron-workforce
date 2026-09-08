@@ -151,7 +151,18 @@ fresh_case() {
 }
 
 BASE_ID=$(date +%s%N | cut -c1-13)
-BTC_1="${BASE_ID}11"; FX="${BASE_ID}12"; WEATHER="${BASE_ID}13"; BTC_2="${BASE_ID}14"
+CHAT_MODE="${BASE_ID}10"; BTC_1="${BASE_ID}11"; FX="${BASE_ID}12"; WEATHER="${BASE_ID}13"; BTC_2="${BASE_ID}14"
+
+# Fresh-information acceptance is a Chat-product contract. Founder surface mode is durable across
+# real interactions, so normalize the acceptance conversation to Chat instead of depending on the
+# Human's last selected Work/Meeting mode.
+CHAT_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+send_update "$CHAT_MODE" "/chat" local
+wait_answer "$CHAT_SINCE" "$CHAT_MODE"
+CHAT_LOG="$OUT/intelligence-${CHAT_MODE}-runtime.log"
+grep -q "telegram_answer_ready update_id=$CHAT_MODE" "$CHAT_LOG"
+grep -q "provenance=conversation-surface-control:telegram:update:$CHAT_MODE" "$CHAT_LOG"
+echo 'INTELLIGENCE_CHAT_SURFACE_NORMALIZATION=PASS'
 
 # Run two bounded waves. BTC_2 remains after BTC_1 so same-topic reacquisition is preserved,
 # while unrelated fresh-information Cases execute concurrently on the same production JVM.
