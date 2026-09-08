@@ -52,7 +52,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
 
         List<String> capabilityRefs = core.capabilities(workerId).stream()
                 .filter(capability -> capability.level() > 0)
-                .map(WorkforceCoreService.CapabilityAttestation::capabilityRef)
+                .map(WorkforceCoreService.Capability::capabilityRef)
                 .distinct()
                 .sorted()
                 .toList();
