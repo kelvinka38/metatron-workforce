@@ -218,10 +218,15 @@ public final class WorkplaceMeetingService {
                 ? roleFromParticipant(meeting.participants().get(1))
                 : meeting.contributions().getLast().role();
         String workerId = meeting.participants().get(1);
+        List<String> participants = meeting.participants();
         if (workerDirectory != null) {
             MeetingWorkerDirectory.ResolvedWorker current = requireBoundWorker(role);
             if (!current.workerId().equals(workerId)) {
-                throw new IllegalStateException("meeting_worker_binding_changed: expected " + workerId + " but role now resolves to " + current.workerId());
+                // Durable rooms created before canonical Worker binding used role:* or the short-lived
+                // legacy Gateway worker id. Reconcile the room to the currently canonical Worker
+                // instead of failing every subsequent Human turn.
+                workerId = current.workerId();
+                participants = List.of(meeting.organizer(), workerId);
             }
         }
         MeetingRoleDeliberator.Deliberation reply = deliberator.converse(workerId, role, interaction.text(), conversationContext);
@@ -233,7 +238,7 @@ public final class WorkplaceMeetingService {
         MeetingRecord updated = new MeetingRecord(
                 meeting.meetingId(), meeting.organizationContextId(), meeting.conversationId(),
                 meeting.channelProvider(), meeting.externalMessageReference(), meeting.title(), meeting.purpose(),
-                meeting.organizer(), meeting.participants(), meeting.agenda(), contributions,
+                meeting.organizer(), participants, meeting.agenda(), contributions,
                 meeting.recommendation(), meeting.actionItems(), meeting.decisionRefs(), evidence,
                 meeting.lifecycle(), MeetingRecord.Status.ACTIVE, meeting.openedAt(), "", false);
         store.save(updated);
