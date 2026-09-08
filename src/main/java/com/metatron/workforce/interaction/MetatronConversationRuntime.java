@@ -167,13 +167,21 @@ public final class MetatronConversationRuntime {
                 interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
                 channel, interaction.conversationId(), interaction.organizationContextId(), history, contract);
         // Depth remains an internal execution preference until differentiated mode flows are completed.
-        // Do not surface FAST/ANALYZE/DEEP labels in the Chat product UI.
-        String answer = rawAnswer;
+        // Provider/frontier output may still echo an internal depth banner from context or prior behavior;
+        // strip only a leading internal FAST/ANALYZE/DEEP Metatron banner at the Chat product boundary.
+        String answer = stripInternalDepthBanner(rawAnswer);
         memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
 
         return new MetatronInteractionOrchestrator.InteractionResponse(
                 interaction.conversationId(), answer,
                 "interaction:" + interaction.externalMessageReference());
+    }
+
+    static String stripInternalDepthBanner(String value) {
+        if (value == null || value.isBlank()) return value;
+        return value.replaceFirst(
+                "(?is)^\\s*(?:[\\p{So}\\p{Sk}]\\s*)?(?:\\*\\*\\s*)?(?:FAST|ANALYZE|DEEP)\\s*[·•|:-]\\s*METATRON(?:\\s*\\*\\*)?\\s*(?:\\R+|$)",
+                "").stripLeading();
     }
 
     /** Compatibility entrypoint for older callers that supplied transport separately. */
