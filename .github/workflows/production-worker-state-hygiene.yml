@@ -135,6 +135,15 @@ jobs:
 
           assert 'WORKER-GATEWAY-DIRECTOR' in ids, 'canonical_gateway_director_missing_or_inactive'
           print(f'ACTIVE_WORKER_COUNT_AFTER={len(ids)}')
+          for view in sorted(active, key=lambda v: ((v.get('worker') or {}).get('workerId',''))):
+              worker=view.get('worker') or {}
+              wid=worker.get('workerId','')
+              live_roles=[
+                  p.get('roleRef','')
+                  for p in (view.get('participations') or [])
+                  if p.get('status') == 'ACTIVE'
+              ]
+              print(f'ACTIVE_WORKER={wid}|ROLES={",".join(live_roles) if live_roles else "none"}')
           print('LEGACY_ACCEPTANCE_WORKER_RECONCILIATION=PASS')
           print('CANONICAL_GATEWAY_DIRECTOR_PRESERVED=PASS')
           PY
