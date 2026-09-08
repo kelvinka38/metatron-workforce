@@ -270,7 +270,10 @@ public final class MetatronIntelligenceResponder {
                 }
             }
 
-            IntelligenceCase intelligenceCase = caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized);
+            IntelligenceCase intelligenceCase = bindInteractionProvenance(
+                    caseStore.openOrUpdate(conversationId, "human:" + humanId, normalized),
+                    channel, externalMessageReference);
+            caseStore.save(intelligenceCase);
 
             if (normalized.materiallyAmbiguous()) {
                 route = "human-clarification-required";
@@ -393,14 +396,45 @@ public final class MetatronIntelligenceResponder {
                 }
             }
 
-            List<String> resultEvidence = result.evidenceReferences().isEmpty()
-                    ? request.evidenceReferences() : result.evidenceReferences();
+            List<String> resultEvidence = mergeEvidenceReferences(
+                    request.evidenceReferences(), result.evidenceReferences());
             caseStore.save(intelligenceCase.withResult(result.text(), resultEvidence));
             return result.text();
         } finally {
             LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}",
                     channel, route, (System.nanoTime() - started) / 1_000_000L, text.length());
         }
+    }
+
+    static IntelligenceCase bindInteractionProvenance(IntelligenceCase intelligenceCase,
+                                                       String channel,
+                                                       String externalMessageReference) {
+        Objects.requireNonNull(intelligenceCase, "intelligenceCase");
+        String normalizedChannel = Objects.requireNonNull(channel, "channel").trim();
+        String normalizedReference = Objects.requireNonNull(externalMessageReference, "externalMessageReference").trim();
+        if (normalizedChannel.isBlank() || normalizedReference.isBlank()) {
+            throw new IllegalArgumentException("interaction provenance must not be blank");
+        }
+        String interactionReference = normalizedChannel + ":" + normalizedReference;
+        String observationReference = "observation:" + interactionReference;
+        return intelligenceCase.withExternalReferences(
+                List.of(interactionReference),
+                List.of(observationReference),
+                intelligenceCase.status());
+    }
+
+    static List<String> mergeEvidenceReferences(List<String> requiredEvidence,
+                                                List<String> producedEvidence) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (requiredEvidence != null) {
+            requiredEvidence.stream().filter(Objects::nonNull).map(String::trim)
+                    .filter(value -> !value.isBlank()).forEach(merged::add);
+        }
+        if (producedEvidence != null) {
+            producedEvidence.stream().filter(Objects::nonNull).map(String::trim)
+                    .filter(value -> !value.isBlank()).forEach(merged::add);
+        }
+        return List.copyOf(merged);
     }
 
     static boolean shouldAdmitExecution(boolean deterministicControl,
