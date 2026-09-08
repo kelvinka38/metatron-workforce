@@ -61,6 +61,45 @@ class MeetingRealWorkerBindingTest {
                 v.equals("meeting-worker:worker:gateway-head:01:participation=participation:gateway-head")));
     }
 
+
+    @Test
+    void canonicalWorkerIdCanBeCalledDirectly() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-head", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("worker:gateway-head:01", "participant:gateway-head");
+        core.participate("participation:gateway-head", "worker:gateway-head:01",
+                "organization:metatron", "position:head-of-gateway", "role:head-of-gateway");
+
+        AtomicReference<String> requester = new AtomicReference<>();
+        MeetingRoleDeliberator deliberator = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                return new Deliberation("unused", "");
+            }
+            @Override public Deliberation converse(String workerId, String role, String message, String context) {
+                requester.set(workerId);
+                return new Deliberation("Tao đây.", "provider:test");
+            }
+            @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                return new Deliberation("unused", "");
+            }
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("direct"), new ObjectMapper()),
+                deliberator, ExecutionObjectiveHandoff.unavailable(), new MeetingWorkerDirectory(core));
+
+        assertTrue(service.supportsInMeetingMode("worker:gateway-head:01"));
+        MetatronInteraction interaction = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:direct", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:direct",
+                "worker:gateway-head:01");
+
+        String response = service.handle(interaction, "");
+        assertEquals("worker:gateway-head:01", requester.get());
+        assertTrue(response.contains("Tao đây."));
+    }
+
     @Test
     void missingRealWorkerFailsClosedInsteadOfSimulatingRole() {
         WorkforceCoreService core = new WorkforceCoreService();
