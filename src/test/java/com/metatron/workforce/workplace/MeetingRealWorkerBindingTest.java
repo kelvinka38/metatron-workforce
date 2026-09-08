@@ -100,6 +100,62 @@ class MeetingRealWorkerBindingTest {
         assertTrue(response.contains("Tao đây."));
     }
 
+
+    @Test
+    void staleRoleBoundMeetingReconcilesToCanonicalWorkerInsteadOfFailing() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-DIRECTOR", "participant:gateway-director-ai");
+        core.participate("participation:gateway-director:metatron", "WORKER-GATEWAY-DIRECTOR",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        AtomicReference<String> requester = new AtomicReference<>();
+        MeetingRoleDeliberator deliberator = new MeetingRoleDeliberator() {
+            @Override public Deliberation deliberate(String role, String purpose, String context) {
+                return new Deliberation("unused", "");
+            }
+            @Override public Deliberation converse(String workerId, String role, String message, String context) {
+                requester.set(workerId);
+                return new Deliberation("Tao đây.", "provider:test");
+            }
+            @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                return new Deliberation("unused", "");
+            }
+        };
+
+        PersistentMeetingStore store = new PersistentMeetingStore(temp.resolve("stale-rebind"), new ObjectMapper());
+        MeetingRecord stale = new MeetingRecord(
+                "meeting:stale", "organization:metatron", "conversation:stale",
+                "telegram", "telegram:update:old", "Conversation with Head of Gateway",
+                "Head of Gateway", "human:founder",
+                List.of("human:founder", "role:head-of-gateway"),
+                List.of("Live conversation"),
+                List.of(new MeetingRecord.Contribution("role:head-of-gateway", "Head of Gateway",
+                        "old reply", "provider:old")),
+                "", List.of(), List.of(), List.of(), List.of(
+                        MeetingRecord.Status.PROPOSED.name(),
+                        MeetingRecord.Status.OPEN.name(),
+                        MeetingRecord.Status.ACTIVE.name()),
+                MeetingRecord.Status.ACTIVE, "2026-09-08T00:00:00Z", "", false);
+        store.save(stale);
+
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                store, deliberator, ExecutionObjectiveHandoff.unavailable(), new MeetingWorkerDirectory(core));
+
+        MetatronInteraction next = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:stale", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:new",
+                "Mày đang ở đây không?");
+
+        String response = service.handle(next, "");
+        assertTrue(response.contains("Tao đây."));
+        assertEquals("WORKER-GATEWAY-DIRECTOR", requester.get());
+        MeetingRecord rebound = service.require("meeting:stale");
+        assertEquals(List.of("human:founder", "WORKER-GATEWAY-DIRECTOR"), rebound.participants());
+    }
+
     @Test
     void missingRealWorkerFailsClosedInsteadOfSimulatingRole() {
         WorkforceCoreService core = new WorkforceCoreService();

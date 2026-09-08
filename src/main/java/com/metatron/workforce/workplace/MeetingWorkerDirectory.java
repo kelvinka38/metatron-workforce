@@ -1,6 +1,7 @@
 package com.metatron.workforce.workplace;
 
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -71,6 +72,12 @@ public final class MeetingWorkerDirectory {
             throw new IllegalStateException("meeting_worker_not_found: no ACTIVE Worker is bound to role " + role);
         }
         if (matches.size() > 1) {
+            List<ResolvedWorker> canonical = matches.stream()
+                    .filter(match -> GatewayDirectorAppointmentCapability.WORKER_ID.equals(match.workerId()))
+                    .toList();
+            if (canonical.size() == 1 && normalize(role).equals(normalize("Head of Gateway"))) {
+                return canonical.getFirst();
+            }
             throw new IllegalStateException("meeting_worker_ambiguous: role " + role
                     + " resolves to " + matches.stream().map(ResolvedWorker::workerId).toList());
         }
