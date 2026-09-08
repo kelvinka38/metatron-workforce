@@ -54,10 +54,10 @@ public final class WorkplaceMeetingService {
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
     }
 
-    /** Meeting-mode route: explicit follow-up or at least two requested institutional roles. */
+    /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
     public boolean supportsInMeetingMode(String text) {
         if (text == null || text.isBlank()) return false;
-        return isAuthorizedFollowUp(text) || requestedRoles(text).size() >= 2;
+        return isAuthorizedFollowUp(text) || requestedRoles(text).size() >= 1;
     }
 
     /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
@@ -71,14 +71,14 @@ public final class WorkplaceMeetingService {
                 || lower.contains("trieu tap") || lower.contains("moi ")
                 || lower.contains("goi ") || lower.contains("summon")
                 || lower.contains("bring ") && lower.contains(" into ");
-        return meetingMarker && requestedRoles(text).size() >= 2;
+        return meetingMarker && requestedRoles(text).size() >= 1;
     }
 
     public String handle(MetatronInteraction interaction, String conversationContext) {
         Objects.requireNonNull(interaction, "interaction");
         if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
         List<String> roles = requestedRoles(interaction.text());
-        if (roles.size() < 2) throw new IllegalArgumentException("Meeting Room requires at least two explicit roles");
+        if (roles.isEmpty()) throw new IllegalArgumentException("Meeting Room requires at least one explicit institutional role; the Human organizer is the other participant");
 
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
         String followUpRef = "meeting-follow-up:" + id;
