@@ -53,7 +53,9 @@ send_update() {
 }
 
 wait_answer() {
-  local since="$1" update="$2" log="$OUT/intelligence-${update}-runtime.log"
+  local since="$1" update="$2"
+  local log
+  log="$OUT/intelligence-${update}-runtime.log"
   for _ in $(seq 1 120); do
     docker logs --since "$since" "$CID" > "$log" 2>&1 || true
     if grep -q "telegram_webhook_ack update_id=$update" "$log" \
