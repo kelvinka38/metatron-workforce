@@ -546,18 +546,29 @@ public final class WorkplaceMeetingService {
     static List<String> requestedRoles(String text) {
         if (text == null) return List.of();
         String lower = normalize(text);
+
+        // Full institutional titles are always explicit. Domain words such as "finance" or
+        // "operations" are not automatically participants merely because the Human discusses them.
         Set<String> roles = new LinkedHashSet<>();
         addRole(lower, roles, "Head of Gateway",
                 "head of gateway", "gateway head", "gateway director", "director of gateway");
-        addRole(lower, roles, "Head of Strategy", "strategy", "chien luoc");
-        addRole(lower, roles, "Head of Finance", "finance", "financial", "tai chinh", "cfo");
-        addRole(lower, roles, "Head of Operations", "operations", "operation", "ops", "van hanh");
-        addRole(lower, roles, "Head of Technology", "technology", "technical", "tech", "ky thuat", "cto");
-        addRole(lower, roles, "Head of Sales", "sales", "commercial", "kinh doanh", "doanh thu");
-        addRole(lower, roles, "Head of Product", "product", "san pham");
-        addRole(lower, roles, "Head of People", "people", "human resources", "hr", "nhan su");
-        // Work/Meeting must not be limited to a hard-coded role catalog. Preserve known canonical
-        // roles above, then recognize explicit "Head of <domain>" roles supplied by the Human.
+        addRole(lower, roles, "Head of Strategy",
+                "head of strategy", "strategy head", "director of strategy");
+        addRole(lower, roles, "Head of Finance",
+                "head of finance", "finance head", "finance director", "director of finance", "cfo");
+        addRole(lower, roles, "Head of Operations",
+                "head of operations", "operations head", "operations director", "director of operations", "coo");
+        addRole(lower, roles, "Head of Technology",
+                "head of technology", "technology head", "technology director", "director of technology", "cto");
+        addRole(lower, roles, "Head of Sales",
+                "head of sales", "sales head", "sales director", "director of sales");
+        addRole(lower, roles, "Head of Product",
+                "head of product", "product head", "product director", "director of product");
+        addRole(lower, roles, "Head of People",
+                "head of people", "people head", "people director", "director of people",
+                "head of human resources", "hr director");
+
+        // Dynamic explicit institutional titles remain supported.
         java.util.regex.Matcher dynamic = java.util.regex.Pattern
                 .compile("\\b(?:head|director) of ([a-z0-9][a-z0-9 &/-]{1,36}?)(?=,|\\band\\b|\\bdiscuss\\b|\\bcreate\\b|\\babout\\b|\\bfor\\b|$)")
                 .matcher(lower);
@@ -570,7 +581,47 @@ public final class WorkplaceMeetingService {
                     .collect(java.util.stream.Collectors.joining(" "));
             roles.add(role);
         }
+
+        // Bare department names are promoted to participants only inside the invitation/roster span,
+        // never from the discussion topic. Example:
+        // "Meeting with Head of Gateway about finance strategy" => Gateway only.
+        // "Mời Strategy, Finance và Operations họp về P&L" => three requested Workers.
+        String roster = invitationRoster(lower);
+        if (!roster.isBlank()) {
+            addRole(roster, roles, "Head of Strategy", "strategy", "chien luoc");
+            addRole(roster, roles, "Head of Finance", "finance", "financial", "tai chinh");
+            addRole(roster, roles, "Head of Operations", "operations", "operation", "ops", "van hanh");
+            addRole(roster, roles, "Head of Technology", "technology", "technical", "tech", "ky thuat");
+            addRole(roster, roles, "Head of Sales", "sales", "commercial", "kinh doanh", "doanh thu");
+            addRole(roster, roles, "Head of Product", "product", "san pham");
+            addRole(roster, roles, "Head of People", "people", "human resources", "hr", "nhan su");
+        }
         return List.copyOf(roles);
+    }
+
+    private static String invitationRoster(String lower) {
+        if (lower == null || lower.isBlank()) return "";
+        String[] starts = {
+                "moi ", "goi ", "summon ", "bring ", "call ",
+                "meeting with ", "meet with ", "hop voi ", "hop ", "meeting "
+        };
+        int start = Integer.MAX_VALUE;
+        for (String marker : starts) {
+            int at = lower.indexOf(marker);
+            if (at >= 0 && at < start) start = at;
+        }
+        if (start == Integer.MAX_VALUE) return "";
+
+        String[] ends = {
+                " about ", " discuss ", " to discuss ", " regarding ",
+                " vao ban ", " ban ve ", " hop ve ", " de ban "
+        };
+        int end = lower.length();
+        for (String marker : ends) {
+            int at = lower.indexOf(marker, start + 1);
+            if (at >= 0 && at < end) end = at;
+        }
+        return lower.substring(start, end);
     }
 
     private static void addRole(String lower, Set<String> roles, String role, String... tokens) {
@@ -593,38 +644,5 @@ public final class WorkplaceMeetingService {
                 "channel:" + i.channelProvider());
     }
 
-    private static MeetingRecord snapshot(String id, MetatronInteraction i, String organizer,
-                                          List<String> participants, List<String> agenda,
-                                          List<MeetingRecord.Contribution> contributions, String recommendation,
-                                          List<String> actionItems, List<String> decisionRefs, List<String> evidence,
-                                          List<String> lifecycle, MeetingRecord.Status status,
-                                          String openedAt, String closedAt) {
-        return new MeetingRecord(id, i.organizationContextId(), i.conversationId(), i.channelProvider(),
-                i.externalMessageReference(), "Institutional multi-role meeting", i.text(), organizer,
-                participants, agenda, contributions, recommendation, actionItems, decisionRefs, evidence,
-                lifecycle, status, openedAt, closedAt, false);
-    }
-    private static MeetingRecord copy(MeetingRecord prior, List<MeetingRecord.Contribution> contributions,
-                                      String recommendation, List<String> actionItems, List<String> lifecycle,
-                                      MeetingRecord.Status status, String closedAt) {
-        return new MeetingRecord(prior.meetingId(), prior.organizationContextId(), prior.conversationId(),
-                prior.channelProvider(), prior.externalMessageReference(), prior.title(), prior.purpose(), prior.organizer(),
-                prior.participants(), prior.agenda(), contributions, recommendation, actionItems, prior.decisionRefs(),
-                prior.evidenceRefs(), lifecycle, status, prior.openedAt(), closedAt, false);
-    }
 
-    private static String render(MeetingRecord m) {
-        StringBuilder out = new StringBuilder("METATRON MEETING COMPLETED\n")
-                .append("meeting_id=").append(m.meetingId()).append('\n')
-                .append("status=").append(m.status()).append('\n')
-                .append("participants=").append(String.join(", ", m.participants())).append('\n')
-                .append("authority_created=false\n")
-                .append("follow_up_ref=").append(m.followUpReference()).append("\n\n");
-        for (MeetingRecord.Contribution c : m.contributions()) {
-            out.append("[").append(c.role()).append("]\n").append(c.text()).append("\n\n");
-        }
-        out.append("[MEETING SYNTHESIS]\n").append(m.recommendation())
-                .append("\n\nFollow-up: ").append(String.join(" ", m.actionItems()));
-        return out.toString();
-    }
 }
