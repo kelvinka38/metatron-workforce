@@ -24,7 +24,7 @@ permissions:
 
 env:
   METATRON_VERSION: "0.1.0"
-  # Acceptance-harness closure candidate v2: redeploy exact main after Highway Intelligence harness repair.
+  # Acceptance-harness closure candidate v3: redeploy exact main for natural Work root production proof.
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
 jobs:
