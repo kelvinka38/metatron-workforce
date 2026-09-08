@@ -29,6 +29,8 @@ import org.springframework.boot.test.context.SpringBootTest;
                 "METATRON_WORKPLACE_CONTINUITY_STATE_PATH=build/test-runtime/workplace-continuity-state.json",
                 "METATRON_RUNTIME_PROFILE_BINDINGS_PATH=build/test-runtime/runtime-profile-bindings.tsv",
                 "METATRON_OBJECTIVE_WORKSPACE_ROOT=build/test-runtime/objective-workspaces",
+                "METATRON_CONVERSATION_MEMORY_PATH=build/test-runtime/conversations",
+                "METATRON_CONVERSATION_SURFACE_MODE_PATH=build/test-runtime/conversation-surface-mode",
                 "OPENAI_API_KEY=startup-test-placeholder",
                 "OPENAI_MODEL=startup-test-model"
         })
