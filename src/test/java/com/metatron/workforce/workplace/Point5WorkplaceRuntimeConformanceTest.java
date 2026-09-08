@@ -154,6 +154,10 @@ class Point5WorkplaceRuntimeConformanceTest {
                 });
         assertTrue(service.supports("Summon Head of Strategy and Head of Finance into a meeting about unit economics."));
         assertTrue(service.supports("Mời Strategy, Finance và Operations họp về P&L."));
+        assertTrue(service.supportsInMeetingMode("Head of gateway"));
+        assertEquals(List.of("Head of Gateway"), WorkplaceMeetingService.requestedRoles("Head of gateway"));
+        assertTrue(service.supportsInMeetingMode("Head of gateway and me (human)"));
+        assertTrue(service.supports("Meeting with Head of Gateway"));
         assertTrue(service.supportsInMeetingMode("Head of tech, create for me head of gateway"));
         assertTrue(WorkplaceMeetingService.requestedRoles("Head of tech, create for me head of gateway")
                 .stream().anyMatch(role -> role.equals("Head of Gateway")));
