@@ -68,7 +68,7 @@ public final class WorkplaceMeetingService {
     /** Meeting-mode route: the Human organizer is an implicit participant, so one requested institutional role is enough. */
     public boolean supportsInMeetingMode(String text) {
         if (text == null || text.isBlank()) return false;
-        return isAuthorizedFollowUp(text) || requestedWorkerId(text).isPresent() || requestedRoles(text).size() >= 1;
+        return isAuthorizedFollowUp(text) || isWorkerDirectoryRequest(text) || requestedWorkerId(text).isPresent() || requestedRoles(text).size() >= 1;
     }
 
     /** Conservative first-class route from AUTO/Chat semantics: marker plus roles, or explicit follow-up. */
@@ -88,6 +88,7 @@ public final class WorkplaceMeetingService {
     public String handle(MetatronInteraction interaction, String conversationContext) {
         Objects.requireNonNull(interaction, "interaction");
         if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
+        if (isWorkerDirectoryRequest(interaction.text())) return renderActiveWorkers();
         java.util.Optional<String> directWorker = requestedWorkerId(interaction.text());
         if (directWorker.isPresent()) {
             if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
@@ -336,6 +337,35 @@ public final class WorkplaceMeetingService {
                 || lower.contains("giao workforce") || lower.contains("cho workforce")
                 || lower.contains("thuc hien") || lower.contains("trien khai")
                 || lower.contains("lam di") || lower.contains("tiep tuc");
+    }
+
+    private String renderActiveWorkers() {
+        if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
+        List<MeetingWorkerDirectory.ResolvedWorker> workers = workerDirectory.listActive();
+        if (workers.isEmpty()) return "🏛 **Active Workers**\n\nNo ACTIVE canonical Workers are currently available.";
+        StringBuilder out = new StringBuilder("🏛 **Active Workers**\n\n");
+        for (MeetingWorkerDirectory.ResolvedWorker worker : workers) {
+            out.append("- `").append(worker.workerId()).append("` — ")
+                    .append(worker.role())
+                    .append(" [").append(worker.roleRef()).append("]")
+                    .append("\n");
+        }
+        out.append("\nCall a Worker directly by sending its `worker_id`.");
+        return out.toString();
+    }
+
+    static boolean isWorkerDirectoryRequest(String text) {
+        if (text == null || text.isBlank()) return false;
+        String lower = normalize(text);
+        return lower.equals("workers")
+                || lower.equals("active workers")
+                || lower.contains("list active workers")
+                || lower.contains("show active workers")
+                || lower.contains("worker ids")
+                || lower.contains("worker id")
+                || lower.contains("danh sach worker")
+                || lower.contains("cac worker")
+                || lower.contains("worker dang hoat dong");
     }
 
     public List<MeetingRecord> list() { return store.list(); }

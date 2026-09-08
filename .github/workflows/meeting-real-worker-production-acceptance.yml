@@ -1,0 +1,102 @@
+name: Meeting Real Worker Production Acceptance
+
+on:
+  workflow_run:
+    workflows: ["Highway Production Deploy"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metatron-production-state
+  cancel-in-progress: false
+
+jobs:
+  accept-real-worker-meeting:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    steps:
+      - name: Prove canonical worker exists and Meeting calls that exact ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+
+          WORKER_ID='worker:head-of-gateway:primary'
+          PARTICIPANT_ID='participant:head-of-gateway'
+          PARTICIPATION_ID='participation:head-of-gateway:primary'
+
+          docker exec "$CID" sh -c "test -s /var/lib/metatron-workforce/workforce-core-state.json"
+          docker exec "$CID" sh -c "grep -q '$WORKER_ID' /var/lib/metatron-workforce/workforce-core-state.json"
+          docker exec "$CID" sh -c "grep -q '$PARTICIPANT_ID' /var/lib/metatron-workforce/workforce-core-state.json"
+          docker exec "$CID" sh -c "grep -q '$PARTICIPATION_ID' /var/lib/metatron-workforce/workforce-core-state.json"
+          docker exec "$CID" sh -c "grep -q 'ROLE-HEAD-OF-GATEWAY' /var/lib/metatron-workforce/workforce-core-state.json"
+
+          send_update() {
+            local text="$1"
+            local update_id="$2"
+            local body
+            body=$(python3 - <<PY
+          import json
+          uid=int('${TELEGRAM_ALLOWED_USER_ID}')
+          update_id=int('$update_id')
+          print(json.dumps({"update_id":update_id,"message":{"message_id":update_id%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":"""$text"""}}))
+          PY
+            )
+            curl -fsS --proto '=https' --tlsv1.2 --max-time 30               -X POST https://gate.metatron.vn/telegram/webhook               -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"               -H 'Content-Type: application/json'               --data-binary "$body" >/dev/null
+          }
+
+          BASE_ID=$(date +%s%N | cut -c1-15)
+          U1="${BASE_ID}01"
+          U2="${BASE_ID}02"
+          U3="${BASE_ID}03"
+          U4="${BASE_ID}04"
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          send_update "/work" "$U1"
+          sleep 2
+          send_update "/meeting" "$U2"
+          sleep 2
+          send_update "active workers" "$U3"
+          sleep 3
+          send_update "$WORKER_ID" "$U4"
+
+          for i in $(seq 1 60); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"               && docker exec "$CID" sh -c "grep -R -q '$WORKER_ID' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"; then
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo 'MEETING_REAL_WORKER_ACCEPTANCE_TIMEOUT' >&2
+              printf '%s\n' "$LOGS" | tail -n 500 >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          docker exec "$CID" sh -c "grep -R -q '$WORKER_ID' /var/lib/metatron-workforce/workplace/meetings"
+          docker exec "$CID" sh -c "grep -R -q 'meeting-worker:$WORKER_ID:participation=$PARTICIPATION_ID' /var/lib/metatron-workforce/workplace/meetings"
+          docker exec "$CID" sh -c "grep -R -q 'provider:' /var/lib/metatron-workforce/workplace/meetings"
+
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          grep -q "telegram_send_success update_id=$U1" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U2" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
+
+          echo 'CANONICAL_GATEWAY_WORKER_BOOTSTRAP=PASS'
+          echo 'ACTIVE_WORKER_DIRECTORY=PASS'
+          echo 'DIRECT_WORKER_ID_MEETING_CALL=PASS'
+          echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
+          echo 'WORKER_BOUND_INTELLIGENCE_REPLY=PASS'
+          echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'
