@@ -131,9 +131,17 @@ public final class MetatronConversationRuntime {
                     interaction.conversationId(), meetingAnswer, "work:meeting-follow-up");
         }
 
+        if (meetingRoom != null && meetingModuleSelected
+                && meetingRoom.hasActiveConversationMeeting(interaction.conversationId())) {
+            String meetingAnswer = meetingRoom.handle(interaction, history);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), meetingAnswer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), meetingAnswer, "work:meeting-conversation");
+        }
+
         if (meetingRoom != null && meetingModuleSelected && !meetingRoom.supportsInMeetingMode(interaction.text())) {
-            String answer = "🧰 WORK · MEETING\nDescribe the meeting naturally and include the institutional roles involved. "
-                    + "Example: Head of Technology and Head of Gateway discuss creating the Gateway leadership role.";
+            String answer = "🧰 WORK · MEETING\nInvite an institutional role, then talk naturally. "
+                    + "Example: Head of Gateway. Once they are in the room, continue like a normal conversation.";
             memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
             return new MetatronInteractionOrchestrator.InteractionResponse(
                     interaction.conversationId(), answer,

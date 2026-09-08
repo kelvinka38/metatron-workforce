@@ -36,7 +36,7 @@ public final class ConversationSurfaceModeService {
             }
             store.set(conversationId, ConversationSurfaceMode.WORK_MEETING);
             return new ControlResult(true, ConversationSurfaceMode.WORK_MEETING,
-                    "🧰 WORK · MEETING\nMeeting module ready. Describe the topic and the institutional roles naturally. Meeting creates coordination output and a durable follow-up; execution still requires explicit approval.");
+                    "🧰 WORK · MEETING\nMeeting room ready. Invite a role, for example: Head of Gateway. Then talk naturally like they are in the room with you. Deliberation, minutes, decisions, and execution happen only when you explicitly ask for them.");
         }
         return new ControlResult(false, store.get(conversationId), "");
     }

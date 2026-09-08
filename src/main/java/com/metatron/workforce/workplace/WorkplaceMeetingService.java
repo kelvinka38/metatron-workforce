@@ -78,7 +78,12 @@ public final class WorkplaceMeetingService {
         Objects.requireNonNull(interaction, "interaction");
         if (isAuthorizedFollowUp(interaction.text())) return handoffFollowUp(interaction);
         List<String> roles = requestedRoles(interaction.text());
-        if (roles.isEmpty()) throw new IllegalArgumentException("Meeting Room requires at least one explicit institutional role; the Human organizer is the other participant");
+        if (roles.isEmpty()) {
+            MeetingRecord active = findActiveConversationMeeting(interaction.conversationId())
+                    .orElseThrow(() -> new IllegalArgumentException("Meeting Room requires at least one explicit institutional role; the Human organizer is the other participant"));
+            return continueConversation(active, interaction, conversationContext);
+        }
+        if (roles.size() == 1) return openConversation(interaction, roles.getFirst());
 
         String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
         String followUpRef = "meeting-follow-up:" + id;
@@ -142,6 +147,81 @@ public final class WorkplaceMeetingService {
         return render(current);
     }
 
+
+    public boolean hasActiveConversationMeeting(String conversationId) {
+        return findActiveConversationMeeting(conversationId).isPresent();
+    }
+
+    private java.util.Optional<MeetingRecord> findActiveConversationMeeting(String conversationId) {
+        if (conversationId == null || conversationId.isBlank()) return java.util.Optional.empty();
+        return store.list().stream()
+                .filter(m -> conversationId.equals(m.conversationId()))
+                .filter(m -> m.status() == MeetingRecord.Status.ACTIVE)
+                .filter(m -> m.participants().size() == 2)
+                .findFirst();
+    }
+
+    private String openConversation(MetatronInteraction interaction, String role) {
+        String id = "meeting:" + UUID.randomUUID().toString().replace("-", "");
+        String now = Instant.now().toString();
+        String organizer = "human:" + interaction.human().actorId();
+        List<String> participants = List.of(organizer, "role:" + slug(role));
+        List<String> lifecycle = List.of(
+                MeetingRecord.Status.PROPOSED.name(),
+                MeetingRecord.Status.OPEN.name(),
+                MeetingRecord.Status.ACTIVE.name());
+        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(role, interaction.text(), "");
+        List<MeetingRecord.Contribution> contributions = List.of(
+                new MeetingRecord.Contribution("role:" + slug(role), role, reply.text(), reply.providerReference()));
+        List<String> evidence = new ArrayList<>(baseEvidence(interaction));
+        if (!reply.providerReference().isBlank()) evidence.add(reply.providerReference());
+        MeetingRecord meeting = new MeetingRecord(
+                id, interaction.organizationContextId(), interaction.conversationId(),
+                interaction.channelProvider(), interaction.externalMessageReference(),
+                "Conversation with " + role, interaction.text(), organizer, participants,
+                List.of("Live conversation"), contributions, "", List.of(), List.of(),
+                evidence, lifecycle, MeetingRecord.Status.ACTIVE, now, "", false);
+        store.save(meeting);
+        return renderConversation(role, reply.text());
+    }
+
+    private String continueConversation(MeetingRecord meeting, MetatronInteraction interaction, String conversationContext) {
+        String expectedOrganizer = "human:" + interaction.human().actorId();
+        if (!expectedOrganizer.equals(meeting.organizer())) throw new SecurityException("meeting organizer mismatch");
+        if (!interaction.organizationContextId().equals(meeting.organizationContextId())) {
+            throw new SecurityException("meeting organization mismatch");
+        }
+        String role = meeting.contributions().isEmpty()
+                ? roleFromParticipant(meeting.participants().get(1))
+                : meeting.contributions().getLast().role();
+        MeetingRoleDeliberator.Deliberation reply = deliberator.converse(role, interaction.text(), conversationContext);
+        List<MeetingRecord.Contribution> contributions = new ArrayList<>(meeting.contributions());
+        contributions.add(new MeetingRecord.Contribution("role:" + slug(role), role, reply.text(), reply.providerReference()));
+        List<String> evidence = new ArrayList<>(meeting.evidenceRefs());
+        evidence.add("interaction:" + interaction.externalMessageReference());
+        if (!reply.providerReference().isBlank()) evidence.add(reply.providerReference());
+        MeetingRecord updated = new MeetingRecord(
+                meeting.meetingId(), meeting.organizationContextId(), meeting.conversationId(),
+                meeting.channelProvider(), meeting.externalMessageReference(), meeting.title(), meeting.purpose(),
+                meeting.organizer(), meeting.participants(), meeting.agenda(), contributions,
+                meeting.recommendation(), meeting.actionItems(), meeting.decisionRefs(), evidence,
+                meeting.lifecycle(), MeetingRecord.Status.ACTIVE, meeting.openedAt(), "", false);
+        store.save(updated);
+        return renderConversation(role, reply.text());
+    }
+
+    private static String roleFromParticipant(String participant) {
+        String value = participant == null ? "" : participant;
+        if (!value.startsWith("role:")) return "Institutional Role";
+        return java.util.Arrays.stream(value.substring(5).split("-"))
+                .filter(token -> !token.isBlank())
+                .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
+                .collect(java.util.stream.Collectors.joining(" "));
+    }
+
+    private static String renderConversation(String role, String text) {
+        return "🏛 **" + role + "**\n\n" + text;
+    }
 
     private String handoffFollowUp(MetatronInteraction interaction) {
         Matcher matcher = FOLLOW_UP_REFERENCE.matcher(interaction.text());
