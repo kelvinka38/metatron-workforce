@@ -39,6 +39,22 @@ public final class MeetingWorkerDirectory {
                 participation.positionRef(), participation.roleRef());
     }
 
+    public List<ResolvedWorker> listActive() {
+        return core.allWorkers().stream()
+                .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
+                .flatMap(w -> core.participations(w.workerId()).stream()
+                        .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
+                        .map(p -> new ResolvedWorker(
+                                w.workerId(),
+                                p.participationId(),
+                                humanizeRole(!blank(p.roleRef()) ? p.roleRef() : p.positionRef()),
+                                p.positionRef(),
+                                p.roleRef())))
+                .sorted(Comparator.comparing(ResolvedWorker::workerId)
+                        .thenComparing(ResolvedWorker::participationId))
+                .toList();
+    }
+
     public ResolvedWorker resolveActive(String role) {
         String wanted = normalize(role);
         List<ResolvedWorker> matches = core.allWorkers().stream()
