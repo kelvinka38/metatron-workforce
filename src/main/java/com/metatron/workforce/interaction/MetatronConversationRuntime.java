@@ -128,6 +128,15 @@ public final class MetatronConversationRuntime {
                 || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
         boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
 
+        if (meetingRoom != null && workSurfaceSelected
+                && WorkplaceMeetingService.isWorkerDirectoryRequest(interaction.text())) {
+            String directoryAnswer = meetingRoom.handle(interaction, history);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), directoryAnswer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), directoryAnswer,
+                    "work:worker-directory:" + interaction.externalMessageReference());
+        }
+
         if (selectedSurface == ConversationSurfaceMode.CHAT && institutionalStateChat != null) {
             java.util.Optional<String> institutionalAnswer = institutionalStateChat.answer(interaction.text());
             if (institutionalAnswer.isPresent()) {
