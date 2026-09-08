@@ -157,6 +157,28 @@ class MeetingRealWorkerBindingTest {
     }
 
     @Test
+    void duplicateGatewayHeadWorkersResolveCanonicalForRoleRefAlias() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-DIRECTOR", "participant:gateway-director-ai");
+        core.participate("participation:gateway-director:metatron", "WORKER-GATEWAY-DIRECTOR",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        core.recognizeParticipant("participant:gateway-head-legacy", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-HEAD-01", "participant:gateway-head-legacy");
+        core.participate("participation:gateway-head-legacy", "WORKER-GATEWAY-HEAD-01",
+                "organization:metatron", "POSITION-HEAD-OF-GATEWAY", "ROLE-HEAD-OF-GATEWAY");
+
+        MeetingWorkerDirectory directory = new MeetingWorkerDirectory(core);
+        assertEquals("WORKER-GATEWAY-DIRECTOR",
+                directory.resolveActive("Head of Gateway").workerId());
+        assertEquals("WORKER-GATEWAY-DIRECTOR",
+                directory.resolveActive("ROLE HEAD OF GATEWAY").workerId());
+        assertEquals("WORKER-GATEWAY-DIRECTOR",
+                directory.resolveActive("ROLE-HEAD-OF-GATEWAY").workerId());
+    }
+
+    @Test
     void missingRealWorkerFailsClosedInsteadOfSimulatingRole() {
         WorkforceCoreService core = new WorkforceCoreService();
         WorkplaceMeetingService service = new WorkplaceMeetingService(
