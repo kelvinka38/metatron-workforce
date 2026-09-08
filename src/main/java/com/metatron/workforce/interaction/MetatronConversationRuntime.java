@@ -83,6 +83,9 @@ public final class MetatronConversationRuntime {
             ConversationSurfaceModeService.ControlResult surfaceControl = surfaceMode.handle(
                     interaction.conversationId(), interaction.text());
             if (surfaceControl.handled()) {
+                if (meetingRoom != null && surfaceControl.mode() != ConversationSurfaceMode.WORK_MEETING) {
+                    meetingRoom.closeActiveConversation(interaction.conversationId());
+                }
                 memory.appendTurn(interaction.conversationId(), interaction.text(), surfaceControl.response());
                 return new MetatronInteractionOrchestrator.InteractionResponse(
                         interaction.conversationId(), surfaceControl.response(),
