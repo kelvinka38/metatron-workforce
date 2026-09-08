@@ -113,6 +113,24 @@ grep -q 'POINT_2_INTELLIGENCE_LIVE_LANE=PASS' "$OUT/current-information.log"
 grep -q 'INTELLIGENCE_FRESH_INFORMATION_NOT_OBJECTIVE=PASS' "$OUT/current-information.log"
 echo 'POINT5_CURRENT_INFORMATION_ROUTE=PASS'
 
+echo 'POINT5_PHASE=WORK_ROOT_NATURAL_EXECUTION'
+WORK_ROOT_SURFACE_UPDATE=$(date +%s%N | cut -c1-18)
+send_public "$WORK_ROOT_SURFACE_UPDATE" '/work'
+test "$(wait_receipt_delivered "$WORK_ROOT_SURFACE_UPDATE" 0)" = NONE
+no_objective_for_update "$WORK_ROOT_SURFACE_UPDATE"
+
+WORK_ROOT_UPDATE=$((WORK_ROOT_SURFACE_UPDATE + 1))
+WORK_ROOT_TEXT='Perform a governed read-only audit of kelvinka38/bios, verify the result through Observation, and deliver evidence. Do not mutate the repository.'
+send_public "$WORK_ROOT_UPDATE" "$WORK_ROOT_TEXT"
+WORK_ROOT_OID=$(wait_receipt_delivered "$WORK_ROOT_UPDATE" 1)
+test -n "$WORK_ROOT_OID"
+test "$WORK_ROOT_OID" != NONE
+WORK_ROOT_LOG="$OUT/work-root-$WORK_ROOT_UPDATE-runtime.log"
+docker logs --since 10m "$CID" > "$WORK_ROOT_LOG" 2>&1 || true
+! grep -q "work:module-menu:telegram:update:$WORK_ROOT_UPDATE" "$WORK_ROOT_LOG"
+echo "POINT5_WORK_ROOT_OBJECTIVE_ID=$WORK_ROOT_OID"
+echo 'POINT5_WORK_ROOT_NATURAL_EXECUTION=PASS'
+
 echo 'POINT5_PHASE=MULTI_ROLE_MEETING'
 # Product hierarchy is Chat | Work, with Meeting nested inside Work. Normalize the
 # synthetic founder acceptance conversation onto the canonical Work > Meeting module
