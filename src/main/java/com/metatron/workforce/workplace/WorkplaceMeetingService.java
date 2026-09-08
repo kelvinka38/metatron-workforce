@@ -204,7 +204,7 @@ public final class WorkplaceMeetingService {
                 .filter(m -> m.status() == MeetingRecord.Status.ACTIVE)
                 .filter(m -> m.participants().size() == 2)
                 .sorted(java.util.Comparator.comparing(MeetingRecord::openedAt).reversed()
-                        .thenComparing(MeetingRecord::meetingId).reversed())
+                        .thenComparing(java.util.Comparator.comparing(MeetingRecord::meetingId).reversed()))
                 .findFirst();
     }
 
