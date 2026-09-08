@@ -1,0 +1,133 @@
+name: Production Worker State Hygiene
+
+on:
+  workflow_run:
+    workflows: ["Highway Production Deploy"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metatron-production-state
+  cancel-in-progress: false
+
+jobs:
+  reconcile-legacy-acceptance-workers:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Suspend only proven legacy acceptance Workers
+        shell: bash
+        env:
+          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          CORE='http://127.0.0.1:8080/workforce/core'
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}'             | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
+
+          EVIDENCE="$HOME/.metatron/acceptance-evidence/worker-hygiene/$GITHUB_RUN_ID"
+          mkdir -p "$EVIDENCE"
+
+          curl -fsS "$CORE/workers/active" > "$EVIDENCE/active-before.json"
+
+          python3 - "$EVIDENCE/active-before.json" > "$EVIDENCE/legacy.tsv" <<'PY'
+          import json,re,sys
+          data=json.load(open(sys.argv[1],encoding='utf-8'))
+          pattern=re.compile(r'^W-([0-9a-f]{8}-[0-9]+-[0-9]+)$')
+          for view in data:
+              worker=view.get('worker') or {}
+              wid=worker.get('workerId','')
+              m=pattern.fullmatch(wid)
+              if not m:
+                  continue
+              suffix=m.group(1)
+
+              # Fail closed: a W-* id alone is never enough to mutate production state.
+              if worker.get('participantId') != f'P-{suffix}':
+                  continue
+
+              participations=view.get('participations') or []
+              expected=[p for p in participations if
+                  p.get('participationId') == f'PART-{suffix}'
+                  and p.get('workerId') == wid
+                  and p.get('organizationRef') == 'ORG-GATEWAY'
+                  and p.get('positionRef') == 'POSITION-DIRECTOR'
+                  and p.get('roleRef') == 'ROLE-DIRECTOR'
+                  and p.get('status') == 'ACTIVE']
+              if len(expected) != 1:
+                  continue
+
+              capabilities=view.get('capabilities') or []
+              if not any(c.get('capabilityRef') == 'gateway-management'
+                         and c.get('evidenceRef') == f'evidence:capability:{suffix}'
+                         for c in capabilities):
+                  continue
+
+              qualifications=view.get('qualifications') or []
+              if not any(q.get('qualificationRef') == 'gateway-director'
+                         and q.get('evidenceRef') == f'evidence:qualification:{suffix}'
+                         for q in qualifications):
+                  continue
+
+              assignments=view.get('assignments') or []
+              if not any(a.get('assignmentId') == f'A-{suffix}'
+                         and a.get('workerId') == wid
+                         and a.get('participationId') == f'PART-{suffix}'
+                         and a.get('objectiveRef') == f'OBJ-{suffix}'
+                         and a.get('description') == 'live acceptance assignment'
+                         for a in assignments):
+                  continue
+
+              print(wid, f'PART-{suffix}', sep='\t')
+          PY
+
+          COUNT=$(wc -l < "$EVIDENCE/legacy.tsv" | tr -d ' ')
+          echo "LEGACY_ACCEPTANCE_WORKERS_MATCHED=$COUNT"
+
+          while IFS=$'\t' read -r WORKER_ID PARTICIPATION_ID; do
+            [ -n "$WORKER_ID" ] || continue
+            echo "SUSPENDING_LEGACY_ACCEPTANCE_WORKER=$WORKER_ID"
+            curl -fsS -X POST               "$CORE/participations/$PARTICIPATION_ID/status/SUSPENDED" >/dev/null
+            curl -fsS -X POST               "$CORE/workers/$WORKER_ID/status/SUSPENDED" >/dev/null
+          done < "$EVIDENCE/legacy.tsv"
+
+          curl -fsS "$CORE/workers/active" > "$EVIDENCE/active-after.json"
+
+          python3 - "$EVIDENCE/active-after.json" "$EVIDENCE/legacy.tsv" <<'PY'
+          import json,re,sys
+          active=json.load(open(sys.argv[1],encoding='utf-8'))
+          legacy=[line.split('\t',1)[0] for line in open(sys.argv[2],encoding='utf-8') if line.strip()]
+          ids={((v.get('worker') or {}).get('workerId')) for v in active}
+
+          leaked=[wid for wid in legacy if wid in ids]
+          assert not leaked, f'legacy_acceptance_workers_still_active:{leaked}'
+
+          # No generic acceptance director may remain ACTIVE.
+          polluted=[]
+          for view in active:
+              worker=view.get('worker') or {}
+              wid=worker.get('workerId','')
+              for p in view.get('participations') or []:
+                  if (p.get('status') == 'ACTIVE'
+                      and p.get('organizationRef') == 'ORG-GATEWAY'
+                      and p.get('positionRef') == 'POSITION-DIRECTOR'
+                      and p.get('roleRef') == 'ROLE-DIRECTOR'
+                      and re.fullmatch(r'W-[0-9a-f]{8}-[0-9]+-[0-9]+',wid)):
+                      polluted.append(wid)
+          assert not polluted, f'active_synthetic_directors_remain:{polluted}'
+
+          assert 'WORKER-GATEWAY-DIRECTOR' in ids, 'canonical_gateway_director_missing_or_inactive'
+          print(f'ACTIVE_WORKER_COUNT_AFTER={len(ids)}')
+          print('LEGACY_ACCEPTANCE_WORKER_RECONCILIATION=PASS')
+          print('CANONICAL_GATEWAY_DIRECTOR_PRESERVED=PASS')
+          PY
+
+          echo "WORKER_STATE_HYGIENE=PASS"
