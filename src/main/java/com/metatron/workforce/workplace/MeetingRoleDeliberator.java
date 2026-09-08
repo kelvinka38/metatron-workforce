@@ -17,6 +17,11 @@ public interface MeetingRoleDeliberator {
     Deliberation deliberate(String role, String purpose, String conversationContext);
     Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String conversationContext);
 
+    /** Live Meeting conversation: role speaks as a persistent institutional counterpart, not as a report generator. */
+    default Deliberation converse(String role, String userMessage, String meetingContext) {
+        return deliberate(role, userMessage, meetingContext);
+    }
+
     record Deliberation(String text, String providerReference) {
         public Deliberation {
             if (text == null || text.isBlank()) throw new IllegalArgumentException("deliberation text required");
@@ -53,6 +58,23 @@ public interface MeetingRoleDeliberator {
             String objective = "MEETING PURPOSE:\n" + purpose
                     + "\n\nCONVERSATION CONTEXT:\n" + safeContext(conversationContext);
             return complete("meeting.role.deliberation", instructions, objective);
+        }
+
+        @Override
+        public Deliberation converse(String role, String userMessage, String meetingContext) {
+            String instructions = """
+                    You are the named institutional Metatron role in a live conversation with the Human.
+                    Speak directly as that role, like a real colleague in the room. This is NOT a memo, report, meeting minutes, governance notice, or formal communication.
+                    Answer the Human's latest message naturally and concisely. You may ask a useful follow-up question when appropriate.
+                    Preserve the role's real accountability and constraints, but do not recite protocol unless the Human asks or it is materially necessary.
+                    Never invent actions, approvals, evidence, or authority. Do not claim execution unless it actually happened.
+                    Do not introduce an old case, objective, repository audit, or institutional context unless the Human explicitly refers to it or it is directly necessary to answer the latest message.
+                    Do not add headings such as COMMUNICATION INITIATION, GOVERNANCE OBJECTIVES, REQUEST FOR INPUT, To/From/Reference, or status boilerplate.
+                    ROLE: %s
+                    """.formatted(role);
+            String objective = "HUMAN MESSAGE:\n" + userMessage
+                    + "\n\nLIVE MEETING CONTEXT:\n" + safeContext(meetingContext);
+            return complete("meeting.role.conversation", instructions, objective);
         }
 
         @Override
