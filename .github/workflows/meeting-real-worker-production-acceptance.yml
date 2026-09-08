@@ -69,13 +69,14 @@ jobs:
           U1="${BASE_ID}01"
           U2="${BASE_ID}02"
           U3="${BASE_ID}03"
+          U4="${BASE_ID}04"
           SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           MEETING_FILE=''
 
           dump_diagnostics() {
             echo '--- MEETING ACCEPTANCE DIAGNOSTICS ---' >&2
             LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
+            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
             if [ -n "$MEETING_FILE" ]; then
               echo "meeting_file=$MEETING_FILE" >&2
               docker exec "$CID" sh -c "cat '$MEETING_FILE'" >&2 || true
@@ -136,6 +137,15 @@ jobs:
           ! grep -q "telegram_interaction_failed update_id=$U3" <<<"$LOGS"
           grep -q "telegram_answer_ready update_id=$U2.*provenance=meeting:" <<<"$LOGS"
           grep -q "telegram_answer_ready update_id=$U3.*provenance=work:meeting-conversation" <<<"$LOGS"
+
+          # Restore the Founder product surface to Work after the synthetic acceptance conversation.
+          send_update "/work" "$U4"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
 
           trap - ERR
           echo 'CANONICAL_GATEWAY_WORKER=PASS'
