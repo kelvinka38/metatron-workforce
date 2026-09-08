@@ -36,12 +36,13 @@ public class IntelligenceRuntimeConfiguration {
                 runtime.fabric(), runtime.configuredProviders().size());
     }
 
-    @Bean IntelligenceCaseStore intelligenceCaseStore(ObjectMapper objectMapper) {
-        String configured=System.getenv().getOrDefault("METATRON_INTELLIGENCE_CASE_PATH","/var/lib/metatron-workforce/intelligence-cases");
+    @Bean IntelligenceCaseStore intelligenceCaseStore(
+            ObjectMapper objectMapper,
+            @Value("${METATRON_INTELLIGENCE_CASE_PATH:/var/lib/metatron-workforce/intelligence-cases}") String configured) {
         return new PersistentIntelligenceCaseStore(Path.of(configured),objectMapper);
     }
-    @Bean IntelligenceDepthPreferenceStore intelligenceDepthPreferenceStore() {
-        String configured=System.getenv().getOrDefault("METATRON_INTELLIGENCE_DEPTH_PATH","/var/lib/metatron-workforce/intelligence-depth");
+    @Bean IntelligenceDepthPreferenceStore intelligenceDepthPreferenceStore(
+            @Value("${METATRON_INTELLIGENCE_DEPTH_PATH:/var/lib/metatron-workforce/intelligence-depth}") String configured) {
         return new PersistentIntelligenceDepthPreferenceStore(Path.of(configured));
     }
     @Bean IntelligenceDepthControlService intelligenceDepthControlService(IntelligenceDepthPreferenceStore store) {
