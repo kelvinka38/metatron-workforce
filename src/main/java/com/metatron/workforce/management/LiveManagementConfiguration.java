@@ -156,26 +156,31 @@ public class LiveManagementConfiguration {
             if (!enabled) return;
             staffing.ensureStaffed(capability, Clock.systemUTC().instant());
 
-            // Retire the short-lived parallel identity introduced by the earlier Meeting bootstrap.
-            final String legacyWorkerId = "worker:head-of-gateway:primary";
+            // Collapse every historical/parallel Gateway Head identity onto the one governed canonical Worker.
+            // Production has accumulated more than one legacy ID over earlier acceptance/bootstrap iterations,
+            // so cleanup is role-based rather than hard-coded to one obsolete worker name.
             core.allWorkers().stream()
-                    .filter(w -> legacyWorkerId.equals(w.workerId()))
-                    .findFirst()
-                    .ifPresent(legacy -> {
-                        for (WorkforceCoreService.Participation p : core.participations(legacyWorkerId)) {
-                            if (p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE) {
+                    .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
+                    .filter(w -> !GatewayDirectorAppointmentCapability.WORKER_ID.equals(w.workerId()))
+                    .filter(w -> core.participations(w.workerId()).stream().anyMatch(p ->
+                            p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE
+                                    && GatewayDirectorAppointmentCapability.ROLE_REF.equals(p.roleRef())))
+                    .forEach(legacy -> {
+                        for (WorkforceCoreService.Participation p : core.participations(legacy.workerId())) {
+                            if (p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE
+                                    && GatewayDirectorAppointmentCapability.ROLE_REF.equals(p.roleRef())) {
                                 try {
                                     core.setParticipationStatus(p.participationId(),
                                             WorkforceCoreService.ParticipationStatus.ENDED);
                                 } catch (RuntimeException ignored) {
-                                    // Meeting resolution prefers the canonical Worker even if a legacy reservation delays cleanup.
+                                    // Canonical Meeting resolution is deterministic even if a reservation delays cleanup.
                                 }
                             }
                         }
                         try {
-                            core.setWorkerStatus(legacyWorkerId, WorkforceCoreService.WorkerStatus.RETIRED);
+                            core.setWorkerStatus(legacy.workerId(), WorkforceCoreService.WorkerStatus.RETIRED);
                         } catch (RuntimeException ignored) {
-                            // Canonical resolution below remains deterministic; cleanup can complete after reservations release.
+                            // A live reservation may delay retirement; it must not make role resolution ambiguous.
                         }
                     });
         };
