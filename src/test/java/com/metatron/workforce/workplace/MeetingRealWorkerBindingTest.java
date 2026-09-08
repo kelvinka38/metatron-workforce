@@ -179,6 +179,16 @@ class MeetingRealWorkerBindingTest {
     }
 
     @Test
+    void naturalGatewayDirectorPhrasesResolveToCanonicalHeadRole() {
+        assertEquals(List.of("Head of Gateway"),
+                WorkplaceMeetingService.requestedRoles("Meeting, call for me director of gateway"));
+        assertEquals(List.of("Head of Gateway"),
+                WorkplaceMeetingService.requestedRoles("I want to have a meeting with director of gateway"));
+        assertEquals(List.of("Head of Gateway"),
+                WorkplaceMeetingService.requestedRoles("meeting with gateway director"));
+    }
+
+    @Test
     void missingRealWorkerFailsClosedInsteadOfSimulatingRole() {
         WorkforceCoreService core = new WorkforceCoreService();
         WorkplaceMeetingService service = new WorkplaceMeetingService(
