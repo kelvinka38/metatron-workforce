@@ -1,7 +1,10 @@
 name: Gateway Director Live Acceptance
-run-name: Gateway Director ${{ inputs.target_sha }}
+run-name: Gateway Director live acceptance
 
 on:
+  workflow_run:
+    workflows: ["Highway Production Deploy"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -13,11 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-production-lane
+  group: metatron-production-state
   cancel-in-progress: false
 
 jobs:
   accept-live-gateway-director:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 20
@@ -25,7 +29,7 @@ jobs:
       - name: Prove exact Founder Telegram appointment creates a real Gateway Director Worker
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -41,6 +45,31 @@ jobs:
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}'             | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
           test "$DEPLOYED_SHA" = "$TARGET_SHA"
           test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+
+          MODE_UPDATE_ID=$(date +%s%N | cut -c1-18)
+          MODE_BODY=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$MODE_UPDATE_ID" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update=int(sys.argv[2])
+          print(json.dumps({
+              "update_id": update,
+              "message": {
+                  "message_id": update % 2000000000,
+                  "from": {"id": uid, "is_bot": False, "first_name": "Founder"},
+                  "chat": {"id": uid, "type": "private"},
+                  "date": 0,
+                  "text": "/work"
+              }
+          }))
+          PY
+          )
+          MODE_HTTP=$(curl -sS -o /tmp/gateway-director-mode-response.json -w '%{http_code}'             --proto '=https' --tlsv1.2 --max-time 20             -X POST https://gate.metatron.vn/telegram/webhook             -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"             -H 'Content-Type: application/json'             --data-binary "$MODE_BODY")
+          test "$MODE_HTTP" = 200
+          for _ in $(seq 1 30); do
+            LOGS=$(docker logs --since 2m "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$MODE_UPDATE_ID" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$MODE_UPDATE_ID" <<<"$LOGS"
 
           UPDATE_ID=$(date +%s%N | cut -c1-18)
           BODY=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$UPDATE_ID" <<'PY'
