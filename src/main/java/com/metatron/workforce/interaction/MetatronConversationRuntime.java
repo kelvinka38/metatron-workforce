@@ -151,18 +151,21 @@ public final class MetatronConversationRuntime {
                     interaction.conversationId(), answer, reference.meetingId());
         }
 
-        if (workSurfaceSelected) {
-            String answer = "🧰 WORK · METATRON\nChoose a Work module: 🏛 Meeting or 📊 Monitor. "
-                    + "Work commands stay out of normal Chat and do not silently create Objectives.";
-            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
-            return new MetatronInteractionOrchestrator.InteractionResponse(
-                    interaction.conversationId(), answer,
-                    "work:module-menu:" + interaction.externalMessageReference());
-        }
-
         IntelligenceDepthContract contract = depthControl == null
                 ? IntelligenceDepthContract.automatic()
                 : depthControl.contract(interaction.conversationId());
+
+        if (selectedSurface == ConversationSurfaceMode.WORK) {
+            String rawAnswer = intelligence.respond(
+                    interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
+                    channel, interaction.conversationId(), interaction.organizationContextId(), history, contract, true);
+            String answer = stripInternalDepthBanner(rawAnswer);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), answer,
+                    "work:interaction:" + interaction.externalMessageReference());
+        }
+
         String rawAnswer = intelligence.respond(
                 interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
                 channel, interaction.conversationId(), interaction.organizationContextId(), history, contract);
