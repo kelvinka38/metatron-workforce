@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
-import com.metatron.workforce.interaction.intelligence.InstitutionalIntelligenceRuntime;
 import com.metatron.workforce.interaction.intelligence.NormalizedRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,49 +27,54 @@ public final class WorkplaceMeetingService {
     private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
     private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b((?:worker:[a-zA-Z0-9._:-]+|WORKER-[a-zA-Z0-9._:-]+))\\b", Pattern.CASE_INSENSITIVE);
     private final PersistentMeetingStore store;
-    private final MeetingRoleDeliberator deliberator;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
     private final MeetingWorkerDirectory workerDirectory;
     private final WorkerConversationGateway workerConversation;
 
     @Autowired
     public WorkplaceMeetingService(
-            InstitutionalIntelligenceRuntime intelligenceRuntime,
             ExecutionObjectiveHandoff executionObjectiveHandoff,
             MeetingWorkerDirectory workerDirectory,
             WorkerConversationGateway workerConversation,
             @Value("${METATRON_WORKPLACE_MEETING_PATH:/var/lib/metatron-workforce/workplace/meetings}") String meetingPath,
             ObjectMapper json) {
         this(new PersistentMeetingStore(Path.of(meetingPath), json),
-                MeetingRoleDeliberator.intelligenceBacked(
-                        Objects.requireNonNull(intelligenceRuntime, "intelligenceRuntime").fabric(),
-                        intelligenceRuntime.configuredProviders().size()),
                 Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff"),
                 Objects.requireNonNull(workerDirectory, "workerDirectory"),
                 Objects.requireNonNull(workerConversation, "workerConversation"));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator) {
-        this(store, deliberator, ExecutionObjectiveHandoff.unavailable(), null, legacyWorkerConversation(deliberator));
+        this(store, ExecutionObjectiveHandoff.unavailable(), null, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff) {
-        this(store, deliberator, executionObjectiveHandoff, null, legacyWorkerConversation(deliberator));
+        this(store, executionObjectiveHandoff, null, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff,
                             MeetingWorkerDirectory workerDirectory) {
-        this(store, deliberator, executionObjectiveHandoff, workerDirectory, legacyWorkerConversation(deliberator));
+        this(store, executionObjectiveHandoff, workerDirectory, legacyWorkerConversation(deliberator));
     }
 
     WorkplaceMeetingService(PersistentMeetingStore store, MeetingRoleDeliberator deliberator,
                             ExecutionObjectiveHandoff executionObjectiveHandoff,
                             MeetingWorkerDirectory workerDirectory,
                             WorkerConversationGateway workerConversation) {
+        Objects.requireNonNull(deliberator, "deliberator");
         this.store = Objects.requireNonNull(store, "store");
-        this.deliberator = Objects.requireNonNull(deliberator, "deliberator");
+        this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
+        this.workerDirectory = workerDirectory;
+        this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+    }
+
+    private WorkplaceMeetingService(PersistentMeetingStore store,
+                                    ExecutionObjectiveHandoff executionObjectiveHandoff,
+                                    MeetingWorkerDirectory workerDirectory,
+                                    WorkerConversationGateway workerConversation) {
+        this.store = Objects.requireNonNull(store, "store");
         this.executionObjectiveHandoff = Objects.requireNonNull(executionObjectiveHandoff, "executionObjectiveHandoff");
         this.workerDirectory = workerDirectory;
         this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
