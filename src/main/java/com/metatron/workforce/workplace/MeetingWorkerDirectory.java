@@ -75,7 +75,7 @@ public final class MeetingWorkerDirectory {
             List<ResolvedWorker> canonical = matches.stream()
                     .filter(match -> GatewayDirectorAppointmentCapability.WORKER_ID.equals(match.workerId()))
                     .toList();
-            if (canonical.size() == 1 && normalize(role).equals(normalize("Head of Gateway"))) {
+            if (canonical.size() == 1 && isGatewayHeadSemantic(wanted)) {
                 return canonical.getFirst();
             }
             throw new IllegalStateException("meeting_worker_ambiguous: role " + role
@@ -95,6 +95,16 @@ public final class MeetingWorkerDirectory {
                 .filter(token -> !token.isBlank())
                 .map(token -> Character.toUpperCase(token.charAt(0)) + token.substring(1))
                 .collect(java.util.stream.Collectors.joining(" "));
+    }
+
+    private static boolean isGatewayHeadSemantic(String normalizedRole) {
+        String value = normalizedRole == null ? "" : normalizedRole;
+        return value.equals("head of gateway")
+                || value.equals("gateway head")
+                || value.equals("gateway director")
+                || value.equals("role head of gateway")
+                || value.endsWith(" head of gateway")
+                || value.contains(" gateway director");
     }
 
     private static boolean matches(String wanted, String ref) {
