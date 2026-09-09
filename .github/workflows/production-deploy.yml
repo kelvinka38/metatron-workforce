@@ -24,7 +24,7 @@ permissions:
 
 env:
   METATRON_VERSION: "0.1.0"
-  # Acceptance-harness closure candidate v4: rerun natural Work root proof with corrected worker view validation.
+  # Worker lifecycle closure candidate v5: redeploy exact main so the repaired live Worker acceptance ratifies production.
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
 jobs:
