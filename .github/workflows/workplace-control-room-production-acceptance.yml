@@ -51,6 +51,10 @@ jobs:
             grep -q 'data-view="projects"' "$page"
             grep -q '/workplace/api/control-room' "$page"
             grep -q '/chat' "$page"
+            grep -q '/profile' "$page"
+            grep -q 'Runtime & Tools' "$page"
+            grep -q 'Live cognition instructions' "$page"
+            grep -q 'Worker-model completeness gaps' "$page"
             grep -q '/availability' "$page"
             grep -q '/control/' "$page"
             grep -q 'Evidence drill-down' "$page"
@@ -74,6 +78,7 @@ jobs:
           assert_unauthorized http://127.0.0.1:8080/workplace/api/control-room
           assert_unauthorized https://gate.metatron.vn/workplace/api/control-room
           assert_unauthorized http://127.0.0.1:8080/workplace/api/workers/WORKER-GATEWAY-DIRECTOR
+          assert_unauthorized http://127.0.0.1:8080/workplace/api/workers/WORKER-GATEWAY-DIRECTOR/profile
           echo 'WORKPLACE_CONTROL_ROOM_AUTH_BOUNDARY=PASS'
 
       - name: Verify packaged product and persistent Worker chat path

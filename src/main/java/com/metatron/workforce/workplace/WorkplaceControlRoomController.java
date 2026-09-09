@@ -19,6 +19,7 @@ public final class WorkplaceControlRoomController {
     private final WorkplaceControlRoomService controlRoom;
     private final WorkforceCoreService core;
     private final DirectWorkerConversationService directWorkerConversation;
+    private final WorkerOperatingProfileService workerOperatingProfile;
     private final WorkplaceFounderControlService founderControl;
 
     public WorkplaceControlRoomController(
@@ -26,11 +27,13 @@ public final class WorkplaceControlRoomController {
             WorkplaceControlRoomService controlRoom,
             WorkforceCoreService core,
             DirectWorkerConversationService directWorkerConversation,
+            WorkerOperatingProfileService workerOperatingProfile,
             WorkplaceFounderControlService founderControl) {
         this.authentication = authentication;
         this.controlRoom = controlRoom;
         this.core = core;
         this.directWorkerConversation = directWorkerConversation;
+        this.workerOperatingProfile = workerOperatingProfile;
         this.founderControl = founderControl;
     }
 
@@ -47,6 +50,18 @@ public final class WorkplaceControlRoomController {
             @RequestHeader(value="Authorization", required=false) String authorization) {
         requireAuthenticated(authorization);
         return controlRoom.worker(workerId);
+    }
+
+    @GetMapping("/workers/{workerId}/profile")
+    public WorkerOperatingProfileService.OperatingProfile workerProfile(
+            @PathVariable String workerId,
+            @RequestHeader(value="Authorization", required=false) String authorization) {
+        requireAuthenticated(authorization);
+        try {
+            return workerOperatingProfile.profile(controlRoom.resolveConversationWorkerId(workerId));
+        } catch (RuntimeException failure) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, failure.getMessage(), failure);
+        }
     }
 
     @GetMapping("/workers/{workerId}/chat")

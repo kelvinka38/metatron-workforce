@@ -115,8 +115,20 @@ class CanonicalWorkerInstitutionalGroundingTest {
 
         assertFalse(reply.text().contains("I have reviewed"));
         assertFalse(reply.text().contains("initiating the BIOS audit"));
-        assertTrue(reply.text().contains("không được claim"));
+        assertTrue(reply.text().contains("Execution note:"));
         assertTrue(reply.evidenceReferences().contains("worker-conversation-claim-guard:execution-claim-suppressed"));
+    }
+
+    @Test
+    void headConversationInstructionsDemandExecutiveOperatingDepthWithoutInventingExecution() {
+        String instructions = CanonicalWorkerConversationService.liveConversationInstructions();
+        assertTrue(instructions.contains("accountable operating executive"));
+        assertTrue(instructions.contains("24/7 operating coverage"));
+        assertTrue(instructions.contains("staffing/capacity"));
+        assertTrue(instructions.contains("budget/cost"));
+        assertTrue(instructions.contains("KPIs/success measures"));
+        assertTrue(instructions.contains("Strategic planning"));
+        assertTrue(instructions.contains("Do not ask a follow-up merely to avoid"));
     }
 
     @Test
