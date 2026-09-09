@@ -1,10 +1,6 @@
 name: BIOS Aquaculture Execution Verify
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bios-aquaculture-execution-verify.yml'
   workflow_dispatch:
 
 permissions:
