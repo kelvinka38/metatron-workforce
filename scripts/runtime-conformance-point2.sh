@@ -44,6 +44,11 @@ wait_terminal() {
     if grep -q "telegram_webhook_ack update_id=$update_id" <<<"$LOGS" \
       && grep -q "telegram_send_success update_id=$update_id" <<<"$LOGS" \
       && grep -q "telegram_answer_ready update_id=$update_id" <<<"$LOGS"; then return 0; fi
+    if grep -q "telegram_interaction_dead_letter update_id=$update_id" <<<"$LOGS"; then
+      echo "POINT2_TERMINAL_DEAD_LETTER update_id=$update_id" >&2
+      printf '%s\n' "$LOGS" | grep -E "update_id=$update_id|metatron_intelligence_latency|semantic_current_information_fallback" | tail -n 120 >&2 || true
+      return 75
+    fi
     sleep 2
   done
   echo "TERMINAL_TIMEOUT update_id=$update_id" >&2
