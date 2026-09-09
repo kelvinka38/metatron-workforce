@@ -28,8 +28,10 @@ jobs:
           COMPOSE="$BASE/docker-compose.yml"
           test -f "$CONFIG"; test -f "$COMPOSE"
           cp "$CONFIG" "$CONFIG.bak.pre-aquaculture-$(date +%s)"
+          TMP_CONFIG="$BASE/envoy-online.yaml.aquaculture-new"
+          cp "$CONFIG" "$TMP_CONFIG"
 
-          python3 - "$CONFIG" <<'PY'
+          python3 - "$TMP_CONFIG" <<'PY'
           from pathlib import Path
           import sys
           path=Path(sys.argv[1])
@@ -59,6 +61,8 @@ jobs:
               text=text.replace(anchor,block+anchor,1)
               path.write_text(text)
           PY
+
+          mv -f "$TMP_CONFIG" "$CONFIG"
 
           grep -q '# BIOS Aquaculture public product boundary.' "$CONFIG"
           grep -q 'prefix: "/aquaculture"' "$CONFIG"
