@@ -1,5 +1,6 @@
 package com.metatron.workforce.runtime;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -13,6 +14,8 @@ public interface RuntimePersistenceStore {
     void save(RuntimePersistenceRecord record);
 
     Optional<RuntimePersistenceRecord> find(String runtimeId);
+
+    List<RuntimePersistenceRecord> list();
 
     void delete(String runtimeId);
 }
