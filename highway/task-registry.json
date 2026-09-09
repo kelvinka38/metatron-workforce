@@ -156,6 +156,26 @@
       "timeout_seconds": 1200,
       "max_attempts": 1,
       "priority": 100
+    },
+    "meeting-real-worker": {
+      "name": "Meeting real Worker production acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/meeting-real-worker.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:meeting",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 60
     }
   }
 }
