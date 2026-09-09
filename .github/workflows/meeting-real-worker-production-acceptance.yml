@@ -1,269 +1,42 @@
-name: Meeting Real Worker Production Acceptance
+name: Meeting Real Worker Highway Ingress
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
-  group: metatron-production-state
-  cancel-in-progress: false
+  group: meeting-real-worker-highway-ingress
+  cancel-in-progress: true
 
 jobs:
-  accept-real-worker-meeting:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+  enqueue-meeting-acceptance:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
+    timeout-minutes: 3
     steps:
-      - name: Prove natural Telegram Meeting reaches one real Worker across turns
+      - uses: actions/checkout@v7
+
+      - name: Publish immutable control-plane release
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+
+      - name: Submit Meeting acceptance to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
-          test -r "$BASE/.env"
-          set -a; source "$BASE/.env"; set +a
-          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
-
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-
-          WORKER_ID='WORKER-GATEWAY-DIRECTOR'
-          PARTICIPANT_ID='participant:gateway-director-ai'
-          PARTICIPATION_ID='participation:gateway-director:metatron'
-
-          docker exec "$CID" sh -c "test -s /var/lib/metatron-workforce/workforce-core-state.json"
-          docker exec "$CID" sh -c "grep -q '$WORKER_ID' /var/lib/metatron-workforce/workforce-core-state.json"
-          docker exec "$CID" sh -c "grep -q '$PARTICIPANT_ID' /var/lib/metatron-workforce/workforce-core-state.json"
-          docker exec "$CID" sh -c "grep -q '$PARTICIPATION_ID' /var/lib/metatron-workforce/workforce-core-state.json"
-          docker exec "$CID" sh -c "grep -q 'ROLE-HEAD-OF-GATEWAY' /var/lib/metatron-workforce/workforce-core-state.json"
-          docker exec "$CID" sh -c "grep -q '^$WORKER_ID.*runtime-profile:general-engineering-worker:v1' /var/lib/metatron-workforce/runtime-profile-bindings.tsv"
-
-          send_update() {
-            local text="$1"
-            local update_id="$2"
-            local body
-            body=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$update_id" "$text" <<'PY'
-          import json,sys
-          uid=int(sys.argv[1]); update_id=int(sys.argv[2]); text=sys.argv[3]
-          print(json.dumps({
-              "update_id": update_id,
-              "message": {
-                  "message_id": update_id % 2000000000,
-                  "from": {"id": uid, "is_bot": False, "first_name": "Founder"},
-                  "chat": {"id": uid, "type": "private"},
-                  "date": 0,
-                  "text": text
-              }
-          }))
-          PY
-            )
-            curl -fsS --proto '=https' --tlsv1.2 --max-time 30               -X POST https://gate.metatron.vn/telegram/webhook               -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"               -H 'Content-Type: application/json'               --data-binary "$body" >/dev/null
-          }
-
-          BASE_ID=$(date +%s%N | cut -c1-15)
-          U1="${BASE_ID}01"
-          U2="${BASE_ID}02"
-          U3="${BASE_ID}03"
-          U4="${BASE_ID}04"
-          U5="${BASE_ID}05"
-          U6="${BASE_ID}06"
-          U7="${BASE_ID}07"
-          U8="${BASE_ID}08"
-          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          MEETING_FILE=''
-
-          dump_diagnostics() {
-            echo '--- MEETING ACCEPTANCE DIAGNOSTICS ---' >&2
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4|$U5|$U6|$U7|$U8)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
-            if [ -n "$MEETING_FILE" ]; then
-              echo "meeting_file=$MEETING_FILE" >&2
-              docker exec "$CID" sh -c "cat '$MEETING_FILE'" >&2 || true
-            fi
-          }
-          trap dump_diagnostics ERR
-
-          send_update "/work" "$U1"
-          sleep 2
-          send_update "Meeting, call for me director of gateway" "$U2"
-
-          for i in $(seq 1 60); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            MEETING_FILE=$(docker exec "$CID" sh -c               "grep -R -l 'interaction:telegram:update:$U2' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null | head -1" || true)
-            if grep -q "telegram_send_success update_id=$U2" <<<"$LOGS" && [ -n "$MEETING_FILE" ]; then
-              break
-            fi
-            if grep -q "telegram_interaction_dead_letter update_id=$U2" <<<"$LOGS"; then
-              echo 'FIRST_MEETING_TURN_DEAD_LETTER' >&2
-              exit 1
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo 'FIRST_MEETING_TURN_TIMEOUT' >&2
-              exit 1
-            fi
-            sleep 2
-          done
-
-          docker exec "$CID" sh -c "grep -q '$WORKER_ID' '$MEETING_FILE'"
-          docker exec "$CID" sh -c "grep -q 'meeting-worker:$WORKER_ID:participation=$PARTICIPATION_ID' '$MEETING_FILE'"
-          docker exec "$CID" sh -c "grep -q 'worker-runtime-profile:runtime-profile:general-engineering-worker:v1' '$MEETING_FILE'"
-
-          # Derive the exact runtime identity from the persisted Meeting evidence instead of
-          # grepping every historical runtime file through "head" under pipefail.
-          # Multiple durable runtimes for the same Worker are expected historical evidence.
-          RUNTIME_ID=$(docker exec "$CID" cat "$MEETING_FILE" | python3 -c 'import json,re,sys; meeting=json.load(sys.stdin); matches=list(dict.fromkeys(m.group(1) for ref in meeting.get("evidenceRefs",[]) if (m:=re.fullmatch(r"worker-runtime-instance:([^:]+):state=RUNNING",ref)))); assert len(matches)==1, f"expected_one_running_meeting_runtime:{matches}"; print(matches[0])')
-          test -n "$RUNTIME_ID"
-          RUNTIME_FILE="/var/lib/metatron-workforce/runtime-state/$RUNTIME_ID.properties"
-          docker exec "$CID" sh -c "test -s '$RUNTIME_FILE'"
-          docker exec "$CID" sh -c "grep -Fqx 'workerId=$WORKER_ID' '$RUNTIME_FILE'"
-          docker exec "$CID" sh -c "grep -Fqx 'runtimeId=$RUNTIME_ID' '$RUNTIME_FILE'"
-          docker exec "$CID" sh -c "grep -Fqx 'state=RUNNING' '$RUNTIME_FILE'"
-          echo "GATEWAY_RUNTIME_ID=$RUNTIME_ID"
-
-          docker exec "$CID" sh -c "grep -q 'worker-conversation-request:worker-cognition-' '$MEETING_FILE'"
-          docker exec "$CID" sh -c "grep -q 'worker-intelligence-provider:' '$MEETING_FILE'"
-          docker exec "$CID" sh -c "grep -Fq 'worker-position-contract:position-contract:position:gateway-director:v1' '$MEETING_FILE'"
-          ! docker exec "$CID" sh -c "grep -q 'worker-constitution:unavailable:' '$MEETING_FILE'"
-          echo 'MEETING_WORKER_CONSTITUTION=PASS'
-
-          # Institutional cognition must be grounded in the current canonical Gateway SoT,
-          # not a Workforce-local copy and not BIOS. Resolve the current blob SHA independently.
-          test -n "${GITHUB_TOKEN:-}"
-          CANONICAL_GATEWAY_SOT_SHA=$(curl -fsSL --max-time 15             -H "Authorization: Bearer $GITHUB_TOKEN"             -H 'Accept: application/vnd.github+json'             -H 'X-GitHub-Api-Version: 2022-11-28'             'https://api.github.com/repos/kelvinka38/metatron-institution/contents/06_GATEWAY/SOT.md?ref=main'             | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
-          test -n "$CANONICAL_GATEWAY_SOT_SHA"
-          docker exec "$CID" sh -c "grep -Fq 'institutional-source:kelvinka38/metatron-institution@main:06_GATEWAY/SOT.md:blob=$CANONICAL_GATEWAY_SOT_SHA' '$MEETING_FILE'"
-          ! docker exec "$CID" sh -c "grep -Eq 'institutional-source:kelvinka38/bios.*[Gg]ateway' '$MEETING_FILE'"
-          echo "CANONICAL_GATEWAY_SOT_SHA=$CANONICAL_GATEWAY_SOT_SHA"
-          echo 'CANONICAL_GATEWAY_SOT_GROUNDING=PASS'
-
-          send_update "What is the root cause of the Gateway routing problem?" "$U3"
-
-          for i in $(seq 1 60); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"               && docker exec "$CID" sh -c "grep -q 'interaction:telegram:update:$U3' '$MEETING_FILE'"; then
-              break
-            fi
-            if grep -q "telegram_interaction_dead_letter update_id=$U3" <<<"$LOGS"; then
-              echo 'SECOND_MEETING_TURN_DEAD_LETTER' >&2
-              exit 1
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo 'SECOND_MEETING_TURN_TIMEOUT' >&2
-              exit 1
-            fi
-            sleep 2
-          done
-
-          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-          grep -q "telegram_send_success update_id=$U1" <<<"$LOGS"
-          grep -q "telegram_send_success update_id=$U2" <<<"$LOGS"
-          grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"
-          ! grep -q "telegram_interaction_failed update_id=$U2" <<<"$LOGS"
-          ! grep -q "telegram_interaction_failed update_id=$U3" <<<"$LOGS"
-          grep -q "telegram_answer_ready update_id=$U2.*provenance=meeting:" <<<"$LOGS"
-          grep -q "telegram_answer_ready update_id=$U3.*provenance=work:meeting-conversation" <<<"$LOGS"
-
-          # Restore the Founder product surface to Work after the synthetic acceptance conversation.
-          send_update "/work" "$U4"
-          for i in $(seq 1 30); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"; then break; fi
-            sleep 1
-          done
-          grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
-
-          # Worker formation is control-plane identity provisioning, not Objective work.
-          # Exact Founder request must return a canonical Worker + live runtime and create NO Objective.
-          send_update "Create worker head of gateway" "$U5"
-          for i in $(seq 1 60); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U5" <<<"$LOGS"; then break; fi
-            if grep -q "telegram_interaction_dead_letter update_id=$U5" <<<"$LOGS"; then
-              echo 'WORKER_LIFECYCLE_DEAD_LETTER' >&2
-              exit 1
-            fi
-            sleep 1
-          done
-          grep -q "telegram_send_success update_id=$U5" <<<"$LOGS"
-          grep -q "telegram_answer_ready update_id=$U5.*provenance=work:worker-lifecycle:telegram:update:$U5" <<<"$LOGS"
-          ! grep -q "telegram_interaction_failed update_id=$U5" <<<"$LOGS"
-
-          curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives > /tmp/meeting-worker-lifecycle-objectives.json
-          python3 - /tmp/meeting-worker-lifecycle-objectives.json "$U5" <<'PY'
-          import json,sys
-          data=json.load(open(sys.argv[1]))
-          needle=f"telegram:update:{sys.argv[2]}"
-          matches=[item for item in data if needle in json.dumps(item,sort_keys=True)] if isinstance(data,list) else []
-          assert not matches, f'worker_formation_created_objective:{matches}'
-          print('WORKER_FORMATION_NO_OBJECTIVE=PASS')
-          PY
-
-          LIFECYCLE_RUNTIME_FILE="/var/lib/metatron-workforce/runtime-state/$RUNTIME_ID.properties"
-          docker exec "$CID" sh -c "test -s '$LIFECYCLE_RUNTIME_FILE'"
-          docker exec "$CID" sh -c "grep -Fqx 'workerId=$WORKER_ID' '$LIFECYCLE_RUNTIME_FILE'"
-          docker exec "$CID" sh -c "grep -Fqx 'state=RUNNING' '$LIFECYCLE_RUNTIME_FILE'"
-          LIFECYCLE_RUNTIME_ID=$(docker exec "$CID" sh -c "sed -n 's/^runtimeId=//p' '$LIFECYCLE_RUNTIME_FILE'")
-          test "$LIFECYCLE_RUNTIME_ID" = "$RUNTIME_ID"
-          echo 'WORKER_LIFECYCLE_DIRECT=PASS'
-          echo 'WORKER_LIFECYCLE_RUNTIME_REUSE=PASS'
-
-          # A requested institutional role with no ACTIVE Worker must never be simulated.
-          # The entire requested roster is resolved before any Worker cognition or Meeting record is created.
-          send_update "Meeting with Head of Gateway and Head of Shadow Fiction" "$U6"
-          for i in $(seq 1 45); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"; then break; fi
-            if grep -q "telegram_interaction_dead_letter update_id=$U6" <<<"$LOGS"; then
-              echo 'SHADOW_ROLE_REQUEST_DEAD_LETTERED' >&2
-              exit 1
-            fi
-            sleep 1
-          done
-          grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"
-          ! grep -q "telegram_interaction_failed update_id=$U6" <<<"$LOGS"
-          grep -q "telegram_answer_ready update_id=$U6.*provenance=work:meeting-no-room:telegram:update:$U6" <<<"$LOGS"
-          ! docker exec "$CID" sh -c             "grep -R -q 'interaction:telegram:update:$U6' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"
-
-          # Restore Work after the rejected no-shadow Meeting request.
-          send_update "/work" "$U7"
-          for i in $(seq 1 30); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"; then break; fi
-            sleep 1
-          done
-          grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"
-
-          # Worker discovery is a real Work directory read, not generic Intelligence and not a Meeting.
-          send_update "active workers" "$U8"
-          for i in $(seq 1 30); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-            if grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"; then break; fi
-            sleep 1
-          done
-          grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"
-          grep -q "telegram_answer_ready update_id=$U8.*provenance=work:worker-directory:telegram:update:$U8" <<<"$LOGS"
-          ! grep -q "telegram_interaction_failed update_id=$U8" <<<"$LOGS"
-
-          trap - ERR
-          echo 'CANONICAL_GATEWAY_WORKER=PASS'
-          echo 'WORKER_RUNTIME_BINDING=PASS'
-          echo 'NATURAL_WORK_TO_MEETING_ROUTING=PASS'
-          echo 'GATEWAY_DIRECTOR_ALIAS_RESOLUTION=PASS'
-          echo 'EXACT_INTERACTION_TO_MEETING_BINDING=PASS'
-          echo 'REAL_WORKER_COGNITION_BOUNDARY=PASS'
-          echo 'CANONICAL_INSTITUTIONAL_GROUNDING=PASS'
-          echo 'NO_BIOS_GATEWAY_GROUNDING=PASS'
-          echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
-          echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
-          echo 'WORKER_RUNTIME_INSTANCE_ID=PASS'
-          echo 'WORKER_RUNTIME_STATE_RUNNING=PASS'
-          echo 'WORKER_LIFECYCLE_CONTROL_PLANE=PASS'
-          echo 'WORKER_FORMATION_NOT_OBJECTIVE=PASS'
-          echo 'NO_SHADOW_ROLE_SIMULATION=PASS'
-          echo 'ACTIVE_WORKER_DIRECTORY=PASS'
-          echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit             --kind meeting-real-worker             --source-sha "$GITHUB_SHA"             --dedupe-key "meeting-real-worker:$GITHUB_SHA:$GITHUB_RUN_ID"             --priority 60             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_MEETING_TASK=$TASK"
+          $CTL get "$TASK"
+          echo 'MEETING_GITHUB_EXECUTION_PLANE=BYPASSED'
+          echo 'MEETING_HIGHWAY_INGRESS=PASS'
