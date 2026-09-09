@@ -78,6 +78,61 @@ final class FrontierSemanticInterpreterTest {
     }
 
     @Test
+    void selfContainedFreshQueryFallsBackConservativelyWhenAllSemanticProvidersFail() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                throw new IllegalStateException("google_request_failed:503:temporarily unavailable");
+            }
+        };
+        LlmProviderClient anthropic = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.ANTHROPIC; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                throw new IllegalStateException("anthropic_request_failed:429:rate limit");
+            }
+        };
+        FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
+                new LlmProviderRouter(List.of(google, anthropic)), provider -> "semantic-test",
+                List.of(LlmProvider.GOOGLE, LlmProvider.ANTHROPIC), new ObjectMapper());
+
+        String human = "Phiên bản stable mới nhất của Python hiện tại là gì? Kiểm tra nguồn hiện tại rồi trả lời.";
+        NormalizedRequest normalized = interpreter.interpret(human, "", "telegram");
+
+        assertEquals(human, normalized.objective());
+        assertEquals(IntelligenceDepth.ANALYZE, normalized.requestedDepth());
+        assertEquals(IntelligenceMode.REASONING, normalized.mode());
+        assertEquals(CollaborationMode.SINGLE, normalized.collaborationMode());
+        assertEquals(CaseContinuity.NEW, normalized.caseContinuity());
+        assertTrue(normalized.freshExternalDataRequired());
+        assertNull(normalized.semanticProvider());
+        assertTrue(normalized.directResponse().isBlank());
+        assertTrue(normalized.analyticalProtocols().isEmpty());
+        assertEquals(DeterministicCapability.NONE, normalized.deterministicCapability());
+    }
+
+    @Test
+    void contextDependentFreshFollowupStillFailsClosedWhenSemanticProvidersAreUnavailable() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                throw new IllegalStateException("google_request_failed:503:temporarily unavailable");
+            }
+        };
+        FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
+                new LlmProviderRouter(List.of(google)), provider -> "semantic-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> interpreter.interpret(
+                        "Còn hiện tại thì sao?",
+                        "Human: Giá Bitcoin trước đó là bao nhiêu?",
+                        "telegram"));
+
+        assertTrue(failure.getMessage().contains("all semantic providers failed"));
+        assertTrue(failure.getMessage().contains("503"));
+    }
+
+    @Test
     void semanticInterpretationCannotRunWithoutAFrontierProvider() {
         FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
                 new LlmProviderRouter(List.of()), provider -> "unused", List.of(), new ObjectMapper());
