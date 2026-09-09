@@ -12,7 +12,7 @@ on:
       target_sha:
         description: Exact Workforce production SHA whose Highway DAG must be terminal
         required: false
-        default: a55b3d1528508c203b2b3aee96d5d5710dbedd54
+        default: e7317b06dc1ba0bfc917942abc8d8727274c020f
         type: string
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 5
     env:
-      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || 'a55b3d1528508c203b2b3aee96d5d5710dbedd54' }}
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || 'e7317b06dc1ba0bfc917942abc8d8727274c020f' }}
     steps:
       - uses: actions/checkout@v7
 
