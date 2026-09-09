@@ -751,6 +751,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             return enforceRequiredActionCompletion(context, observation, requiredAction);
         }
 
+        CognitiveWorkerRuntime.Reflection deterministic = deterministicNonTerminalReflection(context, observation);
+        if (deterministic != null) return deterministic;
+
         String system = """
                 You are the reflection brain for a governed Metatron Cognitive Worker.
                 Decide from the actual Work, acceptance criteria, evidence requirements and observed action result.
@@ -784,6 +787,44 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             default -> throw new IllegalStateException("invalid cognitive reflection decision: " + decision);
         };
         return enforceRequiredActionCompletion(context, observation, proposed);
+    }
+
+    /**
+     * Avoid spending scarce Intelligence on a reflection whose only safe result is CONTINUE.
+     *
+     * Failed tool observations remain recoverable by inspection/change/retry inside the bounded
+     * Cognitive Worker loop. For successful intermediate actions, reuse the same completion guard
+     * that fences provider-proposed COMPLETE: when that guard proves mandatory governed evidence
+     * is still missing, there is no reason to ask an LLM whether the Work is complete.
+     *
+     * External research is intentionally excluded because synthesis/quality judgment is itself
+     * substantive Work and may require Intelligence.
+     */
+    static CognitiveWorkerRuntime.Reflection deterministicNonTerminalReflection(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            ActionFabric.ActionObservation observation) {
+        Objects.requireNonNull(context, "context");
+        Objects.requireNonNull(observation, "observation");
+
+        if (!observation.success()) {
+            return CognitiveWorkerRuntime.Reflection.continueWith(
+                    "Governed action " + observation.actionRef()
+                            + " failed; inspect the observed failure, change or diagnose state, then retry only when justified: "
+                            + clean(observation.summary()));
+        }
+        if (GeneralWebResearchAction.ACTION_REF.equals(observation.actionRef())) return null;
+
+        CognitiveWorkerRuntime.Reflection guarded = enforceRequiredActionCompletion(
+                context,
+                observation,
+                CognitiveWorkerRuntime.Reflection.complete("intermediate governed action observed"));
+        if (guarded.decision() == CognitiveWorkerRuntime.Decision.CONTINUE) {
+            return CognitiveWorkerRuntime.Reflection.continueWith(
+                    "Governed action " + observation.actionRef()
+                            + " succeeded; mandatory completion evidence is still missing. "
+                            + guarded.summary());
+        }
+        return null;
     }
 
     static CognitiveWorkerRuntime.Reflection governedRequiredActionReflection(
