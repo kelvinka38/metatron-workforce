@@ -2,11 +2,12 @@ name: BIOS Production Deploy
 # Terminal completion redeploy: deploy the current canonical BIOS main SHA after checkpoint closure.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bios-production-deploy.yml'
   workflow_dispatch:
+    inputs:
+      bios_sha:
+        description: Exact BIOS source SHA already accepted by BIOS Runtime CI
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,8 +20,10 @@ jobs:
   deploy-bios:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     steps:
-      - name: Deploy canonical BIOS and execute OPERATE-01
+      - name: Deploy accepted BIOS and execute live acceptance
         shell: bash
+        env:
+          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha }}
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
@@ -31,13 +34,16 @@ jobs:
           test -n "${GITHUB_TOKEN:-}"
           docker network inspect metatron-gateway-online >/dev/null
 
-          BIOS_SHA=$(curl -fsSL \
+          BIOS_SHA="$BIOS_REQUESTED_SHA"
+          [[ "$BIOS_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "BIOS_SOURCE_SHA=$BIOS_SHA"
+
+          CI_JSON=$(curl -fsSL \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
-            https://api.github.com/repos/kelvinka38/bios/commits/main \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
-          test "${#BIOS_SHA}" = 40
-          echo "BIOS_SOURCE_SHA=$BIOS_SHA"
+            "https://api.github.com/repos/kelvinka38/bios/actions/runs?head_sha=$BIOS_SHA&status=completed&per_page=20")
+          printf '%s' "$CI_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); ok=any(r.get("name")=="BIOS Runtime" and r.get("head_sha")==sys.argv[1] and r.get("conclusion")=="success" for r in d.get("workflow_runs",[])); assert ok, "exact BIOS SHA has no successful BIOS Runtime CI"' "$BIOS_SHA"
+          echo "BIOS_EXACT_SHA_CI=PASS"
 
           rm -rf "$STAGE" && mkdir -p "$STAGE"
           curl -fsSL \
@@ -47,8 +53,8 @@ jobs:
             | tar -xz -C "$STAGE" --strip-components=1
 
           cd "$STAGE"
-          python3 -m unittest discover -s tests -v
           test -f deploy/docker-compose.yml
+          echo 'UNIT_TEST_REPLAY=SKIPPED_EXACT_SHA_CI_ALREADY_PASS'
 
           mkdir -p "$BIOS_BASE"
           chmod 700 "$BIOS_BASE"
