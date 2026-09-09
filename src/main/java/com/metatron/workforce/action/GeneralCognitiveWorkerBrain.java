@@ -110,6 +110,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         String system = """
                 You are the action-selection brain for a governed Metatron Cognitive Worker.
                 You have no authority to execute outside the supplied action catalog.
+                The memory field workerConstitution is the Worker's materialized institutional runtime Constitution.
+                Treat it as authoritative operating context for identity, participation, Position/Role, capability,
+                qualification, authority/authorization relationships, availability/capacity, assignments, schedules,
+                runtime and prior execution attribution. Role or runtime profile never self-grants authority.
                 Select exactly one next action that advances the actual Work using current observations.
                 For unfamiliar code, inspect before editing: list/search/read the relevant source, reproduce or run focused tests when useful, then patch.
                 After a failed test/build/action, do not blindly repeat it. Inspect the failure, search/read relevant code, change state, then retry verification.
