@@ -1,6 +1,10 @@
 name: BIOS Aquaculture Execution Verify
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-aquaculture-execution-verify.yml'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +22,7 @@ jobs:
       - name: Verify E0-E10 deployed build evidence
         shell: bash
         env:
-          BIOS_EXPECTED_SHA: 8d22e9e441bbdb0a135d6583350cf4d985ba4162
+          BIOS_EXPECTED_SHA: 19214a7015e6b7a4af7403aa79854e2828d4ecb0
         run: |
           set -euo pipefail
           BIOS_BASE="$HOME/.metatron/bios"
@@ -74,4 +78,35 @@ jobs:
           echo 'E5_E10_REFERENCE_WORKFLOWS=PASS_VIA_EXACT_SHA_CI'
           echo 'FIELD_NON_FABRICATION_GUARD=PASS_VIA_EXACT_SHA_CI'
           echo 'AQUACULTURE_FIELD_RUNTIME_VERIFY=PASS'
+          FARMER_CODE=$(curl -sS -o /tmp/aq-farmer.html -w '%{http_code}' https://gate.metatron.vn/aquaculture)
+          test "$FARMER_CODE" = 200
+          grep -q 'Mã tham gia pilot' /tmp/aq-farmer.html
+          grep -q 'Vùng nuôi' /tmp/aq-farmer.html
+          grep -q 'Nên nuôi gì?' /tmp/aq-farmer.html
+          grep -q 'Bán ở đâu?' /tmp/aq-farmer.html
+          grep -q 'Vụ nuôi' /tmp/aq-farmer.html
+          grep -q 'Kết quả' /tmp/aq-farmer.html
+          ! grep -q 'Actor ID' /tmp/aq-farmer.html
+          ! grep -q 'Case ID' /tmp/aq-farmer.html
+          ! grep -q 'Farm ID' /tmp/aq-farmer.html
+          ! grep -q 'API Key' /tmp/aq-farmer.html
+          ! grep -q 'BIOS CONNECTION' /tmp/aq-farmer.html
+          echo 'FARMER_UX_NO_INTERNAL_IDS=PASS'
+
+          FIELD_CODE=$(curl -sS -o /tmp/aq-field-console.html -w '%{http_code}' https://gate.metatron.vn/aquaculture/field)
+          test "$FIELD_CODE" = 200
+          grep -q 'BIOS API Key' /tmp/aq-field-console.html
+          grep -q 'Tạo link mời' /tmp/aq-field-console.html
+          echo 'PILOT_OPERATOR_INVITE_CONSOLE=PASS'
+
+          INVALID_SESSION_CODE=$(curl -sS -o /tmp/aq-invalid-session.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/session/exchange             -H 'Content-Type: application/json'             --data '{"code":"AQ-NOT-VALID"}')
+          test "$INVALID_SESSION_CODE" = 401
+          echo 'PILOT_SESSION_INVALID_CODE_FAIL_CLOSED=PASS'
+
+          READY_SESSION=$(python3 -c 'import json; d=json.load(open("/tmp/aq-exec-ready.json")); print(str(d.get("aquaculture_pilot_session_ready")).lower())')
+          test "$READY_SESSION" = true
+          echo 'PILOT_SESSION_READINESS=PASS'
+
+          echo 'FARMER_UX_SESSION_CONSENT_FLOW=PASS_VIA_EXACT_SHA_CI'
+          echo 'AQUACULTURE_FARMER_UX_VERIFY=PASS'
           echo 'AQUACULTURE_EXECUTION_VERIFY=PASS'
