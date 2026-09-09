@@ -49,167 +49,71 @@ jobs:
           bash -n scripts/runtime-conformance-point2.sh
           bash -n scripts/runtime-conformance-point5.sh
           echo 'HIGHWAY_SHELLS=PASS'
-      - name: Enforce one automatic latest-SHA production lane
+      - name: Enforce persistent multi-executor Highway execution fabric
         shell: bash
         run: |
           set -euo pipefail
-          H=.github/workflows/production-acceptance-highway-v2.yml
           D=.github/workflows/production-deploy.yml
-          P4=.github/workflows/runtime-conformance-point4-production-acceptance.yml
-          P4R=.github/workflows/runtime-conformance-point4-read-production-acceptance.yml
-          P5=.github/workflows/runtime-conformance-point5-production-acceptance.yml
-          P10C=.github/workflows/workforce-autonomy-p10-after-deploy.yml
-          P10GS12=.github/workflows/workforce-autonomy-p10-production-acceptance.yml
-          P10GS34=.github/workflows/workforce-autonomy-p10-gs3-gs4-production-acceptance.yml
-          P10R=.github/workflows/workforce-autonomy-p10-45-condition-ratification.yml
-          GDIR=.github/workflows/gateway-director-live-acceptance.yml
-          LEGACYWF=.github/workflows/workforce-live-acceptance.yml
-          HYGIENE=.github/workflows/production-worker-state-hygiene.yml
-          P10BOOT=.github/workflows/ops-bootstrap-current-p10-ratification.yml
-          FOUNDERP10=.github/workflows/founder-authorized-deep-p10-25b9a6b.yml
-          P10ONESHOT=.github/workflows/ops-one-shot-p10-closure-71f2973.yml
-          P10CHAIN=.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml
+          B=.github/workflows/bios-production-deploy.yml
+          M=.github/workflows/meeting-real-worker-production-acceptance.yml
+          G=.github/workflows/general-engineering-go1-production-acceptance.yml
+          H=.github/workflows/production-acceptance-highway-v2.yml
+          O=.github/workflows/work-observability-production-acceptance.yml
+          C=.github/workflows/workplace-control-room-production-acceptance.yml
+          Y=.github/workflows/production-worker-state-hygiene.yml
+          REG=highway/task-registry.json
+          DAEMON=highway/highwayd.py
 
-          grep -q 'workflows: \["Highway Production Deploy"\]' "$H"
-          ! grep -q 'workflow_run:' .github/workflows/intelligence-product-live-acceptance.yml
-          ! grep -q 'workflow_run:' .github/workflows/runtime-conformance-point2.yml
-          ! grep -q 'workflow_run:' "$P4"
-          ! grep -q 'workflow_run:' "$P4R"
-          ! grep -q 'workflow_run:' "$P5"
-          grep -q 'workflow_dispatch:' "$P4"
-          grep -q 'workflow_dispatch:' "$P4R"
-          grep -q 'workflow_dispatch:' "$P5"
-          ! grep -q 'workflow_run:' "$P10C"
-          ! grep -q '^  push:' "$P10C"
-          grep -q 'workflow_dispatch:' "$P10C"
-          grep -q 'cancel-in-progress: true' "$P10C"
-          grep -q 'P10_RATIFICATION_ON_DEMAND=PASS' "$P10C"
-          grep -q 'confirm:' "$P10C"
-          grep -q 'RUN_DEEP_P10' "$P10C"
-          grep -q "github.actor == 'kelvinka38'" "$P10C"
-          grep -q "github.triggering_actor == 'kelvinka38'" "$P10C"
-          grep -q "inputs.confirm == 'RUN_DEEP_P10'" "$P10C"
-          ! grep -q 'workflow_run:' "$P10GS12"
-          ! grep -q 'workflow_run:' "$P10GS34"
-          ! grep -q 'workflow_run:' "$P10R"
-          grep -q 'group: metatron-production-lane' "$P10GS12"
-          grep -q 'group: metatron-production-lane' "$P10GS34"
-          grep -q 'group: metatron-production-lane' "$P10R"
-          grep -q 'runs-on: ubuntu-latest' "$P10R"
-          grep -q 'group: metatron-production-lane' "$GDIR"
-          ! grep -q 'workflow_run:' "$LEGACYWF"
-          ! grep -q 'runs-on: \[self-hosted, linux, x64, metatron-prod\]' "$LEGACYWF"
-          grep -q 'WORKFORCE_LIVE_ACCEPTANCE=DISABLED' "$LEGACYWF"
-          grep -q 'production_mutation=PROHIBITED' "$LEGACYWF"
-          grep -q 'workflows: \["Highway Production Deploy"\]' "$HYGIENE"
-          grep -q 'group: metatron-production-state' "$HYGIENE"
-          grep -q 'SUSPENDED' "$HYGIENE"
-          grep -Fq "pattern=re.compile(r'^W-(" "$HYGIENE"
-          grep -Fq "[0-9a-f]{12}" "$HYGIENE"
-          grep -Fq "[0-9a-f]{8}-[0-9]+-[0-9]+)" "$HYGIENE"
-          grep -q 'ROLE-DIRECTOR' "$HYGIENE"
-          grep -q 'LEGACY_ACCEPTANCE_WORKER_RECONCILIATION=PASS' "$HYGIENE"
-          grep -q 'CANONICAL_GATEWAY_DIRECTOR_PRESERVED=PASS' "$HYGIENE"
-          ! grep -q '^  push:' "$P10BOOT"
-          grep -q 'P10_BOOTSTRAP_AUTORUN=DISABLED' "$P10BOOT"
-          ! grep -q '^  push:' "$FOUNDERP10"
-          grep -q 'FOUNDER_AUTHORIZED_P10_BOT_AUTODISPATCH=DISABLED' "$FOUNDERP10"
-          ! grep -R -n 'workforce-autonomy-p10-after-deploy.yml/dispatches' .github/workflows
-          ! grep -q 'workflow_run:' "$P10ONESHOT"
-          ! grep -q 'workflow_run:' "$P10CHAIN"
-          grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10ONESHOT"
-          grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10CHAIN"
+          grep -q 'name: Highway Release Ingress' "$D"
+          grep -q -- '--kind workforce-build' "$D"
+          grep -q -- '--kind workforce-deploy' "$D"
+          grep -q 'highway/publish-release.sh' "$D"
+          ! grep -q './gradlew clean test bootJar' "$D"
+          ! grep -q 'docker compose' "$D"
 
-          grep -q 'HIGHWAY_REVISION: fast-production-lane-' "$H"
-          grep -q 'group: metatron-production-lane' "$H"
-          grep -q 'cancel-in-progress: true' "$H"
-          grep -q 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' "$D"
-          grep -q 'PRODUCTION_ADMISSION_REFRESH=PASS' "$D"
-          grep -q 'group: metatron-production-lane' "$D"
-          ! grep -q 'Dispatch exact-SHA P10 closure' "$D"
-          ! grep -q 'workforce-autonomy-p10-after-deploy.yml/dispatches' "$D"
+          for wf in "$B" "$M" "$G" "$H" "$O" "$C" "$Y"; do
+            grep -q 'highwayctl.py' "$wf"
+            ! grep -q 'workflow_run:' "$wf"
+          done
 
-          grep -q "scripts/production-acceptance-highway.sh" "$H"
-          grep -q "scripts/highway-intelligence-lane.sh" "$H"
-          grep -q "scripts/runtime-conformance-point2.sh" "$H"
-          grep -q "scripts/runtime-conformance-point5.sh" "$H"
-          grep -q "scripts/runtime-conformance-point5.sh" "$P5"
-          grep -q 'HIGHWAY_PROFILE:' "$H"
-          grep -q 'HIGHWAY_PROFILE="\${HIGHWAY_PROFILE:-FAST}"' scripts/production-acceptance-highway.sh
-          grep -q 'HIGHWAY_FAST_LIVE_GATE=PASS' scripts/production-acceptance-highway.sh
-          grep -q 'HIGHWAY_DESTRUCTIVE_STRESS=DEFERRED_TO_DEEP_RATIFICATION' scripts/production-acceptance-highway.sh
-          grep -q 'INTELLIGENCE_TWO_WAVE_PARALLELISM=PASS' scripts/highway-intelligence-lane.sh
-          grep -q 'POINT2_SEMANTIC_ISOLATION=PASS' scripts/runtime-conformance-point2.sh
-          ! grep -Eq 'highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&' "$H"
-          grep -q 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS' "$H"
-          grep -q 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS' "$H"
-          grep -q 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS' "$H"
-          ! grep -q 'upload-artifact' "$H"
-          ! grep -q 'actions/upload-artifact@' "$H"
+          grep -q 'ThreadPoolExecutor' "$DAEMON"
+          grep -q 'journal_mode=WAL' "$DAEMON"
+          grep -q 'lease_expires_at' "$DAEMON"
+          grep -q 'heartbeat_at' "$DAEMON"
+          grep -q 'resource_conflicts' "$DAEMON"
+          grep -q 'dependencies_json' "$DAEMON"
+          grep -q 'resource_locks' "$DAEMON"
 
           python3 - <<'PY'
+          import json
           from pathlib import Path
-          deploy=Path('.github/workflows/production-deploy.yml').read_text()
-          h=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
-          build=deploy.split('  deploy-production:',1)[0]
-          deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
-          supersede=deploy.split('  supersede-stale-production:',1)[1].split('  test-and-build:',1)[0]
-          refresh=deploy.split('  refresh-production-admission:',1)[1].split('  deploy-production:',1)[0]
-          assert 'actions/runs?per_page=100' in supersede and '/cancel' in supersede
-          assert 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' in supersede
-          assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
-          assert 'group: metatron-production-lane' in refresh and 'cancel-in-progress: true' in refresh
-          assert 'PRODUCTION_ADMISSION_REFRESH=PASS' in refresh
-          assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: false' in deploy_job
-          assert 'needs: refresh-production-admission' in deploy_job
-          assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
-          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v13' in h
-          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh' in h
-          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh' in h
-          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh' in h
-          phase_positions=[
-              h.index("HIGHWAY_PHASE=INTELLIGENCE_PRODUCT"),
-              h.index("HIGHWAY_PHASE=POINT2_ROOT"),
-              h.index("HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5"),
-          ]
-          assert phase_positions==sorted(phase_positions),phase_positions
-          assert '& INTEL_PID' not in h and '& POINT2_PID' not in h
-          assert 'actions/upload-artifact@' not in h
-          assert 'actions/cache/save@v4' in build
-          assert 'actions/cache/restore@v4' in deploy_job
-          assert 'fail-on-cache-miss: true' in deploy_job
-          assert 'PRODUCTION_EXACT_TESTED_ARTIFACT_HANDOFF=PASS' in deploy_job
-          assert './gradlew clean test bootJar' not in deploy_job
-          assert "      - 'scripts/**'" not in deploy
-          assert 'workforce-autonomy-p10-production-acceptance.yml' not in deploy
-          print('HIGHWAY_TESTED_CACHE_HANDOFF=PASS')
-          print('HIGHWAY_TESTED_ARTIFACT_HANDOFF=PASS')
-          print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
-          print('HIGHWAY_DEPLOY_NEVER_AUTODISPATCHES_DEEP_P10=PASS')
-          print('HIGHWAY_IMMEDIATE_STALE_PREEMPTION=PASS')
-          print('HIGHWAY_JIT_ADMISSION_REFRESH=PASS')
-          print('HIGHWAY_NO_CONCURRENCY_SELF_CANCEL=PASS')
-          print('HIGHWAY_FAST_PROFILE_CONTRACT=PASS')
-          print('HIGHWAY_INTELLIGENCE_INTERNAL_PARALLELISM=PASS')
-          print('HIGHWAY_POINT2_SEMANTIC_ISOLATION=PASS')
-          print('HIGHWAY_NO_ROUTINE_ARTIFACT_UPLOAD=PASS')
-          print('HIGHWAY_FAIL_FAST_TIMEOUT_CONTRACT=PASS')
-          print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
-          print('HIGHWAY_LATEST_SHA_WINS_POLICY=PASS')
-          print('HIGHWAY_RATIFIED_POINT_WORKFLOWS_MANUAL_ONLY=PASS')
+          reg=json.loads(Path('highway/task-registry.json').read_text())['tasks']
+          required={
+              'workforce-build','workforce-deploy','production-highway-fast',
+              'work-observability','control-room-fast','bios-deploy',
+              'meeting-real-worker','general-engineering-go1',
+              'production-highway-full','worker-state-hygiene'
+          }
+          assert required <= set(reg), required-set(reg)
+          def resources(kind):
+              return {(x['name'],x['mode']) for x in reg[kind].get('resources',[])}
+          assert ('prod:workforce','WRITE') in resources('workforce-deploy')
+          assert ('prod:bios','WRITE') in resources('bios-deploy')
+          assert ('prod:workforce','READ') in resources('meeting-real-worker')
+          assert ('state:meeting','WRITE') in resources('meeting-real-worker')
+          assert ('prod:workforce','READ') in resources('production-highway-fast')
+          assert ('prod:workforce','READ') in resources('work-observability')
+          assert ('prod:workforce','READ') in resources('control-room-fast')
+          fanout=set(reg['workforce-deploy'].get('on_success',[]))
+          assert {'production-highway-fast','work-observability','control-room-fast'} <= fanout
+          print('HIGHWAY_PERSISTENT_SCHEDULER_CONTRACT=PASS')
+          print('HIGHWAY_RESOURCE_AWARE_LOCKING_CONTRACT=PASS')
+          print('HIGHWAY_MULTI_EXECUTOR_CONTRACT=PASS')
+          print('HIGHWAY_POST_DEPLOY_PARALLEL_FANOUT_CONTRACT=PASS')
+          print('HIGHWAY_GITHUB_INGRESS_ONLY_CONTRACT=PASS')
           PY
-          echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
-          echo 'HIGHWAY_DEEP_RATIFICATION_ON_DEMAND=PASS'
-          echo 'HIGHWAY_PREEMPTS_STALE_RATIFICATION=PASS'
-          echo 'P10_BOOTSTRAP_AUTORUN_DISABLED=PASS'
-          echo 'P10_EXPLICIT_DEEP_CONFIRMATION_REQUIRED=PASS'
-          echo 'P10_HUMAN_FOUNDER_ACTOR_REQUIRED=PASS'
-          echo 'P10_NO_WORKFLOW_SELF_DISPATCH_ENTRYPOINT=PASS'
-          echo 'HIGHWAY_LATENCY_SLO_CONTRACT=PASS'
-          echo 'HIGHWAY_NO_ARTIFACT_STORAGE_DEPENDENCY=PASS'
-          echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
-          echo 'P10_LEGACY_AUTOFANOUT_ARCHIVED=PASS'
-          echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
+
+          echo 'HIGHWAY_ZERO_UNNECESSARY_QUEUE_CONTRACT=PASS'
       - name: Verify bounded execution planning recovery contract
         shell: bash
         run: |
