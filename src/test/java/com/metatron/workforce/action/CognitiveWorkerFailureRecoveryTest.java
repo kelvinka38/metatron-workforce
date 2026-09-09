@@ -59,6 +59,51 @@ class CognitiveWorkerFailureRecoveryTest {
                 ref.equals("cognitive-completion-rejected:unresolved-failed-actions=tool.required")));
     }
 
+    @Test
+    void domainBrainCanReleaseOptionalDiagnosticFailureWithoutWeakeningRequiredFailureDefault() {
+        ActionFabric fabric = new ActionFabric(List.of(
+                action("tool.diagnostic", request -> ActionFabric.ActionObservation.failure(
+                        "tool.diagnostic", "diagnostic failed", List.of("diagnostic-failed"))),
+                action("tool.required", request -> ActionFabric.ActionObservation.success(
+                        "tool.required", "required evidence obtained", Map.of(), List.of("required-success")))));
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, ActionJournal.noop(), 3);
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-optional-diagnostic", "obtain required evidence", "fixture", "test.recovery", List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("required effect succeeds"), List.of("required evidence"));
+
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
+                WORKER, "assignment-optional", AUTH, "objective-optional", work, "optional-key",
+                new CognitiveWorkerRuntime.Brain() {
+                    @Override
+                    public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                        return context.history().isEmpty()
+                                ? new CognitiveWorkerRuntime.Thought("tool.diagnostic", Map.of(), "optional diagnosis")
+                                : new CognitiveWorkerRuntime.Thought("tool.required", Map.of(), "obtain required evidence");
+                    }
+
+                    @Override
+                    public CognitiveWorkerRuntime.Reflection reflect(
+                            CognitiveWorkerRuntime.CognitiveContext context,
+                            ActionFabric.ActionObservation observation) {
+                        return observation.success()
+                                ? CognitiveWorkerRuntime.Reflection.complete("required acceptance evidence is satisfied")
+                                : CognitiveWorkerRuntime.Reflection.continueWith("diagnostic was optional; continue with required path");
+                    }
+
+                    @Override
+                    public boolean blocksCompletionForUnresolvedFailure(
+                            CognitiveWorkerRuntime.CognitiveContext context,
+                            String actionRef) {
+                        return !"tool.diagnostic".equals(actionRef);
+                    }
+                });
+
+        assertTrue(outcome.success());
+        assertEquals(2, outcome.cycles().size());
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, outcome.cycles().get(1).reflection().decision());
+        assertTrue(outcome.evidenceReferences().contains("diagnostic-failed"));
+    }
+
     private static ActionFabric.Action action(
             String ref,
             java.util.function.Function<ActionFabric.ActionRequest, ActionFabric.ActionObservation> invocation) {
