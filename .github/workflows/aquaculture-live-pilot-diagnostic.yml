@@ -22,15 +22,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIOS_BASE="$HOME/.metatron/bios"
-          DB="$BIOS_BASE/data/bios.db"
-          if [ ! -f "$DB" ]; then
-            DB=$(find "$BIOS_BASE" -maxdepth 3 -name '*.db' -o -name '*.sqlite*' | head -1)
-          fi
-          test -f "$DB"
-          python3 - "$DB" <<'PY'
-          import json,sqlite3,sys
-          db=sqlite3.connect(sys.argv[1]); db.row_factory=sqlite3.Row
+          docker exec metatron-bios python3 - <<'PY'
+          import json,sqlite3
+          db=sqlite3.connect("/data/bios_runtime.db"); db.row_factory=sqlite3.Row
           pilot=db.execute("SELECT * FROM aq_field_pilots WHERE name='Kelvin Self Pilot' ORDER BY created_at DESC LIMIT 1").fetchone()
           assert pilot, "Kelvin Self Pilot not found"
           participant=db.execute("SELECT * FROM aq_field_participants WHERE pilot_id=? ORDER BY joined_at DESC LIMIT 1",(pilot["pilot_id"],)).fetchone()
