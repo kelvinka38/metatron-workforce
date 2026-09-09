@@ -27,7 +27,7 @@ jobs:
       - name: Deploy accepted BIOS and execute live acceptance
         shell: bash
         env:
-          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha || '854ccf3c67c54a12780216d05c48c855194482cf' }}
+          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha || '8493323a6535003f875fe5cf43114892fbae3626' }}
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
