@@ -74,8 +74,16 @@ public final class WorkplaceControlRoomController {
         WorkplaceControlRoomService.WorkerDetail detail = controlRoom.worker(workerId);
         String history = chatStore.context(workerId, 16, 11_000);
         String context = workerOperationalContext(detail) + (history.isBlank() ? "" : "\n\nRECENT DIRECT CONVERSATION\n" + history);
+        List<String> trustedExecutionEvidence = detail.actions().stream()
+                .flatMap(action -> action.evidenceReferences().stream())
+                .filter(ref -> ref != null && ref.startsWith("action-fabric:"))
+                .filter(ref -> ref.contains(":worker=" + workerId + ":"))
+                .filter(ref -> ref.endsWith(":success=true") || ref.contains(":success=true:"))
+                .distinct()
+                .limit(200)
+                .toList();
         WorkerConversationGateway.Reply reply = workerConversation.converse(
-                workerId, role, command.message().trim(), context);
+                workerId, role, command.message().trim(), context, trustedExecutionEvidence);
         return chatStore.append(workerId, command.message(), reply);
     }
 
