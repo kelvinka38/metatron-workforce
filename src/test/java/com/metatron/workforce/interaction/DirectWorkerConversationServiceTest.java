@@ -148,7 +148,9 @@ class DirectWorkerConversationServiceTest {
 
         PersistentWorkerConversationMemoryStore memory =
                 new PersistentWorkerConversationMemoryStore(
-                        new ObjectMapper(), temp.resolve("memory"), temp.resolve("legacy"));
+                        new ObjectMapper(),
+                        temp.resolve("memory").toString(),
+                        temp.resolve("legacy").toString());
         DirectWorkerConversationBindingStore bindings =
                 new DirectWorkerConversationBindingStore(
                         new ObjectMapper(), temp.resolve("bindings.json"));
