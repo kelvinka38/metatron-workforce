@@ -22,7 +22,7 @@ jobs:
       - name: Verify E0-E10 deployed build evidence
         shell: bash
         env:
-          BIOS_EXPECTED_SHA: d1c4e60f6766253ad7d692257ccb41768ee7d52e
+          BIOS_EXPECTED_SHA: f3c5e774ea9a630fb1d999da4660502a8e33ee89
         run: |
           set -euo pipefail
           BIOS_BASE="$HOME/.metatron/bios"
@@ -42,7 +42,7 @@ jobs:
 
           RELEASE_CODE=$(curl -sS -o /tmp/aq-release.json -w '%{http_code}'             -X POST http://127.0.0.1:18080/v2/product/aquaculture/release             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/aq-release-request.json)
           test "$RELEASE_CODE" = 200
-          python3 -c 'import json,os; d=json.load(open("/tmp/aq-release.json"))["payload"]["data"]; assert d["bios_commit_sha"]==os.environ["BIOS_EXPECTED_SHA"]; assert d["execution_plan_version"]=="v1.0"; assert d["data"]["data_bundle_ready"] is True; print("E0_RELEASE_IDENTITY=PASS")'
+          python3 -c 'import json,os; d=json.load(open("/tmp/aq-release.json"))["payload"]["data"]; assert d["bios_commit_sha"]==os.environ["BIOS_EXPECTED_SHA"]; assert d["execution_plan_version"]=="v1.0"; assert d["execution_build_status"]=="AQUACULTURE_BUILD_COMPLETE"; assert d["field_validation"]=="DEFERRED_POST_BUILD"; assert d["data"]["data_bundle_ready"] is True; print("E0_RELEASE_IDENTITY=PASS")'
 
           SOURCES_CODE=$(curl -sS -o /tmp/aq-sources.json -w '%{http_code}'             -X POST http://127.0.0.1:18080/v2/product/aquaculture/data/sources             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/aq-release-request.json)
           test "$SOURCES_CODE" = 200
