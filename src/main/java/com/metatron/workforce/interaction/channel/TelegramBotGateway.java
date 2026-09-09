@@ -3,6 +3,7 @@ package com.metatron.workforce.interaction.channel;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.ConversationSurfaceModeService;
+import com.metatron.workforce.interaction.DirectWorkerConversationService;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -26,6 +27,7 @@ public final class TelegramBotGateway implements ChannelGateway {
     static final String WORK_CONTROL = ConversationSurfaceModeService.WORK_CONTROL;
     static final String MEETING_CONTROL = ConversationSurfaceModeService.MEETING_CONTROL;
     static final String MONITOR_CONTROL = "📊 Monitor";
+    static final String WORKERS_CONTROL = DirectWorkerConversationService.WORKERS_CONTROL;
     /**
      * Telegram sendMessage accepts at most 4096 characters. Stay below the hard limit so
      * multi-byte/supplementary Unicode, future presentation changes, and upstream counting
@@ -148,17 +150,19 @@ public final class TelegramBotGateway implements ChannelGateway {
 
     static Map<String, Object> topLevelReplyMarkup() {
         return Map.of(
-                "keyboard", List.of(List.of(CHAT_CONTROL, WORK_CONTROL)),
+                "keyboard", List.of(
+                        List.of(CHAT_CONTROL, WORK_CONTROL),
+                        List.of(WORKERS_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,
-                "input_field_placeholder", "Chat with Metatron…");
+                "input_field_placeholder", "Chat with Metatron or a Worker…");
     }
 
     static Map<String, Object> workReplyMarkup() {
         return Map.of(
                 "keyboard", List.of(
                         List.of(MEETING_CONTROL, MONITOR_CONTROL),
-                        List.of(CHAT_CONTROL)),
+                        List.of(CHAT_CONTROL, WORKERS_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,
                 "input_field_placeholder", "Work with Metatron…");
