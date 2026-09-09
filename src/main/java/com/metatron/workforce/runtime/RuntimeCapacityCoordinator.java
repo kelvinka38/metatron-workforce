@@ -18,6 +18,11 @@ public final class RuntimeCapacityCoordinator {
         return lifecycle.activate(runtime.runtimeId());
     }
 
+    public synchronized RuntimeInstance ensureRunning(String workerId) {
+        if (workerId == null || workerId.isBlank()) throw new IllegalArgumentException("workerId required");
+        return registry.runningForWorker(workerId.trim()).orElseGet(() -> provision(workerId.trim()));
+    }
+
     public synchronized RuntimeInstance replace(String workerId, String failedRuntimeId) {
         RuntimeInstance old = registry.get(failedRuntimeId);
         if (old == null) throw new IllegalStateException("runtime not found: " + failedRuntimeId);
