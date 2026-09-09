@@ -1,10 +1,6 @@
 name: BIOS Aquaculture Public Reconcile
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bios-aquaculture-public-reconcile.yml'
   workflow_dispatch:
 
 permissions:
