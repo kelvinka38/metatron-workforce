@@ -2,6 +2,7 @@ package com.metatron.workforce.workplace;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -28,6 +29,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
     private final RuntimeCapacityCoordinator runtimeCapacity;
     private final WorkerIntelligenceService intelligence;
     private final InstitutionalRoleGrounding institutionalGrounding;
+    private final WorkerConstitutionService constitution;
 
     @Autowired
     public CanonicalWorkerConversationService(
@@ -35,12 +37,14 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
             WorkerRuntimeProfileBindingService runtimeProfiles,
             RuntimeCapacityCoordinator runtimeCapacity,
             WorkerIntelligenceService intelligence,
-            InstitutionalRoleGrounding institutionalGrounding) {
+            InstitutionalRoleGrounding institutionalGrounding,
+            WorkerConstitutionService constitution) {
         this.core = Objects.requireNonNull(core, "core");
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
         this.runtimeCapacity = Objects.requireNonNull(runtimeCapacity, "runtimeCapacity");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
         this.institutionalGrounding = Objects.requireNonNull(institutionalGrounding, "institutionalGrounding");
+        this.constitution = Objects.requireNonNull(constitution, "constitution");
     }
 
     /**
@@ -51,11 +55,30 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
             WorkerRuntimeProfileBindingService runtimeProfiles,
             RuntimeCapacityCoordinator runtimeCapacity,
             WorkerIntelligenceService intelligence) {
-        this(core, runtimeProfiles, runtimeCapacity, intelligence,
+        this.core = Objects.requireNonNull(core, "core");
+        this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
+        this.runtimeCapacity = Objects.requireNonNull(runtimeCapacity, "runtimeCapacity");
+        this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
+        this.institutionalGrounding =
                 (roleRef, positionRef, requestedRole, message) -> InstitutionalRoleGrounding.Grounding.available(
                         "test-only",
                         "TEST-ONLY INSTITUTIONAL GROUNDING",
-                        List.of("institutional-source:test-only")));
+                        List.of("institutional-source:test-only"));
+        this.constitution = null; // Test/backward constructor only; production requires durable constitution.
+    }
+
+    CanonicalWorkerConversationService(
+            WorkforceCoreService core,
+            WorkerRuntimeProfileBindingService runtimeProfiles,
+            RuntimeCapacityCoordinator runtimeCapacity,
+            WorkerIntelligenceService intelligence,
+            InstitutionalRoleGrounding institutionalGrounding) {
+        this.core = Objects.requireNonNull(core, "core");
+        this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
+        this.runtimeCapacity = Objects.requireNonNull(runtimeCapacity, "runtimeCapacity");
+        this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
+        this.institutionalGrounding = Objects.requireNonNull(institutionalGrounding, "institutionalGrounding");
+        this.constitution = null;
     }
 
     @Override
@@ -79,6 +102,20 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         }
 
         WorkforceCoreService.Participation participation = selectParticipation(activeParticipations, role);
+        WorkerConstitutionService.ConstitutionContext constitutionContext = null;
+        if (constitution != null) {
+            try {
+                constitutionContext = constitution.contextFor(workerId, participation.participationId());
+            } catch (IllegalStateException missingConstitution) {
+                return new Reply(
+                        "Worker operating constitution is unavailable (" + missingConstitution.getMessage()
+                                + "). This Worker is not institutionally usable until its Position mission, responsibilities, "
+                                + "reporting, authority/resource scope, escalation, success measures and operating policy are durably bound.",
+                        "worker-constitution-blocked:" + workerId,
+                        List.of("worker-constitution:unavailable:" + workerId),
+                        "");
+            }
+        }
         WorkerRuntimeProfileBindingService.Binding runtime = runtimeProfiles.requireBinding(workerId);
         RuntimeInstance liveRuntime = runtimeCapacity.ensureRunning(workerId);
 
@@ -98,6 +135,13 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         evidence.add("worker-runtime-instance:" + liveRuntime.runtimeId() + ":state=" + liveRuntime.state().name());
         evidence.add("worker-runtime-actions:" + runtime.profile().actionRefs().stream().sorted().toList());
         capabilityRefs.forEach(capability -> evidence.add("worker-capability:" + capability));
+        if (constitutionContext != null) {
+            constitutionContext.evidenceReferences().stream()
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .filter(ref -> !evidence.contains(ref))
+                    .forEach(evidence::add);
+            evidence.add("worker-position-contract:" + constitutionContext.contract().contractId());
+        }
         if (trustedExecutionEvidence != null) {
             trustedExecutionEvidence.stream()
                     .filter(ref -> ref != null && !ref.isBlank())
@@ -141,6 +185,9 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 runtime_state=%s
                 capabilities=%s
 
+                MATERIALIZED WORKER CONSTITUTION
+                %s
+
                 CANONICAL INSTITUTIONAL GROUNDING
                 domain=%s
                 %s
@@ -160,6 +207,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 liveRuntime.runtimeId(),
                 liveRuntime.state().name(),
                 capabilityRefs,
+                constitutionContext == null ? "TEST-ONLY: no durable constitution injected" : constitutionContext.renderedContext(),
                 grounding.domain(),
                 grounding.context(),
                 safe(userMessage),
