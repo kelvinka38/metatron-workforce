@@ -40,6 +40,7 @@ public final class ChannelInteractionIngressService {
             ExecutionObjectiveHandoff executionObjectiveHandoff,
             WorkplaceMeetingService workplaceMeetingService,
             MetatronInstitutionalStateChatService institutionalStateChatService,
+            WorkerLifecycleControlService workerLifecycleControlService,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/conversations}}") String conversationMemoryPath,
             @Value("${METATRON_CONVERSATION_SURFACE_MODE_PATH:/var/lib/metatron-workforce/conversation-surface-mode}") String conversationSurfaceModePath,
             ObjectMapper objectMapper) {
@@ -57,6 +58,7 @@ public final class ChannelInteractionIngressService {
                 Objects.requireNonNull(workplaceMeetingService, "workplaceMeetingService"),
                 new ConversationSurfaceModeService(new PersistentConversationSurfaceModeStore(Path.of(conversationSurfaceModePath))),
                 Objects.requireNonNull(institutionalStateChatService, "institutionalStateChatService"),
+                Objects.requireNonNull(workerLifecycleControlService, "workerLifecycleControlService"),
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
