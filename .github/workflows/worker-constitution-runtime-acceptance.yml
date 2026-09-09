@@ -7,6 +7,7 @@ on:
       - 'src/main/java/com/metatron/workforce/operating/**'
       - 'src/main/java/com/metatron/workforce/workplace/**'
       - 'src/main/java/com/metatron/workforce/management/GeneralWorkspaceAutonomousCapability.java'
+      - 'src/main/java/com/metatron/workforce/management/LiveManagementConfiguration.java'
       - 'src/main/java/com/metatron/workforce/action/GeneralCognitiveWorkerBrain.java'
       - 'src/test/java/com/metatron/workforce/operating/**'
       - 'src/test/java/com/metatron/workforce/workplace/**'
