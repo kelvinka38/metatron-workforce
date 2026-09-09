@@ -7,6 +7,7 @@ import com.metatron.workforce.execution.ExecutionAttemptStore;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.observation.FileObservationStateStore;
+import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
 import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.observation.ObservationClosureService;
 import com.metatron.workforce.observation.ObservationStateStore;
@@ -154,11 +155,25 @@ public class LiveManagementConfiguration {
             GatewayDirectorAppointmentCapability capability,
             WorkforceCoreService core,
             RuntimeCapacityCoordinator runtimeCapacity,
+            WorkerConstitutionRuntimeMaterializer constitutionRuntime,
             @Value("${METATRON_BOOTSTRAP_GATEWAY_HEAD:true}") boolean enabled) {
         return args -> {
             if (!enabled) return;
-            staffing.ensureStaffed(capability, Clock.systemUTC().instant());
+            var now = Clock.systemUTC().instant();
+            staffing.ensureStaffed(capability, now);
             runtimeCapacity.ensureRunning(GatewayDirectorAppointmentCapability.WORKER_ID);
+            WorkforceCoreService.Participation canonicalParticipation = core.participations(
+                            GatewayDirectorAppointmentCapability.WORKER_ID).stream()
+                    .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
+                    .filter(p -> GatewayDirectorAppointmentCapability.ROLE_REF.equals(p.roleRef()))
+                    .filter(p -> GatewayDirectorAppointmentCapability.POSITION_REF.equals(p.positionRef()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "canonical Gateway Director active participation missing after staffing reconciliation"));
+            constitutionRuntime.materialize(
+                    GatewayDirectorAppointmentCapability.WORKER_ID,
+                    canonicalParticipation.participationId(),
+                    now);
 
             // Collapse every historical/parallel Gateway Head identity onto the one governed canonical Worker.
             // Production has accumulated more than one legacy ID over earlier acceptance/bootstrap iterations,
