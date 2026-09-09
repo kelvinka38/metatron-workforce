@@ -27,6 +27,17 @@ jobs:
           CONFIG="$BASE/envoy-online.yaml"
           COMPOSE="$BASE/docker-compose.yml"
           test -f "$CONFIG"; test -f "$COMPOSE"
+
+          # Recover a valid baseline if a prior candidate was written but failed validation.
+          if ! docker run --rm -v "$CONFIG:/etc/envoy/envoy.yaml:ro" envoyproxy/envoy:v1.36-latest               --mode validate -c /etc/envoy/envoy.yaml >/tmp/aq-current-validate.log 2>&1; then
+            BACKUP=$(ls -1t "$CONFIG".bak.pre-aquaculture-* 2>/dev/null | head -1 || true)
+            test -n "$BACKUP"
+            cp "$BACKUP" "$BASE/envoy-online.yaml.recovered"
+            docker run --rm -v "$BASE/envoy-online.yaml.recovered:/etc/envoy/envoy.yaml:ro" envoyproxy/envoy:v1.36-latest               --mode validate -c /etc/envoy/envoy.yaml
+            mv -f "$BASE/envoy-online.yaml.recovered" "$CONFIG"
+            echo 'AQUACULTURE_BASELINE_RECOVERY=PASS'
+          fi
+
           cp "$CONFIG" "$CONFIG.bak.pre-aquaculture-$(date +%s)"
           TMP_CONFIG="$BASE/envoy-online.yaml.aquaculture-new"
           cp "$CONFIG" "$TMP_CONFIG"
@@ -34,44 +45,57 @@ jobs:
           python3 - "$TMP_CONFIG" <<'PY'
           from pathlib import Path
           import sys
+
           path=Path(sys.argv[1])
           text=path.read_text()
-          marker="# BIOS Aquaculture public product boundary."
-          if marker not in text:
-              anchor='              # Gateway V2 Front Office / Management / explicit egress capabilities.'
-              if anchor not in text:
-                  raise SystemExit("Aquaculture route anchor not found")
-              block='''              # BIOS Aquaculture public product boundary.
-              # Web assets are public. API auth remains fail-closed in BIOS via X-BIOS-API-Key
-              # until a canonical institution identity/session provider is approved.
-              - match: {prefix: "/aquaculture"}
-                route: {cluster: bios, timeout: 30s}
-                typed_per_filter_config:
-                  envoy.filters.http.ext_authz:
-                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
-                    disabled: true
-              - match: {prefix: "/v2/product/aquaculture/"}
-                route: {cluster: bios, timeout: 30s}
-                typed_per_filter_config:
-                  envoy.filters.http.ext_authz:
-                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
-                    disabled: true
+          marker='              # BIOS Aquaculture public product boundary.'
+          anchor='              # Gateway V2 Front Office / Management / explicit egress capabilities.'
 
-          '''
-              text=text.replace(anchor,block+anchor,1)
-              path.write_text(text)
+          # Remove any prior Aquaculture block so reconcile is idempotent and repairs malformed candidates.
+          raw_marker='# BIOS Aquaculture public product boundary.'
+          if raw_marker in text:
+              start=text.index(raw_marker)
+              start=text.rfind('\n',0,start)+1
+              anchor_pos=text.find(anchor,start)
+              if anchor_pos < 0:
+                  raise SystemExit('Gateway anchor missing after Aquaculture marker')
+              text=text[:start]+text[anchor_pos:]
+
+          if anchor not in text:
+              raise SystemExit('Aquaculture route anchor not found')
+
+          block=(
+              '              # BIOS Aquaculture public product boundary.\n'
+              '              # Web assets are public. API auth remains fail-closed in BIOS via X-BIOS-API-Key\n'
+              '              # until a canonical institution identity/session provider is approved.\n'
+              '              - match: {prefix: "/aquaculture"}\n'
+              '                route: {cluster: bios, timeout: 30s}\n'
+              '                typed_per_filter_config:\n'
+              '                  envoy.filters.http.ext_authz:\n'
+              '                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute\n'
+              '                    disabled: true\n'
+              '              - match: {prefix: "/v2/product/aquaculture/"}\n'
+              '                route: {cluster: bios, timeout: 30s}\n'
+              '                typed_per_filter_config:\n'
+              '                  envoy.filters.http.ext_authz:\n'
+              '                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute\n'
+              '                    disabled: true\n'
+              '\n'
+          )
+          text=text.replace(anchor,block+anchor,1)
+          path.write_text(text)
           PY
 
+          grep -q '# BIOS Aquaculture public product boundary.' "$TMP_CONFIG"
+          grep -q 'prefix: "/aquaculture"' "$TMP_CONFIG"
+          grep -q 'prefix: "/v2/product/aquaculture/"' "$TMP_CONFIG"
+          grep -q 'address: bios, port_value: 8080' "$TMP_CONFIG"
+
+          # Candidate must validate before it can replace the live source.
+          docker run --rm -v "$TMP_CONFIG:/etc/envoy/envoy.yaml:ro" envoyproxy/envoy:v1.36-latest             --mode validate -c /etc/envoy/envoy.yaml
+          echo 'AQUACULTURE_ENVOY_CANDIDATE_VALID=PASS'
+
           mv -f "$TMP_CONFIG" "$CONFIG"
-
-          grep -q '# BIOS Aquaculture public product boundary.' "$CONFIG"
-          grep -q 'prefix: "/aquaculture"' "$CONFIG"
-          grep -q 'prefix: "/v2/product/aquaculture/"' "$CONFIG"
-          grep -q 'address: bios, port_value: 8080' "$CONFIG"
-
-          docker run --rm -v "$CONFIG:/etc/envoy/envoy.yaml:ro"             envoyproxy/envoy:v1.36-latest --mode validate -c /etc/envoy/envoy.yaml
-          echo 'AQUACULTURE_ENVOY_CONFIG_VALID=PASS'
-
           cd "$BASE"
           docker compose up -d --force-recreate envoy
 
@@ -98,6 +122,7 @@ jobs:
           test -r "$BIOS_BASE/.env"
           set -a; source "$BIOS_BASE/.env"; set +a
           test -n "${BIOS_API_KEY:-}"
+
           python3 - <<'PY' >/tmp/aq-auth-request.json
           import json,datetime
           print(json.dumps({
@@ -109,6 +134,7 @@ jobs:
             "payload":{}
           }))
           PY
+
           AUTH_CODE=$(curl -sS --max-time 10 -o /tmp/aq-auth.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/readiness             -H "X-BIOS-API-Key: $BIOS_API_KEY"             -H 'Content-Type: application/json'             --data-binary @/tmp/aq-auth-request.json)
           test "$AUTH_CODE" = 200
           python3 - <<'PY'
