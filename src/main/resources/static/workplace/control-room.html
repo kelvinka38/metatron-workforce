@@ -256,7 +256,7 @@ function renderWorkerSummary(w){
 }
 function renderWorkerProfile(p){
   if(!p)return '<div class="empty">Worker operating profile unavailable.</div>';
-  let f=p.formation||{},perf=p.performance||{},m=p.canonicalMandate||{};
+  let f=p.formation||{},perf=p.performance||{},m=p.canonicalMandate||{},cp=p.constitution||{},ct=cp.contract||{};
   let identity=[
     ['Worker',p.workerId],['Participant',p.participantId],['Participant type',p.participantType],['Status',badge(p.status)],
     ['Organization',p.organizationRef||'—'],['Position',p.positionRef||'—'],['Role',p.roleRef||'—'],['Admitted',fmtTime(p.admittedAt)]
@@ -270,24 +270,58 @@ function renderWorkerProfile(p){
 
   let performance=[
     ['Owned objectives',perf.ownedObjectives],['Completed objectives',perf.completedObjectives],['Assignments',perf.assignments],
-    ['Action records',perf.actionRecords],['Successful actions',perf.successfulActions],['Failed actions',perf.failedActions]
+    ['Action records',perf.actionRecords],['Successful actions',perf.successfulActions],['Failed actions',perf.failedActions],
+    ['Objective completion',Math.round((perf.objectiveCompletionRatio||0)*100)+'%'],['Action success',Math.round((perf.actionSuccessRatio||0)*100)+'%']
   ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1]??0)+'</div></div>').join('');
 
   let authorities=p.authorityUses?.length?p.authorityUses.map(a=>'<div class="evidence"><b>'+esc(a.assignmentStatus)+'</b> · '+esc(a.assignmentId)+'<br>authority='+esc(a.authorityRef)+'<br>authorization='+esc(a.authorizationRef)+'<br>objective='+esc(a.objectiveRef)+'</div>').join(''):'<div class="muted">No assignment authority use currently projected.</div>';
   let capabilities=p.capabilities?.length?p.capabilities.map(x=>'<div class="evidence">'+esc(x.capabilityRef)+' · level '+x.level+' · '+esc(x.evidenceRef)+'</div>').join(''):'<div class="muted">No capability attestations.</div>';
   let qualifications=p.qualifications?.length?p.qualifications.map(x=>'<div class="evidence">'+esc(x.qualificationRef)+' · '+esc(x.evidenceRef)+'</div>').join(''):'<div class="muted">No qualification attestations.</div>';
   let sources=m.sourceReferences?.length?m.sourceReferences.map(x=>'<div class="evidence">'+esc(x)+'</div>').join(''):'<div class="muted">'+esc(m.unavailableReason||'No canonical source reference available.')+'</div>';
-  let gaps=p.modelGaps?.length?p.modelGaps.map(x=>'<div class="evidence">'+esc(x)+'</div>').join(''):'<div class="muted">No profile-model gaps reported.</div>';
+  let gaps=p.modelGaps?.length?p.modelGaps.map(x=>'<div class="evidence">'+esc(x)+'</div>').join(''):'<div class="muted">No open Worker Constitution gaps reported for this materialized profile.</div>';
 
-  return '<div class="profileNote"><strong>Worker is an identity anchor.</strong> This view composes canonical Role/Position, staffing, authority, runtime, memory and performance relationships; it does not invent a universal agent object.</div>'+
+  let constitution='';
+  if(cp.available){
+    let responsibilities=(ct.responsibilities||[]).map(x=>'<div class="evidence">'+esc(x)+'</div>').join('');
+    let reporting=(ct.reportingLines||[]).map(x=>'<div class="evidence"><b>'+esc(x.relationshipType)+'</b> → '+esc(x.targetRef)+'<br>'+esc(x.scope)+'</div>').join('');
+    let resources=(ct.resourceScopes||[]).map(x=>'<div class="evidence"><b>'+esc(x.resourceRef)+'</b> · '+esc(x.limitRef)+'</div>').join('');
+    let escalations=(ct.escalationRoutes||[]).map(x=>'<div class="evidence"><b>'+esc(x.category)+'</b> → '+esc(x.targetRef)+'<br>'+esc(x.trigger)+'</div>').join('');
+    let measures=(ct.successMeasures||[]).map(x=>'<div class="evidence"><b>'+esc(x.measureRef)+'</b><br>'+esc(x.description)+'<br><span class="muted">Target: '+esc(x.target)+'</span></div>').join('');
+    let rights=(ct.decisionRights||[]).map(x=>'<div class="evidence">'+esc(x)+'</div>').join('');
+    let reqcaps=(ct.capabilityRequirements||[]).map(x=>'<span class="badge">'+esc(x)+'</span>').join(' ');
+    let authority=(ct.authorityScopes||[]).map(x=>'<div class="evidence">'+esc(x)+'</div>').join('');
+    let experiences=(cp.recentExperience||[]).map(x=>'<div class="evidence"><b>'+esc(x.outcome)+'</b> · '+esc(x.actionRef)+' · '+fmtTime(x.observedAt)+'<br>'+esc(x.statement)+'</div>').join('')||'<div class="muted">No attributable execution experience recorded yet.</div>';
+    let learning=(cp.recentLearning||[]).map(x=>'<div class="evidence"><b>'+esc(x.type)+'</b> · '+fmtTime(x.learnedAt)+'<br>'+esc(x.lesson)+'</div>').join('')||'<div class="muted">No evidence-derived learning record yet.</div>';
+    constitution=
+      '<div class="block"><h3>Materialized Position Constitution</h3><div class="detailGrid">'+[
+        ['Contract',ct.contractId],['Coverage',ct.operatingCoverage],['Working timezone',ct.workingTimeZone],['Max concurrent assignments',ct.maxConcurrentAssignments]
+      ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1]||'—')+'</div></div>').join('')+'</div>'+
+      '<div class="block"><h3>Mission</h3><pre class="profileText">'+esc(ct.mission||'—')+'</pre></div>'+
+      '<div class="block"><h3>Responsibilities</h3>'+responsibilities+'</div>'+
+      '<div class="block"><h3>Reporting / coordination relationships</h3>'+reporting+'</div>'+
+      '<div class="block"><h3>Capability requirements</h3>'+reqcaps+'</div>'+
+      '<div class="block"><h3>Standing authority scopes</h3>'+authority+'</div>'+
+      '<div class="block"><h3>Resource scope</h3>'+resources+'</div>'+
+      '<div class="block"><h3>Escalation routes</h3>'+escalations+'</div>'+
+      '<div class="block"><h3>Success measures / KPI contract</h3>'+measures+'</div>'+
+      '<div class="block"><h3>Decision rights</h3>'+rights+'</div>'+
+      '<div class="block"><h3>Experience</h3>'+experiences+'</div>'+
+      '<div class="block"><h3>Evidence-derived learning</h3>'+learning+'</div>'+
+      '</div>';
+  }else{
+    constitution='<div class="block"><h3>Materialized Position Constitution</h3><div class="evidence">'+badge('BLOCKED')+' No durable Position constitution is bound to this Worker participation.</div></div>';
+  }
+
+  return '<div class="profileNote"><strong>Worker is an identity anchor.</strong> The Position Constitution below is durable Workforce state. Canonical SoT remains the semantic authority; prompt/runtime are implementation layers, not substitutes.</div>'+
     '<div class="block"><h3>Identity / organizational placement</h3><div class="detailGrid">'+identity+'</div></div>'+
     '<div class="block"><h3>Formation / standing operating envelope</h3><div class="detailGrid">'+formation+'</div></div>'+
+    constitution+
     '<div class="block"><h3>Canonical mandate · '+esc(m.domain||'UNRESOLVED')+'</h3>'+(m.available?'<pre class="profileText">'+esc(m.content)+'</pre>':'<div class="muted">'+esc(m.unavailableReason||'Canonical mandate unavailable.')+'</div>')+'</div>'+
     '<div class="block"><h3>Canonical source evidence</h3>'+sources+'</div>'+
-    '<div class="block"><h3>Capabilities</h3>'+capabilities+'</div>'+
+    '<div class="block"><h3>Attested capabilities</h3>'+capabilities+'</div>'+
     '<div class="block"><h3>Qualifications</h3>'+qualifications+'</div>'+
     '<div class="block"><h3>Authority actually used by Assignments</h3>'+authorities+'</div>'+
-    '<div class="block"><h3>Operational performance evidence</h3><div class="detailGrid">'+performance+'</div><div class="profileNote">These counts are evidence/projection, not a formal Performance evaluation.</div></div>'+
+    '<div class="block"><h3>Formal contextual Performance evaluation</h3><div class="detailGrid">'+performance+'</div><div class="profileNote">Evaluator: '+esc(perf.evaluatorRef||'—')+' · '+fmtTime(perf.evaluatedAt)+'. Performance is period/context/evidence bound, not a permanent Worker score.</div></div>'+
     '<div class="block"><h3>Live cognition instructions · prompt contract</h3><pre class="profileText">'+esc(p.liveCognitionInstructions||'—')+'</pre></div>'+
     '<div class="block"><h3>Worker-model completeness gaps</h3>'+gaps+'</div>';
 }
