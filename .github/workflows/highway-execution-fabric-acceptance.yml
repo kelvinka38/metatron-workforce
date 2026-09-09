@@ -36,7 +36,42 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s highway/tests -v
           python3 -m py_compile highway/highwayd.py highway/highwayctl.py
+          bash -n highway/install.sh highway/ensure-running.sh highway/publish-release.sh
+          for script in scripts/highway-tasks/*.sh; do bash -n "$script"; done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reg=json.loads(Path('highway/task-registry.json').read_text())
+          required={
+            'workforce-build','workforce-deploy','production-highway-fast',
+            'work-observability','control-room-fast','bios-deploy',
+            'meeting-real-worker','general-engineering-go1','production-highway-full',
+            'worker-state-hygiene'
+          }
+          assert required <= set(reg['tasks']), required-set(reg['tasks'])
+          deploy=Path('.github/workflows/production-deploy.yml').read_text()
+          assert 'name: Highway Release Ingress' in deploy
+          assert '--kind workforce-build' in deploy and '--kind workforce-deploy' in deploy
+          assert './gradlew clean test bootJar' not in deploy
+          assert 'docker compose' not in deploy
+          migrated=[
+            '.github/workflows/bios-production-deploy.yml',
+            '.github/workflows/meeting-real-worker-production-acceptance.yml',
+            '.github/workflows/general-engineering-go1-production-acceptance.yml',
+            '.github/workflows/production-acceptance-highway-v2.yml',
+            '.github/workflows/work-observability-production-acceptance.yml',
+            '.github/workflows/workplace-control-room-production-acceptance.yml',
+            '.github/workflows/production-worker-state-hygiene.yml',
+          ]
+          for path in migrated:
+              text=Path(path).read_text()
+              assert 'runs-on: [self-hosted, linux, x64, metatron-prod]' in text
+              assert 'highwayctl.py' in text, path
+              assert 'workflow_run:' not in text, path
+          print('HIGHWAY_GITHUB_INGRESS_ONLY_CONTRACT=PASS')
+          PY
           echo 'HIGHWAY_SCHEDULER_UNIT_CONTRACT=PASS'
+          echo 'HIGHWAY_TASK_SCRIPT_SYNTAX=PASS'
 
       - name: Install persistent Highway service
         if: github.event_name != 'pull_request'
