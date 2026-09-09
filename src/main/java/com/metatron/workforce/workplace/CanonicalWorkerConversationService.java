@@ -2,6 +2,8 @@ package com.metatron.workforce.workplace;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
+import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
+import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.springframework.stereotype.Service;
 
@@ -22,14 +24,17 @@ import java.util.Objects;
 public final class CanonicalWorkerConversationService implements WorkerConversationGateway {
     private final WorkforceCoreService core;
     private final WorkerRuntimeProfileBindingService runtimeProfiles;
+    private final RuntimeCapacityCoordinator runtimeCapacity;
     private final WorkerIntelligenceService intelligence;
 
     public CanonicalWorkerConversationService(
             WorkforceCoreService core,
             WorkerRuntimeProfileBindingService runtimeProfiles,
+            RuntimeCapacityCoordinator runtimeCapacity,
             WorkerIntelligenceService intelligence) {
         this.core = Objects.requireNonNull(core, "core");
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
+        this.runtimeCapacity = Objects.requireNonNull(runtimeCapacity, "runtimeCapacity");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
     }
 
@@ -49,6 +54,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
 
         WorkforceCoreService.Participation participation = selectParticipation(activeParticipations, role);
         WorkerRuntimeProfileBindingService.Binding runtime = runtimeProfiles.requireBinding(workerId);
+        RuntimeInstance liveRuntime = runtimeCapacity.ensureRunning(workerId);
 
         List<String> capabilityRefs = core.capabilities(workerId).stream()
                 .filter(capability -> capability.level() > 0)
@@ -63,6 +69,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 + ":role=" + participation.roleRef()
                 + ":position=" + participation.positionRef());
         evidence.add("worker-runtime-profile:" + runtime.profile().profileRef());
+        evidence.add("worker-runtime-instance:" + liveRuntime.runtimeId() + ":state=" + liveRuntime.state().name());
         evidence.add("worker-runtime-actions:" + runtime.profile().actionRefs().stream().sorted().toList());
         capabilityRefs.forEach(capability -> evidence.add("worker-capability:" + capability));
 
@@ -85,6 +92,8 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 role_ref=%s
                 position_ref=%s
                 runtime_profile=%s
+                runtime_id=%s
+                runtime_state=%s
                 capabilities=%s
 
                 HUMAN MESSAGE
@@ -99,6 +108,8 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 participation.roleRef(),
                 participation.positionRef(),
                 runtime.profile().profileRef(),
+                liveRuntime.runtimeId(),
+                liveRuntime.state().name(),
                 capabilityRefs,
                 safe(userMessage),
                 safe(conversationContext));
@@ -112,7 +123,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
 
         List<String> replyEvidence = new ArrayList<>(response.evidenceReferences());
         replyEvidence.add("worker-conversation-request:" + response.requestReference());
-        return new Reply(response.text(), response.requestReference(), List.copyOf(replyEvidence));
+        return new Reply(response.text(), response.requestReference(), List.copyOf(replyEvidence), liveRuntime.runtimeId());
     }
 
     private static WorkforceCoreService.Participation selectParticipation(
