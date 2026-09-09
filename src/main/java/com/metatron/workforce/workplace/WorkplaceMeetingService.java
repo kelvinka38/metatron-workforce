@@ -385,7 +385,20 @@ public final class WorkplaceMeetingService {
         return "Institutional Worker";
     }
 
-    private static String renderWorkerReplies(List<WorkerReply> replies) {\n        StringBuilder out = new StringBuilder();\n        for (WorkerReply reply : replies) {\n            if (!out.isEmpty()) out.append("\\n\\n");\n            out.append("🏛 **").append(reply.worker().role()).append("**\\n")\n                    .append("worker_id=`").append(reply.worker().workerId()).append("`\\n")\n                    .append("runtime_id=`").append(reply.runtimeId().isBlank() ? "UNAVAILABLE" : reply.runtimeId()).append("`\\n")\n                    .append("runtime_state=").append(reply.runtimeId().isBlank() ? "UNVERIFIED" : "RUNNING")\n                    .append("\\n\\n")\n                    .append(reply.text());\n        }\n        return out.toString();\n    }\n\n    private static String renderWorkerUnavailable(List<String> unavailable) {
+    private static String renderWorkerReplies(List<WorkerReply> replies) {
+        StringBuilder out = new StringBuilder();
+        for (WorkerReply reply : replies) {
+            if (!out.isEmpty()) out.append("\n\n");
+            out.append("🏛 **").append(reply.worker().role()).append("**\n")
+                    .append("worker_id=`").append(reply.worker().workerId()).append("`\n")
+                    .append("runtime_id=`").append(reply.runtimeId().isBlank() ? "UNAVAILABLE" : reply.runtimeId()).append("`\n")
+                    .append("runtime_state=").append(reply.runtimeId().isBlank() ? "UNVERIFIED" : "RUNNING")
+                    .append("\n\n")
+                    .append(reply.text());
+        }
+        return out.toString();
+    }
+    private static String renderWorkerUnavailable(List<String> unavailable) {
         StringBuilder out = new StringBuilder("🏛 **WORKER NOT AVAILABLE**\n\n");
         for (String item : unavailable) out.append("- ").append(item).append('\n');
         out.append("\nNo role/persona simulation was used. Create or activate a real Worker first, then call its Worker ID.");
@@ -482,7 +495,25 @@ public final class WorkplaceMeetingService {
                 || lower.contains("lam di") || lower.contains("tiep tuc");
     }
 
-    private String renderActiveWorkers() {\n        if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");\n        List<MeetingWorkerDirectory.ResolvedWorker> workers = workerDirectory.listActive();\n        if (workers.isEmpty()) {\n            return "🏛 **LIVE WORKERS**\\n\\nNo Worker currently has a RUNNING runtime instance.";\n        }\n        StringBuilder out = new StringBuilder("🏛 **LIVE WORKERS**\\n\\n");\n        for (MeetingWorkerDirectory.ResolvedWorker worker : workers) {\n            out.append("worker_id=`").append(worker.workerId()).append("`\\n")\n                    .append("runtime_id=`").append(worker.runtimeId()).append("`\\n")\n                    .append("runtime_state=").append(worker.runtimeState()).append("\\n")\n                    .append("role=").append(worker.role()).append("\\n")\n                    .append("role_ref=").append(worker.roleRef()).append("\\n")\n                    .append("participation_id=`").append(worker.participationId()).append("`\\n\\n");\n        }\n        out.append("Call a Worker by its exact `worker_id`; Meeting will bind to the RUNNING `runtime_id` shown above.");\n        return out.toString();\n    }\n\n    public static boolean isWorkerDirectoryRequest(String text) {
+    private String renderActiveWorkers() {
+        if (workerDirectory == null) throw new IllegalStateException("meeting_worker_directory_unavailable");
+        List<MeetingWorkerDirectory.ResolvedWorker> workers = workerDirectory.listActive();
+        if (workers.isEmpty()) {
+            return "🏛 **LIVE WORKERS**\n\nNo Worker currently has a RUNNING runtime instance.";
+        }
+        StringBuilder out = new StringBuilder("🏛 **LIVE WORKERS**\n\n");
+        for (MeetingWorkerDirectory.ResolvedWorker worker : workers) {
+            out.append("worker_id=`").append(worker.workerId()).append("`\n")
+                    .append("runtime_id=`").append(worker.runtimeId()).append("`\n")
+                    .append("runtime_state=").append(worker.runtimeState()).append("\n")
+                    .append("role=").append(worker.role()).append("\n")
+                    .append("role_ref=").append(worker.roleRef()).append("\n")
+                    .append("participation_id=`").append(worker.participationId()).append("`\n\n");
+        }
+        out.append("Call a Worker by its exact `worker_id`; Meeting will bind to the RUNNING `runtime_id` shown above.");
+        return out.toString();
+    }
+    public static boolean isWorkerDirectoryRequest(String text) {
         if (text == null || text.isBlank()) return false;
         String lower = normalize(text);
         return lower.equals("workers")
