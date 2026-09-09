@@ -72,6 +72,11 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         evidence.add("worker-runtime-instance:" + liveRuntime.runtimeId() + ":state=" + liveRuntime.state().name());
         evidence.add("worker-runtime-actions:" + runtime.profile().actionRefs().stream().sorted().toList());
         capabilityRefs.forEach(capability -> evidence.add("worker-capability:" + capability));
+        String institutionalGrounding = institutionalGrounding(participation);
+        if (!institutionalGrounding.isBlank()) {
+            evidence.add("institutional-context:metatron-institution/06_GATEWAY/SOT.md");
+            evidence.add("institutional-context:metatron-institution/06_GATEWAY/GATEWAY/DOMAIN_OWNERSHIP_MATRIX.md");
+        }
 
         String instructions = """
                 You are the real institutional Worker identified below, speaking directly with the Human in a live Meeting.
@@ -80,6 +85,8 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 Answer the Human's latest message naturally and concisely. Ask a useful follow-up only when needed.
                 Do not invent actions, approvals, evidence, tools, memory, execution or authority.
                 Do not claim work was executed unless durable execution evidence actually exists in the supplied context.
+                Do not claim you reviewed a document, repository, org chart, queue, runtime policy or operational state unless that exact source/evidence is supplied in context.
+                Treat institutional ownership boundaries as hard constraints, not suggestions.
                 Do not expose or impersonate the underlying LLM/provider as the institutional actor.
                 Do not drag unrelated old Objectives, Cases or repository audits into the conversation unless the Human refers to them.
                 """;
@@ -96,6 +103,9 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 runtime_state=%s
                 capabilities=%s
 
+                AUTHORITATIVE INSTITUTIONAL GROUNDING
+                %s
+
                 HUMAN MESSAGE
                 %s
 
@@ -111,6 +121,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 liveRuntime.runtimeId(),
                 liveRuntime.state().name(),
                 capabilityRefs,
+                institutionalGrounding,
                 safe(userMessage),
                 safe(conversationContext));
 
@@ -124,6 +135,23 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         List<String> replyEvidence = new ArrayList<>(response.evidenceReferences());
         replyEvidence.add("worker-conversation-request:" + response.requestReference());
         return new Reply(response.text(), response.requestReference(), List.copyOf(replyEvidence), liveRuntime.runtimeId());
+    }
+
+    private static String institutionalGrounding(WorkforceCoreService.Participation participation) {
+        if ("ROLE-HEAD-OF-GATEWAY".equals(participation.roleRef())
+                || "position:gateway-director".equals(participation.positionRef())) {
+            return """
+                    authority_source=kelvinka38/metatron-institution/06_GATEWAY/SOT.md
+                    ownership_source=kelvinka38/metatron-institution/06_GATEWAY/GATEWAY/DOMAIN_OWNERSHIP_MATRIX.md
+                    gateway_mandate=controlled institutional boundary crossing with the outside world
+                    gateway_owns=boundary enforcement and Gateway-specific operational outcomes
+                    gateway_does_not_own=BIOS product; Workforce/Worker identity; Workplace/Meeting semantics; Objective/Work; Intelligence; Execution semantics; Knowledge truth; downstream product cognition
+                    bios_boundary=BIOS is a downstream Product/Node and is not the Gateway SoT or Gateway institutional owner
+                    execution_rule=conversation is not execution; an execution claim requires supplied durable execution evidence
+                    source_claim_rule=do not say a document/repository/org-chart was reviewed unless exact source evidence is supplied
+                    """;
+        }
+        return "";
     }
 
     private static WorkforceCoreService.Participation selectParticipation(
