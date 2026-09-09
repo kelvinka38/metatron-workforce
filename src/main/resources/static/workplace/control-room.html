@@ -46,6 +46,8 @@ a{color:inherit}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.m
 .block{margin-top:15px}.block h3{font-size:10px;color:#9dacbd;text-transform:uppercase;letter-spacing:.07em;margin:0 0 8px}
 .step{border:1px solid var(--line);background:#101820;border-radius:10px;padding:10px;margin-bottom:7px;cursor:pointer}.step:hover{border-color:#37485a}.stepTop{display:flex;justify-content:space-between;gap:10px}.stepName{font-size:11px;font-weight:720}.stepMeta{font-size:9.5px;color:#758497;line-height:1.5;margin-top:5px}
 .evidence{background:#0b1117;border:1px solid #1d2935;border-radius:8px;padding:8px;font-size:9.5px;color:#a9b4c1;word-break:break-all;margin-bottom:5px}
+.profileText{white-space:pre-wrap;word-break:break-word;background:#0b1117;border:1px solid #1d2935;border-radius:9px;padding:11px;color:#bdc8d4;font-size:9.5px;line-height:1.55;max-height:440px;overflow:auto;margin:0}
+.profileNote{font-size:9.5px;color:#8190a1;line-height:1.5;margin:7px 0}.profileNote strong{color:#d8e2ec}
 .controlRow{display:flex;gap:7px;flex-wrap:wrap}.control{border:1px solid var(--line);background:#17212c;color:#d6dfe8;border-radius:8px;padding:8px 10px;font-size:10px;font-weight:700}.control.warn{border-color:#5b4c25;color:#f1d273}.control.danger{border-color:#5b2930;color:#ff9ca5}.control.good{border-color:#20543a;color:#71e5a2}
 .chat{display:flex;flex-direction:column;height:min(68vh,680px);border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#0d141b}.chatMessages{flex:1;overflow:auto;padding:12px}.msg{max-width:88%;padding:9px 10px;border-radius:11px;margin:7px 0;font-size:11px;line-height:1.55;white-space:pre-wrap}.msg.human{margin-left:auto;background:#25334a}.msg.worker{margin-right:auto;background:#151f29;border:1px solid #233140}.msgMeta{font-size:8.5px;color:#6f7e8f;margin-top:4px}.chatCompose{display:flex;gap:7px;padding:9px;border-top:1px solid var(--line);background:#101820}.chatCompose textarea{flex:1;min-height:42px;max-height:140px;resize:vertical;background:#0c131a;color:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.chatCompose button{border:0;background:#e9eef4;color:#111820;border-radius:8px;padding:0 14px;font-weight:800}.chatError{padding:8px 11px;color:var(--red);font-size:10px;border-top:1px solid var(--line);background:#171116}.chatRuntime{padding:7px 11px;color:#80dba6;font-size:9px;border-bottom:1px solid var(--line);background:#0e1814}
 .toast{position:fixed;z-index:80;bottom:22px;right:22px;background:#18222d;border:1px solid #334253;color:#dce5ed;padding:10px 13px;border-radius:10px;font-size:11px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
@@ -211,16 +213,30 @@ async function openWorker(workerId,tab='summary'){
       return openWorker(w.canonicalReplacementWorkerId,tab);
     }
 
-    let history=[];
+    let history=[],profile=null;
     if(tab==='chat'){
       if(!w.chatAvailable)throw new Error('Worker is not available for direct conversation.');
       history=await api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/chat');
       w=await api('/workplace/api/workers/'+encodeURIComponent(workerId));
     }
+    if(['profile','runtime','memory'].includes(tab)){
+      profile=await api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/profile');
+    }
 
-    let tabs='<div class="drawerTabs"><button class="'+(tab==='summary'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'summary\')">Summary</button><button class="'+(tab==='tasks'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'tasks\')">Tasks</button><button class="'+(tab==='actions'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'actions\')">Actions</button>'+(w.chatAvailable?'<button class="'+(tab==='chat'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Chat</button>':'')+'</div>';
+    let tabs='<div class="drawerTabs">'+
+      '<button class="'+(tab==='summary'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'summary\')">Summary</button>'+
+      '<button class="'+(tab==='profile'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'profile\')">Profile</button>'+
+      '<button class="'+(tab==='runtime'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'runtime\')">Runtime & Tools</button>'+
+      '<button class="'+(tab==='memory'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'memory\')">Memory</button>'+
+      '<button class="'+(tab==='tasks'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'tasks\')">Tasks</button>'+
+      '<button class="'+(tab==='actions'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'actions\')">Actions</button>'+
+      (w.chatAvailable?'<button class="'+(tab==='chat'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Chat</button>':'')+
+      '</div>';
     let body=tabs;
     if(tab==='chat')body+=renderChat(w,history);
+    else if(tab==='profile')body+=renderWorkerProfile(profile);
+    else if(tab==='runtime')body+=renderWorkerRuntime(profile);
+    else if(tab==='memory')body+=renderWorkerMemory(profile,w);
     else if(tab==='tasks')body+=renderWorkerTasks(w);
     else if(tab==='actions')body+=renderWorkerActions(w);
     else body+=renderWorkerSummary(w);
@@ -237,6 +253,62 @@ function renderWorkerSummary(w){
   '<div class="block"><h3>Worker controls</h3><div class="controlRow"><button class="control '+(av.available?'warn':'good')+'" onclick="toggleWorker(\''+esc(w.workerId)+'\','+(!av.available)+','+av.capacity+')">'+(av.available?'Stop new intake':'Resume intake')+'</button>'+(w.chatAvailable?'<button class="control" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Talk to Worker</button>':'')+'</div></div>'+
   '<div class="block"><h3>Capabilities</h3>'+(w.capabilities.length?w.capabilities.map(c=>'<div class="evidence">'+esc(c.capabilityRef)+' · level '+c.level+' · '+esc(c.evidenceRef)+'</div>').join(''):'<div class="muted">No capabilities.</div>')+'</div>'+
   '<div class="block"><h3>Assignments</h3>'+(w.assignments.length?w.assignments.map(a=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(a.objectiveId)+'\')"><div class="stepTop"><div class="stepName">'+esc(a.description)+'</div>'+badge(a.status)+'</div><div class="stepMeta mono">'+esc(a.objectiveId)+'</div></div>').join(''):'<div class="muted">No assignments.</div>')+'</div>';
+}
+function renderWorkerProfile(p){
+  if(!p)return '<div class="empty">Worker operating profile unavailable.</div>';
+  let f=p.formation||{},perf=p.performance||{},m=p.canonicalMandate||{};
+  let identity=[
+    ['Worker',p.workerId],['Participant',p.participantId],['Participant type',p.participantType],['Status',badge(p.status)],
+    ['Organization',p.organizationRef||'—'],['Position',p.positionRef||'—'],['Role',p.roleRef||'—'],['Admitted',fmtTime(p.admittedAt)]
+  ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+(String(x[1]).startsWith('<span')?x[1]:esc(x[1]))+'</div></div>').join('');
+
+  let formation=f.available?[
+    ['Formation policy',f.policyCapabilityRef],['Authority envelope',f.authorityEnvelopeRef],['Qualification',f.qualificationRef],
+    ['Configured capacity',f.configuredCapacity],['Cost limit',f.costLimitRef],['Lifecycle',f.lifecycleRef]
+  ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1]||'—')+'</div></div>').join(''):
+    '<div class="muted">No governed formation policy is currently projected for this Worker.</div>';
+
+  let performance=[
+    ['Owned objectives',perf.ownedObjectives],['Completed objectives',perf.completedObjectives],['Assignments',perf.assignments],
+    ['Action records',perf.actionRecords],['Successful actions',perf.successfulActions],['Failed actions',perf.failedActions]
+  ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1]??0)+'</div></div>').join('');
+
+  let authorities=p.authorityUses?.length?p.authorityUses.map(a=>'<div class="evidence"><b>'+esc(a.assignmentStatus)+'</b> · '+esc(a.assignmentId)+'<br>authority='+esc(a.authorityRef)+'<br>authorization='+esc(a.authorizationRef)+'<br>objective='+esc(a.objectiveRef)+'</div>').join(''):'<div class="muted">No assignment authority use currently projected.</div>';
+  let capabilities=p.capabilities?.length?p.capabilities.map(x=>'<div class="evidence">'+esc(x.capabilityRef)+' · level '+x.level+' · '+esc(x.evidenceRef)+'</div>').join(''):'<div class="muted">No capability attestations.</div>';
+  let qualifications=p.qualifications?.length?p.qualifications.map(x=>'<div class="evidence">'+esc(x.qualificationRef)+' · '+esc(x.evidenceRef)+'</div>').join(''):'<div class="muted">No qualification attestations.</div>';
+  let sources=m.sourceReferences?.length?m.sourceReferences.map(x=>'<div class="evidence">'+esc(x)+'</div>').join(''):'<div class="muted">'+esc(m.unavailableReason||'No canonical source reference available.')+'</div>';
+  let gaps=p.modelGaps?.length?p.modelGaps.map(x=>'<div class="evidence">'+esc(x)+'</div>').join(''):'<div class="muted">No profile-model gaps reported.</div>';
+
+  return '<div class="profileNote"><strong>Worker is an identity anchor.</strong> This view composes canonical Role/Position, staffing, authority, runtime, memory and performance relationships; it does not invent a universal agent object.</div>'+
+    '<div class="block"><h3>Identity / organizational placement</h3><div class="detailGrid">'+identity+'</div></div>'+
+    '<div class="block"><h3>Formation / standing operating envelope</h3><div class="detailGrid">'+formation+'</div></div>'+
+    '<div class="block"><h3>Canonical mandate · '+esc(m.domain||'UNRESOLVED')+'</h3>'+(m.available?'<pre class="profileText">'+esc(m.content)+'</pre>':'<div class="muted">'+esc(m.unavailableReason||'Canonical mandate unavailable.')+'</div>')+'</div>'+
+    '<div class="block"><h3>Canonical source evidence</h3>'+sources+'</div>'+
+    '<div class="block"><h3>Capabilities</h3>'+capabilities+'</div>'+
+    '<div class="block"><h3>Qualifications</h3>'+qualifications+'</div>'+
+    '<div class="block"><h3>Authority actually used by Assignments</h3>'+authorities+'</div>'+
+    '<div class="block"><h3>Operational performance evidence</h3><div class="detailGrid">'+performance+'</div><div class="profileNote">These counts are evidence/projection, not a formal Performance evaluation.</div></div>'+
+    '<div class="block"><h3>Live cognition instructions · prompt contract</h3><pre class="profileText">'+esc(p.liveCognitionInstructions||'—')+'</pre></div>'+
+    '<div class="block"><h3>Worker-model completeness gaps</h3>'+gaps+'</div>';
+}
+function renderWorkerRuntime(p){
+  let r=p?.runtime||{};
+  let boxes=[
+    ['Runtime state',badge(r.runtimeState||'NOT_RUNNING')],['Runtime ID',r.runtimeId||'—'],['Profile',r.profileRef||'—'],['Binding capability',r.bindingCapabilityRef||'—'],
+    ['Writable workspace',String(!!r.writableWorkspace)],['Max process',r.maxProcessSeconds?r.maxProcessSeconds+'s':'—'],['Max output',r.maxOutputBytes||'—'],['Bound at',fmtTime(r.boundAt)]
+  ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+(String(x[1]).startsWith('<span')?x[1]:esc(x[1]))+'</div></div>').join('');
+  let actions=r.actionRefs?.length?r.actionRefs.map(x=>'<div class="evidence">'+esc(x)+'</div>').join(''):'<div class="muted">No runtime actions bound.</div>';
+  let execs=r.allowedExecutables?.length?r.allowedExecutables.map(x=>'<span class="badge">'+esc(x)+'</span>').join(' '):'<span class="muted">No executables bound.</span>';
+  return '<div class="detailGrid">'+boxes+'</div><div class="block"><h3>Governed action catalog</h3>'+actions+'</div><div class="block"><h3>Allowed executables</h3>'+execs+'</div>';
+}
+function renderWorkerMemory(p,w){
+  let m=p?.memory||{};
+  let boxes=[
+    ['Turns',m.turns??0],['Identity key',m.identityKey||'—'],['Channels',(m.channels||[]).join(', ')||'—'],['Last turn',fmtTime(m.lastTurnAt)],
+    ['Max stored turns',m.maxStoredTurns??'—'],['Worker',p?.workerId||w.workerId],['Runtime',w.runtimeState],['Isolation','Human + Worker']
+  ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1])+'</div></div>').join('');
+  return '<div class="profileNote">Memory belongs to the canonical Human + Worker relationship, not Telegram or the browser. Workplace and Telegram continue the same Worker memory.</div><div class="detailGrid">'+boxes+'</div>'+
+    (w.chatAvailable?'<div class="block"><div class="controlRow"><button class="control" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Open conversation</button></div></div>':'');
 }
 function renderWorkerTasks(w){
   return '<div class="block"><h3>Assigned and performed Work</h3>'+(w.tasks.length?w.tasks.map(t=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(t.objectiveId)+'\',\''+esc(t.stepId)+'\')"><div class="stepTop"><div class="stepName">'+esc(t.task)+'</div>'+badge(t.state)+'</div><div class="stepMeta">'+esc(t.projectId)+' · '+esc(t.requiredCapability)+' · '+t.actionCount+' action(s)</div></div>').join(''):'<div class="muted">No task history.</div>')+'</div>';
