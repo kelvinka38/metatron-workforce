@@ -43,7 +43,15 @@ public interface WorkerIntelligenceService {
     }
 
     static WorkerIntelligenceService backedBy(IntelligenceFabric fabric, int configuredProviderCount) {
+        return backedBy(fabric, configuredProviderCount, Thread::sleep);
+    }
+
+    static WorkerIntelligenceService backedBy(
+            IntelligenceFabric fabric,
+            int configuredProviderCount,
+            RetrySleeper retrySleeper) {
         Objects.requireNonNull(fabric, "fabric");
+        Objects.requireNonNull(retrySleeper, "retrySleeper");
         int providerBudget = Math.max(1, configuredProviderCount);
         return request -> {
             String requestId = "worker-cognition-" + UUID.randomUUID();
@@ -52,24 +60,48 @@ public interface WorkerIntelligenceService {
             // request itself is durable reasoning-input provenance and satisfies BIOS without
             // fabricating external evidence or weakening the governance gate.
             governedEvidence.add("worker-cognition-input:" + requestId);
-            IntelligenceRequest intelligenceRequest = new IntelligenceRequest(
-                    requestId,
-                    request.requester(),
-                    IntelligenceMode.REASONING,
-                    CollaborationMode.SINGLE,
-                    request.context(),
-                    "COGNITIVE INSTRUCTIONS\n" + request.instructions(),
-                    List.copyOf(governedEvidence),
-                    request.capability(),
-                    IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
-                    "work-runtime",
-                    "bounded",
-                    "",
-                    "strict structured cognitive result",
-                    List.of(),
-                    providerBudget,
-                    false);
-            IntelligenceResult result = fabric.execute(intelligenceRequest);
+
+            IntelligenceResult result = null;
+            RuntimeException lastFailure = null;
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                IntelligenceRequest intelligenceRequest = new IntelligenceRequest(
+                        requestId,
+                        request.requester(),
+                        IntelligenceMode.REASONING,
+                        CollaborationMode.SINGLE,
+                        request.context(),
+                        "COGNITIVE INSTRUCTIONS\n" + request.instructions(),
+                        List.copyOf(governedEvidence),
+                        request.capability(),
+                        IntelligenceConsequencePolicy.forNonConsequentialMode(IntelligenceMode.REASONING),
+                        "work-runtime",
+                        "bounded",
+                        "",
+                        "strict structured cognitive result",
+                        List.of(),
+                        providerBudget,
+                        false);
+                try {
+                    result = fabric.execute(intelligenceRequest);
+                    break;
+                } catch (RuntimeException failure) {
+                    lastFailure = failure;
+                    long delayMillis = "worker.cognition".equals(request.capability())
+                            ? transientProviderRecoveryDelayMillis(failure)
+                            : 0L;
+                    if (attempt >= 2 || delayMillis <= 0L) throw failure;
+                    governedEvidence.add("worker-intelligence-capacity-retry:" + requestId
+                            + ":attempt=2:delay_ms=" + delayMillis);
+                    try {
+                        retrySleeper.sleep(delayMillis);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("worker intelligence capacity retry interrupted", interrupted);
+                    }
+                }
+            }
+            if (result == null) throw Objects.requireNonNull(lastFailure, "worker intelligence result/failure");
+
             List<String> evidence = new ArrayList<>(result.evidenceReferences());
             evidence.add("worker-intelligence-request:" + requestId);
             result.providerResults().forEach(provider ->
@@ -78,6 +110,36 @@ public interface WorkerIntelligenceService {
                             + ":request=" + safe(provider.response().providerRequestReference())));
             return new Response(requestId, result.text(), List.copyOf(evidence));
         };
+    }
+
+    static long transientProviderRecoveryDelayMillis(Throwable failure) {
+        if (failure == null) return 0L;
+        java.util.ArrayDeque<Throwable> pending = new java.util.ArrayDeque<>();
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        pending.add(failure);
+        boolean transientNetworkOrServer = false;
+        while (!pending.isEmpty()) {
+            Throwable current = pending.removeFirst();
+            if (current == null || !seen.add(current)) continue;
+            String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            if (message.contains("429") || message.contains("rate limit") || message.contains("quota")
+                    || message.contains("capacity_exhausted") || message.contains("resource_exhausted")) {
+                return 60_000L;
+            }
+            if (message.contains("500") || message.contains("502") || message.contains("503")
+                    || message.contains("504") || message.contains("timeout")
+                    || message.contains("temporarily unavailable") || current instanceof java.io.IOException) {
+                transientNetworkOrServer = true;
+            }
+            if (current.getCause() != null) pending.addLast(current.getCause());
+            for (Throwable suppressed : current.getSuppressed()) pending.addLast(suppressed);
+        }
+        return transientNetworkOrServer ? 5_000L : 0L;
+    }
+
+    @FunctionalInterface
+    interface RetrySleeper {
+        void sleep(long millis) throws InterruptedException;
     }
 
     private static String safe(String value) {

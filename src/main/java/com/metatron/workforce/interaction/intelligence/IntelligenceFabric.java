@@ -112,8 +112,16 @@ public final class IntelligenceFabric {
                 return new IntelligenceResult(enrichedRequest.requestId(), fallback, List.of(),
                         enrichment.webEvidence().evidenceReferences());
             }
+            String reasons = failures.stream()
+                    .map(IntelligenceFabric::compactFailure)
+                    .filter(reason -> !reason.isBlank())
+                    .distinct()
+                    .limit(6)
+                    .reduce((left, right) -> left + " | " + right)
+                    .orElse("unavailable");
             IllegalStateException failure = new IllegalStateException(
-                    "all selected intelligence providers failed: " + plan.providers());
+                    "all selected intelligence providers failed: " + plan.providers()
+                            + "; reasons=" + reasons);
             failures.forEach(failure::addSuppressed);
             LOG.error("intelligence_all_providers_failed request_id={} providers={} failure_count={}",
                     enrichedRequest.requestId(), plan.providers(), failures.size());
@@ -191,6 +199,13 @@ public final class IntelligenceFabric {
                 request.latencyBudget(), request.costBudget(), request.authorityContext(), request.requiredOutput(),
                 request.requestedProviders(), request.maxProviders(), request.freshExternalDataRequired());
         return new WebEnrichment(enriched, result);
+    }
+
+    private static String compactFailure(RuntimeException failure) {
+        String message = failure == null ? "" : String.valueOf(failure.getMessage());
+        String clean = message.replace('\n', ' ').replace('\r', ' ').trim();
+        if (clean.length() > 500) clean = clean.substring(0, 500);
+        return clean;
     }
 
     private static String renderWebEvidenceFallback(ToolResult result) {
