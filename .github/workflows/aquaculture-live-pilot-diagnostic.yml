@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker exec metatron-bios python3 - <<'PY'
+          docker exec -i metatron-bios python3 - <<'PY'
           import json,sqlite3
           db=sqlite3.connect("/data/bios_runtime.db"); db.row_factory=sqlite3.Row
           pilot=db.execute("SELECT * FROM aq_field_pilots WHERE name='Kelvin Self Pilot' ORDER BY created_at DESC LIMIT 1").fetchone()
