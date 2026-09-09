@@ -55,7 +55,7 @@ jobs:
           FIELD_WEB_CODE=$(curl -sS -o /tmp/aq-field.html -w '%{http_code}' https://gate.metatron.vn/aquaculture/field)
           test "$FIELD_WEB_CODE" = 200
           grep -q 'FIELD-P1' /tmp/aq-field.html
-          grep -q 'Field Console' /tmp/aq-field.html
+          grep -q 'Pilot Console' /tmp/aq-field.html
           echo 'FIELD_OPERATOR_CONSOLE=PASS'
 
           FIELD_UNAUTH_CODE=$(curl -sS -o /tmp/aq-field-unauth.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/field/readiness             -H 'Content-Type: application/json' --data-binary @/tmp/aq-release-request.json)
