@@ -4,6 +4,7 @@ import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.observation.GatewayDirectorAppointmentObservationVerifier;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.observation.ObservationReport;
 import com.metatron.workforce.observation.ObservationRequirement;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -24,8 +25,9 @@ class GatewayDirectorStaffingIntegrationTest {
         WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
         GatewayDirectorAppointmentCapability delegate =
                 new GatewayDirectorAppointmentCapability(core, profiles);
+        WorkerConstitutionService constitution = WorkerConstitutionService.inMemory();
         AutonomousStaffingService staffing = new AutonomousStaffingService(
-                core, List.of(new GatewayDirectorStaffingPolicy()), profiles);
+                core, List.of(new GatewayDirectorStaffingPolicy()), profiles, constitution);
         GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
                 delegate,
                 core,
@@ -62,6 +64,24 @@ class GatewayDirectorStaffingIntegrationTest {
                 GatewayDirectorAppointmentCapability.CAPABILITY.equals(c.capabilityRef())));
         assertTrue(core.capabilities(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(c ->
                 GatewayDirectorAppointmentCapability.GATEWAY_AUDIT_CAPABILITY.equals(c.capabilityRef())));
+        assertTrue(core.capabilities(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(c ->
+                GatewayDirectorAppointmentCapability.OPERATIONAL_MANAGEMENT_CAPABILITY.equals(c.capabilityRef())));
+        assertTrue(core.capabilities(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(c ->
+                GatewayDirectorAppointmentCapability.RELIABILITY_MANAGEMENT_CAPABILITY.equals(c.capabilityRef())));
+        assertTrue(core.capabilities(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(c ->
+                GatewayDirectorAppointmentCapability.CAPACITY_COST_MANAGEMENT_CAPABILITY.equals(c.capabilityRef())));
+        assertTrue(core.capabilities(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(c ->
+                GatewayDirectorAppointmentCapability.INCIDENT_RECOVERY_CAPABILITY.equals(c.capabilityRef())));
+        var constitutionContext = constitution.contextFor(
+                GatewayDirectorAppointmentCapability.WORKER_ID,
+                "participation:gateway-director:metatron");
+        assertTrue(constitutionContext.contract().mission().contains("controlled institutional boundary"));
+        assertFalse(constitutionContext.contract().reportingLines().isEmpty());
+        assertFalse(constitutionContext.contract().resourceScopes().isEmpty());
+        assertFalse(constitutionContext.contract().escalationRoutes().isEmpty());
+        assertFalse(constitutionContext.contract().successMeasures().isEmpty());
+        assertEquals("CONTINUOUS_ACCOUNTABILITY_WITH_DEMAND_DRIVEN_BOUNDED_EXECUTION",
+                constitutionContext.contract().operatingCoverage());
         assertEquals(WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
                 profiles.requireBinding(GatewayDirectorAppointmentCapability.WORKER_ID).profile().profileRef());
         assertTrue(core.allAssignments().stream().anyMatch(a ->
@@ -70,7 +90,9 @@ class GatewayDirectorStaffingIntegrationTest {
         assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
                 ref.contains("staffing:policy=" + GatewayDirectorAppointmentCapability.CAPABILITY)));
         assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
-                ref.contains("additional-capabilities=[gateway.audit.read]")));
+                ref.contains("position-contract-bound:position-contract:position:gateway-director:v1")));
+        assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
+                ref.contains("gateway.operational.management")));
 
         GatewayDirectorAppointmentObservationVerifier verifier =
                 new GatewayDirectorAppointmentObservationVerifier(core, profiles);
