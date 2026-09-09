@@ -8,11 +8,16 @@ import java.util.Objects;
 public interface WorkerConversationGateway {
     Reply converse(String workerId, String role, String userMessage, String conversationContext);
 
-    record Reply(String text, String requestReference, List<String> evidenceReferences) {
+    record Reply(String text, String requestReference, List<String> evidenceReferences, String runtimeId) {
+        public Reply(String text, String requestReference, List<String> evidenceReferences) {
+            this(text, requestReference, evidenceReferences, "");
+        }
+
         public Reply {
             Objects.requireNonNull(text, "text");
             Objects.requireNonNull(requestReference, "requestReference");
             Objects.requireNonNull(evidenceReferences, "evidenceReferences");
+            runtimeId = runtimeId == null ? "" : runtimeId;
             evidenceReferences = List.copyOf(evidenceReferences);
             if (text.isBlank()) throw new IllegalArgumentException("worker conversation reply must not be blank");
         }
