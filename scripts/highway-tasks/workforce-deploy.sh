@@ -17,9 +17,15 @@ DEPLOY_STARTED_AT=$(date +%s)
 
 echo '=== PRE-FLIGHT ==='
 test -r "$BASE/.env"
-test -d "$WORKSPACE/.git"
-test "$(git -C "$WORKSPACE" rev-parse HEAD)" = "$SHA"
+test -f "$WORKSPACE/.highway-source-sha"
+test "$(cat "$WORKSPACE/.highway-source-sha")" = "$SHA"
 test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
+test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256"
+(
+  cd "$WORKSPACE"
+  sha256sum -c "build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256"
+)
+echo 'HIGHWAY_RELEASE_IDENTITY=PASS'
 set -a; source "$BASE/.env"; set +a
 
 # Internal effect-boundary tokens are host-local credentials. Persist them once, never log them.
