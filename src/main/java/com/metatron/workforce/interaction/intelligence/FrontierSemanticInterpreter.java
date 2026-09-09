@@ -16,6 +16,7 @@ import java.util.function.Function;
 
 /** Frontier-model semantic boundary for multilingual Human input. */
 public final class FrontierSemanticInterpreter {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(FrontierSemanticInterpreter.class);
     private static final String SYSTEM = """
             You are the semantic interface for Metatron.
             Understand the Human in their own language, including Vietnamese, English, mixed language, slang, shorthand, typos and colloquial phrasing.
@@ -145,9 +146,69 @@ public final class FrontierSemanticInterpreter {
                 failures.add(new IllegalStateException("semantic provider failed: " + provider + ": " + failure.getMessage(), failure));
             }
         }
-        IllegalStateException all = new IllegalStateException("all semantic providers failed: " + orderedProviders);
+        if (explicitlyRequestsFreshness(humanText, "") && !requiresConversationContext(humanText)) {
+            String reasons = failures.stream()
+                    .map(FrontierSemanticInterpreter::compactFailure)
+                    .filter(value -> !value.isBlank())
+                    .distinct()
+                    .limit(6)
+                    .reduce((left, right) -> left + " | " + right)
+                    .orElse("unavailable");
+            LOG.warn("semantic_current_information_fallback providers={} reasons={}", orderedProviders, reasons);
+            return conservativeCurrentInformationFallback(humanText);
+        }
+
+        String reasons = failures.stream()
+                .map(FrontierSemanticInterpreter::compactFailure)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .limit(6)
+                .reduce((left, right) -> left + " | " + right)
+                .orElse("unavailable");
+        IllegalStateException all = new IllegalStateException(
+                "all semantic providers failed: " + orderedProviders + "; reasons=" + reasons);
         failures.forEach(all::addSuppressed);
         throw all;
+    }
+
+    /**
+     * Narrow availability fallback for a self-contained request that explicitly requires current external reality.
+     *
+     * This does not infer a domain, entity, Worker, capability or institutional action. It preserves the Human
+     * wording as the semantic objective, forces evidence-grounded REASONING, and lets the normal Case requirement
+     * planner + governed acquisition path retrieve current evidence. Context-dependent follow-ups remain fail-closed
+     * because using this fallback there would guess what "it/that/currently" refers to.
+     */
+    static NormalizedRequest conservativeCurrentInformationFallback(String humanText) {
+        String objective = Objects.requireNonNull(humanText, "humanText").trim();
+        if (objective.isBlank()) throw new IllegalArgumentException("humanText must not be blank");
+        return new NormalizedRequest(
+                objective,
+                "",
+                List.of("use current external evidence", "do not guess"),
+                IntelligenceDepth.ANALYZE,
+                "direct natural-language answer",
+                List.of(),
+                List.of("unsupported guessing"),
+                "current",
+                "",
+                IntelligenceMode.REASONING,
+                CollaborationMode.SINGLE,
+                List.of(),
+                DeterministicCapability.NONE,
+                List.of(),
+                List.of(),
+                true,
+                null,
+                null,
+                CaseContinuity.NEW,
+                "");
+    }
+
+    private static String compactFailure(RuntimeException failure) {
+        if (failure == null) return "";
+        String message = String.valueOf(failure.getMessage()).replace('\n', ' ').replace('\r', ' ').trim();
+        return message.length() <= 500 ? message : message.substring(0, 500);
     }
 
     /** Compatibility overload: execution capability inventory belongs to downstream planning and is intentionally ignored here. */
