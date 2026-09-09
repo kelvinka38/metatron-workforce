@@ -3,6 +3,7 @@ package com.metatron.workforce.workplace;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.memory.PersistentWorkerConversationMemoryStore;
 import com.metatron.workforce.management.AutonomousStaffingPolicy;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -30,6 +31,7 @@ public final class WorkerOperatingProfileService {
     private final List<AutonomousStaffingPolicy> staffingPolicies;
     private final InstitutionalRoleGrounding grounding;
     private final PersistentWorkerConversationMemoryStore memory;
+    private final WorkerConstitutionService constitution;
 
     public WorkerOperatingProfileService(
             WorkforceCoreService core,
@@ -38,7 +40,8 @@ public final class WorkerOperatingProfileService {
             WorkplaceDashboardService dashboard,
             List<AutonomousStaffingPolicy> staffingPolicies,
             InstitutionalRoleGrounding grounding,
-            PersistentWorkerConversationMemoryStore memory) {
+            PersistentWorkerConversationMemoryStore memory,
+            WorkerConstitutionService constitution) {
         this.core = Objects.requireNonNull(core, "core");
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
         this.runtimes = Objects.requireNonNull(runtimes, "runtimes");
@@ -46,6 +49,19 @@ public final class WorkerOperatingProfileService {
         this.staffingPolicies = List.copyOf(Objects.requireNonNull(staffingPolicies, "staffingPolicies"));
         this.grounding = Objects.requireNonNull(grounding, "grounding");
         this.memory = Objects.requireNonNull(memory, "memory");
+        this.constitution = Objects.requireNonNull(constitution, "constitution");
+    }
+
+    WorkerOperatingProfileService(
+            WorkforceCoreService core,
+            WorkerRuntimeProfileBindingService runtimeProfiles,
+            RuntimeRegistry runtimes,
+            WorkplaceDashboardService dashboard,
+            List<AutonomousStaffingPolicy> staffingPolicies,
+            InstitutionalRoleGrounding grounding,
+            PersistentWorkerConversationMemoryStore memory) {
+        this(core, runtimeProfiles, runtimes, dashboard, staffingPolicies, grounding, memory,
+                WorkerConstitutionService.inMemory());
     }
 
     public OperatingProfile profile(String workerId) {
@@ -137,6 +153,55 @@ public final class WorkerOperatingProfileService {
                         assignment.status().name()))
                 .toList();
 
+        // Reconcile operational evidence into durable contextual Performance / Experience / Learning.
+        actionRecords.stream().limit(200).forEach(action ->
+                constitution.observeAction(
+                        workerId,
+                        action.actionRef(),
+                        action.success(),
+                        action.summary(),
+                        action.recordedAt(),
+                        action.evidenceReferences()));
+
+        List<String> performanceEvidence = new ArrayList<>();
+        performanceEvidence.add("workplace-dashboard-revision:" + state.revision());
+        state.objectivePulse().stream()
+                .filter(objective -> workerId.equals(objective.ownerWorkerId())
+                        || objective.actionRecords().stream().anyMatch(action -> workerId.equals(action.workerId())))
+                .limit(100)
+                .forEach(objective -> {
+                    performanceEvidence.add("objective:" + objective.objectiveId() + ":state=" + objective.executionState());
+                    objective.actionRecords().stream()
+                            .filter(action -> workerId.equals(action.workerId()))
+                            .flatMap(action -> action.evidenceReferences().stream())
+                            .limit(20)
+                            .forEach(performanceEvidence::add);
+                });
+        WorkerConstitutionService.PerformanceEvaluation formalPerformance =
+                constitution.recordPerformance(
+                        workerId,
+                        worker.admittedAt(),
+                        state.generatedAt(),
+                        ownedObjectives,
+                        completedObjectives,
+                        assignments.size(),
+                        actionRecords.size(),
+                        successfulActions,
+                        failedActions,
+                        "workforce:operational-performance-evaluator:v1",
+                        List.copyOf(new LinkedHashSet<>(performanceEvidence)));
+
+        WorkerConstitutionService.ConstitutionContext materialized = null;
+        if (primary != null) {
+            Optional<AutonomousStaffingPolicy> policyForWorker = formationPolicy;
+            if (constitution.binding(workerId, primary.participationId()).isEmpty() && policyForWorker.isPresent()) {
+                constitution.ensureConstitution(policyForWorker.get(), state.generatedAt());
+            }
+            materialized = constitution.binding(workerId, primary.participationId()).isPresent()
+                    ? constitution.contextFor(workerId, primary.participationId())
+                    : null;
+        }
+
         PerformanceProfile performance = new PerformanceProfile(
                 ownedObjectives,
                 completedObjectives,
@@ -145,17 +210,28 @@ public final class WorkerOperatingProfileService {
                 successfulActions,
                 failedActions,
                 actionRecords.isEmpty() ? null : actionRecords.getLast().recordedAt(),
-                false);
+                true,
+                formalPerformance.objectiveCompletionRatio(),
+                formalPerformance.actionSuccessRatio(),
+                formalPerformance.evaluatorRef(),
+                formalPerformance.evaluatedAt());
 
         LinkedHashSet<String> gaps = new LinkedHashSet<>();
-        gaps.add("position.mission: CANONICAL_SOURCE_ONLY — not materialized as a first-class live Position contract");
-        gaps.add("position.reporting_relationship: NOT_MODELED in live Workforce Core projection");
-        gaps.add("position.resource_scope: PARTIAL — cost/capacity exist, full resource envelope is not materialized");
-        gaps.add("position.escalation_route: NOT_MODELED in live Worker profile");
-        gaps.add("position.success_measures: CANONICAL_SOURCE_ONLY — no first-class KPI contract bound to this Position");
-        gaps.add("worker.schedule/work_periods: NOT_MODELED in live Worker profile");
-        gaps.add("worker.performance_evaluation: NOT_MODELED — dashboard counts are operational evidence, not formal evaluation");
-        gaps.add("worker.experience/learning: PARTIAL — conversation memory exists; institutional Experience/Learning records are not projected here");
+        if (materialized == null) {
+            gaps.add("worker.position_constitution: NOT_BOUND — active participation has no durable Position operating contract");
+        }
+        if (materialized != null && materialized.contract().reportingLines().isEmpty()) {
+            gaps.add("position.reporting_relationship: MISSING");
+        }
+        if (materialized != null && materialized.contract().resourceScopes().isEmpty()) {
+            gaps.add("position.resource_scope: MISSING");
+        }
+        if (materialized != null && materialized.contract().escalationRoutes().isEmpty()) {
+            gaps.add("position.escalation_route: MISSING");
+        }
+        if (materialized != null && materialized.contract().successMeasures().isEmpty()) {
+            gaps.add("position.success_measures: MISSING");
+        }
 
         return new OperatingProfile(
                 worker.workerId(),
@@ -172,11 +248,24 @@ public final class WorkerOperatingProfileService {
                 runtimeProfile,
                 memoryProfile,
                 performance,
+                materialized == null ? ConstitutionProfile.unavailable() : constitutionProfile(materialized),
                 core.capabilities(workerId),
                 core.qualifications(workerId),
                 authorityUses,
                 CanonicalWorkerConversationService.liveConversationInstructions(),
                 List.copyOf(gaps));
+    }
+
+    private static ConstitutionProfile constitutionProfile(
+            WorkerConstitutionService.ConstitutionContext context) {
+        return new ConstitutionProfile(
+                true,
+                context.contract(),
+                context.binding(),
+                context.performance(),
+                context.recentExperience(),
+                context.recentLearning(),
+                context.evidenceReferences());
     }
 
     private static FormationProfile formationProfile(
@@ -260,7 +349,24 @@ public final class WorkerOperatingProfileService {
             long successfulActions,
             long failedActions,
             Instant lastActionAt,
-            boolean formalEvaluationAvailable) {}
+            boolean formalEvaluationAvailable,
+            double objectiveCompletionRatio,
+            double actionSuccessRatio,
+            String evaluatorRef,
+            Instant evaluatedAt) {}
+
+    public record ConstitutionProfile(
+            boolean available,
+            WorkerConstitutionService.PositionOperatingContract contract,
+            WorkerConstitutionService.WorkerPositionBinding binding,
+            WorkerConstitutionService.PerformanceEvaluation performance,
+            List<WorkerConstitutionService.ExperienceRecord> recentExperience,
+            List<WorkerConstitutionService.LearningRecord> recentLearning,
+            List<String> evidenceReferences) {
+        static ConstitutionProfile unavailable() {
+            return new ConstitutionProfile(false, null, null, null, List.of(), List.of(), List.of());
+        }
+    }
 
     public record AuthorityUse(
             String assignmentId,
@@ -284,6 +390,7 @@ public final class WorkerOperatingProfileService {
             RuntimeProfile runtime,
             MemoryProfile memory,
             PerformanceProfile performance,
+            ConstitutionProfile constitution,
             List<WorkforceCoreService.Capability> capabilities,
             List<WorkforceCoreService.Qualification> qualifications,
             List<AuthorityUse> authorityUses,
