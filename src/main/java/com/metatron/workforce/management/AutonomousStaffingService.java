@@ -90,12 +90,26 @@ public final class AutonomousStaffingService {
             List<String> evidence;
             if (policy != null) {
                 var spec = policy.formationSpec();
+
+                // Reconciliation is part of staffing reality. A pre-existing Worker may have been
+                // formed under an older policy revision; reusing identity must not leave the
+                // current governed capability/qualification/constitution envelope partially applied.
+                core.attestCapability(workerId, capability.capabilityRef(),
+                        spec.capabilityLevel(), spec.capabilityEvidenceRef());
+                for (AutonomousStaffingPolicy.CapabilityGrant grant : policy.additionalCapabilities()) {
+                    core.attestCapability(workerId, grant.capabilityRef(), grant.level(), grant.evidenceRef());
+                }
+                core.attestQualification(workerId, spec.qualificationRef(), spec.qualificationEvidenceRef(), null);
+
                 WorkerRuntimeProfileBindingService.Binding binding = runtimeProfiles.bind(
                         workerId, spec.runtimeProfileRef(), capability.capabilityRef(), at);
                 WorkerConstitutionService.WorkerPositionBinding constitutionBinding =
                         constitution.ensureConstitution(policy, at);
                 evidence = List.of(
                         "staffing:reused-worker=" + workerId,
+                        "reconciled-capabilities=" + policy.additionalCapabilities().stream()
+                                .map(AutonomousStaffingPolicy.CapabilityGrant::capabilityRef).sorted().toList(),
+                        "qualification-evidence:" + spec.qualificationEvidenceRef(),
                         "position-contract-bound:" + constitutionBinding.contractId(),
                         "runtime-profile-bound:" + binding.profile().profileRef(),
                         "runtime-actions=" + binding.profile().actionRefs().stream().sorted().toList());
