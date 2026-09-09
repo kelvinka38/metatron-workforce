@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: metatron-production-state
+  group: workplace-control-room-production-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
