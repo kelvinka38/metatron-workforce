@@ -15,9 +15,9 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * Live institutional conversation through a real canonical Worker.
+ * Live channel-neutral institutional conversation through a real canonical Worker.
  *
- * Meeting never asks a provider to "pretend to be" a role. The requested Worker must exist,
+ * No Workplace surface asks a provider to "pretend to be" a role. The requested Worker must exist,
  * be ACTIVE, hold an ACTIVE institutional participation, and have a durable runtime/tool profile
  * binding. Cognition then goes through the WorkerIntelligenceService with requester=workerId.
  */
@@ -60,6 +60,12 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
 
     @Override
     public Reply converse(String workerId, String role, String userMessage, String conversationContext) {
+        return converse(workerId, role, userMessage, conversationContext, List.of());
+    }
+
+    @Override
+    public Reply converse(String workerId, String role, String userMessage, String conversationContext,
+                          List<String> trustedExecutionEvidence) {
         WorkforceCoreService.Worker worker = core.worker(workerId);
         if (worker.status() != WorkforceCoreService.WorkerStatus.ACTIVE) {
             throw new IllegalStateException("meeting_worker_not_active:" + workerId + ":status=" + worker.status());
@@ -92,6 +98,18 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         evidence.add("worker-runtime-instance:" + liveRuntime.runtimeId() + ":state=" + liveRuntime.state().name());
         evidence.add("worker-runtime-actions:" + runtime.profile().actionRefs().stream().sorted().toList());
         capabilityRefs.forEach(capability -> evidence.add("worker-capability:" + capability));
+        if (trustedExecutionEvidence != null) {
+            trustedExecutionEvidence.stream()
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .map(String::trim)
+                    .filter(ref -> ref.startsWith("action-fabric:"))
+                    .filter(ref -> ref.contains(":worker=" + workerId + ":"))
+                    .filter(ref -> ref.endsWith(":success=true") || ref.contains(":success=true:"))
+                    .distinct()
+                    .limit(200)
+                    .filter(ref -> !evidence.contains(ref))
+                    .forEach(evidence::add);
+        }
 
         InstitutionalRoleGrounding.Grounding grounding = institutionalGrounding.resolve(
                 participation.roleRef(), participation.positionRef(), role, userMessage);
@@ -110,8 +128,9 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         }
 
         String instructions = """
-                You are the real institutional Worker identified below, speaking directly with the Human in a live Meeting.
-                This is a conversation, not a memo, report, governance notice, meeting minutes, or provider persona.
+                You are the real institutional Worker identified below, speaking directly with the Human in a live institutional conversation.
+                This may be surfaced through Meeting, Workplace Control Room, or another authorized Workplace client.
+                It is a conversation, not a memo, report, governance notice, meeting minutes, or provider persona.
                 Preserve the Worker's actual institutional role, accountability and authority boundary.
                 The CANONICAL INSTITUTIONAL GROUNDING below is authoritative for domain ownership and scope.
                 Treat that grounding as a scope ceiling: do not absorb semantics owned by another institutional domain.
@@ -146,7 +165,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 HUMAN MESSAGE
                 %s
 
-                MEETING CONTEXT
+                CONVERSATION CONTEXT
                 %s
                 """.formatted(
                 workerId,

@@ -39,6 +39,8 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
     private static final Pattern SECTION = Pattern.compile("(?m)(?=^##+\\s+)");
     private static final Map<String, String> DOMAIN_BINDINGS = Map.ofEntries(
             Map.entry("gateway", "06_GATEWAY"),
+            Map.entry("general code and runtime worker", "05_WORKFORCE"),
+            Map.entry("general engineering", "05_WORKFORCE"),
             Map.entry("workforce", "05_WORKFORCE"),
             Map.entry("knowledge", "07_KNOWLEDGE"),
             Map.entry("intelligence", "10_INTELLIGENCE"),
@@ -91,7 +93,7 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
             return Grounding.unavailable("no-canonical-domain-binding");
         }
 
-        String sotPath = domain + "/SOT.md";
+        String sotPath = canonicalSotPath(domain);
         Document sot = fetch(sotPath);
         if (sot == null) {
             return Grounding.unavailable("canonical-sot-unavailable:" + sotPath);
@@ -134,6 +136,11 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
             return Grounding.unavailable("canonical-grounding-empty:" + sotPath);
         }
         return Grounding.available(domain, context.toString().trim(), List.copyOf(evidence));
+    }
+
+    static String canonicalSotPath(String domain) {
+        if ("05_WORKFORCE".equals(domain)) return "05_WORKFORCE/WORKFORCE_SOT.md";
+        return domain + "/SOT.md";
     }
 
     private Document fetch(String path) {

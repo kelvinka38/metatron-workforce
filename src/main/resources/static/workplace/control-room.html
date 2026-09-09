@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0f14">
+<title>Metatron Workplace</title>
+<style>
+:root{
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  color:#eaf0f7;background:#0a0f14;
+  --bg:#0a0f14;--panel:#10171f;--panel2:#131c26;--line:#23303d;--line2:#1b2631;
+  --text:#eaf0f7;--muted:#8190a1;--soft:#aab6c4;--green:#4bd58a;--yellow:#f4c95d;
+  --red:#ff7d88;--blue:#83a6ff;--violet:#a99cff;
+}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}
+button,input,textarea{font:inherit}button{cursor:pointer}.hidden{display:none!important}
+a{color:inherit}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.muted{color:var(--muted)}
+.appShell{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:100vh}
+.sidebar{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);background:#0c1218;padding:18px 12px;display:flex;flex-direction:column}
+.brand{padding:4px 10px 18px}.brand strong{display:block;font-size:17px;letter-spacing:.02em}.brand span{font-size:11px;color:var(--muted)}
+.nav{display:grid;gap:5px}.nav button{border:0;background:transparent;color:#9ba8b7;text-align:left;padding:10px 11px;border-radius:9px;font-weight:650;font-size:13px;display:flex;align-items:center;gap:10px}
+.nav button:hover,.nav button.active{background:#17202a;color:#fff}.nav .count{margin-left:auto;font-size:10px;padding:2px 6px;border-radius:999px;background:#23303d;color:#b6c1ce}
+.sideFoot{margin-top:auto;padding:10px}.sideFoot button{width:100%;border:1px solid var(--line);background:#121a23;color:#c9d3dd;border-radius:9px;padding:9px}
+.main{min-width:0}.topbar{height:68px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--line);padding:0 22px;position:sticky;top:0;z-index:12;background:rgba(10,15,20,.92);backdrop-filter:blur(14px)}
+.pageTitle{min-width:160px}.pageTitle strong{font-size:16px}.pageTitle div{font-size:10px;color:var(--muted);margin-top:2px}
+.search{flex:1;max-width:620px;position:relative}.search input{width:100%;background:#111923;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px 10px 36px;outline:none}.search:before{content:"⌕";position:absolute;left:12px;top:7px;color:#748395;font-size:20px}
+.topActions{margin-left:auto;display:flex;align-items:center;gap:9px}.live{display:flex;align-items:center;gap:7px;font-size:11px;color:#93a3b5}.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px rgba(75,213,138,.7)}
+.iconBtn{border:1px solid var(--line);background:#121a23;color:#cbd5df;border-radius:9px;padding:8px 10px}
+.content{padding:20px 22px 90px;max-width:1700px;margin:0 auto}.sectionTitle{display:flex;justify-content:space-between;gap:12px;align-items:flex-end;margin:2px 0 12px}.sectionTitle h1{margin:0;font-size:21px}.sectionTitle p{margin:4px 0 0;color:var(--muted);font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:14px}.kpi{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px}.kpi .k{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#718094}.kpi .v{font-size:24px;font-weight:830;margin-top:6px}.kpi .s{font-size:10px;color:#69788a;margin-top:2px}
+.grid2{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(330px,.72fr);gap:12px}.stack{display:grid;gap:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}.panelHead{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border-bottom:1px solid var(--line)}.panelHead h2{margin:0;font-size:13px}.panelHead span{font-size:10px;color:var(--muted)}
+.tableWrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:780px}.table th,.table td{padding:10px 12px;border-bottom:1px solid var(--line2);font-size:11px;vertical-align:middle;text-align:left}.table th{position:sticky;top:0;background:#0e151c;color:#748397;text-transform:uppercase;font-size:9px;letter-spacing:.07em}.clickRow{cursor:pointer}.clickRow:hover{background:#151e28}.titleCell{font-weight:700;font-size:12px;max-width:500px}.subCell{font-size:9.5px;color:#6f7e8f;margin-top:3px;word-break:break-all}
+.badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 7px;font-size:9px;font-weight:800;white-space:nowrap;background:#24303c;color:#b8c5d3}
+.badge.ACTIVE,.badge.WORKING,.badge.COMPLETED,.badge.COMPLETED_WITH_EVIDENCE,.badge.RUNNING,.badge.SUCCESS{background:#153526;color:#6ee6a3}
+.badge.BLOCKED,.badge.ESCALATED,.badge.STALE,.badge.STALE_EXECUTION,.badge.UNPROVEN_EXECUTION,.badge.FAILED,.badge.CANCELLED{background:#472027;color:#ff9ca5}
+.badge.READY,.badge.PLANNING,.badge.REPLANNING,.badge.WAITING,.badge.PAUSED,.badge.VERIFYING,.badge.NOT_MATERIALIZED{background:#3d341e;color:#f1d273}
+.badge.MUTATING_EFFECT_OBSERVED{background:#30275a;color:#bbb0ff}.badge.READ_ONLY_ONLY{background:#17344b;color:#8fd0ff}
+.progress{height:5px;background:#202b35;border-radius:999px;overflow:hidden;margin-top:5px}.progress i{height:100%;display:block;background:#7f95ff}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:13px;cursor:pointer}.card:hover{border-color:#3c4a5a;background:#121b24}.cardTop{display:flex;justify-content:space-between;gap:8px}.cardTitle{font-size:12px;font-weight:750;word-break:break-word}.cardMeta{font-size:10px;color:var(--muted);margin-top:5px;line-height:1.45}.metricRow{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:10px}.miniMetric{background:#0d141b;border:1px solid var(--line2);border-radius:8px;padding:8px}.miniMetric b{display:block;font-size:15px}.miniMetric span{font-size:9px;color:#758496}
+.list{display:grid}.listItem{padding:11px 13px;border-bottom:1px solid var(--line2);cursor:pointer}.listItem:last-child{border-bottom:0}.listItem:hover{background:#141d26}.listTitle{font-size:11px;font-weight:700}.listMeta{font-size:9.5px;color:#738295;margin-top:4px;line-height:1.45}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}.filter{border:1px solid var(--line);background:#111922;color:#aeb9c5;border-radius:999px;padding:6px 10px;font-size:10px}.filter.active{background:#263445;color:white}
+.drawerBackdrop{position:fixed;inset:0;background:rgba(0,0,0,.58);z-index:40}.drawer{position:fixed;z-index:41;top:0;right:0;width:min(860px,96vw);height:100vh;background:#0c1218;border-left:1px solid #2a3744;overflow:auto;box-shadow:-24px 0 60px rgba(0,0,0,.5)}.drawerHead{position:sticky;top:0;z-index:2;background:rgba(12,18,24,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:15px 17px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.drawerHead h2{font-size:16px;margin:0}.drawerSub{font-size:10px;color:var(--muted);margin-top:4px;word-break:break-all}.drawerBody{padding:15px 17px 30px}.drawerTabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:13px}.drawerTabs button{border:1px solid var(--line);background:#111922;color:#9eabb9;border-radius:8px;padding:7px 10px;font-size:10px}.drawerTabs button.active{background:#223042;color:#fff}.close{border:1px solid var(--line);background:#151e28;color:#d7e0e9;border-radius:8px;padding:7px 9px}
+.detailGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.detailBox{background:#111922;border:1px solid var(--line2);border-radius:10px;padding:10px}.detailBox .k{font-size:9px;color:#708093;text-transform:uppercase}.detailBox .v{font-size:12px;font-weight:730;margin-top:4px;word-break:break-word}
+.block{margin-top:15px}.block h3{font-size:10px;color:#9dacbd;text-transform:uppercase;letter-spacing:.07em;margin:0 0 8px}
+.step{border:1px solid var(--line);background:#101820;border-radius:10px;padding:10px;margin-bottom:7px;cursor:pointer}.step:hover{border-color:#37485a}.stepTop{display:flex;justify-content:space-between;gap:10px}.stepName{font-size:11px;font-weight:720}.stepMeta{font-size:9.5px;color:#758497;line-height:1.5;margin-top:5px}
+.evidence{background:#0b1117;border:1px solid #1d2935;border-radius:8px;padding:8px;font-size:9.5px;color:#a9b4c1;word-break:break-all;margin-bottom:5px}
+.controlRow{display:flex;gap:7px;flex-wrap:wrap}.control{border:1px solid var(--line);background:#17212c;color:#d6dfe8;border-radius:8px;padding:8px 10px;font-size:10px;font-weight:700}.control.warn{border-color:#5b4c25;color:#f1d273}.control.danger{border-color:#5b2930;color:#ff9ca5}.control.good{border-color:#20543a;color:#71e5a2}
+.chat{display:flex;flex-direction:column;height:min(68vh,680px);border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#0d141b}.chatMessages{flex:1;overflow:auto;padding:12px}.msg{max-width:88%;padding:9px 10px;border-radius:11px;margin:7px 0;font-size:11px;line-height:1.55;white-space:pre-wrap}.msg.human{margin-left:auto;background:#25334a}.msg.worker{margin-right:auto;background:#151f29;border:1px solid #233140}.msgMeta{font-size:8.5px;color:#6f7e8f;margin-top:4px}.chatCompose{display:flex;gap:7px;padding:9px;border-top:1px solid var(--line);background:#101820}.chatCompose textarea{flex:1;min-height:42px;max-height:140px;resize:vertical;background:#0c131a;color:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.chatCompose button{border:0;background:#e9eef4;color:#111820;border-radius:8px;padding:0 14px;font-weight:800}
+.toast{position:fixed;z-index:80;bottom:22px;right:22px;background:#18222d;border:1px solid #334253;color:#dce5ed;padding:10px 13px;border-radius:10px;font-size:11px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.login{max-width:410px;margin:13vh auto 0;padding:16px}.loginCard{background:#111820;border:1px solid var(--line);border-radius:15px;padding:19px}.loginCard h1{margin:0;font-size:18px}.loginCard p{font-size:11px;color:var(--muted);line-height:1.5}.loginCard input{width:100%;background:#0b1117;color:#fff;border:1px solid var(--line);border-radius:9px;padding:12px;text-align:center;font-size:18px;letter-spacing:.16em;margin:8px 0}.primary{width:100%;border:0;border-radius:9px;background:#eef2f6;color:#111820;font-weight:800;padding:11px}.secondary{width:100%;border:1px solid var(--line);border-radius:9px;background:#17212b;color:#d8e0e8;font-weight:800;padding:11px;margin-top:7px}.error{color:var(--red);font-size:10px;margin-top:7px}
+.mobileNav{display:none}
+.empty{padding:25px;color:#748395;text-align:center;font-size:11px}
+@media(max-width:1250px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.grid2{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:850px){.appShell{display:block}.sidebar{display:none}.topbar{height:auto;min-height:62px;padding:10px 12px;flex-wrap:wrap}.pageTitle{min-width:0}.search{order:3;flex-basis:100%;max-width:none}.content{padding:13px 11px 82px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi:nth-child(n+5){display:none}.cards{grid-template-columns:1fr}.detailGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.drawer{width:100vw}.mobileNav{position:fixed;display:grid;grid-template-columns:repeat(4,1fr);bottom:0;left:0;right:0;z-index:30;background:rgba(12,18,24,.96);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}.mobileNav button{border:0;background:transparent;color:#8190a2;padding:10px 4px 8px;font-size:9px}.mobileNav button.active{color:#fff}.mobileNav b{display:block;font-size:16px;margin-bottom:2px}.topActions .live{display:none}}
+</style>
+</head>
+<body>
+
+<div id="login" class="login">
+  <div class="loginCard">
+    <h1>METATRON WORKPLACE</h1>
+    <p>Founder Control Room · live canonical Workforce, Work, Execution and Observation projections.</p>
+    <button class="primary" onclick="requestCode()">Send login code to Telegram</button>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    <button class="secondary" onclick="verifyCode()">Open Workplace</button>
+    <div id="loginError" class="error"></div>
+  </div>
+</div>
+
+<div id="shell" class="appShell hidden">
+  <aside class="sidebar">
+    <div class="brand"><strong>METATRON</strong><span>Workplace Control Room</span></div>
+    <nav class="nav">
+      <button data-view="overview" onclick="setView('overview')">⌂ Overview</button>
+      <button data-view="workers" onclick="setView('workers')">◎ Workers <span id="navWorkers" class="count"></span></button>
+      <button data-view="tasks" onclick="setView('tasks')">☷ Tasks <span id="navTasks" class="count"></span></button>
+      <button data-view="projects" onclick="setView('projects')">▦ Projects <span id="navProjects" class="count"></span></button>
+    </nav>
+    <div class="sideFoot"><button onclick="logout()">Log out</button></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="pageTitle"><strong id="pageTitle">Overview</strong><div id="revision"></div></div>
+      <div class="search"><input id="search" placeholder="Search Worker, Objective, Task, Project…" oninput="renderCurrent()"></div>
+      <div class="topActions"><div class="live"><i class="dot"></i>LIVE</div><button class="iconBtn" onclick="load()">Refresh</button></div>
+    </header>
+    <div id="content" class="content"></div>
+  </main>
+
+  <nav class="mobileNav">
+    <button data-view="overview" onclick="setView('overview')"><b>⌂</b>Home</button>
+    <button data-view="workers" onclick="setView('workers')"><b>◎</b>Workers</button>
+    <button data-view="tasks" onclick="setView('tasks')"><b>☷</b>Tasks</button>
+    <button data-view="projects" onclick="setView('projects')"><b>▦</b>Projects</button>
+  </nav>
+</div>
+
+<div id="backdrop" class="drawerBackdrop hidden" onclick="closeDrawer()"></div>
+<aside id="drawer" class="drawer hidden">
+  <div class="drawerHead"><div><h2 id="drawerTitle"></h2><div id="drawerSub" class="drawerSub"></div></div><button class="close" onclick="closeDrawer()">Close</button></div>
+  <div id="drawerBody" class="drawerBody"></div>
+</aside>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let token=localStorage.getItem('metatron_workplace_token')||'';
+let snapshot=null,currentView=localStorage.getItem('metatron_workplace_view')||'overview',selectedObjective='',selectedWorker='',selectedProject='',taskFilter='ALL';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const lower=s=>String(s??'').toLowerCase();
+const fmtTime=v=>v?new Date(v).toLocaleString([], {month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const badge=s=>'<span class="badge '+esc(String(s).replaceAll(' ','_'))+'">'+esc(s||'UNKNOWN')+'</span>';
+const progress=v=>'<b>'+Number(v||0)+'%</b><div class="progress"><i style="width:'+Math.max(0,Math.min(100,Number(v||0)))+'%"></i></div>';
+function toast(msg){$('toast').textContent=msg;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),3200)}
+async function api(path,options={}){
+  options.headers={...(options.headers||{}),Authorization:'Bearer '+token};
+  let r=await fetch(path,options);
+  let text=await r.text(),body=null;try{body=text?JSON.parse(text):null}catch{body=text}
+  if(r.status===401){localStorage.removeItem('metatron_workplace_token');location.reload();throw new Error('authentication_required')}
+  if(!r.ok)throw new Error((body&&body.message)||(body&&body.detail)||(body&&body.error)||text||('HTTP '+r.status));
+  return body;
+}
+async function requestCode(){
+  $('loginError').textContent='';
+  try{let r=await fetch('/workplace/api/auth/request-code',{method:'POST'});let j=await r.json();$('loginError').textContent=r.ok?'Code sent. Check Telegram.':(j.error||'Unable to send code.')}
+  catch(e){$('loginError').textContent=e.message}
+}
+async function verifyCode(){
+  let r=await fetch('/workplace/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('code').value})});
+  let j=await r.json();if(!r.ok){$('loginError').textContent='Invalid or expired code.';return}
+  token=j.token;localStorage.setItem('metatron_workplace_token',token);showApp();await load();
+}
+async function logout(){try{await api('/workplace/api/auth/logout',{method:'POST'})}catch{}localStorage.removeItem('metatron_workplace_token');location.reload()}
+function showApp(){$('login').classList.add('hidden');$('shell').classList.remove('hidden')}
+async function load(){
+  try{
+    snapshot=await api('/workplace/api/control-room');
+    $('revision').textContent=snapshot.environment+' · '+snapshot.revision.slice(0,12)+' · '+fmtTime(snapshot.generatedAt);
+    $('navWorkers').textContent=snapshot.workers.length;$('navTasks').textContent=snapshot.tasks.length;$('navProjects').textContent=snapshot.projects.length;
+    renderCurrent();
+  }catch(e){toast(e.message)}
+}
+function setView(v){currentView=v;localStorage.setItem('metatron_workplace_view',v);$('search').value='';renderCurrent()}
+function navState(){
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===currentView));
+  $('pageTitle').textContent={overview:'Overview',workers:'Workers',tasks:'Tasks',projects:'Projects'}[currentView]||'Workplace';
+}
+function query(){return lower($('search').value.trim())}
+function match(...parts){let q=query();return !q||parts.some(v=>lower(v).includes(q))}
+function renderCurrent(){
+  if(!snapshot)return;navState();
+  if(currentView==='workers')return renderWorkers();
+  if(currentView==='tasks')return renderTasks();
+  if(currentView==='projects')return renderProjects();
+  renderOverview();
+}
+function kpi(k,v,s){return '<div class="kpi"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div><div class="s">'+esc(s)+'</div></div>'}
+function renderOverview(){
+  let s=snapshot.summary,q=query();
+  let objectives=snapshot.objectives.filter(o=>match(o.summary,o.objectiveId,o.ownerWorkerId,o.executionState));
+  $('content').innerHTML=
+    '<div class="sectionTitle"><div><h1>Operational truth</h1><p>Workers, Objectives, Work and evidence from the live runtime — not decorative status cards.</p></div></div>'+
+    '<div class="kpis">'+[
+      kpi('Active objectives',s.activeObjectives,s.objectives+' total'),
+      kpi('Tasks running',s.runningTasks,s.totalTasks+' total'),
+      kpi('Tasks blocked',s.blockedTasks,'requires recovery'),
+      kpi('Workers active',s.activeWorkers,s.workers+' admitted'),
+      kpi('Mutating actions',s.mutatingActions,'successful effects'),
+      kpi('Failed actions',s.failedActions,'recorded failures')
+    ].join('')+'</div>'+
+    '<div class="grid2"><section class="panel"><div class="panelHead"><h2>Objectives & execution</h2><span>'+objectives.length+' visible</span></div>'+
+    '<div class="tableWrap"><table class="table"><thead><tr><th>Objective</th><th>State</th><th>Tasks</th><th>Progress</th><th>Owner</th><th>Last activity</th></tr></thead><tbody>'+
+    (objectives.length?objectives.map(o=>'<tr class="clickRow" onclick="openObjective(\''+encodeURIComponent(o.objectiveId)+'\')"><td><div class="titleCell">'+esc(o.summary)+'</div><div class="subCell mono">'+esc(o.objectiveId)+'</div></td><td>'+badge(o.executionState)+'</td><td>'+o.completedWork+' / '+o.totalWork+'</td><td>'+progress(o.progressPercent)+'</td><td>'+esc(o.ownerWorkerId)+'</td><td>'+fmtTime(o.lastActivityAt)+'</td></tr>').join(''):'<tr><td colspan="6" class="empty">No matching Objectives.</td></tr>')+
+    '</tbody></table></div></section><div class="stack">'+
+    '<section class="panel"><div class="panelHead"><h2>Exceptions</h2><span>'+snapshot.alerts.length+'</span></div><div class="list">'+
+    (snapshot.alerts.length?snapshot.alerts.slice(0,14).map(a=>'<div class="listItem" onclick="'+(a.type==='OBJECTIVE'?"openObjective('"+encodeURIComponent(a.ref)+"')":'')+'"><div class="listTitle">'+esc(a.detail)+'</div><div class="listMeta">'+badge(a.status)+' · '+esc(a.type)+' · '+esc(a.ref)+'</div></div>').join(''):'<div class="empty">No active exceptions.</div>')+
+    '</div></section><section class="panel"><div class="panelHead"><h2>Active Workers</h2><span>'+s.activeWorkers+'</span></div><div class="list">'+
+    snapshot.workers.filter(w=>w.status==='ACTIVE').slice(0,10).map(w=>'<div class="listItem" onclick="openWorker(\''+esc(w.workerId)+'\')"><div class="listTitle">'+esc(w.workerId)+' '+badge(w.runtimeState)+'</div><div class="listMeta">'+esc(w.role||'No active role')+' · '+w.assignments+' assignments · capacity '+w.capacity+'</div></div>').join('')+
+    '</div></section></div></div>';
+}
+function renderWorkers(){
+  let workers=snapshot.workers.filter(w=>match(w.workerId,w.role,w.runtimeProfile,w.runtimeState));
+  $('content').innerHTML='<div class="sectionTitle"><div><h1>Workers</h1><p>Identity, role, capacity, runtime, assignments and direct institutional conversation.</p></div></div>'+
+    '<div class="cards">'+(workers.length?workers.map(w=>'<article class="card" onclick="openWorker(\''+esc(w.workerId)+'\')"><div class="cardTop"><div class="cardTitle">'+esc(w.workerId)+'</div>'+badge(w.status)+'</div><div class="cardMeta">'+esc(w.role||'No active role')+'<br>Runtime: '+esc(w.runtimeState)+'<br>'+esc(w.runtimeProfile||'No runtime profile')+'</div><div class="metricRow"><div class="miniMetric"><b>'+w.assignments+'</b><span>Assignments</span></div><div class="miniMetric"><b>'+w.activeObjectives+'</b><span>Active</span></div><div class="miniMetric"><b>'+w.capacity+'</b><span>Capacity</span></div></div></article>').join(''):'<div class="empty">No matching Workers.</div>')+'</div>';
+}
+function renderTasks(){
+  let tasks=snapshot.tasks.filter(t=>(taskFilter==='ALL'||t.state===taskFilter)&&match(t.task,t.stepId,t.objectiveSummary,t.objectiveId,t.performer,t.projectId,t.requiredCapability));
+  let states=['ALL','RUNNING','READY','WAITING','BLOCKED','COMPLETED','STALE'];
+  $('content').innerHTML='<div class="sectionTitle"><div><h1>Tasks</h1><p>Flattened Work items across every Objective. Click through to execution evidence and parent Objective controls.</p></div></div>'+
+    '<div class="toolbar">'+states.map(s=>'<button class="filter '+(taskFilter===s?'active':'')+'" onclick="taskFilter=\''+s+'\';renderTasks()">'+s+'</button>').join('')+'</div>'+
+    '<section class="panel"><div class="tableWrap"><table class="table"><thead><tr><th>Task</th><th>State</th><th>Project</th><th>Performer</th><th>Effect</th><th>Actions</th><th>Activity</th></tr></thead><tbody>'+
+    (tasks.length?tasks.map(t=>'<tr class="clickRow" onclick="openObjective(\''+encodeURIComponent(t.objectiveId)+'\',\''+esc(t.stepId)+'\')"><td><div class="titleCell">'+esc(t.task)+'</div><div class="subCell">'+esc(t.objectiveSummary)+' · '+esc(t.stepId)+'</div></td><td>'+badge(t.state)+'</td><td>'+esc(t.projectId)+'</td><td>'+esc(t.performer)+'</td><td>'+badge(t.effectState)+'</td><td>'+t.actionCount+'</td><td>'+fmtTime(t.lastActivityAt)+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">No matching Tasks.</td></tr>')+
+    '</tbody></table></div></section>';
+}
+function renderProjects(){
+  let projects=snapshot.projects.filter(p=>match(p.projectId,p.workerIds.join(' '),p.objectiveIds.join(' ')));
+  $('content').innerHTML='<div class="sectionTitle"><div><h1>Projects</h1><p>Derived management views over canonical Objectives/Work, grouped by repository or organization context.</p></div></div>'+
+    '<div class="cards">'+(projects.length?projects.map(p=>'<article class="card" onclick="openProject(\''+encodeURIComponent(p.projectId)+'\')"><div class="cardTop"><div class="cardTitle">'+esc(p.projectId)+'</div>'+(p.blockedObjectives||p.blockedTasks?badge('BLOCKED'):badge(p.activeObjectives?'ACTIVE':'COMPLETED'))+'</div><div class="cardMeta">'+p.workerIds.length+' Worker(s) · '+p.objectives+' Objective(s)<br>Last activity '+fmtTime(p.lastActivityAt)+'</div><div class="metricRow"><div class="miniMetric"><b>'+p.activeTasks+'</b><span>Active tasks</span></div><div class="miniMetric"><b>'+p.completedTasks+'</b><span>Completed</span></div><div class="miniMetric"><b>'+p.blockedTasks+'</b><span>Blocked</span></div></div><div style="margin-top:9px">'+progress(p.progressPercent)+'</div></article>').join(''):'<div class="empty">No matching Projects.</div>')+'</div>';
+}
+function showDrawer(title,sub,body){$('drawerTitle').textContent=title;$('drawerSub').textContent=sub||'';$('drawerBody').innerHTML=body;$('drawer').classList.remove('hidden');$('backdrop').classList.remove('hidden')}
+function closeDrawer(){selectedObjective=selectedWorker=selectedProject='';$('drawer').classList.add('hidden');$('backdrop').classList.add('hidden')}
+async function openWorker(workerId,tab='summary'){
+  selectedWorker=workerId;
+  try{
+    let [w,history]=await Promise.all([api('/workplace/api/workers/'+encodeURIComponent(workerId)),api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/chat')]);
+    let tabs='<div class="drawerTabs"><button class="'+(tab==='summary'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'summary\')">Summary</button><button class="'+(tab==='tasks'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'tasks\')">Tasks</button><button class="'+(tab==='actions'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'actions\')">Actions</button><button class="'+(tab==='chat'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'chat\')">Chat</button></div>';
+    let body=tabs;
+    if(tab==='chat')body+=renderChat(w,history);
+    else if(tab==='tasks')body+=renderWorkerTasks(w);
+    else if(tab==='actions')body+=renderWorkerActions(w);
+    else body+=renderWorkerSummary(w);
+    showDrawer(workerId,(w.primaryRole||'Worker')+' · '+w.runtimeState,body);
+    if(tab==='chat')setTimeout(()=>{let el=$('chatMessages');if(el)el.scrollTop=el.scrollHeight},0);
+  }catch(e){toast(e.message)}
+}
+function renderWorkerSummary(w){
+  let av=w.availability||{available:false,capacity:0};
+  return '<div class="detailGrid">'+[
+    ['Status',badge(w.status)],['Role',w.primaryRole||'—'],['Runtime',badge(w.runtimeState)],['Capacity',av.capacity],
+    ['Assignments',w.assignments.length],['Tasks',w.tasks.length],['Actions',w.actions.length],['Profile',w.runtimeProfile||'—']
+  ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+(String(x[1]).startsWith('<span')?x[1]:esc(x[1]))+'</div></div>').join('')+'</div>'+
+  '<div class="block"><h3>Worker controls</h3><div class="controlRow"><button class="control '+(av.available?'warn':'good')+'" onclick="toggleWorker(\''+esc(w.workerId)+'\','+(!av.available)+','+av.capacity+')">'+(av.available?'Stop new intake':'Resume intake')+'</button><button class="control" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Talk to Worker</button></div></div>'+
+  '<div class="block"><h3>Capabilities</h3>'+(w.capabilities.length?w.capabilities.map(c=>'<div class="evidence">'+esc(c.capabilityRef)+' · level '+c.level+' · '+esc(c.evidenceRef)+'</div>').join(''):'<div class="muted">No capabilities.</div>')+'</div>'+
+  '<div class="block"><h3>Assignments</h3>'+(w.assignments.length?w.assignments.map(a=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(a.objectiveId)+'\')"><div class="stepTop"><div class="stepName">'+esc(a.description)+'</div>'+badge(a.status)+'</div><div class="stepMeta mono">'+esc(a.objectiveId)+'</div></div>').join(''):'<div class="muted">No assignments.</div>')+'</div>';
+}
+function renderWorkerTasks(w){
+  return '<div class="block"><h3>Assigned and performed Work</h3>'+(w.tasks.length?w.tasks.map(t=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(t.objectiveId)+'\',\''+esc(t.stepId)+'\')"><div class="stepTop"><div class="stepName">'+esc(t.task)+'</div>'+badge(t.state)+'</div><div class="stepMeta">'+esc(t.projectId)+' · '+esc(t.requiredCapability)+' · '+t.actionCount+' action(s)</div></div>').join(''):'<div class="muted">No task history.</div>')+'</div>';
+}
+function renderWorkerActions(w){
+  return '<div class="block"><h3>Durable action history</h3>'+(w.actions.length?w.actions.map(a=>'<div class="step"><div class="stepTop"><div class="stepName">'+esc(a.actionRef)+'</div>'+badge(a.success?'SUCCESS':'FAILED')+'</div><div class="stepMeta">'+fmtTime(a.recordedAt)+' · '+esc(a.consequence)+' · cycle '+a.cycle+'<br>'+esc(a.summary)+'<br><span class="mono">'+esc(a.workStepId)+'</span></div></div>').join(''):'<div class="muted">No durable Worker actions recorded.</div>')+'</div>';
+}
+function renderChat(w,history){
+  return '<div class="chat"><div id="chatMessages" class="chatMessages">'+
+    (history.length?history.map(t=>'<div class="msg human">'+esc(t.human)+'<div class="msgMeta">'+fmtTime(t.at)+'</div></div><div class="msg worker">'+esc(t.worker)+'<div class="msgMeta">'+esc(t.runtimeId||'')+' · '+esc(t.requestReference||'')+'</div></div>').join(''):'<div class="empty">Start a direct conversation with this canonical Worker.</div>')+
+    '</div><div class="chatCompose"><textarea id="chatInput" placeholder="Message '+esc(w.workerId)+'…" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendWorkerMessage(\''+esc(w.workerId)+'\')}"></textarea><button onclick="sendWorkerMessage(\''+esc(w.workerId)+'\')">Send</button></div></div>';
+}
+async function sendWorkerMessage(workerId){
+  let input=$('chatInput'),message=input?.value.trim();if(!message)return;input.disabled=true;
+  try{await api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});await openWorker(workerId,'chat')}
+  catch(e){toast(e.message);input.disabled=false}
+}
+async function toggleWorker(workerId,available,capacity){
+  try{
+    await api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/availability',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({available,capacity})});
+    toast(available?'Worker intake resumed':'Worker intake stopped');await load();await openWorker(workerId,'summary');
+  }catch(e){toast(e.message)}
+}
+async function openObjective(encodedId,focusStep=''){
+  let id=decodeURIComponent(encodedId),o=snapshot.objectives.find(x=>x.objectiveId===id);if(!o)return;selectedObjective=id;
+  let controls=!['COMPLETED','DELIVERED','CANCELLED'].includes(o.objectiveStatus)?'<div class="block"><h3>Objective controls</h3><div class="controlRow"><button class="control warn" onclick="objectiveControl(\''+encodeURIComponent(id)+'\',\'pause\')">Pause</button><button class="control good" onclick="objectiveControl(\''+encodeURIComponent(id)+'\',\'resume\')">Resume</button><button class="control" onclick="objectiveControl(\''+encodeURIComponent(id)+'\',\'replan\')">Replan</button><button class="control danger" onclick="objectiveControl(\''+encodeURIComponent(id)+'\',\'cancel\')">Cancel</button></div></div>':'';
+  let boxes=[['Execution',badge(o.executionState)],['Objective',badge(o.objectiveStatus)],['Progress',o.progressPercent+'%'],['Tasks',o.completedWork+' / '+o.totalWork],['Owner',o.ownerWorkerId],['Staffing',o.staffingState],['Evidence',o.evidenceCount],['Blocker',o.blocker||'None']]
+    .map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+(String(x[1]).startsWith('<span')?x[1]:esc(x[1]))+'</div></div>').join('');
+  let tasks=o.workItems.length?o.workItems.map(t=>'<div class="step" style="'+(focusStep===t.stepId?'border-color:#728dff':'')+'"><div class="stepTop"><div class="stepName">'+esc(t.objective)+'</div>'+badge(t.state)+'</div><div class="stepMeta"><b>Step:</b> '+esc(t.stepId)+'<br><b>Performer:</b> '+esc(t.performer)+' · <b>Effect:</b> '+esc(t.effectState)+'<br><b>Capability:</b> '+esc(t.requiredCapability)+'<br><b>Target:</b> '+esc(t.target||'—')+'<br><b>Actions:</b> '+t.actionCount+' · '+esc(t.latestAction)+'<br><b>Acceptance:</b> '+esc(t.acceptanceCriteria.join('; ')||'—')+'</div></div>').join(''):'<div class="muted">No planned Work items.</div>';
+  let actions=o.actionRecords.length?o.actionRecords.map(a=>'<div class="step"><div class="stepTop"><div class="stepName">'+esc(a.workerId)+' · '+esc(a.actionRef)+'</div>'+badge(a.success?'SUCCESS':'FAILED')+'</div><div class="stepMeta">'+fmtTime(a.recordedAt)+' · '+esc(a.consequence)+' · cycle '+a.cycle+'<br>'+esc(a.summary)+'<br>Reflection: '+esc(a.reflection)+' · '+esc(a.reflectionSummary)+'</div></div>').join(''):'<div class="muted">No durable action records.</div>';
+  let evidence=o.evidenceReferences.length?o.evidenceReferences.slice(0,120).map(e=>'<div class="evidence">'+esc(e)+'</div>').join(''):'<div class="muted">No evidence attached.</div>';
+  showDrawer(o.summary,id+' · '+o.ownerWorkerId,'<div class="detailGrid">'+boxes+'</div>'+controls+'<div class="block"><h3>Tasks / Work breakdown</h3>'+tasks+'</div><div class="block"><h3>Actual execution</h3>'+actions+'</div><div class="block"><h3>Evidence drill-down</h3>'+evidence+'</div>');
+}
+async function objectiveControl(encodedId,action){
+  let id=decodeURIComponent(encodedId),body={};
+  if(action==='cancel'&&!confirm('Cancel this Objective? This is a real control action.'))return;
+  if(action==='replan')body.reason=prompt('Reason / instruction for replan:','Founder requested replan from Workplace Control Room')||'Founder requested replan from Workplace Control Room';
+  try{await api('/workplace/api/objectives/'+encodeURIComponent(id)+'/control/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast('Objective '+action+' applied');await load();openObjective(encodeURIComponent(id))}
+  catch(e){toast(e.message)}
+}
+function openProject(encodedId){
+  let id=decodeURIComponent(encodedId),p=snapshot.projects.find(x=>x.projectId===id);if(!p)return;selectedProject=id;
+  let objs=snapshot.objectives.filter(o=>p.objectiveIds.includes(o.objectiveId)),tasks=snapshot.tasks.filter(t=>t.projectId===id);
+  let boxes=[['Objectives',p.objectives],['Active',p.activeObjectives],['Tasks',p.tasks],['Completed',p.completedTasks],['Blocked',p.blockedTasks],['Workers',p.workerIds.length],['Progress',p.progressPercent+'%'],['Activity',fmtTime(p.lastActivityAt)]]
+    .map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+esc(x[1])+'</div></div>').join('');
+  let objHtml=objs.length?objs.map(o=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(o.objectiveId)+'\')"><div class="stepTop"><div class="stepName">'+esc(o.summary)+'</div>'+badge(o.executionState)+'</div><div class="stepMeta">'+o.completedWork+' / '+o.totalWork+' tasks · '+esc(o.ownerWorkerId)+' · '+fmtTime(o.lastActivityAt)+'</div></div>').join(''):'<div class="muted">No Objectives.</div>';
+  let taskHtml=tasks.length?tasks.map(t=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(t.objectiveId)+'\',\''+esc(t.stepId)+'\')"><div class="stepTop"><div class="stepName">'+esc(t.task)+'</div>'+badge(t.state)+'</div><div class="stepMeta">'+esc(t.performer)+' · '+esc(t.requiredCapability)+'</div></div>').join(''):'<div class="muted">No Tasks.</div>';
+  showDrawer(id,'Project view · derived from canonical Objective/Work targets','<div class="detailGrid">'+boxes+'</div><div class="block"><h3>Workers</h3><div class="controlRow">'+p.workerIds.map(w=>'<button class="control" onclick="openWorker(\''+esc(w)+'\')">'+esc(w)+'</button>').join('')+'</div></div><div class="block"><h3>Objectives</h3>'+objHtml+'</div><div class="block"><h3>Tasks</h3>'+taskHtml+'</div>');
+}
+(async()=>{
+  if(!token)return;
+  try{let s=await api('/workplace/api/auth/status');if(s.authenticated){showApp();await load();setInterval(()=>{if(!$('drawer').classList.contains('hidden')&&selectedWorker)return;load()},4000)}}
+  catch{}
+})();
+</script>
+</body>
+</html>

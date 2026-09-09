@@ -119,6 +119,69 @@ class CanonicalWorkerInstitutionalGroundingTest {
         assertTrue(reply.evidenceReferences().contains("worker-conversation-claim-guard:execution-claim-suppressed"));
     }
 
+    @Test
+    void workerAttributedSuccessfulActionReceiptAllowsTruthfulExecutionClaim() {
+        Fixture fixture = fixture();
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "worker-cognition-executed",
+                "I have executed the governed Gateway inspection.",
+                request.evidenceReferences());
+        InstitutionalRoleGrounding grounding = (roleRef, positionRef, requestedRole, message) ->
+                InstitutionalRoleGrounding.Grounding.available(
+                        "06_GATEWAY",
+                        "path=06_GATEWAY/SOT.md\nGateway scope.",
+                        List.of("institutional-source:test"));
+
+        CanonicalWorkerConversationService service = new CanonicalWorkerConversationService(
+                fixture.core(), fixture.runtimeProfiles(), fixture.runtimeCapacity(), intelligence, grounding);
+
+        String receipt = "action-fabric:action=gateway.audit.read:worker="
+                + GatewayDirectorAppointmentCapability.WORKER_ID
+                + ":assignment=A-1:authorization=AUTH:consequence=READ_ONLY:success=true";
+
+        WorkerConversationGateway.Reply reply = service.converse(
+                GatewayDirectorAppointmentCapability.WORKER_ID,
+                "Head of Gateway",
+                "Did you execute it?",
+                "",
+                List.of(receipt));
+
+        assertEquals("I have executed the governed Gateway inspection.", reply.text());
+        assertTrue(reply.evidenceReferences().contains(receipt));
+        assertFalse(reply.evidenceReferences().contains("worker-conversation-claim-guard:execution-claim-suppressed"));
+    }
+
+    @Test
+    void anotherWorkersReceiptCannotAuthorizeThisWorkersExecutionClaim() {
+        Fixture fixture = fixture();
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "worker-cognition-wrong-attribution",
+                "I have executed the governed Gateway inspection.",
+                request.evidenceReferences());
+        InstitutionalRoleGrounding grounding = (roleRef, positionRef, requestedRole, message) ->
+                InstitutionalRoleGrounding.Grounding.available(
+                        "06_GATEWAY",
+                        "path=06_GATEWAY/SOT.md\nGateway scope.",
+                        List.of("institutional-source:test"));
+
+        CanonicalWorkerConversationService service = new CanonicalWorkerConversationService(
+                fixture.core(), fixture.runtimeProfiles(), fixture.runtimeCapacity(), intelligence, grounding);
+
+        String otherReceipt = "action-fabric:action=gateway.audit.read:worker=WORKER-OTHER"
+                + ":assignment=A-2:authorization=AUTH:consequence=READ_ONLY:success=true";
+
+        WorkerConversationGateway.Reply reply = service.converse(
+                GatewayDirectorAppointmentCapability.WORKER_ID,
+                "Head of Gateway",
+                "Did you execute it?",
+                "",
+                List.of(otherReceipt));
+
+        assertFalse(reply.text().contains("I have executed"));
+        assertTrue(reply.evidenceReferences().contains("worker-conversation-claim-guard:execution-claim-suppressed"));
+        assertFalse(reply.evidenceReferences().contains(otherReceipt));
+    }
+
     private static Fixture fixture() {
         WorkforceCoreService core = new WorkforceCoreService();
         core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
