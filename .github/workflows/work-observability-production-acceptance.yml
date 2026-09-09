@@ -1,71 +1,48 @@
-name: Work Observability Production Acceptance
+name: Work Observability Highway Ingress
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: false
+        type: string
 
 permissions:
   contents: read
+  statuses: write
+
+concurrency:
+  group: work-observability-ingress
+  cancel-in-progress: true
 
 jobs:
-  verify:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    env:
-      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+    timeout-minutes: 3
     steps:
-      - name: Verify exact production identity
+      - uses: actions/checkout@v7
+      - name: Publish immutable control-plane release
         shell: bash
         run: |
           set -euo pipefail
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          DEPLOYED=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED" = "$TARGET_SHA"
-          test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
-          echo "WORK_OBSERVABILITY_SHA=$DEPLOYED"
-
-      - name: Verify accountable Dashboard and canonical monitor API
+          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+      - name: Submit to persistent Highway
         shell: bash
+        env:
+          REQUESTED_TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           set -euo pipefail
-          DASH=$(curl -fsS http://127.0.0.1:8080/workforce/monitor)
-          grep -q 'METATRON WORKFORCE' <<<"$DASH"
-          grep -q 'canonical management projection' <<<"$DASH"
-          grep -q 'Work Breakdown' <<<"$DASH"
-          grep -q 'Reports to' <<<"$DASH"
-          grep -q 'Staffing' <<<"$DASH"
-          API_FILE=$(mktemp)
-          trap 'rm -f "$API_FILE"' EXIT
-          curl -fsS -H 'X-Metatron-Actor: human-primary' http://127.0.0.1:8080/workforce/monitor/api/objectives > "$API_FILE"
-          python3 - "$API_FILE" <<'PY'
-          import json,sys
-          with open(sys.argv[1],encoding='utf-8') as fh:
-              rows=json.load(fh)
-          assert isinstance(rows,list)
-          for row in rows:
-              for key in ('objectiveId','humanStatus','progressPercent','ownerWorker','reportsTo','workload','etaCommitment','staffingState','workItems','recentEvents','executionProof'):
-                  assert key in row, (key,row)
-              proof=row['executionProof']; assert 'state' in proof and 'last_activity_at' in proof
-              if row['humanStatus']=='WORKING': assert proof['state']=='EXECUTION_ACTIVITY_OBSERVED', row
-              if row['humanStatus']=='COMPLETED': assert row['progressPercent']==100 or row['totalWork']==0, row
-              if row['staffingState']=='UNASSIGNED':
-                  for work in row['workItems']: assert work['performer']=='UNASSIGNED', work
-              for work in row['workItems']:
-                  for key in ('requiredCapability','performer','acceptanceCriteria','dependsOn','status'): assert key in work, (key,work)
-          print('ACCOUNTABLE_WORK_ORDER_API=PASS')
-          print('VISIBLE_OBJECTIVES='+str(len(rows)))
-          PY
-          echo 'WORK_OBSERVABILITY_DASHBOARD=PASS'
-
-      - name: Verify Telegram monitoring transport is live
-        shell: bash
-        run: |
-          set -euo pipefail
-          HEALTH=$(curl -fsS http://127.0.0.1:8080/telegram/health)
-          python3 - "$HEALTH" <<'PY'
-          import json,sys
-          h=json.loads(sys.argv[1]); assert h['status']=='UP'; assert h['channel']=='telegram'; assert 'active_task_monitors' in h
-          print('TELEGRAM_MONITOR_TRANSPORT=PASS')
-          PY
+          TARGET_SHA="${REQUESTED_TARGET_SHA:-$GITHUB_SHA}"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit             --kind work-observability             --source-sha "$GITHUB_SHA"             --priority 70             --dedupe-key "work-observability:$TARGET_SHA:$GITHUB_RUN_ID"             --env "TARGET_SHA=$TARGET_SHA"             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_TASK=$TASK"
+          $CTL get "$TASK"
+          echo 'WORK_OBSERVABILITY_HIGHWAY_INGRESS=PASS'
