@@ -60,6 +60,12 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
 
     @Override
     public Reply converse(String workerId, String role, String userMessage, String conversationContext) {
+        return converse(workerId, role, userMessage, conversationContext, List.of());
+    }
+
+    @Override
+    public Reply converse(String workerId, String role, String userMessage, String conversationContext,
+                          List<String> trustedExecutionEvidence) {
         WorkforceCoreService.Worker worker = core.worker(workerId);
         if (worker.status() != WorkforceCoreService.WorkerStatus.ACTIVE) {
             throw new IllegalStateException("meeting_worker_not_active:" + workerId + ":status=" + worker.status());
@@ -92,6 +98,18 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         evidence.add("worker-runtime-instance:" + liveRuntime.runtimeId() + ":state=" + liveRuntime.state().name());
         evidence.add("worker-runtime-actions:" + runtime.profile().actionRefs().stream().sorted().toList());
         capabilityRefs.forEach(capability -> evidence.add("worker-capability:" + capability));
+        if (trustedExecutionEvidence != null) {
+            trustedExecutionEvidence.stream()
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .map(String::trim)
+                    .filter(ref -> ref.startsWith("action-fabric:"))
+                    .filter(ref -> ref.contains(":worker=" + workerId + ":"))
+                    .filter(ref -> ref.endsWith(":success=true") || ref.contains(":success=true:"))
+                    .distinct()
+                    .limit(200)
+                    .filter(ref -> !evidence.contains(ref))
+                    .forEach(evidence::add);
+        }
 
         InstitutionalRoleGrounding.Grounding grounding = institutionalGrounding.resolve(
                 participation.roleRef(), participation.positionRef(), role, userMessage);
