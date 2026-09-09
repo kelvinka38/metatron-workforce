@@ -267,6 +267,10 @@ class Point5WorkplaceRuntimeConformanceTest {
                 .stream().anyMatch(role -> role.equals("Head of Gateway")));
         assertFalse(service.supports("Let's have a meeting sometime."));
         assertFalse(service.supports("Finance outlook this week?"));
+        assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("Worker active"));
+        assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("active worker"));
+        assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("workers active"));
+        assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("worker đang hoạt động"));
     }
 
     private static MetatronInteraction interaction(String conversationId, String externalRef, String text) {

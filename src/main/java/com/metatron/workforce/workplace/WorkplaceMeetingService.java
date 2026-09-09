@@ -517,14 +517,21 @@ public final class WorkplaceMeetingService {
         if (text == null || text.isBlank()) return false;
         String lower = normalize(text);
         return lower.equals("workers")
+                || lower.equals("worker")
                 || lower.equals("active workers")
+                || lower.equals("active worker")
+                || lower.equals("workers active")
+                || lower.equals("worker active")
                 || lower.contains("list active workers")
+                || lower.contains("list active worker")
                 || lower.contains("show active workers")
+                || lower.contains("show active worker")
                 || lower.contains("worker ids")
                 || lower.contains("worker id")
                 || lower.contains("danh sach worker")
                 || lower.contains("cac worker")
-                || lower.contains("worker dang hoat dong");
+                || lower.contains("worker dang hoat dong")
+                || lower.contains("worker hoat dong");
     }
 
     public List<MeetingRecord> list() { return store.list(); }
