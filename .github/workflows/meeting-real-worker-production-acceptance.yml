@@ -113,13 +113,27 @@ jobs:
           docker exec "$CID" sh -c "grep -q 'meeting-worker:$WORKER_ID:participation=$PARTICIPATION_ID' '$MEETING_FILE'"
           docker exec "$CID" sh -c "grep -q 'worker-runtime-profile:runtime-profile:general-engineering-worker:v1' '$MEETING_FILE'"
 
-          RUNTIME_FILE=$(docker exec "$CID" sh -c "grep -R -l '^workerId=$WORKER_ID$' /var/lib/metatron-workforce/runtime-state/*.properties 2>/dev/null | head -1")
-          test -n "$RUNTIME_FILE"
-          docker exec "$CID" sh -c "grep -q '^state=RUNNING$' '$RUNTIME_FILE'"
-          RUNTIME_ID=$(docker exec "$CID" sh -c "sed -n 's/^runtimeId=//p' '$RUNTIME_FILE' | head -1")
+          # Derive the exact runtime identity from the persisted Meeting evidence instead of
+          # grepping every historical runtime file through "head" under pipefail.
+          # Multiple durable runtimes for the same Worker are expected historical evidence.
+          RUNTIME_ID=$(docker exec "$CID" sh -c "python3 - '$MEETING_FILE' <<'PY'
+import json,re,sys
+meeting=json.load(open(sys.argv[1],encoding='utf-8'))
+matches=[]
+for ref in meeting.get('evidenceRefs',[]):
+    m=re.fullmatch(r'worker-runtime-instance:([^:]+):state=RUNNING',ref)
+    if m: matches.append(m.group(1))
+matches=list(dict.fromkeys(matches))
+assert len(matches)==1, f'expected_one_running_meeting_runtime:{matches}'
+print(matches[0])
+PY")
           test -n "$RUNTIME_ID"
+          RUNTIME_FILE="/var/lib/metatron-workforce/runtime-state/$RUNTIME_ID.properties"
+          docker exec "$CID" sh -c "test -s '$RUNTIME_FILE'"
+          docker exec "$CID" sh -c "grep -Fqx 'workerId=$WORKER_ID' '$RUNTIME_FILE'"
+          docker exec "$CID" sh -c "grep -Fqx 'runtimeId=$RUNTIME_ID' '$RUNTIME_FILE'"
+          docker exec "$CID" sh -c "grep -Fqx 'state=RUNNING' '$RUNTIME_FILE'"
           echo "GATEWAY_RUNTIME_ID=$RUNTIME_ID"
-          docker exec "$CID" sh -c "grep -q 'worker-runtime-instance:$RUNTIME_ID:state=RUNNING' '$MEETING_FILE'"
 
           docker exec "$CID" sh -c "grep -q 'worker-conversation-request:worker-cognition-' '$MEETING_FILE'"
           docker exec "$CID" sh -c "grep -q 'worker-intelligence-provider:' '$MEETING_FILE'"
@@ -196,10 +210,11 @@ jobs:
           print('WORKER_FORMATION_NO_OBJECTIVE=PASS')
           PY
 
-          LIFECYCLE_RUNTIME_FILE=$(docker exec "$CID" sh -c "grep -R -l '^workerId=$WORKER_ID$' /var/lib/metatron-workforce/runtime-state/*.properties 2>/dev/null | head -1")
-          test -n "$LIFECYCLE_RUNTIME_FILE"
-          docker exec "$CID" sh -c "grep -q '^state=RUNNING$' '$LIFECYCLE_RUNTIME_FILE'"
-          LIFECYCLE_RUNTIME_ID=$(docker exec "$CID" sh -c "sed -n 's/^runtimeId=//p' '$LIFECYCLE_RUNTIME_FILE' | head -1")
+          LIFECYCLE_RUNTIME_FILE="/var/lib/metatron-workforce/runtime-state/$RUNTIME_ID.properties"
+          docker exec "$CID" sh -c "test -s '$LIFECYCLE_RUNTIME_FILE'"
+          docker exec "$CID" sh -c "grep -Fqx 'workerId=$WORKER_ID' '$LIFECYCLE_RUNTIME_FILE'"
+          docker exec "$CID" sh -c "grep -Fqx 'state=RUNNING' '$LIFECYCLE_RUNTIME_FILE'"
+          LIFECYCLE_RUNTIME_ID=$(docker exec "$CID" sh -c "sed -n 's/^runtimeId=//p' '$LIFECYCLE_RUNTIME_FILE'")
           test "$LIFECYCLE_RUNTIME_ID" = "$RUNTIME_ID"
           echo 'WORKER_LIFECYCLE_DIRECT=PASS'
           echo 'WORKER_LIFECYCLE_RUNTIME_REUSE=PASS'
