@@ -231,6 +231,35 @@ class MeetingRealWorkerBindingTest {
         assertEquals("WORKER-GATEWAY-LIVE", live.getFirst().workerId());
         assertEquals(runtime.runtimeId(), live.getFirst().runtimeId());
         assertEquals("RUNNING", live.getFirst().runtimeState());
+
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("live-directory-output"), new ObjectMapper()),
+                new MeetingRoleDeliberator() {
+                    @Override public Deliberation deliberate(String role, String purpose, String context) {
+                        fail("directory read must not invoke shadow deliberation");
+                        return new Deliberation("never", "");
+                    }
+                    @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                        fail("directory read must not invoke synthesis");
+                        return new Deliberation("never", "");
+                    }
+                },
+                ExecutionObjectiveHandoff.unavailable(),
+                directory,
+                (workerId, role, message, context) -> {
+                    throw new AssertionError("directory read must not invoke Worker cognition");
+                });
+
+        MetatronInteraction directoryRequest = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:live-directory", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:live-directory",
+                "active workers");
+        String rendered = service.handle(directoryRequest, "");
+        assertTrue(rendered.contains("worker_id=`WORKER-GATEWAY-LIVE`"));
+        assertTrue(rendered.contains("runtime_id=`" + runtime.runtimeId() + "`"));
+        assertTrue(rendered.contains("runtime_state=RUNNING"));
     }
 
     @Test
