@@ -124,6 +124,16 @@ jobs:
           docker exec "$CID" sh -c "grep -q 'worker-conversation-request:worker-cognition-' '$MEETING_FILE'"
           docker exec "$CID" sh -c "grep -q 'worker-intelligence-provider:' '$MEETING_FILE'"
 
+          # Institutional cognition must be grounded in the current canonical Gateway SoT,
+          # not a Workforce-local copy and not BIOS. Resolve the current blob SHA independently.
+          test -n "${GITHUB_TOKEN:-}"
+          CANONICAL_GATEWAY_SOT_SHA=$(curl -fsSL --max-time 15             -H "Authorization: Bearer $GITHUB_TOKEN"             -H 'Accept: application/vnd.github+json'             -H 'X-GitHub-Api-Version: 2022-11-28'             'https://api.github.com/repos/kelvinka38/metatron-institution/contents/06_GATEWAY/SOT.md?ref=main'             | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+          test -n "$CANONICAL_GATEWAY_SOT_SHA"
+          docker exec "$CID" sh -c "grep -Fq 'institutional-source:kelvinka38/metatron-institution@main:06_GATEWAY/SOT.md:blob=$CANONICAL_GATEWAY_SOT_SHA' '$MEETING_FILE'"
+          ! docker exec "$CID" sh -c "grep -Eq 'institutional-source:kelvinka38/bios.*[Gg]ateway' '$MEETING_FILE'"
+          echo "CANONICAL_GATEWAY_SOT_SHA=$CANONICAL_GATEWAY_SOT_SHA"
+          echo 'CANONICAL_GATEWAY_SOT_GROUNDING=PASS'
+
           send_update "What is the root cause of the Gateway routing problem?" "$U3"
 
           for i in $(seq 1 60); do
@@ -238,6 +248,8 @@ jobs:
           echo 'GATEWAY_DIRECTOR_ALIAS_RESOLUTION=PASS'
           echo 'EXACT_INTERACTION_TO_MEETING_BINDING=PASS'
           echo 'REAL_WORKER_COGNITION_BOUNDARY=PASS'
+          echo 'CANONICAL_INSTITUTIONAL_GROUNDING=PASS'
+          echo 'NO_BIOS_GATEWAY_GROUNDING=PASS'
           echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
           echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
           echo 'WORKER_RUNTIME_INSTANCE_ID=PASS'
