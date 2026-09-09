@@ -2,6 +2,7 @@ package com.metatron.workforce.interaction.memory;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -35,6 +36,7 @@ public final class PersistentWorkerConversationMemoryStore {
     private final Path root;
     private final Path legacyWorkplaceRoot;
 
+    @Autowired
     public PersistentWorkerConversationMemoryStore(
             ObjectMapper json,
             @Value("${METATRON_WORKER_CONVERSATION_MEMORY_PATH:/var/lib/metatron-workforce/worker-conversations}") String root,
