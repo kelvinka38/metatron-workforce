@@ -56,12 +56,18 @@ public final class DirectWorkerConversationService {
         }
 
         Optional<String> activeBinding = bindings.workerId(interaction.conversationId());
-        if (isExit(text) && activeBinding.isPresent()) {
-            bindings.clear(interaction.conversationId());
-            return Optional.of(new HandledReply(
-                    "💬 METATRON\nDirect Worker conversation closed. You are talking to Metatron again.",
-                    "direct-worker:exit:" + interaction.externalMessageReference(),
-                    ""));
+        if (isExit(text)) {
+            if (activeBinding.isPresent()) bindings.clear(interaction.conversationId());
+            if (activeBinding.isPresent() || isExplicitExitCommand(text)) {
+                return Optional.of(new HandledReply(
+                        "💬 METATRON\n"
+                                + (activeBinding.isPresent()
+                                ? "Direct Worker conversation closed. "
+                                : "No Direct Worker is currently selected. ")
+                                + "You are talking to Metatron.",
+                        "direct-worker:exit:" + interaction.externalMessageReference(),
+                        ""));
+            }
         }
 
         if (isDirectory(text)) {
@@ -228,6 +234,12 @@ public final class DirectWorkerConversationService {
                 || q.equals("roi worker")
                 || "/metatron".equalsIgnoreCase(text.trim())
                 || "/worker off".equalsIgnoreCase(text.trim());
+    }
+
+    private static boolean isExplicitExitCommand(String text) {
+        String trimmed = text == null ? "" : text.trim();
+        return "/metatron".equalsIgnoreCase(trimmed)
+                || "/worker off".equalsIgnoreCase(trimmed);
     }
 
     private static boolean isSurfaceControl(String text) {
