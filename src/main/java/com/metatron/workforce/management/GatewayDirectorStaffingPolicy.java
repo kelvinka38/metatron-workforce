@@ -111,9 +111,26 @@ public final class GatewayDirectorStaffingPolicy implements AutonomousStaffingPo
 
     @Override
     public List<CapabilityGrant> additionalCapabilities() {
-        return List.of(new CapabilityGrant(
-                GatewayDirectorAppointmentCapability.GATEWAY_AUDIT_CAPABILITY,
-                1.0,
-                "evidence:gateway-director-audit-capability:v1"));
+        return List.of(
+                new CapabilityGrant(
+                        GatewayDirectorAppointmentCapability.GATEWAY_AUDIT_CAPABILITY,
+                        1.0,
+                        "evidence:gateway-director-audit-capability:v1"),
+                new CapabilityGrant(
+                        "gateway.operational.management",
+                        1.0,
+                        "evidence:gateway-director-operational-management:v1"),
+                new CapabilityGrant(
+                        "gateway.reliability.management",
+                        1.0,
+                        "evidence:gateway-director-reliability-management:v1"),
+                new CapabilityGrant(
+                        "gateway.capacity.cost.management",
+                        1.0,
+                        "evidence:gateway-director-capacity-cost-management:v1"),
+                new CapabilityGrant(
+                        "gateway.incident.recovery.coordination",
+                        1.0,
+                        "evidence:gateway-director-incident-recovery-coordination:v1"));
     }
 }
