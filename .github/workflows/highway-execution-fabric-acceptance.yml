@@ -38,6 +38,24 @@ jobs:
           python3 -m py_compile highway/highwayd.py highway/highwayctl.py
           bash -n highway/install.sh highway/ensure-running.sh highway/publish-release.sh
           for script in scripts/highway-tasks/*.sh; do bash -n "$script"; done
+
+          TMP_HIGHWAY=$(mktemp -d)
+          cleanup_tmp_highway() { rm -rf "$TMP_HIGHWAY"; }
+          trap cleanup_tmp_highway EXIT
+          for n in 1 2 3 4; do
+            METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY" \
+              bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >"/tmp/highway-publish-$n.log" 2>&1 &
+          done
+          wait
+          test "$(cat "$TMP_HIGHWAY/releases/$GITHUB_SHA/.highway-source-sha")" = "$GITHUB_SHA"
+          test -f "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh"
+          test "$(find "$TMP_HIGHWAY/releases" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
+          SOURCE_HASH=$(sha256sum "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh")
+          METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY" \
+            bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >/tmp/highway-republish.log
+          test "$SOURCE_HASH" = "$(sha256sum "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh")"
+          echo 'HIGHWAY_ATOMIC_IMMUTABLE_RELEASE_PUBLICATION=PASS'
+
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -49,6 +67,23 @@ jobs:
             'worker-state-hygiene'
           }
           assert required <= set(reg['tasks']), required-set(reg['tasks'])
+          install=Path('highway/install.sh').read_text()
+          publish=Path('highway/publish-release.sh').read_text()
+          build_task=Path('scripts/highway-tasks/workforce-build.sh').read_text()
+          deploy_task=Path('scripts/highway-tasks/workforce-deploy.sh').read_text()
+          assert 'rm -rf "$RELEASE"' not in install
+          assert 'rm -rf "$RELEASE"' not in publish
+          assert 'HIGHWAY_BUILD_WORKSPACE_ISOLATION=PASS' in build_task
+          assert 'HIGHWAY_ARTIFACT_SEALED=' in build_task
+          assert 'HIGHWAY_SEALED_ARTIFACT_IDENTITY=PASS' in deploy_task
+          assert 'HIGHWAY_DEPLOY_WORKSPACE_ISOLATION=PASS' in deploy_task
+          build_resources={(x['name'],x['mode']) for x in reg['tasks']['workforce-build']['resources']}
+          deploy_resources={(x['name'],x['mode']) for x in reg['tasks']['workforce-deploy']['resources']}
+          assert ('source-release:{source_sha}','READ') in build_resources
+          assert ('artifact:{source_sha}','WRITE') in build_resources
+          assert ('source-release:{source_sha}','READ') in deploy_resources
+          assert ('artifact:{source_sha}','READ') in deploy_resources
+          assert ('prod:workforce','WRITE') in deploy_resources
           deploy=Path('.github/workflows/production-deploy.yml').read_text()
           assert 'name: Highway Release Ingress' in deploy
           assert '--kind workforce-build' in deploy and '--kind workforce-deploy' in deploy
