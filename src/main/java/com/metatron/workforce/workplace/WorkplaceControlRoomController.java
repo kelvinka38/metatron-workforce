@@ -55,8 +55,12 @@ public final class WorkplaceControlRoomController {
             @PathVariable String workerId,
             @RequestHeader(value="Authorization", required=false) String authorization) {
         requireAuthenticated(authorization);
-        controlRoom.worker(workerId);
-        return chatStore.history(workerId);
+        try {
+            WorkplaceControlRoomService.WorkerDetail detail = controlRoom.prepareConversationWorker(workerId);
+            return chatStore.history(detail.workerId());
+        } catch (IllegalStateException failure) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, failure.getMessage(), failure);
+        }
     }
 
     @PostMapping("/workers/{workerId}/chat")
@@ -65,26 +69,33 @@ public final class WorkplaceControlRoomController {
             @RequestHeader(value="Authorization", required=false) String authorization,
             @RequestBody ChatCommand command) {
         requireAuthenticated(authorization);
-        controlRoom.worker(workerId);
         if (command == null || command.message() == null || command.message().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message required");
         }
+
+        WorkplaceControlRoomService.WorkerDetail detail;
+        try {
+            detail = controlRoom.prepareConversationWorker(workerId);
+        } catch (IllegalStateException failure) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, failure.getMessage(), failure);
+        }
+
+        String effectiveWorkerId = detail.workerId();
         String role = command.role() == null || command.role().isBlank()
-                ? controlRoom.primaryRole(workerId) : command.role().trim();
-        WorkplaceControlRoomService.WorkerDetail detail = controlRoom.worker(workerId);
-        String history = chatStore.context(workerId, 16, 11_000);
+                ? detail.primaryRole() : command.role().trim();
+        String history = chatStore.context(effectiveWorkerId, 16, 11_000);
         String context = workerOperationalContext(detail) + (history.isBlank() ? "" : "\n\nRECENT DIRECT CONVERSATION\n" + history);
         List<String> trustedExecutionEvidence = detail.actions().stream()
                 .flatMap(action -> action.evidenceReferences().stream())
                 .filter(ref -> ref != null && ref.startsWith("action-fabric:"))
-                .filter(ref -> ref.contains(":worker=" + workerId + ":"))
+                .filter(ref -> ref.contains(":worker=" + effectiveWorkerId + ":"))
                 .filter(ref -> ref.endsWith(":success=true") || ref.contains(":success=true:"))
                 .distinct()
                 .limit(200)
                 .toList();
         WorkerConversationGateway.Reply reply = workerConversation.converse(
-                workerId, role, command.message().trim(), context, trustedExecutionEvidence);
-        return chatStore.append(workerId, command.message(), reply);
+                effectiveWorkerId, role, command.message().trim(), context, trustedExecutionEvidence);
+        return chatStore.append(effectiveWorkerId, command.message(), reply);
     }
 
     @PostMapping("/workers/{workerId}/availability")

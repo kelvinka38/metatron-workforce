@@ -1,7 +1,9 @@
 package com.metatron.workforce.workplace;
 
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
 import com.metatron.workforce.management.ManagementObjective;
+import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -32,24 +34,30 @@ public final class WorkplaceControlRoomService {
     private final WorkforceCoreService core;
     private final WorkerRuntimeProfileBindingService runtimeProfiles;
     private final RuntimeRegistry runtimes;
+    private final RuntimeCapacityCoordinator runtimeCapacity;
 
     public WorkplaceControlRoomService(
             WorkplaceDashboardService dashboard,
             WorkforceCoreService core,
             WorkerRuntimeProfileBindingService runtimeProfiles,
-            RuntimeRegistry runtimes) {
+            RuntimeRegistry runtimes,
+            RuntimeCapacityCoordinator runtimeCapacity) {
         this.dashboard = dashboard;
         this.core = core;
         this.runtimeProfiles = runtimeProfiles;
         this.runtimes = runtimes;
+        this.runtimeCapacity = runtimeCapacity;
     }
 
     public ControlRoomSnapshot snapshot() {
         WorkplaceDashboardService.Dashboard source = dashboard.dashboard();
         List<TaskView> tasks = tasks(source);
         List<ProjectView> projects = projects(source, tasks);
+        List<WorkerSummary> operationalWorkers = workerSummaries(source).stream()
+                .filter(worker -> "ACTIVE".equals(worker.status()))
+                .toList();
         return new ControlRoomSnapshot(source.generatedAt(), source.revision(), source.environment(),
-                source.summary(), workerSummaries(source), source.objectivePulse(), tasks, projects,
+                source.summary(), operationalWorkers, source.objectivePulse(), tasks, projects,
                 source.alerts(), source.recentEvents());
     }
 
@@ -91,6 +99,12 @@ public final class WorkplaceControlRoomService {
                 .map(WorkforceCoreService.Participation::roleRef)
                 .findFirst().orElse("");
 
+        String replacementWorkerId = canonicalReplacementWorkerId(worker, source);
+        boolean chatAvailable = replacementWorkerId.isBlank()
+                && "ACTIVE".equals(worker.status())
+                && !primaryRole.isBlank()
+                && binding != null;
+
         return new WorkerDetail(
                 worker.workerId(), worker.status(), primaryRole,
                 worker.participations(), worker.capabilities(), worker.qualifications(),
@@ -100,7 +114,49 @@ public final class WorkplaceControlRoomService {
                 runtime == null ? "" : runtime.runtimeId(),
                 runtime == null ? "NOT_RUNNING" : runtime.state().name(),
                 runtime == null ? null : runtime.createdAt(),
-                objectives, workerTasks, actions);
+                objectives, workerTasks, actions,
+                chatAvailable, replacementWorkerId);
+    }
+
+    public WorkerDetail prepareConversationWorker(String requestedWorkerId) {
+        WorkerDetail requested = worker(requestedWorkerId);
+        WorkerDetail target = requested.canonicalReplacementWorkerId().isBlank()
+                ? requested
+                : worker(requested.canonicalReplacementWorkerId());
+
+        if (!target.chatAvailable()) {
+            throw new IllegalStateException("worker_not_conversable:" + target.workerId()
+                    + ":status=" + target.status()
+                    + ":role=" + target.primaryRole()
+                    + ":runtimeProfile=" + target.runtimeProfile());
+        }
+
+        runtimeCapacity.ensureRunning(target.workerId());
+        return worker(target.workerId());
+    }
+
+    public String resolveConversationWorkerId(String requestedWorkerId) {
+        WorkerDetail detail = worker(requestedWorkerId);
+        return detail.canonicalReplacementWorkerId().isBlank()
+                ? detail.workerId()
+                : detail.canonicalReplacementWorkerId();
+    }
+
+    private static String canonicalReplacementWorkerId(
+            WorkplaceDashboardService.WorkerView worker,
+            WorkplaceDashboardService.Dashboard source) {
+        if (GatewayDirectorAppointmentCapability.WORKER_ID.equals(worker.workerId())) return "";
+
+        boolean gatewayHeadIdentity = worker.participations().stream()
+                .anyMatch(participation ->
+                        GatewayDirectorAppointmentCapability.ROLE_REF.equals(participation.roleRef()));
+        if (!gatewayHeadIdentity) return "";
+
+        boolean canonicalAvailable = source.workers().stream()
+                .anyMatch(candidate ->
+                        GatewayDirectorAppointmentCapability.WORKER_ID.equals(candidate.workerId())
+                                && "ACTIVE".equals(candidate.status()));
+        return canonicalAvailable ? GatewayDirectorAppointmentCapability.WORKER_ID : "";
     }
 
     public String primaryRole(String workerId) {
@@ -268,7 +324,9 @@ public final class WorkplaceControlRoomService {
             String runtimeId, String runtimeState, Instant runtimeCreatedAt,
             List<WorkplaceDashboardService.ObjectivePulse> objectives,
             List<TaskView> tasks,
-            List<WorkplaceDashboardService.ActionPulse> actions) {}
+            List<WorkplaceDashboardService.ActionPulse> actions,
+            boolean chatAvailable,
+            String canonicalReplacementWorkerId) {}
 
     public record TaskView(
             String projectId, String objectiveId, String objectiveSummary, String stepId,
