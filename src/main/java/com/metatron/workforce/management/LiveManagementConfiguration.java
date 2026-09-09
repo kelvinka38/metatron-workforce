@@ -151,10 +151,12 @@ public class LiveManagementConfiguration {
             AutonomousStaffingService staffing,
             GatewayDirectorAppointmentCapability capability,
             WorkforceCoreService core,
+            RuntimeCapacityCoordinator runtimeCapacity,
             @Value("${METATRON_BOOTSTRAP_GATEWAY_HEAD:true}") boolean enabled) {
         return args -> {
             if (!enabled) return;
             staffing.ensureStaffed(capability, Clock.systemUTC().instant());
+            runtimeCapacity.ensureRunning(GatewayDirectorAppointmentCapability.WORKER_ID);
 
             // Collapse every historical/parallel Gateway Head identity onto the one governed canonical Worker.
             // Production has accumulated more than one legacy ID over earlier acceptance/bootstrap iterations,
