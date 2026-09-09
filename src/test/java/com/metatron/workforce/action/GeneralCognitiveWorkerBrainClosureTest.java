@@ -278,7 +278,7 @@ class GeneralCognitiveWorkerBrainClosureTest {
             assertTrue(request.context().contains("authority=policy:bounded:test"));
             return new WorkerIntelligenceService.Response(
                     "intelligence-constitution-grounded",
-                    "{\\"actionRef\\":\\"workspace.file.read\\",\\"inputs\\":{\\"path\\":\\"README.md\\"},\\"rationale\\":\\"inspect within bound constitution\\"}",
+                    "{\\\"actionRef\\\":\\\"workspace.file.read\\\",\\\"inputs\\\":{\\\"path\\\":\\\"README.md\\\"},\\\"rationale\\\":\\\"inspect within bound constitution\\\"}",
                     List.of("intelligence-provider:test"));
         };
         GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
