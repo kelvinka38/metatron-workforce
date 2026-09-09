@@ -2,6 +2,9 @@ package com.metatron.workforce.workplace;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
+import com.metatron.workforce.runtime.RuntimeInstance;
+import com.metatron.workforce.runtime.RuntimeRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -14,9 +17,17 @@ import java.util.Objects;
 @Service
 public final class MeetingWorkerDirectory {
     private final WorkforceCoreService core;
+    private final RuntimeRegistry runtimes;
 
-    public MeetingWorkerDirectory(WorkforceCoreService core) {
+    @Autowired
+    public MeetingWorkerDirectory(WorkforceCoreService core, RuntimeRegistry runtimes) {
         this.core = Objects.requireNonNull(core, "core");
+        this.runtimes = Objects.requireNonNull(runtimes, "runtimes");
+    }
+
+    MeetingWorkerDirectory(WorkforceCoreService core) {
+        this.core = Objects.requireNonNull(core, "core");
+        this.runtimes = null;
     }
 
     public ResolvedWorker resolveActiveById(String workerId) {
@@ -54,12 +65,20 @@ public final class MeetingWorkerDirectory {
                         .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
                         .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
                         .findFirst().stream()
-                        .map(p -> new ResolvedWorker(
-                                w.workerId(),
-                                p.participationId(),
-                                humanizeRole(!blank(p.roleRef()) ? p.roleRef() : p.positionRef()),
-                                p.positionRef(),
-                                p.roleRef())))
+                        .flatMap(p -> {
+                            if (runtimes == null) {
+                                return java.util.stream.Stream.of(new ResolvedWorker(
+                                        w.workerId(), p.participationId(),
+                                        humanizeRole(!blank(p.roleRef()) ? p.roleRef() : p.positionRef()),
+                                        p.positionRef(), p.roleRef(), "", "UNVERIFIED"));
+                            }
+                            return runtimes.runningForWorker(w.workerId()).stream()
+                                    .map(runtime -> new ResolvedWorker(
+                                            w.workerId(), p.participationId(),
+                                            humanizeRole(!blank(p.roleRef()) ? p.roleRef() : p.positionRef()),
+                                            p.positionRef(), p.roleRef(),
+                                            runtime.runtimeId(), runtime.state().name()));
+                        }))
                 .toList();
     }
 
@@ -141,5 +160,11 @@ public final class MeetingWorkerDirectory {
     }
 
     public record ResolvedWorker(String workerId, String participationId, String role,
-                                 String positionRef, String roleRef) {}
+                                 String positionRef, String roleRef,
+                                 String runtimeId, String runtimeState) {
+        public ResolvedWorker(String workerId, String participationId, String role,
+                              String positionRef, String roleRef) {
+            this(workerId, participationId, role, positionRef, roleRef, "", "");
+        }
+    }
 }
