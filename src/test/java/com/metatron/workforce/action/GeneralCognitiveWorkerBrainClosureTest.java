@@ -267,4 +267,35 @@ class GeneralCognitiveWorkerBrainClosureTest {
         assertTrue(GeneralCognitiveWorkerBrain.researchCompletionQualityProblems(context, latest, summary).isEmpty());
     }
 
+
+    @Test
+    void actionSelectionReceivesMaterializedWorkerConstitutionFromRuntimeMemory() {
+        WorkerIntelligenceService intelligence = request -> {
+            assertTrue(request.instructions().contains("workerConstitution"));
+            assertTrue(request.instructions().contains("Role or runtime profile never self-grants authority"));
+            assertTrue(request.context().contains("\\\"workerConstitution\\\""));
+            assertTrue(request.context().contains("MATERIALIZED WORKER CONSTITUTION — RUNTIME"));
+            assertTrue(request.context().contains("authority=policy:bounded:test"));
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-constitution-grounded",
+                    "{\\"actionRef\\":\\"workspace.file.read\\",\\"inputs\\":{\\"path\\":\\"README.md\\"},\\"rationale\\":\\"inspect within bound constitution\\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "inspect", "Inspect the requested source before changing it", "workspace",
+                "execution.general.workspace", List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("source inspected"), List.of("read evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "authorization-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(),
+                Map.of("workerConstitution",
+                        "MATERIALIZED WORKER CONSTITUTION — RUNTIME\\nauthority=policy:bounded:test"));
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals("README.md", thought.inputs().get("path"));
+    }
+
 }
