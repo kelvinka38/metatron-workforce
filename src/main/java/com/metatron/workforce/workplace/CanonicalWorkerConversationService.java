@@ -5,7 +5,7 @@ import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
-import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,17 +25,35 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
     private final WorkforceCoreService core;
     private final WorkerRuntimeProfileBindingService runtimeProfiles;
     private final RuntimeCapacityCoordinator runtimeCapacity;
-    private final WorkerIntelligenceService intelligence;
+    private final WorkerIntelligenceService intelligence;\n    private final InstitutionalRoleGrounding institutionalGrounding;
 
+    @Autowired
     public CanonicalWorkerConversationService(
             WorkforceCoreService core,
             WorkerRuntimeProfileBindingService runtimeProfiles,
             RuntimeCapacityCoordinator runtimeCapacity,
-            WorkerIntelligenceService intelligence) {
+            WorkerIntelligenceService intelligence,
+            InstitutionalRoleGrounding institutionalGrounding) {
         this.core = Objects.requireNonNull(core, "core");
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
         this.runtimeCapacity = Objects.requireNonNull(runtimeCapacity, "runtimeCapacity");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
+        this.institutionalGrounding = Objects.requireNonNull(institutionalGrounding, "institutionalGrounding");
+    }
+
+    /**
+     * Test/backward-compatible constructor only. Production Spring wiring uses the grounded constructor above.
+     */
+    CanonicalWorkerConversationService(
+            WorkforceCoreService core,
+            WorkerRuntimeProfileBindingService runtimeProfiles,
+            RuntimeCapacityCoordinator runtimeCapacity,
+            WorkerIntelligenceService intelligence) {
+        this(core, runtimeProfiles, runtimeCapacity, intelligence,
+                (roleRef, positionRef, requestedRole, message) -> InstitutionalRoleGrounding.Grounding.available(
+                        "test-only",
+                        "TEST-ONLY INSTITUTIONAL GROUNDING",
+                        List.of("institutional-source:test-only")));
     }
 
     @Override
@@ -73,13 +91,36 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         evidence.add("worker-runtime-actions:" + runtime.profile().actionRefs().stream().sorted().toList());
         capabilityRefs.forEach(capability -> evidence.add("worker-capability:" + capability));
 
+        InstitutionalRoleGrounding.Grounding grounding = institutionalGrounding.resolve(
+                participation.roleRef(), participation.positionRef(), role, userMessage);
+        grounding.evidenceReferences().stream()
+                .filter(ref -> ref != null && !ref.isBlank())
+                .filter(ref -> !evidence.contains(ref))
+                .forEach(evidence::add);
+        if (!grounding.available()) {
+            return new Reply(
+                    "Canonical institutional grounding is unavailable for this Worker (" + grounding.reason()
+                            + "). I will not answer as " + (role == null || role.isBlank() ? participation.roleRef() : role)
+                            + " from ungrounded model memory.",
+                    "institutional-grounding-blocked:" + workerId,
+                    List.copyOf(evidence),
+                    liveRuntime.runtimeId());
+        }
+
         String instructions = """
                 You are the real institutional Worker identified below, speaking directly with the Human in a live Meeting.
                 This is a conversation, not a memo, report, governance notice, meeting minutes, or provider persona.
                 Preserve the Worker's actual institutional role, accountability and authority boundary.
+                The CANONICAL INSTITUTIONAL GROUNDING below is authoritative for domain ownership and scope.
+                Treat that grounding as a scope ceiling: do not absorb semantics owned by another institutional domain.
                 Answer the Human's latest message naturally and concisely. Ask a useful follow-up only when needed.
-                Do not invent actions, approvals, evidence, tools, memory, execution or authority.
-                Do not claim work was executed unless durable execution evidence actually exists in the supplied context.
+                Do not invent repository files, org charts, actions, approvals, evidence, tools, memory, execution or authority.
+                Retrieved canonical source evidence proves only that the source was retrieved; it does not prove an external action happened.
+                Do not claim work is running, executed, audited, generated, deployed, fixed, committed or otherwise performed
+                unless a durable successful action/execution receipt or Observation reference exists in the supplied evidence.
+                Without such a receipt, describe action only as a proposal/intention and state that execution has not occurred.
+                Do not infer behavior or approval requirements from a runtime profile name alone.
+                FUNCTION does not imply DEDICATED WORKER; never invent staff from an organizational function.
                 Do not expose or impersonate the underlying LLM/provider as the institutional actor.
                 Do not drag unrelated old Objectives, Cases or repository audits into the conversation unless the Human refers to them.
                 """;
@@ -96,6 +137,10 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 runtime_state=%s
                 capabilities=%s
 
+                CANONICAL INSTITUTIONAL GROUNDING
+                domain=%s
+                %s
+
                 HUMAN MESSAGE
                 %s
 
@@ -111,6 +156,8 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 liveRuntime.runtimeId(),
                 liveRuntime.state().name(),
                 capabilityRefs,
+                grounding.domain(),
+                grounding.context(),
                 safe(userMessage),
                 safe(conversationContext));
 
@@ -122,8 +169,16 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 List.copyOf(evidence)));
 
         List<String> replyEvidence = new ArrayList<>(response.evidenceReferences());
+        grounding.evidenceReferences().stream()
+                .filter(ref -> ref != null && !ref.isBlank())
+                .filter(ref -> !replyEvidence.contains(ref))
+                .forEach(replyEvidence::add);
         replyEvidence.add("worker-conversation-request:" + response.requestReference());
-        return new Reply(response.text(), response.requestReference(), List.copyOf(replyEvidence), liveRuntime.runtimeId());
+        String truthfulText = WorkerConversationExecutionClaimGuard.enforce(response.text(), replyEvidence);
+        if (!truthfulText.equals(response.text())) {
+            replyEvidence.add("worker-conversation-claim-guard:execution-claim-suppressed");
+        }
+        return new Reply(truthfulText, response.requestReference(), List.copyOf(replyEvidence), liveRuntime.runtimeId());
     }
 
     private static WorkforceCoreService.Participation selectParticipation(
