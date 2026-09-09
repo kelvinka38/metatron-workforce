@@ -7,6 +7,9 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -68,6 +71,33 @@ public final class FileRuntimePersistenceStore implements RuntimePersistenceStor
         } catch (IOException | RuntimeException e) {
             throw new IllegalStateException("unable to load runtime " + runtimeId, e);
         }
+    }
+
+    @Override
+    public synchronized List<RuntimePersistenceRecord> list() {
+        if (!Files.exists(root)) return List.of();
+        List<RuntimePersistenceRecord> records = new ArrayList<>();
+        try (var stream = Files.list(root)) {
+            for (Path file : stream
+                    .filter(path -> path.getFileName().toString().endsWith(".properties"))
+                    .sorted()
+                    .toList()) {
+                try (InputStream input = Files.newInputStream(file)) {
+                    Properties properties = new Properties();
+                    properties.load(input);
+                    records.add(new RuntimePersistenceRecord(
+                            properties.getProperty("runtimeId"),
+                            properties.getProperty("workerId"),
+                            properties.getProperty("state"),
+                            java.time.Instant.parse(properties.getProperty("updatedAt"))));
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalStateException("unable to list durable runtimes", e);
+        }
+        return records.stream()
+                .sorted(Comparator.comparing(RuntimePersistenceRecord::runtimeId))
+                .toList();
     }
 
     @Override
