@@ -220,6 +220,22 @@
       "timeout_seconds": 1200,
       "max_attempts": 1,
       "priority": 40
+    },
+    "worker-state-hygiene": {
+      "name": "Production Worker state hygiene",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/worker-state-hygiene.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 30
     }
   }
 }
