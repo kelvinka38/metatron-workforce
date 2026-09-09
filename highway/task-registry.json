@@ -140,6 +140,102 @@
       "timeout_seconds": 180,
       "max_attempts": 1,
       "priority": 70
+    },
+    "bios-deploy": {
+      "name": "BIOS production mutation",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-deploy.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 100
+    },
+    "meeting-real-worker": {
+      "name": "Meeting real Worker production acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/meeting-real-worker.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:meeting",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 60
+    },
+    "general-engineering-go1": {
+      "name": "General engineering GO1 production acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/general-engineering-go1.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github:metatron-workforce",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 50
+    },
+    "production-highway-full": {
+      "name": "FULL production acceptance highway",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/production-highway-full.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "highway:isolated-sandbox",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 40
+    },
+    "worker-state-hygiene": {
+      "name": "Production Worker state hygiene",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/worker-state-hygiene.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 30
     }
   }
 }

@@ -1,9 +1,6 @@
-name: Production Acceptance Highway V2
+name: Production Acceptance Highway Ingress
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
   workflow_dispatch:
     inputs:
       target_sha:
@@ -11,178 +8,58 @@ on:
         required: false
         type: string
       profile:
-        description: FAST for routine gate; FULL only for explicit destructive stress
+        description: FAST for routine gate; FULL only for explicit isolated stress
         required: false
         default: FAST
         type: choice
-        options:
-          - FAST
-          - FULL
+        options: [FAST, FULL]
 
 permissions:
   contents: read
+  statuses: write
 
-# One repository-wide production lane owns the single production runner.
-# A newer deploy supersedes any stale acceptance run; after that deploy succeeds,
-# only the Highway for the newly deployed exact SHA is admitted.
 concurrency:
-  group: metatron-production-lane
+  group: production-acceptance-highway-ingress
   cancel-in-progress: true
 
 jobs:
-  highway:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+  enqueue-highway:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
-    timeout-minutes: 12
-    env:
-      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
-      HIGHWAY_REVISION: fast-production-lane-v13
-      HIGHWAY_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'FAST' }}
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
-      - name: Run single-owner production acceptance highway
+
+      - name: Publish immutable control-plane release
         shell: bash
         run: |
           set -euo pipefail
-          echo "HIGHWAY_REVISION=$HIGHWAY_REVISION"
-          chmod +x \
-            scripts/production-acceptance-highway.sh \
-            scripts/highway-intelligence-lane.sh \
-            scripts/runtime-conformance-point2.sh \
-            scripts/runtime-conformance-point5.sh
-          ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
-          mkdir -p "$ROOT"
-          HIGHWAY_STARTED_AT=$(date +%s)
-          HIGHWAY_LATENCY_SLO_SECONDS=300
+          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
 
-          # Capacity-heavy phases stay sequential on the 4GB production host.
-          # Core Highway retains its own bounded internal concurrency. No other
-          # post-deploy workflow is allowed to compete for the production runner.
-          echo 'HIGHWAY_PHASE=CORE'
-          CORE_RC=1
-          CORE_ATTEMPT=0
-          while [ "$CORE_ATTEMPT" -lt 2 ]; do
-            CORE_ATTEMPT=$((CORE_ATTEMPT + 1))
-            ATTEMPT_LOG="$ROOT/highway-core-attempt-${CORE_ATTEMPT}.log"
-            set +e
-            CORE_TIMEOUT_SECONDS=120
-            [ "$HIGHWAY_PROFILE" = FULL ] && CORE_TIMEOUT_SECONDS=600
-            timeout --signal=TERM --kill-after=20s "$CORE_TIMEOUT_SECONDS" scripts/production-acceptance-highway.sh > "$ATTEMPT_LOG" 2>&1
-            CORE_RC=$?
-            set -e
-            cp "$ATTEMPT_LOG" "$ROOT/highway-core.log"
-            echo "HIGHWAY_CORE_ATTEMPT=${CORE_ATTEMPT} RC=${CORE_RC}"
-            cat "$ATTEMPT_LOG" || true
-            [ "$CORE_RC" = 0 ] && break
-
-            # The public edge can briefly retain the old upstream immediately after
-            # an exact-image replacement even though the local runtime is healthy.
-            # Recover only the proven narrow shape: both destructive Objective lanes
-            # and local observability passed, the only failed Core lane is the public
-            # Gateway, and the exact deployed SHA remains healthy. Persistent 503 or
-            # any other Core failure remains a hard failure.
-            if [ "$CORE_ATTEMPT" = 1 ] \
-              && [ -f "$ROOT/live-gateway.rc" ] \
-              && [ "$(cat "$ROOT/live-gateway.rc")" != 0 ] \
-              && [ "$(cat "$ROOT/live-observability.rc" 2>/dev/null || echo 1)" = 0 ] \
-              && [ "$(cat "$ROOT/lane-a.rc" 2>/dev/null || echo 1)" = 0 ] \
-              && [ "$(cat "$ROOT/lane-b.rc" 2>/dev/null || echo 1)" = 0 ]; then
-              echo 'HIGHWAY_CORE_GATEWAY_ONLY_TRANSIENT=DETECTED'
-              GATEWAY_RECOVERED=0
-              for GATEWAY_ATTEMPT in $(seq 1 12); do
-                CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-                LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-                HEALTH=$(docker inspect "$CID" --format '{{.State.Health.Status}}')
-                STATUS=$(curl -sS -o "$ROOT/live-gateway-recovery.json" -w '%{http_code}' --proto '=https' --tlsv1.2 \
-                  --connect-timeout 5 --max-time 15 https://gate.metatron.vn/telegram/health || true)
-                echo "HIGHWAY_CORE_GATEWAY_RECOVERY_ATTEMPT=$GATEWAY_ATTEMPT STATUS=$STATUS LIVE_SHA=$LIVE_SHA HEALTH=$HEALTH"
-                if [ "$STATUS" = 200 ] \
-                  && grep -q '"status":"UP"' "$ROOT/live-gateway-recovery.json" \
-                  && [ "$LIVE_SHA" = "$TARGET_SHA" ] \
-                  && [ "$HEALTH" = healthy ]; then
-                  GATEWAY_RECOVERED=1
-                  break
-                fi
-                sleep 5
-              done
-              if [ "$GATEWAY_RECOVERED" = 1 ]; then
-                CORE_RC=0
-                echo 'HIGHWAY_CORE_BOUNDED_GATEWAY_RECOVERY=PASS'
-                break
-              fi
-              echo 'HIGHWAY_CORE_BOUNDED_GATEWAY_RECOVERY=FAILED'
-            fi
-
-            OBJECTIVE_COUNT=$(grep -cE 'lane-[ab]_OBJECTIVE_ID=' "$ATTEMPT_LOG" || true)
-            if [ "$CORE_ATTEMPT" = 1 ] \
-              && grep -qE 'lane-[ab]_PLANNING_ADMISSION=ACQUIRED' "$ATTEMPT_LOG" \
-              && [ "$OBJECTIVE_COUNT" -lt 2 ]; then
-              echo "HIGHWAY_CORE_BOUNDED_RETRY=OBJECTIVE_ADMISSION_MATERIALIZATION objective_count=${OBJECTIVE_COUNT}"
-              sleep 5
-              continue
-            fi
-            break
-          done
-          echo "$CORE_RC" > "$ROOT/highway-core.rc"
-          test "$CORE_RC" = 0
-          if [ "$CORE_ATTEMPT" -gt 1 ]; then
-            echo 'HIGHWAY_CORE_BOUNDED_ADMISSION_RECOVERY=PASS'
-          fi
-
-          echo 'HIGHWAY_PHASE=INTELLIGENCE_PRODUCT'
-          set +e
-          timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh > "$ROOT/intelligence-product.log" 2>&1
-          INTEL_RC=$?
-          set -e
-          echo "$INTEL_RC" > "$ROOT/intelligence-product.rc"
-          cat "$ROOT/intelligence-product.log" || true
-          test "$INTEL_RC" = 0
-
-          echo 'HIGHWAY_PHASE=POINT2_ROOT'
-          set +e
-          timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1
-          POINT2_RC=$?
-          set -e
-          echo "$POINT2_RC" > "$ROOT/point2-root-routing.rc"
-          cat "$ROOT/point2-root-routing.log" || true
-          test "$POINT2_RC" = 0
-          echo 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS'
-
-          echo 'HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5'
-          mkdir -p "$ROOT/point5"
-          set +e
-          POINT5_OUT_DIR="$ROOT/point5" timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh > "$ROOT/point5.log" 2>&1
-          POINT5_RC=$?
-          set -e
-          echo "$POINT5_RC" > "$ROOT/point5.rc"
-          cat "$ROOT/point5.log" || true
-          test "$POINT5_RC" = 0
-          grep -q 'RUNTIME_CONFORMANCE_POINT5=PASS' "$ROOT/point5.log"
-
-          echo 'HIGHWAY_SCHEDULER_SINGLE_ORCHESTRATOR=PASS'
-          echo 'HIGHWAY_STALE_ACCEPTANCE_SUPERSESSION=PASS'
-          echo 'HIGHWAY_CORE_INTERNAL_PARALLELISM=PASS'
-          echo 'HIGHWAY_HOST_CAPACITY_PHASES=PASS'
-          echo 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS'
-          echo 'HIGHWAY_INTELLIGENCE_PRODUCT=PASS'
-          echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
-          echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=PASS'
-          HIGHWAY_TOTAL_SECONDS=$(( $(date +%s) - HIGHWAY_STARTED_AT ))
-          echo "HIGHWAY_TOTAL_SECONDS=$HIGHWAY_TOTAL_SECONDS"
-          test "$HIGHWAY_TOTAL_SECONDS" -lt "$HIGHWAY_LATENCY_SLO_SECONDS"
-          echo 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS'
-          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2_AND_POINT5=PASS'
-      - name: Persist highway evidence locally
-        if: always()
-        continue-on-error: true
+      - name: Submit acceptance profile to persistent Highway
         shell: bash
+        env:
+          REQUESTED_TARGET_SHA: ${{ inputs.target_sha }}
+          REQUESTED_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
-          ROOT="/tmp/metatron-production-highway-${GITHUB_RUN_ID}"
-          DURABLE="$HOME/.metatron/acceptance-evidence/highway/$TARGET_SHA/$GITHUB_RUN_ID"
-          rm -rf "$DURABLE"
-          mkdir -p "$DURABLE"
-          if [ -d "$ROOT" ]; then cp -a "$ROOT/." "$DURABLE/"; fi
-          printf 'target_sha=%s\nrun_id=%s\n' "$TARGET_SHA" "$GITHUB_RUN_ID" > "$DURABLE/_index.txt"
-          echo "HIGHWAY_DURABLE_EVIDENCE=$DURABLE"
+          TARGET_SHA="${REQUESTED_TARGET_SHA:-$GITHUB_SHA}"
+          PROFILE="${REQUESTED_PROFILE:-FAST}"
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          case "$PROFILE" in
+            FAST) KIND=production-highway-fast; PRIORITY=70 ;;
+            FULL) KIND=production-highway-full; PRIORITY=40 ;;
+            *) echo "unsupported profile: $PROFILE" >&2; exit 1 ;;
+          esac
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit             --kind "$KIND"             --source-sha "$GITHUB_SHA"             --priority "$PRIORITY"             --dedupe-key "$KIND:$TARGET_SHA:$GITHUB_RUN_ID"             --env "TARGET_SHA=$TARGET_SHA"             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_ACCEPTANCE_TASK=$TASK"
+          echo "HIGHWAY_ACCEPTANCE_PROFILE=$PROFILE"
+          $CTL get "$TASK"
+          echo 'PRODUCTION_ACCEPTANCE_GITHUB_EXECUTION_PLANE=BYPASSED'
+          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_INGRESS=PASS'

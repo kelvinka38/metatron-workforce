@@ -24,6 +24,12 @@ printf '%s\n' "$SHA" > "$RELEASE.tmp/.highway-source-sha"
 rm -rf "$RELEASE"
 mv "$RELEASE.tmp" "$RELEASE"
 
+OLD_DAEMON_HASH=""
+if [ -f "$CURRENT/highwayd.py" ]; then
+  OLD_DAEMON_HASH=$(sha256sum "$CURRENT/highwayd.py" | awk '{print $1}')
+fi
+NEW_DAEMON_HASH=$(sha256sum "$CHECKOUT/highway/highwayd.py" | awk '{print $1}')
+
 rm -rf "$CURRENT.tmp"
 mkdir -p "$CURRENT.tmp"
 cp "$CHECKOUT/highway/highwayd.py" "$CURRENT.tmp/highwayd.py"
@@ -58,11 +64,25 @@ os.chmod(tmp,0o600)
 os.replace(tmp,path)
 PY
 
-METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" METATRON_HIGHWAY_STATE_DIR="$STATE"   bash "$CURRENT/ensure-running.sh" --restart
-
 set -a
 source "$ENV_FILE"
 set +a
+
+if [ "$OLD_DAEMON_HASH" != "$NEW_DAEMON_HASH" ] && curl -fsS --max-time 1 http://127.0.0.1:18090/health >/dev/null 2>&1; then
+  echo 'HIGHWAY_DAEMON_CODE_CHANGED=YES'
+  for _ in $(seq 1 600); do
+    ACTIVE=$(curl -fsS --max-time 1 http://127.0.0.1:18090/health | python3 -c 'import json,sys; print(int(json.load(sys.stdin).get("active",0)))' || echo 1)
+    [ "$ACTIVE" = 0 ] && break
+    sleep .5
+  done
+  ACTIVE=$(curl -fsS --max-time 1 http://127.0.0.1:18090/health | python3 -c 'import json,sys; print(int(json.load(sys.stdin).get("active",0)))' || echo 1)
+  test "$ACTIVE" = 0
+  METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" METATRON_HIGHWAY_STATE_DIR="$STATE" bash "$CURRENT/ensure-running.sh" --restart
+else
+  echo 'HIGHWAY_DAEMON_RESTART=NOT_REQUIRED'
+  METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" METATRON_HIGHWAY_STATE_DIR="$STATE" bash "$CURRENT/ensure-running.sh"
+fi
+
 python3 "$CURRENT/highwayctl.py" health
 test "$(cat "$RELEASE/.highway-source-sha")" = "$SHA"
 echo "HIGHWAY_RELEASE_SHA=$SHA"
