@@ -93,7 +93,7 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
             return Grounding.unavailable("no-canonical-domain-binding");
         }
 
-        String sotPath = domain + "/SOT.md";
+        String sotPath = canonicalSotPath(domain);
         Document sot = fetch(sotPath);
         if (sot == null) {
             return Grounding.unavailable("canonical-sot-unavailable:" + sotPath);
@@ -136,6 +136,11 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
             return Grounding.unavailable("canonical-grounding-empty:" + sotPath);
         }
         return Grounding.available(domain, context.toString().trim(), List.copyOf(evidence));
+    }
+
+    private static String canonicalSotPath(String domain) {
+        if ("05_WORKFORCE".equals(domain)) return "05_WORKFORCE/WORKFORCE_SOT.md";
+        return domain + "/SOT.md";
     }
 
     private Document fetch(String path) {
