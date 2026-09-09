@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "tasks": {
+    "fabric-probe-read": {
+      "name": "Highway parallel READ probe",
+      "command": [
+        "python3",
+        "highway/tasks/fabric_probe.py",
+        "2"
+      ],
+      "resources": [
+        {
+          "name": "probe:shared",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 20,
+      "max_attempts": 1,
+      "priority": 80
+    },
+    "fabric-probe-write": {
+      "name": "Highway serialized WRITE probe",
+      "command": [
+        "python3",
+        "highway/tasks/fabric_probe.py",
+        "1"
+      ],
+      "resources": [
+        {
+          "name": "probe:shared",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 20,
+      "max_attempts": 1,
+      "priority": 70
+    },
+    "fabric-probe-unrelated": {
+      "name": "Highway unrelated resource probe",
+      "command": [
+        "python3",
+        "highway/tasks/fabric_probe.py",
+        "2"
+      ],
+      "resources": [
+        {
+          "name": "probe:other",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 20,
+      "max_attempts": 1,
+      "priority": 80
+    },
+    "workforce-build": {
+      "name": "Workforce exact-SHA build and test",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/workforce-build.sh"
+      ],
+      "resources": [
+        {
+          "name": "release:{source_sha}",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 2,
+      "priority": 90
+    },
+    "workforce-deploy": {
+      "name": "Workforce production mutation",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/workforce-deploy.sh"
+      ],
+      "resources": [
+        {
+          "name": "release:{source_sha}",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 100,
+      "on_success": [
+        "work-observability",
+        "control-room-fast",
+        "production-highway-fast"
+      ]
+    },
+    "production-highway-fast": {
+      "name": "FAST production acceptance highway",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/production-highway-fast.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 420,
+      "max_attempts": 1,
+      "priority": 70
+    },
+    "work-observability": {
+      "name": "Work observability production acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/work-observability.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 120,
+      "max_attempts": 1,
+      "priority": 70
+    },
+    "control-room-fast": {
+      "name": "Control Room production acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/control-room-fast.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 180,
+      "max_attempts": 1,
+      "priority": 70
+    }
+  }
+}
