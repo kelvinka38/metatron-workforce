@@ -5,7 +5,8 @@ import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
-import org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,7 +26,8 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
     private final WorkforceCoreService core;
     private final WorkerRuntimeProfileBindingService runtimeProfiles;
     private final RuntimeCapacityCoordinator runtimeCapacity;
-    private final WorkerIntelligenceService intelligence;\n    private final InstitutionalRoleGrounding institutionalGrounding;
+    private final WorkerIntelligenceService intelligence;
+    private final InstitutionalRoleGrounding institutionalGrounding;
 
     @Autowired
     public CanonicalWorkerConversationService(
