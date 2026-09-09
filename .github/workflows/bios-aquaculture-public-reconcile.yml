@@ -1,0 +1,121 @@
+name: BIOS Aquaculture Public Reconcile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-aquaculture-public-reconcile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bios-aquaculture-public-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 8
+    steps:
+      - name: Reconcile Aquaculture public routes through canonical Gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/gateway-g6/source
+          CONFIG="$BASE/envoy-online.yaml"
+          COMPOSE="$BASE/docker-compose.yml"
+          test -f "$CONFIG"; test -f "$COMPOSE"
+          cp "$CONFIG" "$CONFIG.bak.pre-aquaculture-$(date +%s)"
+
+          python3 - "$CONFIG" <<'PY'
+          from pathlib import Path
+          import sys
+          path=Path(sys.argv[1])
+          text=path.read_text()
+          marker="# BIOS Aquaculture public product boundary."
+          if marker not in text:
+              anchor='              # Gateway V2 Front Office / Management / explicit egress capabilities.'
+              if anchor not in text:
+                  raise SystemExit("Aquaculture route anchor not found")
+              block='''              # BIOS Aquaculture public product boundary.
+              # Web assets are public. API auth remains fail-closed in BIOS via X-BIOS-API-Key
+              # until a canonical institution identity/session provider is approved.
+              - match: {prefix: "/aquaculture"}
+                route: {cluster: bios, timeout: 30s}
+                typed_per_filter_config:
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+              - match: {prefix: "/v2/product/aquaculture/"}
+                route: {cluster: bios, timeout: 30s}
+                typed_per_filter_config:
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+
+'''
+              text=text.replace(anchor,block+anchor,1)
+              path.write_text(text)
+          PY
+
+          grep -q '# BIOS Aquaculture public product boundary.' "$CONFIG"
+          grep -q 'prefix: "/aquaculture"' "$CONFIG"
+          grep -q 'prefix: "/v2/product/aquaculture/"' "$CONFIG"
+          grep -q 'address: bios, port_value: 8080' "$CONFIG"
+
+          docker run --rm -v "$CONFIG:/etc/envoy/envoy.yaml:ro"             envoyproxy/envoy:v1.36-latest --mode validate -c /etc/envoy/envoy.yaml
+          echo 'AQUACULTURE_ENVOY_CONFIG_VALID=PASS'
+
+          cd "$BASE"
+          docker compose up -d --force-recreate envoy
+
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 https://gate.metatron.vn/healthz >/tmp/aq-gateway-health.json 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          grep -q '"status":"ok"' /tmp/aq-gateway-health.json
+          echo 'AQUACULTURE_GATEWAY_HEALTH=PASS'
+
+          WEB_CODE=$(curl -sS --max-time 10 -o /tmp/aq-public.html -w '%{http_code}' https://gate.metatron.vn/aquaculture)
+          test "$WEB_CODE" = 200
+          grep -q '<title>BIOS Aquaculture</title>' /tmp/aq-public.html
+          grep -q 'Vùng nuôi' /tmp/aq-public.html
+          echo 'AQUACULTURE_PUBLIC_WEB=PASS'
+
+          UNAUTH_CODE=$(curl -sS --max-time 10 -o /tmp/aq-unauth.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/readiness             -H 'Content-Type: application/json'             --data '{"request_id":"aq-public-unauth","correlation_id":"aq-public-unauth","actor_id":"UNAUTH","timestamp":"2026-09-09T00:00:00+00:00","schema_version":"0.1","payload":{}}')
+          test "$UNAUTH_CODE" = 401
+          echo 'AQUACULTURE_PUBLIC_API_FAIL_CLOSED=PASS'
+
+          BIOS_BASE="$HOME/.metatron/bios"
+          test -r "$BIOS_BASE/.env"
+          set -a; source "$BIOS_BASE/.env"; set +a
+          test -n "${BIOS_API_KEY:-}"
+          python3 - <<'PY' >/tmp/aq-auth-request.json
+          import json,datetime
+          print(json.dumps({
+            "request_id":"aq-public-auth",
+            "correlation_id":"aq-public-auth",
+            "actor_id":"FOUNDER",
+            "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "schema_version":"0.1",
+            "payload":{}
+          }))
+          PY
+          AUTH_CODE=$(curl -sS --max-time 10 -o /tmp/aq-auth.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/readiness             -H "X-BIOS-API-Key: $BIOS_API_KEY"             -H 'Content-Type: application/json'             --data-binary @/tmp/aq-auth-request.json)
+          test "$AUTH_CODE" = 200
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-auth.json'))
+          assert d['status']=='OK'
+          assert d['payload']['domain']=='AQUACULTURE'
+          assert d['payload']['data']['aquaculture_ready'] is True
+          print('AQUACULTURE_PUBLIC_AUTH_API=PASS')
+          PY
+
+          ss -ltn | grep -q '127.0.0.1:18080'
+          echo 'BIOS_DIRECT_PUBLIC_PORT=NOT_EXPOSED'
+          echo 'E1_PUBLIC_PRODUCT_ACCESS=PASS'
