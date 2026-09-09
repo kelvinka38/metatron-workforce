@@ -70,7 +70,7 @@ jobs:
           print(json.dumps(selected,indent=2,sort_keys=True))
           json.dump(selected,open(out,'w',encoding='utf-8'),indent=2,sort_keys=True)
           missing=[k for k in kinds if k not in selected]
-          assert not missing, f"MISSING_HIGHWAY_TASKS={missing}"
+          print(f"HIGHWAY_MISSING_TASKS={missing}")
           PY
 
           python3 - /tmp/highway-selected.json <<'PY'
@@ -111,8 +111,13 @@ jobs:
           from datetime import datetime
           rows=json.load(open(sys.argv[1],encoding='utf-8'))
           target,live,health=sys.argv[2:]
+          required=('workforce-build','workforce-deploy')
+          for kind in required:
+              assert kind in rows, f"MISSING_REQUIRED_TASK={kind}"
           for kind,row in rows.items():
               assert row['state']=='SUCCEEDED', f"{kind} NOT_SUCCEEDED state={row['state']} failure={row.get('failure','')}"
+          for kind in ('production-highway-fast','work-observability','control-room-fast'):
+              assert kind in rows, f"MISSING_FANOUT_TASK={kind}"
           assert live==target, (live,target)
           assert health=='healthy', health
 
