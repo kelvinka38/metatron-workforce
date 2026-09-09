@@ -43,8 +43,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
-          test "$(cat /opt/metatron/highway/releases/$GITHUB_SHA/.highway-source-sha)" = "$GITHUB_SHA"
+          bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          test "$(cat "$HOME/.metatron/highway/releases/$GITHUB_SHA/.highway-source-sha")" = "$GITHUB_SHA"
           echo 'HIGHWAY_HOST_SERVICE_INSTALL=PASS'
 
       - name: Prove unrelated work executes concurrently
@@ -54,7 +54,9 @@ jobs:
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
           set -a; source "$BASE/.env"; set +a
-          CTL="python3 /opt/metatron/highway/current/highwayctl.py"
+          set -a; source "$HOME/.metatron/highway/highway.env"; set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
           $CTL health
 
           submit() {
