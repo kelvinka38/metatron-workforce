@@ -7,6 +7,7 @@ import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimeState;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -30,6 +31,7 @@ public final class WorkerLifecycleControlService {
     private final RuntimeCapacityCoordinator runtimes;
     private final Clock clock;
 
+    @Autowired
     public WorkerLifecycleControlService(
             AutonomousStaffingService staffing,
             GatewayDirectorAppointmentCapability gatewayDirector,
