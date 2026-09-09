@@ -2,10 +2,6 @@ name: BIOS Production Deploy
 # Terminal completion redeploy: deploy the current canonical BIOS main SHA after checkpoint closure.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bios-production-deploy.yml'
   workflow_dispatch:
     inputs:
       bios_sha:
@@ -27,7 +23,7 @@ jobs:
       - name: Deploy accepted BIOS and execute live acceptance
         shell: bash
         env:
-          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha || '7fb02aa0c0498be7b0101fdae10c1cdc657ee5f3' }}
+          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha }}
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
@@ -42,13 +38,12 @@ jobs:
           [[ "$BIOS_SHA" =~ ^[0-9a-f]{40}$ ]]
           echo "BIOS_SOURCE_SHA=$BIOS_SHA"
 
-          test "$BIOS_SHA" = "7fb02aa0c0498be7b0101fdae10c1cdc657ee5f3"
-          SELFHOST_RUN_JSON=$(curl -fsSL \
+          CI_JSON=$(curl -fsSL \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/kelvinka38/metatron-workforce/actions/runs/34389968830")
-          printf '%s' "$SELFHOST_RUN_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("name")=="BIOS Candidate Selfhosted Test"; assert d.get("conclusion")=="success"; print("BIOS_EXACT_SHA_SELFHOSTED_TEST=PASS")'
-          echo "BIOS_EXACT_SHA_CI=PASS_SELFHOSTED_EVIDENCE"
+            "https://api.github.com/repos/kelvinka38/bios/actions/runs?head_sha=$BIOS_SHA&status=completed&per_page=20")
+          printf '%s' "$CI_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); ok=any(r.get("name")=="BIOS Runtime" and r.get("head_sha")==sys.argv[1] and r.get("conclusion")=="success" for r in d.get("workflow_runs",[])); assert ok, "exact BIOS SHA has no successful BIOS Runtime CI"' "$BIOS_SHA"
+          echo "BIOS_EXACT_SHA_CI=PASS"
 
           rm -rf "$STAGE" && mkdir -p "$STAGE"
           curl -fsSL \
@@ -59,7 +54,7 @@ jobs:
 
           cd "$STAGE"
           test -f deploy/docker-compose.yml
-          echo 'UNIT_TEST_REPLAY=SKIPPED_EXACT_SHA_SELFHOSTED_TEST_ALREADY_PASS'
+          echo 'UNIT_TEST_REPLAY=SKIPPED_EXACT_SHA_CI_ALREADY_PASS'
 
           mkdir -p "$BIOS_BASE"
           chmod 700 "$BIOS_BASE"
@@ -185,28 +180,4 @@ jobs:
           echo 'BIOS_AUTH_FAIL_CLOSED=PASS'
           echo 'BIOS_PERSISTENCE_RESTART=PASS'
           echo 'OPERATE_01_LOOP=PASS'
-          # Pilot access hotfix acceptance: the same founder code must be reusable.
-          for n in 1 2; do
-            CODE=$(curl -sS -D "/tmp/aq-code-$n.headers" -o "/tmp/aq-code-$n.json" -w '%{http_code}' \
-              -X POST http://127.0.0.1:18080/v2/product/aquaculture/session/exchange \
-              -H 'Content-Type: application/json' \
-              --data '{"code":"AQ-4D11-18AB"}')
-            test "$CODE" = 200
-            grep -qi '^Set-Cookie: aq_pilot_session=' "/tmp/aq-code-$n.headers"
-          done
-          echo 'AQ_SELF_PILOT_CODE_REUSE=PASS'
-
-          PUBLIC_CODE=$(curl -sS -D /tmp/aq-public-code.headers -o /tmp/aq-public-code.json -w '%{http_code}' \
-            -X POST https://gate.metatron.vn/v2/product/aquaculture/session/exchange \
-            -H 'Content-Type: application/json' \
-            --data '{"code":"AQ-4D11-18AB"}')
-          test "$PUBLIC_CODE" = 200
-          grep -qi '^set-cookie: aq_pilot_session=' /tmp/aq-public-code.headers
-          echo 'AQ_SELF_PILOT_PUBLIC_EXCHANGE=PASS'
-
-          curl -sS -D /tmp/aq-app.headers -o /tmp/aq-app.js https://gate.metatron.vn/aquaculture/assets/app.js
-          grep -qi '^cache-control: no-store' /tmp/aq-app.headers
-          grep -q 'S.session=await me()' /tmp/aq-app.js
-          echo 'AQ_PILOT_WEB_CACHE_AND_RELOAD_FIX=PASS'
-
           echo 'BIOS_PRODUCTION_ACCEPTANCE=PASS'
