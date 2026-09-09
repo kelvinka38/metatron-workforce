@@ -14,10 +14,11 @@ class TelegramDepthControlMarkupTest {
         Map<String, Object> markup = TelegramBotGateway.depthControlReplyMarkup();
 
         assertEquals(List.of(
-                List.of("💬 Chat", "🧰 Work")), markup.get("keyboard"));
+                List.of("💬 Chat", "🧰 Work"),
+                List.of("👥 Workers")), markup.get("keyboard"));
         assertEquals(List.of(
                 List.of("🏛 Meeting", "📊 Monitor"),
-                List.of("💬 Chat")), TelegramBotGateway.workReplyMarkup().get("keyboard"));
+                List.of("💬 Chat", "👥 Workers")), TelegramBotGateway.workReplyMarkup().get("keyboard"));
         assertEquals(true, markup.get("resize_keyboard"));
         assertEquals(true, markup.get("is_persistent"));
         assertTrue(markup.containsKey("input_field_placeholder"));
