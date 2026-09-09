@@ -176,6 +176,30 @@
       "timeout_seconds": 900,
       "max_attempts": 1,
       "priority": 60
+    },
+    "general-engineering-go1": {
+      "name": "General engineering GO1 production acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/general-engineering-go1.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github:metatron-workforce",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 50
     }
   }
 }
