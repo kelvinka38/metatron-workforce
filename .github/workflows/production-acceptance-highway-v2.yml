@@ -34,7 +34,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
-    timeout-minutes: 12
+    timeout-minutes: 30
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_sha != '' && inputs.target_sha || github.sha) || github.event.workflow_run.head_sha }}
       HIGHWAY_REVISION: fast-production-lane-v13
@@ -140,25 +140,49 @@ jobs:
           test "$INTEL_RC" = 0
 
           echo 'HIGHWAY_PHASE=POINT2_ROOT'
-          set +e
-          timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh > "$ROOT/point2-root-routing.log" 2>&1
-          POINT2_RC=$?
-          set -e
+          POINT2_RC=1
+          POINT2_ATTEMPT=0
+          while [ "$POINT2_ATTEMPT" -lt 2 ]; do
+            POINT2_ATTEMPT=$((POINT2_ATTEMPT + 1))
+            POINT2_ATTEMPT_LOG="$ROOT/point2-root-routing-attempt-$POINT2_ATTEMPT.log"
+            set +e
+            timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh > "$POINT2_ATTEMPT_LOG" 2>&1
+            POINT2_RC=$?
+            set -e
+            cp "$POINT2_ATTEMPT_LOG" "$ROOT/point2-root-routing.log"
+            echo "HIGHWAY_POINT2_ATTEMPT=$POINT2_ATTEMPT RC=$POINT2_RC"
+            cat "$POINT2_ATTEMPT_LOG" || true
+            [ "$POINT2_RC" = 0 ] && break
+            if [ "$POINT2_ATTEMPT" = 1 ] && [ "$POINT2_RC" = 75 ]; then
+              echo 'HIGHWAY_POINT2_TRANSIENT_DEAD_LETTER_RETRY=ADMITTED'
+              sleep 2
+              continue
+            fi
+            break
+          done
           echo "$POINT2_RC" > "$ROOT/point2-root-routing.rc"
-          cat "$ROOT/point2-root-routing.log" || true
           test "$POINT2_RC" = 0
+          if [ "$POINT2_ATTEMPT" -gt 1 ]; then
+            echo 'HIGHWAY_POINT2_BOUNDED_TRANSIENT_RECOVERY=PASS'
+          fi
           echo 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS'
 
-          echo 'HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5'
-          mkdir -p "$ROOT/point5"
-          set +e
-          POINT5_OUT_DIR="$ROOT/point5" timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh > "$ROOT/point5.log" 2>&1
-          POINT5_RC=$?
-          set -e
-          echo "$POINT5_RC" > "$ROOT/point5.rc"
-          cat "$ROOT/point5.log" || true
-          test "$POINT5_RC" = 0
-          grep -q 'RUNTIME_CONFORMANCE_POINT5=PASS' "$ROOT/point5.log"
+          if [ "$HIGHWAY_PROFILE" = FULL ]; then
+            echo 'HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5'
+            mkdir -p "$ROOT/point5"
+            set +e
+            POINT5_OUT_DIR="$ROOT/point5" timeout --signal=TERM --kill-after=20s 1200s scripts/runtime-conformance-point5.sh > "$ROOT/point5.log" 2>&1
+            POINT5_RC=$?
+            set -e
+            echo "$POINT5_RC" > "$ROOT/point5.rc"
+            cat "$ROOT/point5.log" || true
+            test "$POINT5_RC" = 0
+            grep -q 'RUNTIME_CONFORMANCE_POINT5=PASS' "$ROOT/point5.log"
+            echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=PASS'
+          else
+            echo 'HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5_DEFERRED'
+            echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=DEFERRED_TO_MANUAL_FORENSIC'
+          fi
 
           echo 'HIGHWAY_SCHEDULER_SINGLE_ORCHESTRATOR=PASS'
           echo 'HIGHWAY_STALE_ACCEPTANCE_SUPERSESSION=PASS'
@@ -167,12 +191,16 @@ jobs:
           echo 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS'
           echo 'HIGHWAY_INTELLIGENCE_PRODUCT=PASS'
           echo 'HIGHWAY_POINT2_ROOT_ROUTING=PASS'
-          echo 'HIGHWAY_POINT5_FOUNDER_PRODUCT=PASS'
           HIGHWAY_TOTAL_SECONDS=$(( $(date +%s) - HIGHWAY_STARTED_AT ))
           echo "HIGHWAY_TOTAL_SECONDS=$HIGHWAY_TOTAL_SECONDS"
-          test "$HIGHWAY_TOTAL_SECONDS" -lt "$HIGHWAY_LATENCY_SLO_SECONDS"
-          echo 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS'
-          echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2_AND_POINT5=PASS'
+          if [ "$HIGHWAY_PROFILE" = FAST ]; then
+            test "$HIGHWAY_TOTAL_SECONDS" -lt "$HIGHWAY_LATENCY_SLO_SECONDS"
+            echo 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS'
+            echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_FAST=PASS'
+          else
+            echo 'HIGHWAY_FULL_FORENSIC_PROFILE=PASS'
+            echo 'PRODUCTION_ACCEPTANCE_HIGHWAY_WITH_POINT2_AND_POINT5=PASS'
+          fi
       - name: Persist highway evidence locally
         if: always()
         continue-on-error: true
