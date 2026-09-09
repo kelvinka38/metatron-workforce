@@ -15,14 +15,12 @@ RELEASE="$INSTALL/releases/$SHA"
 ENV_FILE="$INSTALL/highway.env"
 
 test -r "$BASE_ENV"
-mkdir -p "$INSTALL/releases" "$STATE/logs"
+mkdir -p "$INSTALL/releases" "$STATE/logs" "$STATE/workspaces" "$STATE/artifacts"
 
-rm -rf "$RELEASE.tmp"
-mkdir -p "$RELEASE.tmp"
-git -C "$CHECKOUT" archive "$SHA" | tar -x -C "$RELEASE.tmp"
-printf '%s\n' "$SHA" > "$RELEASE.tmp/.highway-source-sha"
-rm -rf "$RELEASE"
-mv "$RELEASE.tmp" "$RELEASE"
+# Source publication is immutable and serialized independently from task execution.
+# Re-installing the control plane must never replace a release an executor is using.
+METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" \
+  bash "$CHECKOUT/highway/publish-release.sh" "$CHECKOUT" "$SHA"
 
 OLD_DAEMON_HASH=""
 if [ -f "$CURRENT/highwayd.py" ]; then

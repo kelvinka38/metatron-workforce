@@ -1,31 +1,62 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 export SHA="${HIGHWAY_SOURCE_SHA:?HIGHWAY_SOURCE_SHA required}"
+: "${HIGHWAY_TASK_ID:?HIGHWAY_TASK_ID required}"
+: "${HIGHWAY_INSTALL_DIR:?HIGHWAY_INSTALL_DIR required}"
+: "${HIGHWAY_STATE_DIR:?HIGHWAY_STATE_DIR required}"
 export METATRON_VERSION="${METATRON_VERSION:-0.1.0}"
-export GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$PWD}"
+
 # --- Deploy exact tested artifact and isolated sandbox with rollback ---
-set -euo pipefail
 mkdir -p "$HOME/.metatron"
 exec 9>"$HOME/.metatron/production-mutation.lock"
 flock -w 600 9
 echo 'PRODUCTION_MUTATION_LOCK=ACQUIRED'
+
 BASE=/opt/metatron/metatron-workforce
-WORKSPACE="$GITHUB_WORKSPACE"
+SOURCE="$HIGHWAY_INSTALL_DIR/releases/$SHA"
+ARTIFACT="$HIGHWAY_STATE_DIR/artifacts/$SHA"
+WORK_ROOT="$HIGHWAY_STATE_DIR/workspaces"
+WORKSPACE="$WORK_ROOT/$HIGHWAY_TASK_ID-deploy"
 COMPOSE="$WORKSPACE/deploy/docker-compose.yml"
 PROJECT=deploy
 DEPLOY_STARTED_AT=$(date +%s)
+JAR="metatron-workforce-${METATRON_VERSION}.jar"
+
+mkdir -p "$WORK_ROOT"
+rm -rf "$WORKSPACE"
+TMP="$WORKSPACE.tmp.$"
+rm -rf "$TMP"
+mkdir -p "$TMP"
+cleanup_workspace() { rm -rf "$TMP" "$WORKSPACE"; }
+trap cleanup_workspace EXIT
 
 echo '=== PRE-FLIGHT ==='
 test -r "$BASE/.env"
-test -f "$WORKSPACE/.highway-source-sha"
-test "$(cat "$WORKSPACE/.highway-source-sha")" = "$SHA"
-test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar"
-test -f "$WORKSPACE/build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256"
+test -d "$SOURCE"
+test "$(cat "$SOURCE/.highway-source-sha")" = "$SHA"
+test -d "$ARTIFACT"
+test "$(cat "$ARTIFACT/.highway-source-sha")" = "$SHA"
 (
-  cd "$WORKSPACE"
-  sha256sum -c "build/libs/metatron-workforce-${METATRON_VERSION}.jar.sha256"
+  cd "$ARTIFACT"
+  sha256sum -c "$JAR.sha256"
+)
+
+# Assemble a private deployment context from immutable source + sealed tested artifact.
+# Docker build output may mutate this workspace but can never touch the canonical release.
+cp -a "$SOURCE/." "$TMP/"
+mkdir -p "$TMP/build/libs"
+cp "$ARTIFACT/$JAR" "$TMP/build/libs/$JAR"
+cp "$ARTIFACT/$JAR.sha256" "$TMP/build/libs/$JAR.sha256"
+mv "$TMP" "$WORKSPACE"
+test "$(cat "$WORKSPACE/.highway-source-sha")" = "$SHA"
+(
+  cd "$WORKSPACE/build/libs"
+  sha256sum -c "$JAR.sha256"
 )
 echo 'HIGHWAY_RELEASE_IDENTITY=PASS'
+echo 'HIGHWAY_SEALED_ARTIFACT_IDENTITY=PASS'
+echo 'HIGHWAY_DEPLOY_WORKSPACE_ISOLATION=PASS'
 set -a; source "$BASE/.env"; set +a
 
 # Internal effect-boundary tokens are host-local credentials. Persist them once, never log them.
