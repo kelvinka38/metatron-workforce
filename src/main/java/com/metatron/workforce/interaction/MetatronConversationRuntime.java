@@ -16,6 +16,7 @@ public final class MetatronConversationRuntime {
     private final WorkplaceMeetingService meetingRoom;
     private final ConversationSurfaceModeService surfaceMode;
     private final MetatronInstitutionalStateChatService institutionalStateChat;
+    private final WorkerLifecycleControlService workerLifecycle;
     private final int maxTurns;
     private final int maxChars;
 
@@ -62,12 +63,26 @@ public final class MetatronConversationRuntime {
                                        MetatronInstitutionalStateChatService institutionalStateChat,
                                        int maxTurns,
                                        int maxChars) {
+        this(memory, intelligence, depthControl, meetingRoom, surfaceMode,
+                institutionalStateChat, null, maxTurns, maxChars);
+    }
+
+    public MetatronConversationRuntime(ConversationMemoryStore memory,
+                                       MetatronIntelligenceResponder intelligence,
+                                       IntelligenceDepthControlService depthControl,
+                                       WorkplaceMeetingService meetingRoom,
+                                       ConversationSurfaceModeService surfaceMode,
+                                       MetatronInstitutionalStateChatService institutionalStateChat,
+                                       WorkerLifecycleControlService workerLifecycle,
+                                       int maxTurns,
+                                       int maxChars) {
         this.memory = Objects.requireNonNull(memory, "memory");
         this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
         this.depthControl = depthControl;
         this.meetingRoom = meetingRoom;
         this.surfaceMode = surfaceMode;
         this.institutionalStateChat = institutionalStateChat;
+        this.workerLifecycle = workerLifecycle;
         if (maxTurns < 1 || maxChars < 1) throw new IllegalArgumentException("memory limits must be positive");
         this.maxTurns = maxTurns;
         this.maxChars = maxChars;
@@ -127,6 +142,15 @@ public final class MetatronConversationRuntime {
         boolean workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
                 || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
         boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
+
+        if (workerLifecycle != null && workSurfaceSelected && workerLifecycle.supports(interaction.text())) {
+            String workerAnswer = workerLifecycle.handle(interaction.human().actorId(), interaction.text())
+                    .orElseThrow(() -> new IllegalStateException("worker_lifecycle_control_unhandled"));
+            memory.appendTurn(interaction.conversationId(), interaction.text(), workerAnswer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), workerAnswer,
+                    "work:worker-lifecycle:" + interaction.externalMessageReference());
+        }
 
         if (meetingRoom != null && workSurfaceSelected
                 && WorkplaceMeetingService.isWorkerDirectoryRequest(interaction.text())) {
