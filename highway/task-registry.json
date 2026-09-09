@@ -60,7 +60,11 @@
       ],
       "resources": [
         {
-          "name": "release:{source_sha}",
+          "name": "source-release:{source_sha}",
+          "mode": "READ"
+        },
+        {
+          "name": "artifact:{source_sha}",
           "mode": "WRITE"
         }
       ],
@@ -76,7 +80,11 @@
       ],
       "resources": [
         {
-          "name": "release:{source_sha}",
+          "name": "source-release:{source_sha}",
+          "mode": "READ"
+        },
+        {
+          "name": "artifact:{source_sha}",
           "mode": "READ"
         },
         {
