@@ -116,17 +116,7 @@ jobs:
           # Derive the exact runtime identity from the persisted Meeting evidence instead of
           # grepping every historical runtime file through "head" under pipefail.
           # Multiple durable runtimes for the same Worker are expected historical evidence.
-          RUNTIME_ID=$(docker exec "$CID" sh -c "python3 - '$MEETING_FILE' <<'PY'
-import json,re,sys
-meeting=json.load(open(sys.argv[1],encoding='utf-8'))
-matches=[]
-for ref in meeting.get('evidenceRefs',[]):
-    m=re.fullmatch(r'worker-runtime-instance:([^:]+):state=RUNNING',ref)
-    if m: matches.append(m.group(1))
-matches=list(dict.fromkeys(matches))
-assert len(matches)==1, f'expected_one_running_meeting_runtime:{matches}'
-print(matches[0])
-PY")
+          RUNTIME_ID=$(docker exec "$CID" python3 -c 'import json,re,sys; meeting=json.load(open(sys.argv[1],encoding="utf-8")); matches=list(dict.fromkeys(m.group(1) for ref in meeting.get("evidenceRefs",[]) if (m:=re.fullmatch(r"worker-runtime-instance:([^:]+):state=RUNNING",ref)))); assert len(matches)==1, f"expected_one_running_meeting_runtime:{matches}"; print(matches[0])' "$MEETING_FILE")
           test -n "$RUNTIME_ID"
           RUNTIME_FILE="/var/lib/metatron-workforce/runtime-state/$RUNTIME_ID.properties"
           docker exec "$CID" sh -c "test -s '$RUNTIME_FILE'"
