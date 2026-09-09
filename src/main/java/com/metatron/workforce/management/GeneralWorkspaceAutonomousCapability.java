@@ -8,14 +8,17 @@ import com.metatron.workforce.action.GeneralCognitiveWorkerBrainFactory;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
 import com.metatron.workforce.action.GeneralWebResearchAction;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,6 +41,20 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     private final GeneralCognitiveWorkerBrainFactory brains;
     private final WorkerRuntimeProfileBindingService profiles;
     private final ObjectiveWorkspaceService workspaces;
+    private final WorkerConstitutionRuntimeMaterializer runtimeConstitution;
+
+    @Autowired
+    public GeneralWorkspaceAutonomousCapability(GeneralWorkspaceActionCatalog actions,
+                                                GeneralCognitiveWorkerBrainFactory brains,
+                                                WorkerRuntimeProfileBindingService profiles,
+                                                ObjectiveWorkspaceService workspaces,
+                                                WorkerConstitutionRuntimeMaterializer runtimeConstitution) {
+        this.actions = Objects.requireNonNull(actions, "actions");
+        this.brains = Objects.requireNonNull(brains, "brains");
+        this.profiles = Objects.requireNonNull(profiles, "profiles");
+        this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
+        this.runtimeConstitution = Objects.requireNonNull(runtimeConstitution, "runtimeConstitution");
+    }
 
     public GeneralWorkspaceAutonomousCapability(GeneralWorkspaceActionCatalog actions,
                                                 GeneralCognitiveWorkerBrainFactory brains,
@@ -47,6 +64,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         this.brains = Objects.requireNonNull(brains, "brains");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
+        this.runtimeConstitution = null;
     }
 
     @Override public String capabilityRef() { return CAPABILITY; }
@@ -79,7 +97,16 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
 
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(
                 request.objectiveId(), request.allocatedWorkerId());
-        Map<String, String> objectiveMemory = objectiveWorkspaceMemory(workspaces, workspace);
+        Map<String, String> objectiveMemory = new LinkedHashMap<>(
+                objectiveWorkspaceMemory(workspaces, workspace));
+        WorkerConstitutionRuntimeMaterializer.RuntimeConstitution constitutionSnapshot = null;
+        if (runtimeConstitution != null) {
+            constitutionSnapshot = runtimeConstitution.materializeForAssignment(
+                    request.allocatedWorkerId(), request.assignmentReference(), Instant.now());
+            objectiveMemory.put("workerConstitutionSnapshotRef", constitutionSnapshot.snapshotId());
+            objectiveMemory.put("workerConstitutionMaterializedAt", constitutionSnapshot.materializedAt().toString());
+            objectiveMemory.put("workerConstitution", constitutionSnapshot.renderedContext());
+        }
         List<ActionFabric.Action> governedActions = actionsForWork(
                 actions.actions(request.allocatedWorkerId(), request.authorizationReference(), request.objectiveId()),
                 request.workSpec(), objectiveMemory);
@@ -109,6 +136,13 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         evidence.add("general-action-composition:capability=" + request.workSpec().requiredCapability()
                 + ":workspace=" + workspace.workspaceRef()
                 + ":profile=" + binding.profile().profileRef());
+        if (constitutionSnapshot != null) {
+            evidence.add("worker-constitution-runtime-snapshot:" + constitutionSnapshot.snapshotId());
+            constitutionSnapshot.evidenceReferences().stream()
+                    .filter(ref -> ref != null && !ref.isBlank())
+                    .limit(300)
+                    .forEach(evidence::add);
+        }
         evidence.add("general-action-catalog:" + governedActions.stream().map(ActionFabric.Action::actionRef).sorted().toList());
         evidence.add("general-workspace-continuity:materialized="
                 + objectiveMemory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false")
