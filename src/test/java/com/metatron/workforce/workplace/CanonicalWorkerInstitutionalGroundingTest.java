@@ -3,6 +3,8 @@ package com.metatron.workforce.workplace;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
+import com.metatron.workforce.management.GatewayDirectorStaffingPolicy;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -62,6 +64,48 @@ class CanonicalWorkerInstitutionalGroundingTest {
                 .anyMatch(ref -> ref.contains("institutional-source:kelvinka38/metatron-institution@main:06_GATEWAY/SOT.md")));
         assertTrue(reply.evidenceReferences().stream()
                 .anyMatch(ref -> ref.contains("blob=380f3407001ee94ea3049984ca08f9ccfb278f24")));
+    }
+
+    @Test
+    void productionConversationReceivesMaterializedPositionConstitutionBeforeCognition() {
+        Fixture fixture = fixture();
+        WorkerConstitutionService constitution = WorkerConstitutionService.inMemory();
+        GatewayDirectorStaffingPolicy policy = new GatewayDirectorStaffingPolicy();
+        constitution.ensureConstitution(policy, Instant.parse("2026-09-09T00:00:00Z"));
+
+        AtomicReference<WorkerIntelligenceService.Request> captured = new AtomicReference<>();
+        WorkerIntelligenceService intelligence = request -> {
+            captured.set(request);
+            return new WorkerIntelligenceService.Response(
+                    "worker-cognition-constitution",
+                    "I own Gateway planning within my bound operating contract.",
+                    request.evidenceReferences());
+        };
+        InstitutionalRoleGrounding grounding = (roleRef, positionRef, requestedRole, message) ->
+                InstitutionalRoleGrounding.Grounding.available(
+                        "06_GATEWAY",
+                        "path=06_GATEWAY/SOT.md\nGateway controlled boundary.",
+                        List.of("institutional-source:test"));
+
+        CanonicalWorkerConversationService service = new CanonicalWorkerConversationService(
+                fixture.core(), fixture.runtimeProfiles(), fixture.runtimeCapacity(),
+                intelligence, grounding, constitution);
+
+        WorkerConversationGateway.Reply reply = service.converse(
+                GatewayDirectorAppointmentCapability.WORKER_ID,
+                "Head of Gateway",
+                "Give me the operating plan you own.",
+                "");
+
+        assertNotNull(captured.get());
+        assertTrue(captured.get().context().contains("MATERIALIZED WORKER CONSTITUTION"));
+        assertTrue(captured.get().context().contains("MATERIALIZED WORKER / POSITION OPERATING CONTRACT"));
+        assertTrue(captured.get().context().contains("mission=Continuously own Gateway"));
+        assertTrue(captured.get().context().contains("success_measures="));
+        assertTrue(captured.get().context().contains("decision_rights="));
+        assertTrue(captured.get().evidenceReferences().stream()
+                .anyMatch(ref -> ref.startsWith("position-contract:")));
+        assertTrue(reply.text().contains("Gateway planning"));
     }
 
     @Test
