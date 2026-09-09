@@ -200,6 +200,26 @@
       "timeout_seconds": 1200,
       "max_attempts": 1,
       "priority": 50
+    },
+    "production-highway-full": {
+      "name": "FULL production acceptance highway",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/production-highway-full.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "highway:isolated-sandbox",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 40
     }
   }
 }
