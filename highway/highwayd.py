@@ -417,6 +417,7 @@ class HighwayFabric:
 
         env = os.environ.copy()
         env.update(json.loads(task["env_json"]))
+        synthetic_run_id = str(int(task_id.replace("hw-", "")[:12], 16))
         env.update({
             "HIGHWAY_TASK_ID": task_id,
             "HIGHWAY_TASK_KIND": task["kind"],
@@ -426,6 +427,9 @@ class HighwayFabric:
             "HIGHWAY_STATE_DIR": str(self.state_dir),
             "GITHUB_REPOSITORY": env.get("GITHUB_REPOSITORY", REPO),
             "GITHUB_API_URL": env.get("GITHUB_API_URL", API),
+            "GITHUB_WORKSPACE": str(release),
+            "GITHUB_RUN_ID": synthetic_run_id,
+            "TARGET_SHA": env.get("TARGET_SHA", task["source_sha"]),
         })
         command = [str(x).replace("{source_sha}", task["source_sha"]) for x in spec["command"]]
         heartbeat_stop = threading.Event()
