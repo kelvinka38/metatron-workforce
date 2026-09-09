@@ -307,7 +307,7 @@ public final class WorkplaceMeetingService {
         evidence.add("interaction:" + interaction.externalMessageReference());
         List<WorkerReply> replies = new ArrayList<>();
 
-        String roomContext = conversationContext
+        String roomContext = meetingLocalContext(meeting)
                 + "\n\nLIVE MEETING WORKER IDS="
                 + roomWorkers.keySet();
         for (MeetingWorkerDirectory.ResolvedWorker worker : targets) {
@@ -336,6 +336,21 @@ public final class WorkplaceMeetingService {
                 meeting.lifecycle(), MeetingRecord.Status.ACTIVE, meeting.openedAt(), "", false);
         store.save(updated);
         return renderWorkerReplies(replies);
+    }
+
+    private static String meetingLocalContext(MeetingRecord meeting) {
+        StringBuilder context = new StringBuilder();
+        context.append("MEETING PURPOSE / FIRST HUMAN TURN\n")
+                .append(meeting.purpose())
+                .append("\n\nMEETING-LOCAL WORKER TURNS");
+        meeting.contributions().stream()
+                .skip(Math.max(0, meeting.contributions().size() - 12L))
+                .forEach(contribution -> context.append("\n")
+                        .append(contribution.participant())
+                        .append(" [").append(contribution.role()).append("]: ")
+                        .append(contribution.text()));
+        context.append("\n\nGLOBAL CHAT/WORK HISTORY IS INTENTIONALLY EXCLUDED FROM THIS ROOM.");
+        return context.toString();
     }
 
     private void closePriorConversationMeetings(String conversationId) {
