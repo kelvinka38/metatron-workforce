@@ -104,23 +104,6 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         this.runtimeConstitution = null;
     }
 
-    CanonicalWorkerConversationService(
-            WorkforceCoreService core,
-            WorkerRuntimeProfileBindingService runtimeProfiles,
-            RuntimeCapacityCoordinator runtimeCapacity,
-            WorkerIntelligenceService intelligence,
-            InstitutionalRoleGrounding institutionalGrounding,
-            WorkerConstitutionService constitution,
-            WorkerConstitutionRuntimeMaterializer runtimeConstitution) {
-        this.core = Objects.requireNonNull(core, "core");
-        this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
-        this.runtimeCapacity = Objects.requireNonNull(runtimeCapacity, "runtimeCapacity");
-        this.intelligence = Objects.requireNonNull(intelligence, "intelligence");
-        this.institutionalGrounding = Objects.requireNonNull(institutionalGrounding, "institutionalGrounding");
-        this.constitution = Objects.requireNonNull(constitution, "constitution");
-        this.runtimeConstitution = Objects.requireNonNull(runtimeConstitution, "runtimeConstitution");
-    }
-
     @Override
     public Reply converse(String workerId, String role, String userMessage, String conversationContext) {
         return converse(workerId, role, userMessage, conversationContext, List.of());
