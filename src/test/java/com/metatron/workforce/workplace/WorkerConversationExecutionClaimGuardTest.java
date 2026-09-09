@@ -18,10 +18,30 @@ class WorkerConversationExecutionClaimGuardTest {
 
         assertNotEquals(original, guarded);
         assertEquals(
-                "Không có execution receipt / Observation evidence cho hành động đó trong context của Meeting này. "
-                        + "Vì vậy Worker không được claim là đã hoặc đang thực hiện. Trạng thái đúng hiện tại: "
-                        + "chỉ có thể phân tích/đề xuất; execution phải đi qua authority check → Execution/action → receipt → Observation/evidence.",
+                "Execution note: no durable receipt/evidence proves the suppressed action claim. "
+                        + "That action remains proposed until it passes authority/authorization, Execution, and Observation/evidence.",
                 guarded);
+    }
+
+    @Test
+    void preservesStrategicPlanWhenOnlyOneSentenceMakesAnUnsupportedExecutionClaim() {
+        String original = "I would run Gateway as an accountable 24/7 service owner. "
+                + "I am currently deploying three replicas. "
+                + "The operating plan covers demand, staffing, budget, SLOs, incident response and KPIs.";
+
+        String guarded = WorkerConversationExecutionClaimGuard.enforce(original, List.of());
+
+        assertNotEquals(original, guarded);
+        assertEquals(true, guarded.contains("accountable 24/7 service owner"));
+        assertEquals(true, guarded.contains("demand, staffing, budget, SLOs, incident response and KPIs"));
+        assertEquals(false, guarded.contains("currently deploying three replicas"));
+        assertEquals(true, guarded.contains("Execution note:"));
+    }
+
+    @Test
+    void doesNotTreatPlanningDiscourseAsExecution() {
+        String original = "I am starting with demand and capacity planning. I will create a 24/7 operating model next.";
+        assertEquals(original, WorkerConversationExecutionClaimGuard.enforce(original, List.of()));
     }
 
     @Test
