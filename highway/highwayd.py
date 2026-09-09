@@ -281,7 +281,7 @@ class HighwayStore:
                 if resource_conflicts(resources, held):
                     continue
                 attempt = task["attempt"] + 1
-                c.execute(
+                claimed = c.execute(
                     """
                     UPDATE tasks SET state='RUNNING',attempt=?,lease_owner=?,lease_expires_at=?,
                       heartbeat_at=?,started_at=COALESCE(started_at,?),updated_at=?,failure=''
@@ -292,7 +292,7 @@ class HighwayStore:
                         now.isoformat(), task["task_id"]
                     )
                 )
-                if c.total_changes == 0:
+                if claimed.rowcount != 1:
                     continue
                 for name, mode in resources.items():
                     c.execute(
