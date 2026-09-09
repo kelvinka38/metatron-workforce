@@ -19,6 +19,11 @@ class WorkplaceControlRoomPageContractTest {
             assertTrue(html.contains("data-view=\"projects\""));
             assertTrue(html.contains("/workplace/api/control-room"));
             assertTrue(html.contains("/chat"));
+            assertTrue(html.contains("/profile"));
+            assertTrue(html.contains("Runtime & Tools"));
+            assertTrue(html.contains("Memory"));
+            assertTrue(html.contains("Live cognition instructions"));
+            assertTrue(html.contains("Worker-model completeness gaps"));
             assertTrue(html.contains("/availability"));
             assertTrue(html.contains("/control/"));
             assertTrue(html.contains("Evidence drill-down"));
