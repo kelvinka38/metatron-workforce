@@ -211,6 +211,62 @@ class MeetingRealWorkerBindingTest {
     }
 
     @Test
+    void liveMeetingContinuationExcludesGlobalChatHistoryAndUsesMeetingLocalContextOnly() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-local", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-LOCAL", "participant:gateway-local");
+        core.participate("participation:gateway-local", "WORKER-GATEWAY-LOCAL",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        java.util.ArrayList<String> contexts = new java.util.ArrayList<>();
+        WorkerConversationGateway workerConversation = (workerId, role, message, context) -> {
+            contexts.add(context);
+            return new WorkerConversationGateway.Reply(
+                    "reply:" + message,
+                    "worker-cognition:" + contexts.size(),
+                    List.of("evidence:" + contexts.size()));
+        };
+        WorkplaceMeetingService service = new WorkplaceMeetingService(
+                new PersistentMeetingStore(temp.resolve("meeting-local-context"), new ObjectMapper()),
+                new MeetingRoleDeliberator() {
+                    @Override public Deliberation deliberate(String role, String purpose, String context) {
+                        fail("shadow deliberation must not run");
+                        return new Deliberation("never", "");
+                    }
+                    @Override public Deliberation synthesize(String purpose, List<MeetingRecord.Contribution> contributions, String context) {
+                        fail("shadow synthesis must not run");
+                        return new Deliberation("never", "");
+                    }
+                },
+                ExecutionObjectiveHandoff.unavailable(),
+                new MeetingWorkerDirectory(core),
+                workerConversation);
+
+        MetatronInteraction open = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:local-context", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:local-open",
+                "Head of Gateway");
+        service.handle(open, "OLD GLOBAL kelvinka38/bios audit MUST NOT ENTER");
+        assertEquals("", contexts.getFirst());
+
+        MetatronInteraction next = new MetatronInteraction(
+                new ActorRef("founder", ActorRef.ActorType.HUMAN),
+                new ActorRef("workforce-head", ActorRef.ActorType.WORKER),
+                "organization:metatron", "conversation:local-context", "telegram",
+                "telegram:user:1", "telegram:chat:1", "telegram:update:local-next",
+                "Gateway owns cái gì?");
+        service.handle(next, "OLD GLOBAL kelvinka38/bios audit MUST NOT ENTER");
+
+        assertEquals(2, contexts.size());
+        assertFalse(contexts.get(1).contains("kelvinka38/bios"));
+        assertTrue(contexts.get(1).contains("MEETING PURPOSE / FIRST HUMAN TURN"));
+        assertTrue(contexts.get(1).contains("Head of Gateway"));
+        assertTrue(contexts.get(1).contains("GLOBAL CHAT/WORK HISTORY IS INTENTIONALLY EXCLUDED"));
+    }
+
+    @Test
     void activeWorkerDirectoryOnlyListsWorkersWithRunningRuntimeAndShowsRuntimeId() {
         WorkforceCoreService core = new WorkforceCoreService();
         core.recognizeParticipant("participant:gateway-live", WorkforceCoreService.ParticipantType.AI, "test");
@@ -315,6 +371,16 @@ class MeetingRealWorkerBindingTest {
         assertFalse(reply.runtimeId().isBlank());
         assertTrue(cognition.get().context().contains("runtime_id=" + reply.runtimeId()));
         assertTrue(cognition.get().context().contains("runtime_state=RUNNING"));
+        assertTrue(cognition.get().context().contains(
+                "authority_source=kelvinka38/metatron-institution/06_GATEWAY/SOT.md"));
+        assertTrue(cognition.get().context().contains(
+                "ownership_source=kelvinka38/metatron-institution/06_GATEWAY/GATEWAY/DOMAIN_OWNERSHIP_MATRIX.md"));
+        assertTrue(cognition.get().context().contains(
+                "gateway_does_not_own=BIOS product"));
+        assertTrue(cognition.get().context().contains(
+                "bios_boundary=BIOS is a downstream Product/Node"));
+        assertTrue(cognition.get().instructions().contains(
+                "Do not claim you reviewed a document, repository, org chart"));
     }
 
     @Test
