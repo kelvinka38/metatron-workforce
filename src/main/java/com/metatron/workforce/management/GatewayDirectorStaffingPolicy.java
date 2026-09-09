@@ -57,10 +57,10 @@ public final class GatewayDirectorStaffingPolicy implements AutonomousStaffingPo
                 List.of(
                         GatewayDirectorAppointmentCapability.CAPABILITY,
                         GatewayDirectorAppointmentCapability.GATEWAY_AUDIT_CAPABILITY,
-                        "gateway.operational.management",
-                        "gateway.reliability.management",
-                        "gateway.capacity.cost.management",
-                        "gateway.incident.recovery.coordination"),
+                        GatewayDirectorAppointmentCapability.OPERATIONAL_MANAGEMENT_CAPABILITY,
+                        GatewayDirectorAppointmentCapability.RELIABILITY_MANAGEMENT_CAPABILITY,
+                        GatewayDirectorAppointmentCapability.CAPACITY_COST_MANAGEMENT_CAPABILITY,
+                        GatewayDirectorAppointmentCapability.INCIDENT_RECOVERY_CAPABILITY),
                 List.of(
                         spec.authorityEnvelopeRef(),
                         "gateway:operational-management-within-delegated-scope",
@@ -117,19 +117,19 @@ public final class GatewayDirectorStaffingPolicy implements AutonomousStaffingPo
                         1.0,
                         "evidence:gateway-director-audit-capability:v1"),
                 new CapabilityGrant(
-                        "gateway.operational.management",
+                        GatewayDirectorAppointmentCapability.OPERATIONAL_MANAGEMENT_CAPABILITY,
                         1.0,
                         "evidence:gateway-director-operational-management:v1"),
                 new CapabilityGrant(
-                        "gateway.reliability.management",
+                        GatewayDirectorAppointmentCapability.RELIABILITY_MANAGEMENT_CAPABILITY,
                         1.0,
                         "evidence:gateway-director-reliability-management:v1"),
                 new CapabilityGrant(
-                        "gateway.capacity.cost.management",
+                        GatewayDirectorAppointmentCapability.CAPACITY_COST_MANAGEMENT_CAPABILITY,
                         1.0,
                         "evidence:gateway-director-capacity-cost-management:v1"),
                 new CapabilityGrant(
-                        "gateway.incident.recovery.coordination",
+                        GatewayDirectorAppointmentCapability.INCIDENT_RECOVERY_CAPABILITY,
                         1.0,
                         "evidence:gateway-director-incident-recovery-coordination:v1"));
     }
