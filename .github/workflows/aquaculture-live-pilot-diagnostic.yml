@@ -1,0 +1,47 @@
+name: Aquaculture Live Pilot Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/aquaculture-live-pilot-diagnostic.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aquaculture-live-pilot-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect Kelvin self-pilot decision state
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIOS_BASE="$HOME/.metatron/bios"
+          DB="$BIOS_BASE/data/bios.db"
+          if [ ! -f "$DB" ]; then
+            DB=$(find "$BIOS_BASE" -maxdepth 3 -name '*.db' -o -name '*.sqlite*' | head -1)
+          fi
+          test -f "$DB"
+          python3 - "$DB" <<'PY'
+          import json,sqlite3,sys
+          db=sqlite3.connect(sys.argv[1]); db.row_factory=sqlite3.Row
+          pilot=db.execute("SELECT * FROM aq_field_pilots WHERE name='Kelvin Self Pilot' ORDER BY created_at DESC LIMIT 1").fetchone()
+          assert pilot, "Kelvin Self Pilot not found"
+          participant=db.execute("SELECT * FROM aq_field_participants WHERE pilot_id=? ORDER BY joined_at DESC LIMIT 1",(pilot["pilot_id"],)).fetchone()
+          assert participant, "participant not found"
+          farm_id=participant["farm_id"]
+          print("PILOT",json.dumps(dict(pilot),ensure_ascii=False))
+          print("PARTICIPANT",json.dumps({k:participant[k] for k in ("participant_id","subject_id","case_id","farm_id","consent_status","evidence_mode")},ensure_ascii=False))
+          disc=[dict(r) for r in db.execute("SELECT semantic_key,normalized_value_json,field_state,owner_lock FROM aq_core_discovery WHERE farm_id=? ORDER BY semantic_key",(farm_id,)).fetchall()]
+          print("DISCOVERY",json.dumps(disc,ensure_ascii=False))
+          scenarios=[dict(r) for r in db.execute("SELECT scenario_id,version,label,eligibility,recommendation_state,production_json,economics_json,unknown_refs_json FROM aq_scenarios WHERE farm_id=? ORDER BY created_at",(farm_id,)).fetchall()]
+          print("SCENARIOS",json.dumps(scenarios,ensure_ascii=False))
+          print("KNOWLEDGE_COUNT",db.execute("SELECT COUNT(*) n FROM aq_knowledge_items").fetchone()["n"])
+          print("SPECIES",json.dumps([r["subject"] for r in db.execute("SELECT DISTINCT subject FROM aq_knowledge_items WHERE knowledge_class='SPECIES' ORDER BY subject")],ensure_ascii=False))
+          PY
