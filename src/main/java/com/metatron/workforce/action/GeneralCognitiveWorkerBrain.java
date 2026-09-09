@@ -741,6 +741,63 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     @Override
+    public boolean blocksCompletionForUnresolvedFailure(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            String actionRef) {
+        Objects.requireNonNull(context, "context");
+        String ref = actionRef == null ? "" : actionRef.trim();
+
+        // General engineering often uses process/shell actions as disposable diagnostics while
+        // locating an unfamiliar defect. A failed diagnostic must remain in evidence, but once
+        // the actual acceptance prerequisites (source mutation, governed tests, Git/PR, etc.) are
+        // independently satisfied it must not keep the Objective alive forever or force duplicate PRs.
+        if ("workspace.process.run".equals(ref)) {
+            return explicitlyRequiresAction(context, ref, "process execution", "run process");
+        }
+        if ("workspace.shell.run".equals(ref)) {
+            return explicitlyRequiresAction(context, ref, "shell execution", "run shell");
+        }
+        if ("workspace.file.list".equals(ref)) {
+            return explicitlyRequiresAction(context, ref, "list files", "file listing");
+        }
+        if ("workspace.git.diff".equals(ref)) {
+            return explicitlyRequiresAction(context, ref, "git diff");
+        }
+        if ("workspace.dependencies.install".equals(ref)) {
+            return explicitlyRequiresAction(context, ref, "install dependencies", "dependency installation");
+        }
+
+        // Build is optional for many test-driven fixes, but required when the Work explicitly
+        // asks for build evidence.
+        if ("workspace.build.run".equals(ref)) {
+            return explicitlyRequiresAction(context, ref, "build", "compile");
+        }
+
+        // All other action failures remain fail-closed by default. This preserves the existing
+        // safety invariant for required materialization, inspection, mutation, tests, Git commit,
+        // publication, research, and any future unknown action.
+        return true;
+    }
+
+    private static boolean explicitlyRequiresAction(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            String actionRef,
+            String... semanticPhrases) {
+        StringBuilder text = new StringBuilder();
+        text.append(context.workSpec().objective()).append('\n')
+                .append(context.workSpec().target()).append('\n');
+        context.workSpec().acceptanceCriteria().forEach(value -> text.append(value).append('\n'));
+        context.workSpec().evidenceRequirements().forEach(value -> text.append(value).append('\n'));
+        String normalized = text.toString().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains(actionRef.toLowerCase(java.util.Locale.ROOT))) return true;
+        for (String phrase : semanticPhrases) {
+            if (phrase != null && !phrase.isBlank()
+                    && normalized.contains(phrase.toLowerCase(java.util.Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    @Override
     public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
                                                       ActionFabric.ActionObservation observation) {
         CognitiveWorkerRuntime.Reflection canonicalMaterialization =

@@ -120,6 +120,43 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void generalBrainTreatsUnrequestedProcessFailureAsOptionalButExplicitBuildFailureAsRequired() {
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(
+                request -> { throw new AssertionError("classification must not call Intelligence"); },
+                new ObjectMapper());
+        ExecutionWorkSpec repair = new ExecutionWorkSpec(
+                "repair",
+                "Find the root cause, repair the source, run tests, commit, and publish an unmerged pull request",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass", "reviewable pull request exists"),
+                List.of("governed test action evidence"));
+        CognitiveWorkerRuntime.CognitiveContext repairContext = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "auth", "objective", repair, "idem",
+                List.of("workspace.process.run", "workspace.test.run", "workspace.github.pr.publish"),
+                List.of(), Map.of());
+
+        assertFalse(brain.blocksCompletionForUnresolvedFailure(repairContext, "workspace.process.run"));
+        assertTrue(brain.blocksCompletionForUnresolvedFailure(repairContext, "workspace.test.run"));
+        assertTrue(brain.blocksCompletionForUnresolvedFailure(repairContext, "workspace.github.pr.publish"));
+
+        ExecutionWorkSpec buildRequired = new ExecutionWorkSpec(
+                "build",
+                "Repair the project and build the verified artifact",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("build succeeds"), List.of("build evidence"));
+        CognitiveWorkerRuntime.CognitiveContext buildContext = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "auth", "objective-build", buildRequired, "idem-build",
+                List.of("workspace.build.run"), List.of(), Map.of());
+        assertTrue(brain.blocksCompletionForUnresolvedFailure(buildContext, "workspace.build.run"));
+    }
+
+    @Test
     void malformedIntelligenceResponseFailsClosedAtWorkerBoundary() {
         WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
                 "intelligence-malformed", "not-json", List.of("intelligence-provider:test"));

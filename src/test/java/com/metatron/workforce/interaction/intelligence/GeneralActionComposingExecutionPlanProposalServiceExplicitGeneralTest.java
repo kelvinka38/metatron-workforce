@@ -5,6 +5,7 @@ import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -88,6 +89,54 @@ class GeneralActionComposingExecutionPlanProposalServiceExplicitGeneralTest {
                 GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER));
         assertFalse(result.stream().anyMatch(step -> "repository.pr.propose".equals(step.requiredCapability())));
         assertFalse(result.stream().anyMatch(step -> "repository.audit.read".equals(step.requiredCapability())));
+    }
+
+    @Test
+    void explicitGeneralWorkspaceWithoutRequestedProviderBypassesFrontierPlanner() {
+        NormalizedRequest request = new NormalizedRequest(
+                "Take ownership of one governed general engineering Objective using execution.general.workspace. "
+                        + "Find the root cause, fix the defect, run tests, create one local Git commit, "
+                        + "publish a reviewable unmerged pull request, and verify the acceptance criteria.",
+                "kelvinka38/metatron-workforce",
+                List.of("Do not weaken fixture tests"),
+                IntelligenceDepth.FAST,
+                "evidence-backed completion",
+                List.of(),
+                List.of("Do not merge"),
+                "",
+                "",
+                IntelligenceMode.EXECUTION,
+                CollaborationMode.SINGLE,
+                List.of(),
+                DeterministicCapability.NONE,
+                false,
+                null,
+                null,
+                "");
+
+        AtomicBoolean delegateCalled = new AtomicBoolean(false);
+        GeneralActionComposingExecutionPlanProposalService service =
+                new GeneralActionComposingExecutionPlanProposalService((caseId, normalized, capabilities) -> {
+                    delegateCalled.set(true);
+                    throw new IllegalStateException("frontier planner must not be required");
+                });
+
+        List<ExecutionWorkSpec> result = service.propose(
+                "case",
+                request,
+                List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY));
+
+        assertFalse(delegateCalled.get());
+        assertEquals(1, result.size());
+        ExecutionWorkSpec work = result.getFirst();
+        assertEquals("explicit-general-workspace", work.stepId());
+        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
+        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("tests pass")));
+        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("pull request")));
+        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("unmerged")));
+        assertTrue(work.evidenceRequirements().contains(
+                GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER));
     }
 
     @Test

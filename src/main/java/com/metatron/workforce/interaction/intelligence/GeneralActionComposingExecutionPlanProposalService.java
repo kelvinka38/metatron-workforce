@@ -37,6 +37,12 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
 
     @Override
     public List<ExecutionWorkSpec> propose(String caseId, NormalizedRequest request, List<String> availableCapabilities) {
+        List<ExecutionWorkSpec> deterministicExplicitGeneral =
+                deterministicExplicitGeneralWorkspaceObjective(request, availableCapabilities);
+        if (!deterministicExplicitGeneral.isEmpty() && request.explicitlyRequestedProvider() == null) {
+            return deterministicExplicitGeneral;
+        }
+
         List<ExecutionWorkSpec> plan = delegate.propose(caseId, request, availableCapabilities);
         if (plan == null || plan.isEmpty()) return plan;
         plan = collapseExplicitRecoveryComposite(request, availableCapabilities, plan);
@@ -66,6 +72,78 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                     step.dependsOn(), step.consequence(), acceptance, evidence));
         }
         return List.copyOf(composed);
+    }
+
+    /**
+     * Explicit execution.general.workspace is already a complete governed capability-routing
+     * decision. Workforce does not need a frontier provider merely to restate that one Work item.
+     * The Cognitive Worker owns the detailed inspect/change/test/commit/publish action sequence.
+     */
+    static List<ExecutionWorkSpec> deterministicExplicitGeneralWorkspaceObjective(
+            NormalizedRequest request,
+            List<String> availableCapabilities) {
+        if (request == null) return List.of();
+        boolean generalAvailable = availableCapabilities != null && availableCapabilities.stream()
+                .filter(Objects::nonNull).map(String::trim)
+                .anyMatch(GeneralWorkspaceAutonomousCapability.CAPABILITY::equals);
+        if (!generalAvailable) return List.of();
+
+        String semantic = explicitRequestSemantic(request);
+        String lower = semantic.toLowerCase(Locale.ROOT);
+        if (!lower.contains(GeneralWorkspaceAutonomousCapability.CAPABILITY.toLowerCase(Locale.ROOT))) {
+            return List.of();
+        }
+
+        boolean mutating = lower.contains("mutating")
+                || lower.contains("fix") || lower.contains("repair")
+                || lower.contains("patch") || lower.contains("write")
+                || lower.contains("modify") || lower.contains("change")
+                || lower.contains("commit") || lower.contains("pull request")
+                || lower.contains("publish") || lower.contains("push")
+                || lower.contains("delete") || lower.contains("deploy");
+        ExecutionWorkSpec.Consequence consequence = mutating
+                ? ExecutionWorkSpec.Consequence.MUTATING
+                : ExecutionWorkSpec.Consequence.READ_ONLY;
+
+        List<String> acceptance = new ArrayList<>();
+        addDistinct(acceptance, "explicit execution.general.workspace Objective completes without capability escape");
+        if (consequence == ExecutionWorkSpec.Consequence.MUTATING) {
+            addDistinct(acceptance, "requested workspace source change is present in the committed work product");
+        }
+        if (lower.contains("test")) {
+            addDistinct(acceptance, "repository tests pass after the requested workspace change");
+        }
+        if (lower.contains("pull request") || lower.contains("open pr")
+                || lower.contains("proposal branch") || lower.contains("publish") && lower.contains("github")) {
+            addDistinct(acceptance, "reviewable pull request exists for the committed Objective work product");
+        }
+        if (lower.contains("do not merge") || request.explicitProhibitions().stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).anyMatch(value -> value.contains("merge"))) {
+            addDistinct(acceptance, "remote proposal remains unmerged");
+        }
+        if (acceptance.size() == 1) {
+            addDistinct(acceptance, "requested governed workspace outcome is independently observable");
+        }
+
+        List<String> evidence = new ArrayList<>();
+        addDistinct(evidence, GENERAL_RUNTIME_MARKER);
+        addDistinct(evidence, "requested-capability:" + GeneralWorkspaceAutonomousCapability.CAPABILITY);
+        addDistinct(evidence, "general Action Fabric action journal");
+        if (lower.contains("test")) addDistinct(evidence, "governed test action evidence");
+        if (lower.contains("pull request") || lower.contains("proposal branch")
+                || lower.contains("publish") && lower.contains("github")) {
+            addDistinct(evidence, "fresh authoritative GitHub API Observation");
+        }
+
+        return List.of(new ExecutionWorkSpec(
+                "explicit-general-workspace",
+                semantic,
+                request.target(),
+                GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                List.of(),
+                consequence,
+                acceptance,
+                evidence));
     }
 
     /**

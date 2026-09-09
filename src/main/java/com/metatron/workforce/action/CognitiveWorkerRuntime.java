@@ -27,6 +27,15 @@ public final class CognitiveWorkerRuntime {
     public interface Brain {
         Thought think(CognitiveContext context);
         Reflection reflect(CognitiveContext context, ActionFabric.ActionObservation observation);
+
+        /**
+         * Generic safety defaults to blocking completion until any previously failed actionRef
+         * is later observed successful. A domain Brain may narrow that only for actions it can
+         * prove are optional diagnostics rather than acceptance prerequisites.
+         */
+        default boolean blocksCompletionForUnresolvedFailure(CognitiveContext context, String actionRef) {
+            return true;
+        }
     }
 
     /** An auditable decision about the next tool action. rationale is a concise decision reason, not hidden model scratchpad. */
@@ -168,7 +177,9 @@ public final class CognitiveWorkerRuntime {
                 if (!observation.success()) {
                     throw new IllegalStateException("brain-cannot-complete-after-failed-observation");
                 }
-                Set<String> unresolvedFailures = unresolvedFailedActions(history, observation);
+                Set<String> unresolvedFailures = unresolvedFailedActions(history, observation).stream()
+                        .filter(actionRef -> brain.blocksCompletionForUnresolvedFailure(afterAction, actionRef))
+                        .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
                 if (!unresolvedFailures.isEmpty()) {
                     String unresolved = String.join(",", unresolvedFailures);
                     evidence.add("cognitive-completion-rejected:unresolved-failed-actions=" + unresolved);
