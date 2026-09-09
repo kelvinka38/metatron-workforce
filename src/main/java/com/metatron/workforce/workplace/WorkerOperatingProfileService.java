@@ -3,6 +3,7 @@ package com.metatron.workforce.workplace;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.memory.PersistentWorkerConversationMemoryStore;
 import com.metatron.workforce.management.AutonomousStaffingPolicy;
+import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
 import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimeRegistry;
@@ -34,6 +35,7 @@ public final class WorkerOperatingProfileService {
     private final InstitutionalRoleGrounding grounding;
     private final PersistentWorkerConversationMemoryStore memory;
     private final WorkerConstitutionService constitution;
+    private final WorkerConstitutionRuntimeMaterializer runtimeConstitution;
 
     @Autowired
     public WorkerOperatingProfileService(
@@ -44,7 +46,8 @@ public final class WorkerOperatingProfileService {
             List<AutonomousStaffingPolicy> staffingPolicies,
             InstitutionalRoleGrounding grounding,
             PersistentWorkerConversationMemoryStore memory,
-            WorkerConstitutionService constitution) {
+            WorkerConstitutionService constitution,
+            WorkerConstitutionRuntimeMaterializer runtimeConstitution) {
         this.core = Objects.requireNonNull(core, "core");
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
         this.runtimes = Objects.requireNonNull(runtimes, "runtimes");
@@ -53,6 +56,7 @@ public final class WorkerOperatingProfileService {
         this.grounding = Objects.requireNonNull(grounding, "grounding");
         this.memory = Objects.requireNonNull(memory, "memory");
         this.constitution = Objects.requireNonNull(constitution, "constitution");
+        this.runtimeConstitution = Objects.requireNonNull(runtimeConstitution, "runtimeConstitution");
     }
 
     WorkerOperatingProfileService(
@@ -63,8 +67,15 @@ public final class WorkerOperatingProfileService {
             List<AutonomousStaffingPolicy> staffingPolicies,
             InstitutionalRoleGrounding grounding,
             PersistentWorkerConversationMemoryStore memory) {
-        this(core, runtimeProfiles, runtimes, dashboard, staffingPolicies, grounding, memory,
-                WorkerConstitutionService.inMemory());
+        this.core = Objects.requireNonNull(core, "core");
+        this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
+        this.runtimes = Objects.requireNonNull(runtimes, "runtimes");
+        this.dashboard = Objects.requireNonNull(dashboard, "dashboard");
+        this.staffingPolicies = List.copyOf(Objects.requireNonNull(staffingPolicies, "staffingPolicies"));
+        this.grounding = Objects.requireNonNull(grounding, "grounding");
+        this.memory = Objects.requireNonNull(memory, "memory");
+        this.constitution = WorkerConstitutionService.inMemory();
+        this.runtimeConstitution = null;
     }
 
     public OperatingProfile profile(String workerId) {
@@ -195,6 +206,7 @@ public final class WorkerOperatingProfileService {
                         List.copyOf(new LinkedHashSet<>(performanceEvidence)));
 
         WorkerConstitutionService.ConstitutionContext materialized = null;
+        WorkerConstitutionRuntimeMaterializer.RuntimeConstitution runtimeMaterialized = null;
         if (primary != null) {
             Optional<AutonomousStaffingPolicy> policyForWorker = formationPolicy;
             if (constitution.binding(workerId, primary.participationId()).isEmpty() && policyForWorker.isPresent()) {
@@ -203,6 +215,10 @@ public final class WorkerOperatingProfileService {
             materialized = constitution.binding(workerId, primary.participationId()).isPresent()
                     ? constitution.contextFor(workerId, primary.participationId())
                     : null;
+            if (materialized != null && runtimeConstitution != null) {
+                runtimeMaterialized = runtimeConstitution.materialize(
+                        workerId, primary.participationId(), state.generatedAt());
+            }
         }
 
         PerformanceProfile performance = new PerformanceProfile(
@@ -251,7 +267,9 @@ public final class WorkerOperatingProfileService {
                 runtimeProfile,
                 memoryProfile,
                 performance,
-                materialized == null ? ConstitutionProfile.unavailable() : constitutionProfile(materialized),
+                materialized == null
+                        ? ConstitutionProfile.unavailable()
+                        : constitutionProfile(materialized, runtimeMaterialized),
                 core.capabilities(workerId),
                 core.qualifications(workerId),
                 authorityUses,
@@ -260,7 +278,8 @@ public final class WorkerOperatingProfileService {
     }
 
     private static ConstitutionProfile constitutionProfile(
-            WorkerConstitutionService.ConstitutionContext context) {
+            WorkerConstitutionService.ConstitutionContext context,
+            WorkerConstitutionRuntimeMaterializer.RuntimeConstitution runtimeMaterialized) {
         return new ConstitutionProfile(
                 true,
                 context.contract(),
@@ -268,6 +287,7 @@ public final class WorkerOperatingProfileService {
                 context.performance(),
                 context.recentExperience(),
                 context.recentLearning(),
+                runtimeMaterialized,
                 context.evidenceReferences());
     }
 
@@ -365,9 +385,10 @@ public final class WorkerOperatingProfileService {
             WorkerConstitutionService.PerformanceEvaluation performance,
             List<WorkerConstitutionService.ExperienceRecord> recentExperience,
             List<WorkerConstitutionService.LearningRecord> recentLearning,
+            WorkerConstitutionRuntimeMaterializer.RuntimeConstitution runtimeMaterialization,
             List<String> evidenceReferences) {
         static ConstitutionProfile unavailable() {
-            return new ConstitutionProfile(false, null, null, null, List.of(), List.of(), List.of());
+            return new ConstitutionProfile(false, null, null, null, List.of(), List.of(), null, List.of());
         }
     }
 

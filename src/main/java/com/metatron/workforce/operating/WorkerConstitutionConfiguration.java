@@ -1,5 +1,10 @@
 package com.metatron.workforce.operating;
 
+import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.execution.ExecutionAttemptService;
+import com.metatron.workforce.phase5.WorkScheduleService;
+import com.metatron.workforce.runtime.RuntimeRegistry;
+import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,5 +22,24 @@ public class WorkerConstitutionConfiguration {
     @Bean
     WorkerConstitutionService workerConstitutionService(WorkerConstitutionStateStore store) {
         return new WorkerConstitutionService(store);
+    }
+
+    @Bean
+    WorkerConstitutionRuntimeStateStore workerConstitutionRuntimeStateStore(
+            @Value("${METATRON_WORKER_CONSTITUTION_RUNTIME_STATE_PATH:/var/lib/metatron-workforce/worker-constitution-runtime-state.json}") String configured) {
+        return new FileWorkerConstitutionRuntimeStateStore(Path.of(configured));
+    }
+
+    @Bean
+    WorkerConstitutionRuntimeMaterializer workerConstitutionRuntimeMaterializer(
+            WorkforceCoreService core,
+            WorkerConstitutionService constitution,
+            WorkScheduleService schedules,
+            WorkerRuntimeProfileBindingService runtimeProfiles,
+            RuntimeRegistry runtimes,
+            ExecutionAttemptService executionAttempts,
+            WorkerConstitutionRuntimeStateStore store) {
+        return new WorkerConstitutionRuntimeMaterializer(
+                core, constitution, schedules, runtimeProfiles, runtimes, executionAttempts, store);
     }
 }
