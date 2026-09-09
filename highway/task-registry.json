@@ -140,6 +140,22 @@
       "timeout_seconds": 180,
       "max_attempts": 1,
       "priority": 70
+    },
+    "bios-deploy": {
+      "name": "BIOS production mutation",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-deploy.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 100
     }
   }
 }
