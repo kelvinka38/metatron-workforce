@@ -47,6 +47,44 @@ jobs:
           bash "$HOME/.metatron/highway/current/ensure-running.sh"
           CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
           $CTL health | tee /tmp/highway-runtime-health.json
+
+          # Wait for the exact SHA DAG to become terminal. This probe observes Highway;
+          # it does not own execution and therefore never serializes production resources.
+          DEADLINE=$(( $(date +%s) + 900 ))
+          while true; do
+            $CTL list --limit 500 > /tmp/highway-runtime-tasks.json
+            STATE=$(python3 - /tmp/highway-runtime-tasks.json "$TARGET_SHA" <<'PY'
+          import json,sys
+          rows=[r for r in json.load(open(sys.argv[1],encoding='utf-8')) if r.get('source_sha')==sys.argv[2]]
+          by={}
+          for r in rows:
+              by.setdefault(r.get('kind'),[]).append(r)
+          def latest(kind):
+              xs=by.get(kind,[])
+              return sorted(xs,key=lambda r:r.get('created_at') or '')[-1] if xs else None
+          build=latest('workforce-build')
+          deploy=latest('workforce-deploy')
+          fan=[latest(k) for k in ('production-highway-fast','work-observability','control-room-fast')]
+          failures={'FAILED','DEAD_LETTERED','BLOCKED','CANCELLED'}
+          if build and build.get('state') in failures:
+              print('FAIL'); raise SystemExit
+          if deploy and deploy.get('state') in failures:
+              print('FAIL'); raise SystemExit
+          if all(x and x.get('state')=='SUCCEEDED' for x in [build,deploy,*fan]):
+              print('DONE'); raise SystemExit
+          print('WAIT')
+          PY
+            )
+            case "$STATE" in
+              DONE|FAIL) break ;;
+            esac
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "HIGHWAY_RUNTIME_WAIT_TIMEOUT target=$TARGET_SHA" >&2
+              break
+            fi
+            sleep 5
+          done
+          echo "HIGHWAY_RUNTIME_WAIT_STATE=$STATE"
           $CTL list --limit 500 > /tmp/highway-runtime-tasks.json
 
           python3 - /tmp/highway-runtime-tasks.json "$TARGET_SHA" /tmp/highway-selected.json <<'PY'
