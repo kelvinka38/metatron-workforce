@@ -104,7 +104,169 @@ jobs:
           grep -q 'workflows: \["Highway Production Deploy"\]' "$HYGIENE"
           grep -q 'group: metatron-production-state' "$HYGIENE"
           grep -q 'SUSPENDED' "$HYGIENE"
-          grep -q 'W-\[0-9a-f\]{8}' "$HYGIENE"
+          grep -Fq "pattern=re.compile(r'^W-([0-9a-f]{12}|[0-9a-f]{8}-[0-9]+-[0-9]+)
+          grep -q 'ROLE-DIRECTOR' "$HYGIENE"
+          grep -q 'LEGACY_ACCEPTANCE_WORKER_RECONCILIATION=PASS' "$HYGIENE"
+          grep -q 'CANONICAL_GATEWAY_DIRECTOR_PRESERVED=PASS' "$HYGIENE"
+          ! grep -q '^  push:' "$P10BOOT"
+          grep -q 'P10_BOOTSTRAP_AUTORUN=DISABLED' "$P10BOOT"
+          ! grep -q '^  push:' "$FOUNDERP10"
+          grep -q 'FOUNDER_AUTHORIZED_P10_BOT_AUTODISPATCH=DISABLED' "$FOUNDERP10"
+          ! grep -R -n 'workforce-autonomy-p10-after-deploy.yml/dispatches' .github/workflows
+          ! grep -q 'workflow_run:' "$P10ONESHOT"
+          ! grep -q 'workflow_run:' "$P10CHAIN"
+          grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10ONESHOT"
+          grep -q 'P10_LEGACY_AUTOFANOUT=DISABLED' "$P10CHAIN"
+
+          grep -q 'HIGHWAY_REVISION: fast-production-lane-' "$H"
+          grep -q 'group: metatron-production-lane' "$H"
+          grep -q 'cancel-in-progress: true' "$H"
+          grep -q 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' "$D"
+          grep -q 'PRODUCTION_ADMISSION_REFRESH=PASS' "$D"
+          grep -q 'group: metatron-production-lane' "$D"
+          ! grep -q 'Dispatch exact-SHA P10 closure' "$D"
+          ! grep -q 'workforce-autonomy-p10-after-deploy.yml/dispatches' "$D"
+
+          grep -q "scripts/production-acceptance-highway.sh" "$H"
+          grep -q "scripts/highway-intelligence-lane.sh" "$H"
+          grep -q "scripts/runtime-conformance-point2.sh" "$H"
+          grep -q "scripts/runtime-conformance-point5.sh" "$H"
+          grep -q "scripts/runtime-conformance-point5.sh" "$P5"
+          grep -q 'HIGHWAY_PROFILE:' "$H"
+          grep -q 'HIGHWAY_PROFILE="\${HIGHWAY_PROFILE:-FAST}"' scripts/production-acceptance-highway.sh
+          grep -q 'HIGHWAY_FAST_LIVE_GATE=PASS' scripts/production-acceptance-highway.sh
+          grep -q 'HIGHWAY_DESTRUCTIVE_STRESS=DEFERRED_TO_DEEP_RATIFICATION' scripts/production-acceptance-highway.sh
+          grep -q 'INTELLIGENCE_TWO_WAVE_PARALLELISM=PASS' scripts/highway-intelligence-lane.sh
+          grep -q 'POINT2_SEMANTIC_ISOLATION=PASS' scripts/runtime-conformance-point2.sh
+          ! grep -Eq 'highway-intelligence-lane\.sh.*&|runtime-conformance-point2\.sh.*&' "$H"
+          grep -q 'HIGHWAY_SEMANTIC_PHASE_ISOLATION=PASS' "$H"
+          grep -q 'HIGHWAY_FAIL_FAST_PHASE_TIMEOUTS=PASS' "$H"
+          grep -q 'HIGHWAY_LATENCY_SLO_UNDER_5_MIN=PASS' "$H"
+          ! grep -q 'upload-artifact' "$H"
+          ! grep -q 'actions/upload-artifact@' "$H"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          deploy=Path('.github/workflows/production-deploy.yml').read_text()
+          h=Path('.github/workflows/production-acceptance-highway-v2.yml').read_text()
+          build=deploy.split('  deploy-production:',1)[0]
+          deploy_job='  deploy-production:'+deploy.split('  deploy-production:',1)[1]
+          supersede=deploy.split('  supersede-stale-production:',1)[1].split('  test-and-build:',1)[0]
+          refresh=deploy.split('  refresh-production-admission:',1)[1].split('  deploy-production:',1)[0]
+          assert 'actions/runs?per_page=100' in supersede and '/cancel' in supersede
+          assert 'PRODUCTION_STALE_WORK_PREEMPTED=PASS' in supersede
+          assert 'group: metatron-hosted-build-main' in build and 'cancel-in-progress: true' in build
+          assert 'group: metatron-production-lane' in refresh and 'cancel-in-progress: true' in refresh
+          assert 'PRODUCTION_ADMISSION_REFRESH=PASS' in refresh
+          assert 'group: metatron-production-lane' in deploy_job and 'cancel-in-progress: false' in deploy_job
+          assert 'needs: refresh-production-admission' in deploy_job
+          assert 'group: metatron-production-lane' in h and 'cancel-in-progress: true' in h
+          assert 'HIGHWAY_PROFILE' in h and 'fast-production-lane-v13' in h
+          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/highway-intelligence-lane.sh' in h
+          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point2.sh' in h
+          assert 'timeout --signal=TERM --kill-after=20s 300s scripts/runtime-conformance-point5.sh' in h
+          phase_positions=[
+              h.index("HIGHWAY_PHASE=INTELLIGENCE_PRODUCT"),
+              h.index("HIGHWAY_PHASE=POINT2_ROOT"),
+              h.index("HIGHWAY_PHASE=FOUNDER_PRODUCT_POINT5"),
+          ]
+          assert phase_positions==sorted(phase_positions),phase_positions
+          assert '& INTEL_PID' not in h and '& POINT2_PID' not in h
+          assert 'actions/upload-artifact@' not in h
+          assert 'actions/cache/save@v4' in build
+          assert 'actions/cache/restore@v4' in deploy_job
+          assert 'fail-on-cache-miss: true' in deploy_job
+          assert 'PRODUCTION_EXACT_TESTED_ARTIFACT_HANDOFF=PASS' in deploy_job
+          assert './gradlew clean test bootJar' not in deploy_job
+          assert "      - 'scripts/**'" not in deploy
+          assert 'workforce-autonomy-p10-production-acceptance.yml' not in deploy
+          print('HIGHWAY_TESTED_CACHE_HANDOFF=PASS')
+          print('HIGHWAY_TESTED_ARTIFACT_HANDOFF=PASS')
+          print('HIGHWAY_RUNTIME_ONLY_DEPLOY_TRIGGER=PASS')
+          print('HIGHWAY_DEPLOY_NEVER_AUTODISPATCHES_DEEP_P10=PASS')
+          print('HIGHWAY_IMMEDIATE_STALE_PREEMPTION=PASS')
+          print('HIGHWAY_JIT_ADMISSION_REFRESH=PASS')
+          print('HIGHWAY_NO_CONCURRENCY_SELF_CANCEL=PASS')
+          print('HIGHWAY_FAST_PROFILE_CONTRACT=PASS')
+          print('HIGHWAY_INTELLIGENCE_INTERNAL_PARALLELISM=PASS')
+          print('HIGHWAY_POINT2_SEMANTIC_ISOLATION=PASS')
+          print('HIGHWAY_NO_ROUTINE_ARTIFACT_UPLOAD=PASS')
+          print('HIGHWAY_FAIL_FAST_TIMEOUT_CONTRACT=PASS')
+          print('HIGHWAY_CAPACITY_PHASE_ORDER=PASS')
+          print('HIGHWAY_LATEST_SHA_WINS_POLICY=PASS')
+          print('HIGHWAY_RATIFIED_POINT_WORKFLOWS_MANUAL_ONLY=PASS')
+          PY
+          echo 'HIGHWAY_SINGLE_AUTO_ORCHESTRATOR=PASS'
+          echo 'HIGHWAY_DEEP_RATIFICATION_ON_DEMAND=PASS'
+          echo 'HIGHWAY_PREEMPTS_STALE_RATIFICATION=PASS'
+          echo 'P10_BOOTSTRAP_AUTORUN_DISABLED=PASS'
+          echo 'P10_EXPLICIT_DEEP_CONFIRMATION_REQUIRED=PASS'
+          echo 'P10_HUMAN_FOUNDER_ACTOR_REQUIRED=PASS'
+          echo 'P10_NO_WORKFLOW_SELF_DISPATCH_ENTRYPOINT=PASS'
+          echo 'HIGHWAY_LATENCY_SLO_CONTRACT=PASS'
+          echo 'HIGHWAY_NO_ARTIFACT_STORAGE_DEPENDENCY=PASS'
+          echo 'P10_DUPLICATE_AUTOTRIGGERS_REMOVED=PASS'
+          echo 'P10_LEGACY_AUTOFANOUT_ARCHIVED=PASS'
+          echo 'HIGHWAY_NO_STANDALONE_PROD_QUEUE_FANOUT=PASS'
+      - name: Verify bounded execution planning recovery contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          P=src/main/java/com/metatron/workforce/interaction/intelligence/ExecutionWorkPlanner.java
+          T=src/test/java/com/metatron/workforce/interaction/intelligence/ExecutionWorkPlannerTest.java
+          H=scripts/production-acceptance-highway.sh
+          grep -q 'deterministicSingleRepositoryAudit' "$P"
+          grep -q 'reconcileSingleRepositoryAudit' "$P"
+          grep -q 'Never use `cross-repository-audit-analysis` for a single-repository audit' "$P"
+          grep -q 'boundedSingleRepositoryAuditCanPlanWithoutExternalProvider' "$T"
+          grep -q 'providerlessPlannerStillFailsClosedOutsideBoundedAuditShape' "$T"
+          grep -q 'w=d.get.*autonomousWork' "$H"
+          grep -q 'flock 9' "$H"
+          echo 'HIGHWAY_BOUNDED_PLANNING_FALLBACK=PASS'
+          echo 'HIGHWAY_PLANNING_CAPACITY_SERIALIZATION_CONTRACT=PASS'
+      - name: Validate canonical production defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/docker-compose.yml config --format json > /tmp/live.json
+          python3 - /tmp/live.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); w=d['services']['workforce']; p=w['ports'][0]
+          assert str(p['published'])=='8080' and str(p['target'])=='8080' and p['host_ip']=='127.0.0.1',p
+          assert d['volumes']['workforce-state']['name']=='metatron-workforce-state'
+          assert d['networks']['workforce']['name']=='metatron-workforce'
+          assert d['networks']['gateway']['name']=='metatron-gateway-online'
+          assert w['environment']['TELEGRAM_API_BASE_URL']=='https://api.telegram.org'
+          print('HIGHWAY_CANONICAL_DEFAULTS=PASS')
+          PY
+      - name: Prove two isolated destructive lane configs do not collide
+        shell: bash
+        run: |
+          set -euo pipefail
+          METATRON_HOST_PORT=18111 METATRON_STATE_VOLUME_NAME=highway-test-a-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/a.json
+          METATRON_HOST_PORT=18222 METATRON_STATE_VOLUME_NAME=highway-test-b-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/b.json
+          python3 - /tmp/a.json /tmp/b.json <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
+          def f(d):
+            w=d['services']['workforce']; p=w['ports'][0]
+            return (str(p['published']),d['volumes']['workforce-state']['name'],d['networks']['workforce']['name'],w['environment']['TELEGRAM_API_BASE_URL'],tuple(w['networks']['gateway'].get('aliases',[])))
+          fa,fb=f(a),f(b); assert fa!=fb
+          assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4]
+          print('HIGHWAY_CONFIG_ISOLATION=PASS')
+          PY
+      - name: Verify grounded search and provider isolation remain explicit
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'TELEGRAM_API_BASE_URL' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
+          grep -q 'https://api.telegram.org' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
+          grep -q 'google_search' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          grep -q 'groundingChunks' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          grep -q 'looksLikeInsufficientAnswer' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          echo 'HIGHWAY_PROVIDER_ISOLATION_WITH_REAL_DEFAULT=PASS'
+          echo 'POINT2_GROUNDED_SEARCH_CONTRACT=PASS'
+)" "$HYGIENE"
           grep -q 'ROLE-DIRECTOR' "$HYGIENE"
           grep -q 'LEGACY_ACCEPTANCE_WORKER_RECONCILIATION=PASS' "$HYGIENE"
           grep -q 'CANONICAL_GATEWAY_DIRECTOR_PRESERVED=PASS' "$HYGIENE"
