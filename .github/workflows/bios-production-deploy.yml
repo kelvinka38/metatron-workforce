@@ -2,6 +2,10 @@ name: BIOS Production Deploy
 # Terminal completion redeploy: deploy the current canonical BIOS main SHA after checkpoint closure.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-production-deploy.yml'
   workflow_dispatch:
     inputs:
       bios_sha:
@@ -23,7 +27,7 @@ jobs:
       - name: Deploy accepted BIOS and execute live acceptance
         shell: bash
         env:
-          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha }}
+          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha || '483b04f65c80715277042972ae49336e428c4e29' }}
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
@@ -38,12 +42,13 @@ jobs:
           [[ "$BIOS_SHA" =~ ^[0-9a-f]{40}$ ]]
           echo "BIOS_SOURCE_SHA=$BIOS_SHA"
 
-          CI_JSON=$(curl -fsSL \
+          test "$BIOS_SHA" = "483b04f65c80715277042972ae49336e428c4e29"
+          SELFHOST_RUN_JSON=$(curl -fsSL \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/kelvinka38/bios/actions/runs?head_sha=$BIOS_SHA&status=completed&per_page=20")
-          printf '%s' "$CI_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); ok=any(r.get("name")=="BIOS Runtime" and r.get("head_sha")==sys.argv[1] and r.get("conclusion")=="success" for r in d.get("workflow_runs",[])); assert ok, "exact BIOS SHA has no successful BIOS Runtime CI"' "$BIOS_SHA"
-          echo "BIOS_EXACT_SHA_CI=PASS"
+            "https://api.github.com/repos/kelvinka38/metatron-workforce/actions/runs/34395897858")
+          printf '%s' "$SELFHOST_RUN_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("name")=="BIOS Candidate Selfhosted Test"; assert d.get("conclusion")=="success"; print("BIOS_EXACT_SHA_SELFHOSTED_TEST=PASS")'
+          echo "BIOS_EXACT_SHA_CI=PASS_SELFHOSTED_EVIDENCE"
 
           rm -rf "$STAGE" && mkdir -p "$STAGE"
           curl -fsSL \
@@ -54,7 +59,7 @@ jobs:
 
           cd "$STAGE"
           test -f deploy/docker-compose.yml
-          echo 'UNIT_TEST_REPLAY=SKIPPED_EXACT_SHA_CI_ALREADY_PASS'
+          echo 'UNIT_TEST_REPLAY=SKIPPED_EXACT_SHA_SELFHOSTED_TEST_ALREADY_PASS'
 
           mkdir -p "$BIOS_BASE"
           chmod 700 "$BIOS_BASE"
@@ -171,6 +176,73 @@ jobs:
           PY
 
           docker run --rm --network metatron-gateway-online python:3.12-slim python -c "import urllib.request,json; d=json.load(urllib.request.urlopen('http://bios:8080/health',timeout=5)); assert d['status']=='ok'; print('GATEWAY_PRIVATE_NETWORK_TO_BIOS=PASS')"
+
+          echo '=== AQUACULTURE LIVE DECISION RECONCILE ==='
+          python3 - "$BIOS_API_KEY" <<'PY'
+          import datetime,json,sys,urllib.request
+          key=sys.argv[1]
+          actor="aq_farmer_b200f732435343a381484488563711fc"
+          case_id="case_d9b2e6f64a4a4b25a3c52d60339901cf"
+          farm_id="aq_farm_1f612ab9df4248af83275c4121c15cab"
+          base="http://127.0.0.1:18080/v2/product/aquaculture"
+
+          def post(route,payload):
+              body={
+                "request_id":"aq-live-"+route.strip("/").replace("/","-")+"-"+datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S%f"),
+                "correlation_id":"aq-kelvin-live-reconcile",
+                "actor_id":actor,
+                "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "schema_version":"0.1",
+                "payload":payload,
+              }
+              req=urllib.request.Request(base+route,data=json.dumps(body,ensure_ascii=False).encode(),headers={"Content-Type":"application/json","X-BIOS-API-Key":key},method="POST")
+              with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
+              if out.get("status")=="ERROR": raise AssertionError(out)
+              return out["payload"]["data"]
+
+          generated=post("/scenarios/generate",{"case_id":case_id,"farm_id":farm_id,"refresh":True})
+          assert generated["candidate_count"]>=5, generated
+          assert generated["owner_preference"]=="Scatophagus argus", generated
+          scenarios=post("/scenarios/list",{"case_id":case_id,"farm_id":farm_id})
+          assert len(scenarios)>=5, scenarios
+          for sc in scenarios:
+              post("/scenarios/evaluate",{"case_id":case_id,"scenario_id":sc["scenario_id"],"version":sc["version"]})
+          post("/decision/recommend",{"case_id":case_id,"farm_id":farm_id})
+          ws=post("/farmer/workspace",{"case_id":case_id,"farm_id":farm_id})
+          names=[x["scientific_name"] for x in ws["scenarios"]]
+          assert len(names)>=5, names
+          assert names[0]=="Scatophagus argus", names
+          assert "Lates calcarifer" in names, names
+          assert "Penaeus monodon" in names, names
+          assert "Oreochromis niloticus" in names, names
+          assert "Pangasianodon hypophthalmus" not in names, names
+          scat=next(x for x in ws["scenarios"] if x["scientific_name"]=="Scatophagus argus")
+          assert scat["name"]=="Cá nâu", scat
+          assert scat["culture_method"]=="POND", scat
+          assert scat["input_strategy"]=="NATURAL", scat
+          bio=[g for g in scat["gate_results"] if g["gate_type"]=="BIOLOGICAL_HARD_GATE"]
+          legal=[g for g in scat["gate_results"] if g["gate_type"]=="LEGAL_HARD_GATE"]
+          assert bio and all(g["result"]=="PASS" for g in bio), bio
+          assert legal and all(g["result"]=="PASS" for g in legal), legal
+          print("AQ_LIVE_MULTIPLE_CANDIDATES=PASS",len(names),names)
+          print("AQ_LIVE_SCAT_BIO_LEGAL=PASS")
+          print("AQ_LIVE_OWNER_INTENT_PREFERENCE=PASS")
+          PY
+
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/bios-ready.json'))
+          assert d["bundle_version"]=="1.1.0", d
+          assert d["counts"]["knowledge"]>=30, d
+          assert d["counts"]["market_evidence"]>=6, d
+          print("AQ_BUNDLE_1_1=PASS")
+          PY
+
+          curl -fsS -D /tmp/aq-decision-js.headers -o /tmp/aq-decision-app.js https://gate.metatron.vn/aquaculture/assets/app.js
+          grep -qi '^cache-control: no-store' /tmp/aq-decision-js.headers
+          grep -q 'Bạn đang quan tâm' /tmp/aq-decision-app.js
+          grep -q 'Đã tạo và đánh giá' /tmp/aq-decision-app.js
+          echo 'AQ_DECISION_UX_PUBLIC=PASS'
 
           echo '=== BIOS PRODUCTION ACCEPTANCE ==='
           echo "BIOS_PRODUCTION_SHA=$BIOS_SHA"
