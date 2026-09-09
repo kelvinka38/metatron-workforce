@@ -43,7 +43,13 @@ jobs:
           docker exec "$CID" sh -c "grep -q 'ROLE-HEAD-OF-GATEWAY' /var/lib/metatron-workforce/workforce-core-state.json"
           docker exec "$CID" sh -c "grep -q '^$WORKER_ID.*runtime-profile:general-engineering-worker:v1' /var/lib/metatron-workforce/runtime-profile-bindings.tsv"
 
-          RUNTIME_FILE=$(docker exec "$CID" sh -c             "grep -R -l '^workerId=$WORKER_ID          send_update() {
+          RUNTIME_FILE=$(docker exec "$CID" sh -c "grep -R -l '^workerId=$WORKER_ID$' /var/lib/metatron-workforce/runtime-state/*.properties 2>/dev/null | head -1")
+          test -n "$RUNTIME_FILE"
+          docker exec "$CID" sh -c "grep -q '^state=RUNNING$' '$RUNTIME_FILE'"
+          RUNTIME_ID=$(docker exec "$CID" sh -c "sed -n 's/^runtimeId=//p' '$RUNTIME_FILE' | head -1")
+          test -n "$RUNTIME_ID"
+          echo "GATEWAY_RUNTIME_ID=$RUNTIME_ID"
+          send_update() {
             local text="$1"
             local update_id="$2"
             local body
