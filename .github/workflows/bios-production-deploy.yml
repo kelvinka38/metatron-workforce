@@ -2,10 +2,6 @@ name: BIOS Production Deploy
 # Terminal completion redeploy: deploy the current canonical BIOS main SHA after checkpoint closure.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bios-production-deploy.yml'
   workflow_dispatch:
     inputs:
       bios_sha:
@@ -27,7 +23,7 @@ jobs:
       - name: Deploy accepted BIOS and execute live acceptance
         shell: bash
         env:
-          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha || 'f3c5e774ea9a630fb1d999da4660502a8e33ee89' }}
+          BIOS_REQUESTED_SHA: ${{ inputs.bios_sha }}
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
