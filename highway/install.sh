@@ -7,16 +7,16 @@ SHA="${2:?exact source SHA required}"
 test -d "$CHECKOUT/.git"
 test "$(git -C "$CHECKOUT" rev-parse HEAD)" = "$SHA"
 
-RUN_USER="${SUDO_USER:-$(id -un)}"
-RUN_GROUP="$(id -gn "$RUN_USER")"
-INSTALL=/opt/metatron/highway
-STATE=/var/lib/metatron-highway
+INSTALL="${METATRON_HIGHWAY_INSTALL_DIR:-$HOME/.metatron/highway}"
+STATE="${METATRON_HIGHWAY_STATE_DIR:-$INSTALL/state}"
 BASE_ENV=/opt/metatron/metatron-workforce/.env
 CURRENT="$INSTALL/current"
 RELEASE="$INSTALL/releases/$SHA"
+ENV_FILE="$INSTALL/highway.env"
 
 test -r "$BASE_ENV"
 mkdir -p "$INSTALL/releases" "$STATE/logs"
+
 rm -rf "$RELEASE.tmp"
 mkdir -p "$RELEASE.tmp"
 git -C "$CHECKOUT" archive "$SHA" | tar -x -C "$RELEASE.tmp"
@@ -28,76 +28,43 @@ rm -rf "$CURRENT.tmp"
 mkdir -p "$CURRENT.tmp"
 cp "$CHECKOUT/highway/highwayd.py" "$CURRENT.tmp/highwayd.py"
 cp "$CHECKOUT/highway/highwayctl.py" "$CURRENT.tmp/highwayctl.py"
+cp "$CHECKOUT/highway/ensure-running.sh" "$CURRENT.tmp/ensure-running.sh"
 cp "$CHECKOUT/highway/task-registry.json" "$CURRENT.tmp/task-registry.json"
-chmod 0755 "$CURRENT.tmp/highwayd.py" "$CURRENT.tmp/highwayctl.py"
+chmod 0755 "$CURRENT.tmp/highwayd.py" "$CURRENT.tmp/highwayctl.py" "$CURRENT.tmp/ensure-running.sh"
 rm -rf "$CURRENT"
 mv "$CURRENT.tmp" "$CURRENT"
 
-python3 - "$BASE_ENV" <<'PY'
+python3 - "$ENV_FILE" <<'PY'
 import os,secrets,sys
 path=sys.argv[1]
-lines=open(path,encoding='utf-8').read().splitlines()
 values={}
-for line in lines:
-    if '=' in line and not line.lstrip().startswith('#'):
-        k,v=line.split('=',1); values[k]=v
-if not values.get('METATRON_HIGHWAY_TOKEN','').strip():
-    lines=[x for x in lines if not x.startswith('METATRON_HIGHWAY_TOKEN=')]
-    lines.append('METATRON_HIGHWAY_TOKEN='+secrets.token_urlsafe(48))
-if not values.get('METATRON_HIGHWAY_EXECUTORS','').strip():
-    lines=[x for x in lines if not x.startswith('METATRON_HIGHWAY_EXECUTORS=')]
-    lines.append('METATRON_HIGHWAY_EXECUTORS=4')
-tmp=path+'.highway.tmp'
+lines=[]
+if os.path.exists(path):
+    lines=open(path,encoding='utf-8').read().splitlines()
+    for line in lines:
+        if '=' in line and not line.lstrip().startswith('#'):
+            k,v=line.split('=',1); values[k]=v
+def ensure(key,value):
+    global lines
+    if not values.get(key,'').strip():
+        lines=[x for x in lines if not x.startswith(key+'=')]
+        lines.append(key+'='+value)
+ensure('METATRON_HIGHWAY_TOKEN',secrets.token_urlsafe(48))
+ensure('METATRON_HIGHWAY_EXECUTORS','4')
+ensure('METATRON_HIGHWAY_PORT','18090')
+tmp=path+'.tmp'
 with open(tmp,'w',encoding='utf-8') as f: f.write('\n'.join(lines)+'\n')
 os.chmod(tmp,0o600)
 os.replace(tmp,path)
 PY
 
-chown -R "$RUN_USER:$RUN_GROUP" "$INSTALL" "$STATE"
-cat >/etc/systemd/system/metatron-highway.service <<EOF
-[Unit]
-Description=Metatron Persistent Highway Execution Fabric
-After=network-online.target docker.service
-Wants=network-online.target
+METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" METATRON_HIGHWAY_STATE_DIR="$STATE"   bash "$CURRENT/ensure-running.sh" --restart
 
-[Service]
-Type=simple
-User=$RUN_USER
-Group=$RUN_GROUP
-WorkingDirectory=$INSTALL/current
-EnvironmentFile=-$BASE_ENV
-Environment=METATRON_HIGHWAY_INSTALL_DIR=$INSTALL
-Environment=METATRON_HIGHWAY_STATE_DIR=$STATE
-Environment=METATRON_HIGHWAY_PORT=18090
-ExecStart=/usr/bin/python3 $INSTALL/current/highwayd.py
-Restart=always
-RestartSec=2
-TimeoutStopSec=15
-KillMode=control-group
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable metatron-highway.service >/dev/null
-systemctl restart metatron-highway.service
-
-for _ in $(seq 1 40); do
-  if curl -fsS --max-time 2 http://127.0.0.1:18090/health >/tmp/metatron-highway-health.json 2>/dev/null; then
-    break
-  fi
-  sleep .25
-done
-cat /tmp/metatron-highway-health.json
-python3 - /tmp/metatron-highway-health.json <<'PY'
-import json,sys
-d=json.load(open(sys.argv[1]))
-assert d['status']=='UP',d
-assert int(d['executors']) >= 4,d
-assert d['scheduler']=='persistent',d
-print('HIGHWAY_PERSISTENT_SCHEDULER=PASS')
-PY
-systemctl --no-pager --full status metatron-highway.service | sed -n '1,18p'
+set -a
+source "$ENV_FILE"
+set +a
+python3 "$CURRENT/highwayctl.py" health
+test "$(cat "$RELEASE/.highway-source-sha")" = "$SHA"
 echo "HIGHWAY_RELEASE_SHA=$SHA"
+echo "HIGHWAY_ROOTLESS_PERSISTENCE=PASS"
 echo "HIGHWAY_INSTALL=PASS"
