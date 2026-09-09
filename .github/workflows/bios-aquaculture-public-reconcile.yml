@@ -55,7 +55,7 @@ jobs:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                     disabled: true
 
-'''
+          '''
               text=text.replace(anchor,block+anchor,1)
               path.write_text(text)
           PY
