@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: bios-candidate-selfhosted-test
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: [self-hosted, linux, x64, metatron-prod]
@@ -17,7 +21,7 @@ jobs:
       - name: Test exact BIOS candidate SHA
         shell: bash
         env:
-          BIOS_CANDIDATE_SHA: 7ce85f2a406c048fc645d686026d2ed9543786b7
+          BIOS_CANDIDATE_SHA: 820cc86d703b8d33ceaadb4f32388d82950c8f1e
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
