@@ -53,6 +53,10 @@ jobs:
             grep -q '/chat' "$page"
             grep -q '/profile' "$page"
             grep -q 'Runtime & Tools' "$page"
+            grep -q 'Materialized Position Constitution' "$page"
+            grep -q 'Success measures / KPI contract' "$page"
+            grep -q 'Evidence-derived learning' "$page"
+            grep -q 'Formal contextual Performance evaluation' "$page"
             grep -q 'Live cognition instructions' "$page"
             grep -q 'Worker-model completeness gaps' "$page"
             grep -q '/availability' "$page"
@@ -90,4 +94,20 @@ jobs:
           docker exec "$CID" sh -c 'test -d /var/lib/metatron-workforce'
           docker exec "$CID" sh -c 'mkdir -p /var/lib/metatron-workforce/workplace-worker-chat && test -w /var/lib/metatron-workforce/workplace-worker-chat'
           echo 'WORKPLACE_WORKER_CHAT_PERSISTENCE_PATH=PASS'
+
+          # The canonical Gateway Director must have a durable Position operating constitution,
+          # not merely a role label/runtime profile or UI-only projection.
+          CONSTITUTION=/var/lib/metatron-workforce/worker-constitution-state.json
+          for i in $(seq 1 30); do
+            if docker exec "$CID" sh -c "test -s '$CONSTITUTION'"; then break; fi
+            sleep 1
+          done
+          docker exec "$CID" sh -c "test -s '$CONSTITUTION'"
+          docker exec "$CID" sh -c "grep -Fq 'position-contract:position:gateway-director:v1' '$CONSTITUTION'"
+          docker exec "$CID" sh -c "grep -Fq 'CONTINUOUS_ACCOUNTABILITY_WITH_DEMAND_DRIVEN_BOUNDED_EXECUTION' '$CONSTITUTION'"
+          docker exec "$CID" sh -c "grep -Fq 'gateway-user-smoothness' '$CONSTITUTION'"
+          docker exec "$CID" sh -c "grep -Fq 'gateway.operational.management' '$CONSTITUTION'"
+          docker exec "$CID" sh -c "grep -Fq 'MAJOR_INVESTMENT_OR_PROTECTED_AUTHORITY' '$CONSTITUTION'"
+          echo 'WORKER_CONSTITUTION_DURABILITY=PASS'
+          echo 'WORKER_CONSTITUTION_GATEWAY_DIRECTOR=PASS'
           echo 'WORKPLACE_CONTROL_ROOM_PRODUCTION_ACCEPTANCE=PASS'

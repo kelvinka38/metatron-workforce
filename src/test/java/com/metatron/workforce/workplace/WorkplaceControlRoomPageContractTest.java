@@ -22,6 +22,10 @@ class WorkplaceControlRoomPageContractTest {
             assertTrue(html.contains("/profile"));
             assertTrue(html.contains("Runtime & Tools"));
             assertTrue(html.contains("Memory"));
+            assertTrue(html.contains("Materialized Position Constitution"));
+            assertTrue(html.contains("Success measures / KPI contract"));
+            assertTrue(html.contains("Evidence-derived learning"));
+            assertTrue(html.contains("Formal contextual Performance evaluation"));
             assertTrue(html.contains("Live cognition instructions"));
             assertTrue(html.contains("Worker-model completeness gaps"));
             assertTrue(html.contains("/availability"));

@@ -1,6 +1,7 @@
 package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
 import java.time.Instant;
@@ -46,16 +47,25 @@ public final class AutonomousStaffingService {
     private final WorkforceCoreService core;
     private final Map<String, AutonomousStaffingPolicy> policies;
     private final WorkerRuntimeProfileBindingService runtimeProfiles;
+    private final WorkerConstitutionService constitution;
 
     public AutonomousStaffingService(WorkforceCoreService core, List<AutonomousStaffingPolicy> policies) {
-        this(core, policies, WorkerRuntimeProfileBindingService.inMemory());
+        this(core, policies, WorkerRuntimeProfileBindingService.inMemory(), WorkerConstitutionService.inMemory());
     }
 
     public AutonomousStaffingService(WorkforceCoreService core,
                                      List<AutonomousStaffingPolicy> policies,
                                      WorkerRuntimeProfileBindingService runtimeProfiles) {
+        this(core, policies, runtimeProfiles, WorkerConstitutionService.inMemory());
+    }
+
+    public AutonomousStaffingService(WorkforceCoreService core,
+                                     List<AutonomousStaffingPolicy> policies,
+                                     WorkerRuntimeProfileBindingService runtimeProfiles,
+                                     WorkerConstitutionService constitution) {
         this.core = Objects.requireNonNull(core);
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
+        this.constitution = Objects.requireNonNull(constitution, "constitution");
         this.policies = List.copyOf(policies).stream().collect(Collectors.toUnmodifiableMap(
                 AutonomousStaffingPolicy::capabilityRef,
                 Function.identity(),
@@ -80,10 +90,27 @@ public final class AutonomousStaffingService {
             List<String> evidence;
             if (policy != null) {
                 var spec = policy.formationSpec();
+
+                // Reconciliation is part of staffing reality. A pre-existing Worker may have been
+                // formed under an older policy revision; reusing identity must not leave the
+                // current governed capability/qualification/constitution envelope partially applied.
+                core.attestCapability(workerId, capability.capabilityRef(),
+                        spec.capabilityLevel(), spec.capabilityEvidenceRef());
+                for (AutonomousStaffingPolicy.CapabilityGrant grant : policy.additionalCapabilities()) {
+                    core.attestCapability(workerId, grant.capabilityRef(), grant.level(), grant.evidenceRef());
+                }
+                core.attestQualification(workerId, spec.qualificationRef(), spec.qualificationEvidenceRef(), null);
+
                 WorkerRuntimeProfileBindingService.Binding binding = runtimeProfiles.bind(
                         workerId, spec.runtimeProfileRef(), capability.capabilityRef(), at);
+                WorkerConstitutionService.WorkerPositionBinding constitutionBinding =
+                        constitution.ensureConstitution(policy, at);
                 evidence = List.of(
                         "staffing:reused-worker=" + workerId,
+                        "reconciled-capabilities=" + policy.additionalCapabilities().stream()
+                                .map(AutonomousStaffingPolicy.CapabilityGrant::capabilityRef).sorted().toList(),
+                        "qualification-evidence:" + spec.qualificationEvidenceRef(),
+                        "position-contract-bound:" + constitutionBinding.contractId(),
                         "runtime-profile-bound:" + binding.profile().profileRef(),
                         "runtime-actions=" + binding.profile().actionRefs().stream().sorted().toList());
             } else {
@@ -124,6 +151,8 @@ public final class AutonomousStaffingService {
             core.attestCapability(spec.workerId(), grant.capabilityRef(), grant.level(), grant.evidenceRef());
         }
         core.attestQualification(spec.workerId(), spec.qualificationRef(), spec.qualificationEvidenceRef(), null);
+        WorkerConstitutionService.WorkerPositionBinding constitutionBinding =
+                constitution.ensureConstitution(policy, at);
         core.setAvailability(spec.workerId(), true, spec.capacity());
         WorkerRuntimeProfileBindingService.Binding runtimeBinding = runtimeProfiles.bind(
                 spec.workerId(), spec.runtimeProfileRef(), capability.capabilityRef(), at);
@@ -147,6 +176,7 @@ public final class AutonomousStaffingService {
                         .map(AutonomousStaffingPolicy.CapabilityGrant::capabilityRef).sorted().toList(),
                 "qualification-evidence:" + spec.qualificationEvidenceRef(),
                 "authority-envelope:" + spec.authorityEnvelopeRef(),
+                "position-contract-bound:" + constitutionBinding.contractId(),
                 "runtime-profile-bound:" + runtimeBinding.profile().profileRef(),
                 "runtime-actions=" + runtimeBinding.profile().actionRefs().stream().sorted().toList(),
                 "cost-limit:" + spec.costLimitRef(),

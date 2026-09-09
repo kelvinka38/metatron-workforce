@@ -23,6 +23,10 @@ public final class GatewayDirectorAppointmentCapability implements AutonomousExe
     public static final String ROLE_REF = "ROLE-HEAD-OF-GATEWAY";
     public static final String POSITION_REF = "position:gateway-director";
     public static final String GATEWAY_AUDIT_CAPABILITY = "gateway.audit.read";
+    public static final String OPERATIONAL_MANAGEMENT_CAPABILITY = "gateway.operational.management";
+    public static final String RELIABILITY_MANAGEMENT_CAPABILITY = "gateway.reliability.management";
+    public static final String CAPACITY_COST_MANAGEMENT_CAPABILITY = "gateway.capacity.cost.management";
+    public static final String INCIDENT_RECOVERY_CAPABILITY = "gateway.incident.recovery.coordination";
     public static final String AUTHORITY_REFERENCE = "policy:founder-gateway-director-appointment:v1";
     public static final String AUTHORIZATION_REFERENCE = "authorization:founder-gateway-director-appointment:v1";
 
@@ -70,12 +74,21 @@ public final class GatewayDirectorAppointmentCapability implements AutonomousExe
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("Gateway Director active role/position participation missing"));
 
-        boolean appointmentCapability = core.capabilities(WORKER_ID).stream()
-                .anyMatch(item -> CAPABILITY.equals(item.capabilityRef()) && item.level() >= 1.0);
-        boolean gatewayAuditCapability = core.capabilities(WORKER_ID).stream()
-                .anyMatch(item -> GATEWAY_AUDIT_CAPABILITY.equals(item.capabilityRef()) && item.level() >= 1.0);
-        if (!appointmentCapability || !gatewayAuditCapability) {
-            throw new IllegalStateException("Gateway Director approved capability bundle incomplete");
+        java.util.Set<String> approvedCapabilities = core.capabilities(WORKER_ID).stream()
+                .filter(item -> item.level() >= 1.0)
+                .map(WorkforceCoreService.Capability::capabilityRef)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.Set<String> requiredCapabilities = java.util.Set.of(
+                CAPABILITY,
+                GATEWAY_AUDIT_CAPABILITY,
+                OPERATIONAL_MANAGEMENT_CAPABILITY,
+                RELIABILITY_MANAGEMENT_CAPABILITY,
+                CAPACITY_COST_MANAGEMENT_CAPABILITY,
+                INCIDENT_RECOVERY_CAPABILITY);
+        if (!approvedCapabilities.containsAll(requiredCapabilities)) {
+            java.util.Set<String> missing = new java.util.LinkedHashSet<>(requiredCapabilities);
+            missing.removeAll(approvedCapabilities);
+            throw new IllegalStateException("Gateway Director approved capability bundle incomplete: missing=" + missing);
         }
 
         WorkerRuntimeProfileBindingService.Binding binding = runtimeProfiles.requireBinding(WORKER_ID);
@@ -87,8 +100,7 @@ public final class GatewayDirectorAppointmentCapability implements AutonomousExe
         evidence.add("worker:" + worker.workerId() + ":status=" + worker.status());
         evidence.add("participation:" + participation.participationId() + ":role=" + participation.roleRef()
                 + ":position=" + participation.positionRef());
-        evidence.add("capability:" + CAPABILITY);
-        evidence.add("capability:" + GATEWAY_AUDIT_CAPABILITY);
+        requiredCapabilities.stream().sorted().forEach(capability -> evidence.add("capability:" + capability));
         evidence.add("runtime-profile-bound:" + binding.profile().profileRef());
         evidence.add("runtime-actions=" + binding.profile().actionRefs().stream().sorted().toList());
         if (request.dispatchBound()) {

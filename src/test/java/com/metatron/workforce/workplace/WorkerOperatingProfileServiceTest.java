@@ -84,7 +84,16 @@ class WorkerOperatingProfileServiceTest {
         assertTrue(profile.runtime().allowedExecutables().contains("git"));
         assertEquals(1, profile.memory().turns());
         assertTrue(profile.liveCognitionInstructions().contains("accountable operating executive"));
-        assertTrue(profile.modelGaps().stream().anyMatch(gap -> gap.contains("reporting_relationship: NOT_MODELED")));
-        assertFalse(profile.performance().formalEvaluationAvailable());
+        assertTrue(profile.constitution().available());
+        assertTrue(profile.constitution().contract().mission().contains("controlled institutional boundary"));
+        assertFalse(profile.constitution().contract().reportingLines().isEmpty());
+        assertFalse(profile.constitution().contract().resourceScopes().isEmpty());
+        assertFalse(profile.constitution().contract().escalationRoutes().isEmpty());
+        assertFalse(profile.constitution().contract().successMeasures().isEmpty());
+        assertEquals("CONTINUOUS_ACCOUNTABILITY_WITH_DEMAND_DRIVEN_BOUNDED_EXECUTION",
+                profile.constitution().contract().operatingCoverage());
+        assertTrue(profile.performance().formalEvaluationAvailable());
+        assertEquals("workforce:operational-performance-evaluator:v1", profile.performance().evaluatorRef());
+        assertTrue(profile.modelGaps().isEmpty());
     }
 }

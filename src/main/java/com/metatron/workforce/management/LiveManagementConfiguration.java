@@ -7,6 +7,7 @@ import com.metatron.workforce.execution.ExecutionAttemptStore;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.observation.FileObservationStateStore;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.observation.ObservationClosureService;
 import com.metatron.workforce.observation.ObservationStateStore;
 import com.metatron.workforce.observation.ObservationVerifier;
@@ -138,8 +139,9 @@ public class LiveManagementConfiguration {
     @Bean
     AutonomousStaffingService autonomousStaffingService(WorkforceCoreService core,
                                                          List<AutonomousStaffingPolicy> policies,
-                                                         WorkerRuntimeProfileBindingService runtimeProfiles) {
-        return new AutonomousStaffingService(core, policies, runtimeProfiles);
+                                                         WorkerRuntimeProfileBindingService runtimeProfiles,
+                                                         WorkerConstitutionService constitution) {
+        return new AutonomousStaffingService(core, policies, runtimeProfiles, constitution);
     }
 
     /**
