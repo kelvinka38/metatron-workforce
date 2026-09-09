@@ -43,6 +43,514 @@ jobs:
           docker exec "$CID" sh -c "grep -q 'ROLE-HEAD-OF-GATEWAY' /var/lib/metatron-workforce/workforce-core-state.json"
           docker exec "$CID" sh -c "grep -q '^$WORKER_ID.*runtime-profile:general-engineering-worker:v1' /var/lib/metatron-workforce/runtime-profile-bindings.tsv"
 
+          RUNTIME_FILE=$(docker exec "$CID" sh -c             "grep -R -l '^workerId=$WORKER_ID          send_update() {
+            local text="$1"
+            local update_id="$2"
+            local body
+            body=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$update_id" "$text" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update_id=int(sys.argv[2]); text=sys.argv[3]
+          print(json.dumps({
+              "update_id": update_id,
+              "message": {
+                  "message_id": update_id % 2000000000,
+                  "from": {"id": uid, "is_bot": False, "first_name": "Founder"},
+                  "chat": {"id": uid, "type": "private"},
+                  "date": 0,
+                  "text": text
+              }
+          }))
+          PY
+            )
+            curl -fsS --proto '=https' --tlsv1.2 --max-time 30               -X POST https://gate.metatron.vn/telegram/webhook               -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"               -H 'Content-Type: application/json'               --data-binary "$body" >/dev/null
+          }
+
+          BASE_ID=$(date +%s%N | cut -c1-15)
+          U1="${BASE_ID}01"
+          U2="${BASE_ID}02"
+          U3="${BASE_ID}03"
+          U4="${BASE_ID}04"
+          U5="${BASE_ID}05"
+          U6="${BASE_ID}06"
+          U7="${BASE_ID}07"
+          U8="${BASE_ID}08"
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          MEETING_FILE=''
+
+          dump_diagnostics() {
+            echo '--- MEETING ACCEPTANCE DIAGNOSTICS ---' >&2
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4|$U5|$U6|$U7|$U8)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
+            if [ -n "$MEETING_FILE" ]; then
+              echo "meeting_file=$MEETING_FILE" >&2
+              docker exec "$CID" sh -c "cat '$MEETING_FILE'" >&2 || true
+            fi
+          }
+          trap dump_diagnostics ERR
+
+          send_update "/work" "$U1"
+          sleep 2
+          send_update "Meeting, call for me director of gateway" "$U2"
+
+          for i in $(seq 1 60); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            MEETING_FILE=$(docker exec "$CID" sh -c               "grep -R -l 'interaction:telegram:update:$U2' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null | head -1" || true)
+            if grep -q "telegram_send_success update_id=$U2" <<<"$LOGS" && [ -n "$MEETING_FILE" ]; then
+              break
+            fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U2" <<<"$LOGS"; then
+              echo 'FIRST_MEETING_TURN_DEAD_LETTER' >&2
+              exit 1
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo 'FIRST_MEETING_TURN_TIMEOUT' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          docker exec "$CID" sh -c "grep -q '$WORKER_ID' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'meeting-worker:$WORKER_ID:participation=$PARTICIPATION_ID' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-runtime-profile:runtime-profile:general-engineering-worker:v1' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-runtime-instance:$RUNTIME_ID:state=RUNNING' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-conversation-request:worker-cognition-' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-intelligence-provider:' '$MEETING_FILE'"
+
+          send_update "What is the root cause of the Gateway routing problem?" "$U3"
+
+          for i in $(seq 1 60); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"               && docker exec "$CID" sh -c "grep -q 'interaction:telegram:update:$U3' '$MEETING_FILE'"; then
+              break
+            fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U3" <<<"$LOGS"; then
+              echo 'SECOND_MEETING_TURN_DEAD_LETTER' >&2
+              exit 1
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo 'SECOND_MEETING_TURN_TIMEOUT' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          grep -q "telegram_send_success update_id=$U1" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U2" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U2" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U3" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U2.*provenance=meeting:" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U3.*provenance=work:meeting-conversation" <<<"$LOGS"
+
+          # Restore the Founder product surface to Work after the synthetic acceptance conversation.
+          send_update "/work" "$U4"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
+
+          # Prove the exact Founder-style "create Worker Head of Gateway" Work request no longer
+          # sits at PLANNING 0/0. It must materialize one exact Objective and reach terminal success.
+          send_update "Create worker head of gateway" "$U5"
+          OBJECTIVE_ID=''
+          for i in $(seq 1 90); do
+            curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives               > /tmp/meeting-gateway-objectives.json || true
+            OBJECTIVE_ID=$(python3 - /tmp/meeting-gateway-objectives.json "$U5" <<'PY'
+          import json,sys
+          path,update=sys.argv[1],sys.argv[2]
+          try:
+              data=json.load(open(path))
+          except Exception:
+              print('')
+              raise SystemExit(0)
+          needle=f"telegram:update:{update}"
+          found=[]
+          for item in data if isinstance(data,list) else []:
+              if needle not in json.dumps(item,sort_keys=True):
+                  continue
+              objective=item.get('objective') or {}
+              oid=objective.get('objectiveId') or objective.get('objective_id')
+              if oid:
+                  found.append(oid)
+          found=list(dict.fromkeys(found))
+          print(found[0] if len(found)==1 else '')
+          PY
+            )
+            if [ -n "$OBJECTIVE_ID" ]; then break; fi
+            sleep 2
+          done
+          test -n "$OBJECTIVE_ID"
+          echo "GATEWAY_DIRECTOR_OBJECTIVE_ID=$OBJECTIVE_ID"
+
+          TERMINAL=''
+          for i in $(seq 1 120); do
+            curl -fsS --max-time 5               "http://127.0.0.1:8080/workforce/management/objectives/$OBJECTIVE_ID"               > /tmp/meeting-gateway-objective.json || true
+            TERMINAL=$(python3 - /tmp/meeting-gateway-objective.json <<'PY'
+          import json,sys
+          try:
+              d=json.load(open(sys.argv[1]))
+              print((d.get('objective') or {}).get('status',''))
+          except Exception:
+              print('')
+          PY
+            )
+            case "$TERMINAL" in
+              COMPLETED|DELIVERED) break ;;
+              BLOCKED|ESCALATED|CANCELLED)
+                echo "GATEWAY_DIRECTOR_BAD_TERMINAL=$TERMINAL" >&2
+                cat /tmp/meeting-gateway-objective.json >&2 || true
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          case "$TERMINAL" in
+            COMPLETED|DELIVERED) ;;
+            *)
+              echo "GATEWAY_DIRECTOR_TERMINAL_TIMEOUT=$TERMINAL" >&2
+              cat /tmp/meeting-gateway-objective.json >&2 || true
+              exit 1
+              ;;
+          esac
+
+          python3 - /tmp/meeting-gateway-objective.json "$OBJECTIVE_ID" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); oid=sys.argv[2]
+          objective=d.get('objective') or {}
+          assert objective.get('objectiveId')==oid, objective
+          assert objective.get('status') in ('COMPLETED','DELIVERED'), objective
+          work=d.get('autonomousWork') or d.get('work') or {}
+          planned=work.get('plannedWork') or work.get('planned_work') or []
+          completed=work.get('completedStepIds') or work.get('completed_step_ids') or []
+          blob=json.dumps(d,sort_keys=True)
+          assert planned, 'gateway_director_plan_empty'
+          assert len(completed) >= len(planned), (planned,completed)
+          for marker in (
+              'workforce.staffing.gateway-director',
+              'ROLE-HEAD-OF-GATEWAY',
+              'WORKER-GATEWAY-DIRECTOR',
+              'runtime-profile:general-engineering-worker:v1'):
+              assert marker in blob, f'missing_gateway_director_evidence:{marker}'
+          print('GATEWAY_DIRECTOR_WORK_ORDER_PLAN=PASS')
+          print('GATEWAY_DIRECTOR_WORK_ORDER_EXECUTION=PASS')
+          print('GATEWAY_DIRECTOR_WORK_ORDER_COMPLETION=PASS')
+          PY
+
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          grep -q "telegram_send_success update_id=$U5" <<<"$LOGS"
+          ! grep -q "telegram_interaction_dead_letter update_id=$U5" <<<"$LOGS"
+
+          # A requested institutional role with no ACTIVE Worker must never be simulated.
+          # The entire requested roster is resolved before any Worker cognition or Meeting record is created.
+          send_update "Meeting with Head of Gateway and Head of Shadow Fiction" "$U6"
+          for i in $(seq 1 45); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"; then break; fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U6" <<<"$LOGS"; then
+              echo 'SHADOW_ROLE_REQUEST_DEAD_LETTERED' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U6" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U6.*provenance=work:meeting-no-room:telegram:update:$U6" <<<"$LOGS"
+          ! docker exec "$CID" sh -c             "grep -R -q 'interaction:telegram:update:$U6' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"
+
+          # Restore Work after the rejected no-shadow Meeting request.
+          send_update "/work" "$U7"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"
+
+          # Worker discovery is a real Work directory read, not generic Intelligence and not a Meeting.
+          send_update "active workers" "$U8"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U8.*provenance=work:worker-directory:telegram:update:$U8" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U8" <<<"$LOGS"
+
+          trap - ERR
+          echo 'CANONICAL_GATEWAY_WORKER=PASS'
+          echo 'WORKER_RUNTIME_BINDING=PASS'
+          echo 'WORKER_RUNTIME_INSTANCE_ID=PASS'
+          echo 'WORKER_RUNTIME_STATE_RUNNING=PASS'
+          echo 'NATURAL_WORK_TO_MEETING_ROUTING=PASS'
+          echo 'GATEWAY_DIRECTOR_ALIAS_RESOLUTION=PASS'
+          echo 'EXACT_INTERACTION_TO_MEETING_BINDING=PASS'
+          echo 'REAL_WORKER_COGNITION_BOUNDARY=PASS'
+          echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
+          echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
+          echo 'GATEWAY_DIRECTOR_WORK_ORDER_END_TO_END=PASS'
+          echo 'NO_SHADOW_ROLE_SIMULATION=PASS'
+          echo 'ACTIVE_WORKER_DIRECTORY=PASS'
+          echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'
+ /var/lib/metatron-workforce/runtime-state/*.properties 2>/dev/null | head -1")
+          test -n "$RUNTIME_FILE"
+          docker exec "$CID" sh -c "grep -q '^state=RUNNING          send_update() {
+            local text="$1"
+            local update_id="$2"
+            local body
+            body=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$update_id" "$text" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update_id=int(sys.argv[2]); text=sys.argv[3]
+          print(json.dumps({
+              "update_id": update_id,
+              "message": {
+                  "message_id": update_id % 2000000000,
+                  "from": {"id": uid, "is_bot": False, "first_name": "Founder"},
+                  "chat": {"id": uid, "type": "private"},
+                  "date": 0,
+                  "text": text
+              }
+          }))
+          PY
+            )
+            curl -fsS --proto '=https' --tlsv1.2 --max-time 30               -X POST https://gate.metatron.vn/telegram/webhook               -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"               -H 'Content-Type: application/json'               --data-binary "$body" >/dev/null
+          }
+
+          BASE_ID=$(date +%s%N | cut -c1-15)
+          U1="${BASE_ID}01"
+          U2="${BASE_ID}02"
+          U3="${BASE_ID}03"
+          U4="${BASE_ID}04"
+          U5="${BASE_ID}05"
+          U6="${BASE_ID}06"
+          U7="${BASE_ID}07"
+          U8="${BASE_ID}08"
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          MEETING_FILE=''
+
+          dump_diagnostics() {
+            echo '--- MEETING ACCEPTANCE DIAGNOSTICS ---' >&2
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            printf '%s\n' "$LOGS" | grep -E "update_id=($U1|$U2|$U3|$U4|$U5|$U6|$U7|$U8)|meeting_worker|worker-cognition|telegram_interaction_failed" | tail -n 300 >&2 || true
+            if [ -n "$MEETING_FILE" ]; then
+              echo "meeting_file=$MEETING_FILE" >&2
+              docker exec "$CID" sh -c "cat '$MEETING_FILE'" >&2 || true
+            fi
+          }
+          trap dump_diagnostics ERR
+
+          send_update "/work" "$U1"
+          sleep 2
+          send_update "Meeting, call for me director of gateway" "$U2"
+
+          for i in $(seq 1 60); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            MEETING_FILE=$(docker exec "$CID" sh -c               "grep -R -l 'interaction:telegram:update:$U2' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null | head -1" || true)
+            if grep -q "telegram_send_success update_id=$U2" <<<"$LOGS" && [ -n "$MEETING_FILE" ]; then
+              break
+            fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U2" <<<"$LOGS"; then
+              echo 'FIRST_MEETING_TURN_DEAD_LETTER' >&2
+              exit 1
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo 'FIRST_MEETING_TURN_TIMEOUT' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          docker exec "$CID" sh -c "grep -q '$WORKER_ID' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'meeting-worker:$WORKER_ID:participation=$PARTICIPATION_ID' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-runtime-profile:runtime-profile:general-engineering-worker:v1' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-conversation-request:worker-cognition-' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -q 'worker-intelligence-provider:' '$MEETING_FILE'"
+
+          send_update "What is the root cause of the Gateway routing problem?" "$U3"
+
+          for i in $(seq 1 60); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"               && docker exec "$CID" sh -c "grep -q 'interaction:telegram:update:$U3' '$MEETING_FILE'"; then
+              break
+            fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U3" <<<"$LOGS"; then
+              echo 'SECOND_MEETING_TURN_DEAD_LETTER' >&2
+              exit 1
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo 'SECOND_MEETING_TURN_TIMEOUT' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          grep -q "telegram_send_success update_id=$U1" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U2" <<<"$LOGS"
+          grep -q "telegram_send_success update_id=$U3" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U2" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U3" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U2.*provenance=meeting:" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U3.*provenance=work:meeting-conversation" <<<"$LOGS"
+
+          # Restore the Founder product surface to Work after the synthetic acceptance conversation.
+          send_update "/work" "$U4"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U4" <<<"$LOGS"
+
+          # Prove the exact Founder-style "create Worker Head of Gateway" Work request no longer
+          # sits at PLANNING 0/0. It must materialize one exact Objective and reach terminal success.
+          send_update "Create worker head of gateway" "$U5"
+          OBJECTIVE_ID=''
+          for i in $(seq 1 90); do
+            curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives               > /tmp/meeting-gateway-objectives.json || true
+            OBJECTIVE_ID=$(python3 - /tmp/meeting-gateway-objectives.json "$U5" <<'PY'
+          import json,sys
+          path,update=sys.argv[1],sys.argv[2]
+          try:
+              data=json.load(open(path))
+          except Exception:
+              print('')
+              raise SystemExit(0)
+          needle=f"telegram:update:{update}"
+          found=[]
+          for item in data if isinstance(data,list) else []:
+              if needle not in json.dumps(item,sort_keys=True):
+                  continue
+              objective=item.get('objective') or {}
+              oid=objective.get('objectiveId') or objective.get('objective_id')
+              if oid:
+                  found.append(oid)
+          found=list(dict.fromkeys(found))
+          print(found[0] if len(found)==1 else '')
+          PY
+            )
+            if [ -n "$OBJECTIVE_ID" ]; then break; fi
+            sleep 2
+          done
+          test -n "$OBJECTIVE_ID"
+          echo "GATEWAY_DIRECTOR_OBJECTIVE_ID=$OBJECTIVE_ID"
+
+          TERMINAL=''
+          for i in $(seq 1 120); do
+            curl -fsS --max-time 5               "http://127.0.0.1:8080/workforce/management/objectives/$OBJECTIVE_ID"               > /tmp/meeting-gateway-objective.json || true
+            TERMINAL=$(python3 - /tmp/meeting-gateway-objective.json <<'PY'
+          import json,sys
+          try:
+              d=json.load(open(sys.argv[1]))
+              print((d.get('objective') or {}).get('status',''))
+          except Exception:
+              print('')
+          PY
+            )
+            case "$TERMINAL" in
+              COMPLETED|DELIVERED) break ;;
+              BLOCKED|ESCALATED|CANCELLED)
+                echo "GATEWAY_DIRECTOR_BAD_TERMINAL=$TERMINAL" >&2
+                cat /tmp/meeting-gateway-objective.json >&2 || true
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          case "$TERMINAL" in
+            COMPLETED|DELIVERED) ;;
+            *)
+              echo "GATEWAY_DIRECTOR_TERMINAL_TIMEOUT=$TERMINAL" >&2
+              cat /tmp/meeting-gateway-objective.json >&2 || true
+              exit 1
+              ;;
+          esac
+
+          python3 - /tmp/meeting-gateway-objective.json "$OBJECTIVE_ID" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); oid=sys.argv[2]
+          objective=d.get('objective') or {}
+          assert objective.get('objectiveId')==oid, objective
+          assert objective.get('status') in ('COMPLETED','DELIVERED'), objective
+          work=d.get('autonomousWork') or d.get('work') or {}
+          planned=work.get('plannedWork') or work.get('planned_work') or []
+          completed=work.get('completedStepIds') or work.get('completed_step_ids') or []
+          blob=json.dumps(d,sort_keys=True)
+          assert planned, 'gateway_director_plan_empty'
+          assert len(completed) >= len(planned), (planned,completed)
+          for marker in (
+              'workforce.staffing.gateway-director',
+              'ROLE-HEAD-OF-GATEWAY',
+              'WORKER-GATEWAY-DIRECTOR',
+              'runtime-profile:general-engineering-worker:v1'):
+              assert marker in blob, f'missing_gateway_director_evidence:{marker}'
+          print('GATEWAY_DIRECTOR_WORK_ORDER_PLAN=PASS')
+          print('GATEWAY_DIRECTOR_WORK_ORDER_EXECUTION=PASS')
+          print('GATEWAY_DIRECTOR_WORK_ORDER_COMPLETION=PASS')
+          PY
+
+          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+          grep -q "telegram_send_success update_id=$U5" <<<"$LOGS"
+          ! grep -q "telegram_interaction_dead_letter update_id=$U5" <<<"$LOGS"
+
+          # A requested institutional role with no ACTIVE Worker must never be simulated.
+          # The entire requested roster is resolved before any Worker cognition or Meeting record is created.
+          send_update "Meeting with Head of Gateway and Head of Shadow Fiction" "$U6"
+          for i in $(seq 1 45); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"; then break; fi
+            if grep -q "telegram_interaction_dead_letter update_id=$U6" <<<"$LOGS"; then
+              echo 'SHADOW_ROLE_REQUEST_DEAD_LETTERED' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U6" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U6" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U6.*provenance=work:meeting-no-room:telegram:update:$U6" <<<"$LOGS"
+          ! docker exec "$CID" sh -c             "grep -R -q 'interaction:telegram:update:$U6' /var/lib/metatron-workforce/workplace/meetings 2>/dev/null"
+
+          # Restore Work after the rejected no-shadow Meeting request.
+          send_update "/work" "$U7"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U7" <<<"$LOGS"
+
+          # Worker discovery is a real Work directory read, not generic Intelligence and not a Meeting.
+          send_update "active workers" "$U8"
+          for i in $(seq 1 30); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"; then break; fi
+            sleep 1
+          done
+          grep -q "telegram_send_success update_id=$U8" <<<"$LOGS"
+          grep -q "telegram_answer_ready update_id=$U8.*provenance=work:worker-directory:telegram:update:$U8" <<<"$LOGS"
+          ! grep -q "telegram_interaction_failed update_id=$U8" <<<"$LOGS"
+
+          trap - ERR
+          echo 'CANONICAL_GATEWAY_WORKER=PASS'
+          echo 'WORKER_RUNTIME_BINDING=PASS'
+          echo 'NATURAL_WORK_TO_MEETING_ROUTING=PASS'
+          echo 'GATEWAY_DIRECTOR_ALIAS_RESOLUTION=PASS'
+          echo 'EXACT_INTERACTION_TO_MEETING_BINDING=PASS'
+          echo 'REAL_WORKER_COGNITION_BOUNDARY=PASS'
+          echo 'WORKER_ID_PERSISTED_AS_MEETING_PARTICIPANT=PASS'
+          echo 'MULTI_TURN_MEETING_CONTINUITY=PASS'
+          echo 'GATEWAY_DIRECTOR_WORK_ORDER_END_TO_END=PASS'
+          echo 'NO_SHADOW_ROLE_SIMULATION=PASS'
+          echo 'ACTIVE_WORKER_DIRECTORY=PASS'
+          echo 'MEETING_REAL_WORKER_PRODUCTION_ACCEPTANCE=PASS'
+ '$RUNTIME_FILE'"
+          RUNTIME_ID=$(docker exec "$CID" sh -c "sed -n 's/^runtimeId=//p' '$RUNTIME_FILE' | head -1")
+          test -n "$RUNTIME_ID"
+          echo "GATEWAY_RUNTIME_ID=$RUNTIME_ID"
+
           send_update() {
             local text="$1"
             local update_id="$2"
