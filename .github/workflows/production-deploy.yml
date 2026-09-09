@@ -24,7 +24,7 @@ permissions:
 
 env:
   METATRON_VERSION: "0.1.0"
-  # Worker lifecycle closure candidate v5: redeploy exact main so the repaired live Worker acceptance ratifies production.
+  # Worker lifecycle closure candidate v6: redeploy exact main after the live Meeting acceptance parser substrate repair.
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
 jobs:
