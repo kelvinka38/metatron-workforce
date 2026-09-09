@@ -47,7 +47,7 @@ a{color:inherit}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.m
 .step{border:1px solid var(--line);background:#101820;border-radius:10px;padding:10px;margin-bottom:7px;cursor:pointer}.step:hover{border-color:#37485a}.stepTop{display:flex;justify-content:space-between;gap:10px}.stepName{font-size:11px;font-weight:720}.stepMeta{font-size:9.5px;color:#758497;line-height:1.5;margin-top:5px}
 .evidence{background:#0b1117;border:1px solid #1d2935;border-radius:8px;padding:8px;font-size:9.5px;color:#a9b4c1;word-break:break-all;margin-bottom:5px}
 .controlRow{display:flex;gap:7px;flex-wrap:wrap}.control{border:1px solid var(--line);background:#17212c;color:#d6dfe8;border-radius:8px;padding:8px 10px;font-size:10px;font-weight:700}.control.warn{border-color:#5b4c25;color:#f1d273}.control.danger{border-color:#5b2930;color:#ff9ca5}.control.good{border-color:#20543a;color:#71e5a2}
-.chat{display:flex;flex-direction:column;height:min(68vh,680px);border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#0d141b}.chatMessages{flex:1;overflow:auto;padding:12px}.msg{max-width:88%;padding:9px 10px;border-radius:11px;margin:7px 0;font-size:11px;line-height:1.55;white-space:pre-wrap}.msg.human{margin-left:auto;background:#25334a}.msg.worker{margin-right:auto;background:#151f29;border:1px solid #233140}.msgMeta{font-size:8.5px;color:#6f7e8f;margin-top:4px}.chatCompose{display:flex;gap:7px;padding:9px;border-top:1px solid var(--line);background:#101820}.chatCompose textarea{flex:1;min-height:42px;max-height:140px;resize:vertical;background:#0c131a;color:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.chatCompose button{border:0;background:#e9eef4;color:#111820;border-radius:8px;padding:0 14px;font-weight:800}
+.chat{display:flex;flex-direction:column;height:min(68vh,680px);border:1px solid var(--line);border-radius:11px;overflow:hidden;background:#0d141b}.chatMessages{flex:1;overflow:auto;padding:12px}.msg{max-width:88%;padding:9px 10px;border-radius:11px;margin:7px 0;font-size:11px;line-height:1.55;white-space:pre-wrap}.msg.human{margin-left:auto;background:#25334a}.msg.worker{margin-right:auto;background:#151f29;border:1px solid #233140}.msgMeta{font-size:8.5px;color:#6f7e8f;margin-top:4px}.chatCompose{display:flex;gap:7px;padding:9px;border-top:1px solid var(--line);background:#101820}.chatCompose textarea{flex:1;min-height:42px;max-height:140px;resize:vertical;background:#0c131a;color:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.chatCompose button{border:0;background:#e9eef4;color:#111820;border-radius:8px;padding:0 14px;font-weight:800}.chatError{padding:8px 11px;color:var(--red);font-size:10px;border-top:1px solid var(--line);background:#171116}.chatRuntime{padding:7px 11px;color:#80dba6;font-size:9px;border-bottom:1px solid var(--line);background:#0e1814}
 .toast{position:fixed;z-index:80;bottom:22px;right:22px;background:#18222d;border:1px solid #334253;color:#dce5ed;padding:10px 13px;border-radius:10px;font-size:11px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .login{max-width:410px;margin:13vh auto 0;padding:16px}.loginCard{background:#111820;border:1px solid var(--line);border-radius:15px;padding:19px}.loginCard h1{margin:0;font-size:18px}.loginCard p{font-size:11px;color:var(--muted);line-height:1.5}.loginCard input{width:100%;background:#0b1117;color:#fff;border:1px solid var(--line);border-radius:9px;padding:12px;text-align:center;font-size:18px;letter-spacing:.16em;margin:8px 0}.primary{width:100%;border:0;border-radius:9px;background:#eef2f6;color:#111820;font-weight:800;padding:11px}.secondary{width:100%;border:1px solid var(--line);border-radius:9px;background:#17212b;color:#d8e0e8;font-weight:800;padding:11px;margin-top:7px}.error{color:var(--red);font-size:10px;margin-top:7px}
 .mobileNav{display:none}
@@ -205,14 +205,26 @@ function closeDrawer(){selectedObjective=selectedWorker=selectedProject='';$('dr
 async function openWorker(workerId,tab='summary'){
   selectedWorker=workerId;
   try{
-    let [w,history]=await Promise.all([api('/workplace/api/workers/'+encodeURIComponent(workerId)),api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/chat')]);
-    let tabs='<div class="drawerTabs"><button class="'+(tab==='summary'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'summary\')">Summary</button><button class="'+(tab==='tasks'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'tasks\')">Tasks</button><button class="'+(tab==='actions'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'actions\')">Actions</button><button class="'+(tab==='chat'?'active':'')+'" onclick="openWorker(\''+esc(workerId)+'\',\'chat\')">Chat</button></div>';
+    let w=await api('/workplace/api/workers/'+encodeURIComponent(workerId));
+    if(w.canonicalReplacementWorkerId){
+      toast(workerId+' is historical. Opening canonical Worker '+w.canonicalReplacementWorkerId+'.');
+      return openWorker(w.canonicalReplacementWorkerId,tab);
+    }
+
+    let history=[];
+    if(tab==='chat'){
+      if(!w.chatAvailable)throw new Error('Worker is not available for direct conversation.');
+      history=await api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/chat');
+      w=await api('/workplace/api/workers/'+encodeURIComponent(workerId));
+    }
+
+    let tabs='<div class="drawerTabs"><button class="'+(tab==='summary'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'summary\')">Summary</button><button class="'+(tab==='tasks'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'tasks\')">Tasks</button><button class="'+(tab==='actions'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'actions\')">Actions</button>'+(w.chatAvailable?'<button class="'+(tab==='chat'?'active':'')+'" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Chat</button>':'')+'</div>';
     let body=tabs;
     if(tab==='chat')body+=renderChat(w,history);
     else if(tab==='tasks')body+=renderWorkerTasks(w);
     else if(tab==='actions')body+=renderWorkerActions(w);
     else body+=renderWorkerSummary(w);
-    showDrawer(workerId,(w.primaryRole||'Worker')+' · '+w.runtimeState,body);
+    showDrawer(w.workerId,(w.primaryRole||'Worker')+' · '+w.runtimeState,body);
     if(tab==='chat')setTimeout(()=>{let el=$('chatMessages');if(el)el.scrollTop=el.scrollHeight},0);
   }catch(e){toast(e.message)}
 }
@@ -222,7 +234,7 @@ function renderWorkerSummary(w){
     ['Status',badge(w.status)],['Role',w.primaryRole||'—'],['Runtime',badge(w.runtimeState)],['Capacity',av.capacity],
     ['Assignments',w.assignments.length],['Tasks',w.tasks.length],['Actions',w.actions.length],['Profile',w.runtimeProfile||'—']
   ].map(x=>'<div class="detailBox"><div class="k">'+esc(x[0])+'</div><div class="v">'+(String(x[1]).startsWith('<span')?x[1]:esc(x[1]))+'</div></div>').join('')+'</div>'+
-  '<div class="block"><h3>Worker controls</h3><div class="controlRow"><button class="control '+(av.available?'warn':'good')+'" onclick="toggleWorker(\''+esc(w.workerId)+'\','+(!av.available)+','+av.capacity+')">'+(av.available?'Stop new intake':'Resume intake')+'</button><button class="control" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Talk to Worker</button></div></div>'+
+  '<div class="block"><h3>Worker controls</h3><div class="controlRow"><button class="control '+(av.available?'warn':'good')+'" onclick="toggleWorker(\''+esc(w.workerId)+'\','+(!av.available)+','+av.capacity+')">'+(av.available?'Stop new intake':'Resume intake')+'</button>'+(w.chatAvailable?'<button class="control" onclick="openWorker(\''+esc(w.workerId)+'\',\'chat\')">Talk to Worker</button>':'')+'</div></div>'+
   '<div class="block"><h3>Capabilities</h3>'+(w.capabilities.length?w.capabilities.map(c=>'<div class="evidence">'+esc(c.capabilityRef)+' · level '+c.level+' · '+esc(c.evidenceRef)+'</div>').join(''):'<div class="muted">No capabilities.</div>')+'</div>'+
   '<div class="block"><h3>Assignments</h3>'+(w.assignments.length?w.assignments.map(a=>'<div class="step" onclick="openObjective(\''+encodeURIComponent(a.objectiveId)+'\')"><div class="stepTop"><div class="stepName">'+esc(a.description)+'</div>'+badge(a.status)+'</div><div class="stepMeta mono">'+esc(a.objectiveId)+'</div></div>').join(''):'<div class="muted">No assignments.</div>')+'</div>';
 }
@@ -233,14 +245,15 @@ function renderWorkerActions(w){
   return '<div class="block"><h3>Durable action history</h3>'+(w.actions.length?w.actions.map(a=>'<div class="step"><div class="stepTop"><div class="stepName">'+esc(a.actionRef)+'</div>'+badge(a.success?'SUCCESS':'FAILED')+'</div><div class="stepMeta">'+fmtTime(a.recordedAt)+' · '+esc(a.consequence)+' · cycle '+a.cycle+'<br>'+esc(a.summary)+'<br><span class="mono">'+esc(a.workStepId)+'</span></div></div>').join(''):'<div class="muted">No durable Worker actions recorded.</div>')+'</div>';
 }
 function renderChat(w,history){
-  return '<div class="chat"><div id="chatMessages" class="chatMessages">'+
+  return '<div class="chat"><div class="chatRuntime">● '+esc(w.runtimeState)+' · '+esc(w.runtimeId||'runtime starting')+'</div><div id="chatMessages" class="chatMessages">'+
     (history.length?history.map(t=>'<div class="msg human">'+esc(t.human)+'<div class="msgMeta">'+fmtTime(t.at)+'</div></div><div class="msg worker">'+esc(t.worker)+'<div class="msgMeta">'+esc(t.runtimeId||'')+' · '+esc(t.requestReference||'')+'</div></div>').join(''):'<div class="empty">Start a direct conversation with this canonical Worker.</div>')+
-    '</div><div class="chatCompose"><textarea id="chatInput" placeholder="Message '+esc(w.workerId)+'…" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendWorkerMessage(\''+esc(w.workerId)+'\')}"></textarea><button onclick="sendWorkerMessage(\''+esc(w.workerId)+'\')">Send</button></div></div>';
+    '</div><div id="chatError" class="chatError hidden"></div><div class="chatCompose"><textarea id="chatInput" placeholder="Message '+esc(w.workerId)+'…" onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();sendWorkerMessage(\''+esc(w.workerId)+'\')}"></textarea><button id="chatSend" onclick="sendWorkerMessage(\''+esc(w.workerId)+'\')">Send</button></div></div>';
 }
 async function sendWorkerMessage(workerId){
-  let input=$('chatInput'),message=input?.value.trim();if(!message)return;input.disabled=true;
+  let input=$('chatInput'),button=$('chatSend'),error=$('chatError'),message=input?.value.trim();if(!message)return;
+  input.disabled=true;if(button){button.disabled=true;button.textContent='Sending…'}if(error){error.classList.add('hidden');error.textContent=''}
   try{await api('/workplace/api/workers/'+encodeURIComponent(workerId)+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});await openWorker(workerId,'chat')}
-  catch(e){toast(e.message);input.disabled=false}
+  catch(e){if(error){error.textContent=e.message;error.classList.remove('hidden')}toast(e.message);input.disabled=false;if(button){button.disabled=false;button.textContent='Send'}}
 }
 async function toggleWorker(workerId,available,capacity){
   try{
