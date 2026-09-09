@@ -6,6 +6,8 @@ import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import com.metatron.workforce.management.GatewayDirectorAppointmentCapability;
+import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
+import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.metatron.workforce.phase3.ActorRef;
 import org.junit.jupiter.api.Test;
@@ -209,6 +211,29 @@ class MeetingRealWorkerBindingTest {
     }
 
     @Test
+    void activeWorkerDirectoryOnlyListsWorkersWithRunningRuntimeAndShowsRuntimeId() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        core.recognizeParticipant("participant:gateway-live", WorkforceCoreService.ParticipantType.AI, "test");
+        core.admitWorker("WORKER-GATEWAY-LIVE", "participant:gateway-live");
+        core.participate("participation:gateway-live", "WORKER-GATEWAY-LIVE",
+                "organization:metatron", "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+
+        RuntimeRegistry registry = new RuntimeRegistry();
+        MeetingWorkerDirectory directory = new MeetingWorkerDirectory(core, registry);
+        assertTrue(directory.listActive().isEmpty(),
+                "Core ACTIVE alone must not be advertised as a live Worker");
+
+        RuntimeCapacityCoordinator capacity = new RuntimeCapacityCoordinator(registry);
+        var runtime = capacity.ensureRunning("WORKER-GATEWAY-LIVE");
+
+        var live = directory.listActive();
+        assertEquals(1, live.size());
+        assertEquals("WORKER-GATEWAY-LIVE", live.getFirst().workerId());
+        assertEquals(runtime.runtimeId(), live.getFirst().runtimeId());
+        assertEquals("RUNNING", live.getFirst().runtimeState());
+    }
+
+    @Test
     void canonicalWorkerConversationRequiresRuntimeBindingAndUsesWorkerCognitionBoundary() {
         WorkforceCoreService core = new WorkforceCoreService();
         core.recognizeParticipant("participant:gateway-director-ai", WorkforceCoreService.ParticipantType.AI, "test");
@@ -229,8 +254,9 @@ class MeetingRealWorkerBindingTest {
                     "Có tao đây.",
                     List.of("worker-intelligence-provider:test"));
         };
+        RuntimeCapacityCoordinator runtimeCapacity = new RuntimeCapacityCoordinator(new RuntimeRegistry());
         CanonicalWorkerConversationService service =
-                new CanonicalWorkerConversationService(core, runtimeProfiles, workerIntelligence);
+                new CanonicalWorkerConversationService(core, runtimeProfiles, runtimeCapacity, workerIntelligence);
 
         IllegalStateException unbound = assertThrows(IllegalStateException.class, () ->
                 service.converse(GatewayDirectorAppointmentCapability.WORKER_ID,
@@ -257,6 +283,9 @@ class MeetingRealWorkerBindingTest {
                 "runtime_profile=" + WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE));
         assertTrue(reply.evidenceReferences().contains("worker-intelligence-provider:test"));
         assertTrue(reply.evidenceReferences().contains("worker-conversation-request:worker-cognition-test"));
+        assertFalse(reply.runtimeId().isBlank());
+        assertTrue(cognition.get().context().contains("runtime_id=" + reply.runtimeId()));
+        assertTrue(cognition.get().context().contains("runtime_state=RUNNING"));
     }
 
     @Test

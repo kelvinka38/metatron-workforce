@@ -1,5 +1,7 @@
 package com.metatron.workforce.runtime;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +18,13 @@ public final class InMemoryRuntimePersistenceStore implements RuntimePersistence
     @Override
     public Optional<RuntimePersistenceRecord> find(String runtimeId) {
         return Optional.ofNullable(records.get(runtimeId));
+    }
+
+    @Override
+    public List<RuntimePersistenceRecord> list() {
+        return records.values().stream()
+                .sorted(Comparator.comparing(RuntimePersistenceRecord::runtimeId))
+                .toList();
     }
 
     @Override
