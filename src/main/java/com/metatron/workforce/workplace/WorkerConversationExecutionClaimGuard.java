@@ -11,6 +11,12 @@ import java.util.regex.Pattern;
  * the supplied evidence contains a durable successful action/execution/observation reference.
  */
 final class WorkerConversationExecutionClaimGuard {
+    private static final Pattern EXPLICIT_NEGATION = Pattern.compile(
+            "(?is)(?:\\b(?:i|we)\\b|\\b(?:tao|tôi|mình|chúng tôi|chúng ta)\\b).{0,48}"
+                    + "(?:have not|haven't|did not|didn't|am not|are not|chưa|không).{0,96}"
+                    + "(?:audit|review|execut|generat|deploy|fix|commit|push|writ|creat|delet|updat|modif|run|start|initiat|build|test|inspect|implement|"
+                    + "triển khai|thực hiện|kiểm tra|tạo|sửa|xóa|chạy|đẩy|cập nhật)");
+
     private static final Pattern FIRST_PERSON_EXECUTION = Pattern.compile(
             "(?is)(?:\\b(?:i|we)\\b|\\b(?:tao|tôi|mình|chúng tôi|chúng ta)\\b).{0,48}"
                     + "(?:\\b(?:have|has|am|are|was|were|now|already|currently|started|starting|initiating)\\b|(?:đã|đang)).{0,96}"
@@ -22,6 +28,7 @@ final class WorkerConversationExecutionClaimGuard {
     static String enforce(String text, List<String> evidenceReferences) {
         if (text == null || text.isBlank()) return text;
         if (hasSuccessfulExecutionEvidence(evidenceReferences)) return text;
+        if (EXPLICIT_NEGATION.matcher(text).find()) return text;
         if (!FIRST_PERSON_EXECUTION.matcher(text).find()) return text;
 
         return "Không có execution receipt / Observation evidence cho hành động đó trong context của Meeting này. "
