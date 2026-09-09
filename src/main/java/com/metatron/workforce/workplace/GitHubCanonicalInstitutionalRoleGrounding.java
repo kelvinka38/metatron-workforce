@@ -138,7 +138,7 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
         return Grounding.available(domain, context.toString().trim(), List.copyOf(evidence));
     }
 
-    private static String canonicalSotPath(String domain) {
+    static String canonicalSotPath(String domain) {
         if ("05_WORKFORCE".equals(domain)) return "05_WORKFORCE/WORKFORCE_SOT.md";
         return domain + "/SOT.md";
     }
