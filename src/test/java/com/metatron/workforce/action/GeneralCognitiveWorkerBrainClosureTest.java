@@ -58,6 +58,68 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void successfulIntermediateActionUsesDeterministicContinueWhenCompletionGuardProvesMoreEvidenceIsRequired() {
+        WorkerIntelligenceService intelligence = request -> {
+            throw new AssertionError("non-terminal reflection must not spend Intelligence");
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "repair-and-publish",
+                "Repair the defect, run tests, create one local Git commit, and publish a reviewable unmerged pull request",
+                "kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass after the requested source change",
+                        "reviewable pull request exists for the committed work product",
+                        "remote proposal remains unmerged"),
+                List.of("governed test action evidence", "fresh authoritative GitHub API Observation"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.patch", "workspace.test.run",
+                        "workspace.git.run", "workspace.github.pr.publish"),
+                List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Reflection reflection = brain.reflect(
+                context,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.read", "source inspected",
+                        Map.of("path", "slugify.py"), List.of("workspace-read:evidence")));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, reflection.decision());
+        assertTrue(reflection.summary().contains("mandatory completion evidence is still missing"));
+    }
+
+    @Test
+    void failedActionUsesDeterministicRecoveryReflectionWithoutSpendingIntelligence() {
+        WorkerIntelligenceService intelligence = request -> {
+            throw new AssertionError("failed action recovery reflection must not spend Intelligence");
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "repair",
+                "Inspect an unfamiliar defect, repair it, and run tests until they pass",
+                "kelvinka38/example",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass after the latest source mutation"),
+                List.of("governed workspace.test.run evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.search", "workspace.file.read", "workspace.file.patch", "workspace.test.run"),
+                List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Reflection reflection = brain.reflect(
+                context,
+                ActionFabric.ActionObservation.failure(
+                        "workspace.test.run", "tests failed with assertion mismatch", List.of("test-run:failed")));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, reflection.decision());
+        assertTrue(reflection.summary().contains("tests failed with assertion mismatch"));
+    }
+
+    @Test
     void malformedIntelligenceResponseFailsClosedAtWorkerBoundary() {
         WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
                 "intelligence-malformed", "not-json", List.of("intelligence-provider:test"));
