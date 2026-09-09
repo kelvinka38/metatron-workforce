@@ -1,0 +1,64 @@
+name: Worker Constitution Live Proof
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/worker-constitution-live-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-constitution-live-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Prove production Worker Constitution runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA=038b5975351f4fc27e7bceeb37b7d6e475921e30
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          ACTUAL_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+          docker exec "$CID" cat /var/lib/metatron-workforce/worker-constitution-runtime-state.json > /tmp/worker-constitution-runtime-state.json
+          python3 - <<'PY'
+          import json
+          path='/tmp/worker-constitution-runtime-state.json'
+          with open(path, encoding='utf-8') as f:
+              data=json.load(f)
+          rows=data.get('constitutions',[])
+          row=next((x for x in rows if x.get('workerId')=='WORKER-GATEWAY-DIRECTOR'),None)
+          assert row is not None, 'canonical Gateway Worker runtime Constitution missing'
+          assert row['participant']['participantId']
+          assert row['participation']['positionRef']=='position:gateway-director'
+          assert row['participation']['roleRef']=='ROLE-HEAD-OF-GATEWAY'
+          assert row['positionContract']['mission']
+          assert row['capabilities'], 'capabilities not materialized'
+          assert row['qualifications'], 'qualifications not materialized'
+          assert row['capacity']['available'] is True
+          assert row['runtime']['runtimeState']=='RUNNING'
+          assert row['runtime']['runtimeId']
+          assert row.get('reputationClaims',[]) == []
+          rendered=row['renderedContext']
+          assert 'MATERIALIZED WORKER CONSTITUTION' in rendered
+          assert 'EXECUTION ATTRIBUTION' in rendered
+          print('WORKER_CONSTITUTION_LIVE_MATERIALIZATION=PASS')
+          print('WORKER_ID='+row['workerId'])
+          print('POSITION='+row['participation']['positionRef'])
+          print('ROLE='+row['participation']['roleRef'])
+          print('RUNTIME_STATE='+row['runtime']['runtimeState'])
+          print('RUNTIME_ID='+row['runtime']['runtimeId'])
+          print('CAPABILITY_COUNT='+str(len(row['capabilities'])))
+          print('QUALIFICATION_COUNT='+str(len(row['qualifications'])))
+          print('ASSIGNMENT_COUNT='+str(len(row['assignments'])))
+          print('EXECUTION_ATTRIBUTION_COUNT='+str(len(row['executionAttribution'])))
+          PY
+          echo "PRODUCTION_SHA=$ACTUAL_SHA"
+          echo "WORKER_CONSTITUTION_LIVE_PROOF=PASS"
