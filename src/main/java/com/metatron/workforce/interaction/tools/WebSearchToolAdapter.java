@@ -93,32 +93,39 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private final String endpoint;
     private final String publicKnowledgeEndpoint;
     private final String publicKnowledgeArticleEndpoint;
+    private final boolean groundedSearchEnabled;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public WebSearchToolAdapter() {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NORMAL).build(),
-                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE);
+                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE, true);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout) {
-        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE);
+        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE, true);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint) {
-        this(client, timeout, endpoint, "", WIKIPEDIA_ARTICLE);
+        this(client, timeout, endpoint, "", WIKIPEDIA_ARTICLE, false);
     }
 
     WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint) {
-        this(client, timeout, endpoint, publicKnowledgeEndpoint, WIKIPEDIA_ARTICLE);
+        this(client, timeout, endpoint, publicKnowledgeEndpoint, WIKIPEDIA_ARTICLE, false);
     }
 
     WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint,
                          String publicKnowledgeArticleEndpoint) {
+        this(client, timeout, endpoint, publicKnowledgeEndpoint, publicKnowledgeArticleEndpoint, false);
+    }
+
+    private WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint,
+                                 String publicKnowledgeArticleEndpoint, boolean groundedSearchEnabled) {
         this.client = Objects.requireNonNull(client, "client");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         this.publicKnowledgeEndpoint = publicKnowledgeEndpoint == null ? "" : publicKnowledgeEndpoint.trim();
         this.publicKnowledgeArticleEndpoint = publicKnowledgeArticleEndpoint == null ? "" : publicKnowledgeArticleEndpoint.trim();
+        this.groundedSearchEnabled = groundedSearchEnabled;
         if (endpoint.isBlank()) throw new IllegalArgumentException("endpoint must not be blank");
     }
 
@@ -177,6 +184,7 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     }
 
     private ToolResult searchGrounded(ToolRequest request, String query) {
+        if (!groundedSearchEnabled) return ToolResult.failure(request, "grounded_search_disabled_for_custom_endpoint");
         String apiKey = System.getenv("GEMINI_API_KEY");
         if (apiKey == null || apiKey.isBlank()) return ToolResult.failure(request, "grounded_search_credential_unavailable");
         String configured = System.getenv("GEMINI_GROUNDED_SEARCH_MODEL");
