@@ -1,0 +1,137 @@
+name: Highway Runtime Closure Probe
+
+on:
+  push:
+    branches:
+      - main
+      - ops/highway-runtime-closure-probe
+    paths:
+      - '.github/workflows/highway-runtime-closure-probe.yml'
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact Workforce production SHA whose Highway DAG must be terminal
+        required: false
+        default: e8a4825953a4e821cae94b78265190f9b73bf4be
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: highway-runtime-closure-probe
+  cancel-in-progress: true
+
+jobs:
+  close-runtime:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    env:
+      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha || 'e8a4825953a4e821cae94b78265190f9b73bf4be' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Inspect persistent Highway terminal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          $CTL health | tee /tmp/highway-runtime-health.json
+          $CTL list --limit 500 > /tmp/highway-runtime-tasks.json
+
+          python3 - /tmp/highway-runtime-tasks.json "$TARGET_SHA" /tmp/highway-selected.json <<'PY'
+          import json,sys
+          source,target,out=sys.argv[1:]
+          rows=json.load(open(source,encoding='utf-8'))
+          rows=[r for r in rows if r.get('source_sha')==target]
+          kinds=[
+            'workforce-build',
+            'workforce-deploy',
+            'production-highway-fast',
+            'work-observability',
+            'control-room-fast',
+          ]
+          selected={}
+          for kind in kinds:
+              candidates=[r for r in rows if r.get('kind')==kind]
+              if candidates:
+                  candidates.sort(key=lambda r:r.get('created_at') or '')
+                  selected[kind]=candidates[-1]
+          print(json.dumps(selected,indent=2,sort_keys=True))
+          json.dump(selected,open(out,'w',encoding='utf-8'),indent=2,sort_keys=True)
+          missing=[k for k in kinds if k not in selected]
+          assert not missing, f"MISSING_HIGHWAY_TASKS={missing}"
+          PY
+
+          python3 - /tmp/highway-selected.json <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          for kind,row in rows.items():
+              print(f"HIGHWAY_TASK kind={kind} id={row['task_id']} state={row['state']} attempt={row['attempt']} started={row.get('started_at')} finished={row.get('finished_at')} failure={row.get('failure','')}")
+          PY
+
+          python3 - /tmp/highway-selected.json > /tmp/highway-log-paths.txt <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          for kind,row in rows.items():
+              p=row.get('log_path') or ''
+              if p: print(kind+'\t'+p)
+          PY
+
+          while IFS=$'\t' read -r kind path; do
+            [ -n "$path" ] || continue
+            echo "===== HIGHWAY LOG: $kind $path ====="
+            if [ -r "$path" ]; then
+              tail -n 250 "$path"
+            else
+              echo "LOG_NOT_READABLE=$path"
+            fi
+          done < /tmp/highway-log-paths.txt
+
+          echo '===== LIVE WORKFORCE ====='
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          LIVE_HEALTH=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+          echo "LIVE_WORKFORCE_SHA=$LIVE_SHA"
+          echo "LIVE_WORKFORCE_HEALTH=$LIVE_HEALTH"
+
+          python3 - /tmp/highway-selected.json "$TARGET_SHA" "$LIVE_SHA" "$LIVE_HEALTH" <<'PY'
+          import json,sys
+          from datetime import datetime
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          target,live,health=sys.argv[2:]
+          for kind,row in rows.items():
+              assert row['state']=='SUCCEEDED', f"{kind} NOT_SUCCEEDED state={row['state']} failure={row.get('failure','')}"
+          assert live==target, (live,target)
+          assert health=='healthy', health
+
+          fan=[rows[k] for k in ('production-highway-fast','work-observability','control-room-fast')]
+          def ts(v):
+              return datetime.fromisoformat(v.replace('Z','+00:00')).timestamp()
+          starts=[ts(r['started_at']) for r in fan]
+          finishes=[ts(r['finished_at']) for r in fan]
+          spread=max(starts)-min(starts)
+          assert spread < 2.0, f"POST_DEPLOY_FANOUT_NOT_CONCURRENT start_spread={spread}"
+          overlap=max(starts) < min(finishes)
+          assert overlap, f"POST_DEPLOY_FANOUT_DID_NOT_OVERLAP starts={starts} finishes={finishes}"
+
+          build=rows['workforce-build']
+          deploy=rows['workforce-deploy']
+          assert ts(deploy['started_at']) >= ts(build['finished_at']) - 0.05
+          print(f"HIGHWAY_POST_DEPLOY_START_SPREAD_SECONDS={spread:.3f}")
+          print('HIGHWAY_BUILD_DEPLOY_DAG=PASS')
+          print('HIGHWAY_POST_DEPLOY_PARALLEL_FANOUT=PASS')
+          print('HIGHWAY_LIVE_EXACT_SHA=PASS')
+          print('HIGHWAY_RUNTIME_CLOSURE=PASS')
+          PY
