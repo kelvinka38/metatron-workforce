@@ -7,6 +7,7 @@ import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.RuntimeInstance;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -34,6 +35,7 @@ public final class WorkerOperatingProfileService {
     private final PersistentWorkerConversationMemoryStore memory;
     private final WorkerConstitutionService constitution;
 
+    @Autowired
     public WorkerOperatingProfileService(
             WorkforceCoreService core,
             WorkerRuntimeProfileBindingService runtimeProfiles,
