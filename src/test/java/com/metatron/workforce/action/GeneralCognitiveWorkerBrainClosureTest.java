@@ -273,12 +273,12 @@ class GeneralCognitiveWorkerBrainClosureTest {
         WorkerIntelligenceService intelligence = request -> {
             assertTrue(request.instructions().contains("workerConstitution"));
             assertTrue(request.instructions().contains("Role or runtime profile never self-grants authority"));
-            assertTrue(request.context().contains("\\\"workerConstitution\\\""));
+            assertTrue(request.context().contains("\"workerConstitution\""));
             assertTrue(request.context().contains("MATERIALIZED WORKER CONSTITUTION — RUNTIME"));
             assertTrue(request.context().contains("authority=policy:bounded:test"));
             return new WorkerIntelligenceService.Response(
                     "intelligence-constitution-grounded",
-                    "{\\\"actionRef\\\":\\\"workspace.file.read\\\",\\\"inputs\\\":{\\\"path\\\":\\\"README.md\\\"},\\\"rationale\\\":\\\"inspect within bound constitution\\\"}",
+                    "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"README.md\"},\"rationale\":\"inspect within bound constitution\"}",
                     List.of("intelligence-provider:test"));
         };
         GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
@@ -290,7 +290,7 @@ class GeneralCognitiveWorkerBrainClosureTest {
                 "worker-1", "assignment-1", "authorization-1", "objective-1", work, "idem-1",
                 List.of("workspace.file.read"), List.of(),
                 Map.of("workerConstitution",
-                        "MATERIALIZED WORKER CONSTITUTION — RUNTIME\\nauthority=policy:bounded:test"));
+                        "MATERIALIZED WORKER CONSTITUTION — RUNTIME\nauthority=policy:bounded:test"));
 
         CognitiveWorkerRuntime.Thought thought = brain.think(context);
 
