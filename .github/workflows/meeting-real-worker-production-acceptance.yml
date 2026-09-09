@@ -127,6 +127,9 @@ jobs:
 
           docker exec "$CID" sh -c "grep -q 'worker-conversation-request:worker-cognition-' '$MEETING_FILE'"
           docker exec "$CID" sh -c "grep -q 'worker-intelligence-provider:' '$MEETING_FILE'"
+          docker exec "$CID" sh -c "grep -Fq 'worker-position-contract:position-contract:position:gateway-director:v1' '$MEETING_FILE'"
+          ! docker exec "$CID" sh -c "grep -q 'worker-constitution:unavailable:' '$MEETING_FILE'"
+          echo 'MEETING_WORKER_CONSTITUTION=PASS'
 
           # Institutional cognition must be grounded in the current canonical Gateway SoT,
           # not a Workforce-local copy and not BIOS. Resolve the current blob SHA independently.
