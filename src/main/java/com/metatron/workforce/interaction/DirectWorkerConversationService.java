@@ -55,7 +55,8 @@ public final class DirectWorkerConversationService {
             return Optional.empty();
         }
 
-        if (isExit(text)) {
+        Optional<String> activeBinding = bindings.workerId(interaction.conversationId());
+        if (isExit(text) && activeBinding.isPresent()) {
             bindings.clear(interaction.conversationId());
             return Optional.of(new HandledReply(
                     "💬 METATRON\nDirect Worker conversation closed. You are talking to Metatron again.",
@@ -87,13 +88,12 @@ public final class DirectWorkerConversationService {
                     worker.workerId()));
         }
 
-        Optional<String> active = bindings.workerId(interaction.conversationId());
-        if (active.isEmpty()) return Optional.empty();
+        if (activeBinding.isEmpty()) return Optional.empty();
 
         try {
             ConversationReply reply = converse(
                     interaction.human().actorId(),
-                    active.get(),
+                    activeBinding.get(),
                     interaction.text(),
                     interaction.channelProvider());
             return Optional.of(new HandledReply(
