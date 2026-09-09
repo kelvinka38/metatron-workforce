@@ -34,10 +34,11 @@ class WorkplaceControlRoomServiceTest {
         profiles.bind("WORKER-1", WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
                 "execution.general.workspace", Instant.now());
         RuntimeRegistry registry = new RuntimeRegistry();
-        new RuntimeCapacityCoordinator(registry).ensureRunning("WORKER-1");
+        RuntimeCapacityCoordinator runtimeCapacity = new RuntimeCapacityCoordinator(registry);
+        runtimeCapacity.ensureRunning("WORKER-1");
 
         WorkplaceControlRoomService service = new WorkplaceControlRoomService(
-                dashboard, core, profiles, registry);
+                dashboard, core, profiles, registry, runtimeCapacity);
 
         var snapshot = service.snapshot();
         assertEquals(1, snapshot.workers().size());
@@ -50,5 +51,50 @@ class WorkplaceControlRoomServiceTest {
         assertEquals(1, detail.assignments().size());
         assertEquals("OBJ-1", detail.assignments().getFirst().objectiveId());
         assertFalse(detail.runtimeActions().isEmpty());
+    }
+
+
+    @Test
+    void historicalGatewayHeadIsNotListedAndChatResolvesToCanonicalRunningWorker() {
+        WorkforceCoreService core = new WorkforceCoreService();
+
+        core.recognizeParticipant("P-CANON", WorkforceCoreService.ParticipantType.AI, "canon");
+        core.admitWorker("WORKER-GATEWAY-DIRECTOR", "P-CANON");
+        core.participate("PART-CANON", "WORKER-GATEWAY-DIRECTOR", "organization:metatron",
+                "position:gateway-director", "ROLE-HEAD-OF-GATEWAY");
+        core.attestCapability("WORKER-GATEWAY-DIRECTOR", "gateway.audit.read", 1.0, "evidence:canon");
+        core.setAvailability("WORKER-GATEWAY-DIRECTOR", true, 1.0);
+
+        core.recognizeParticipant("P-LEGACY", WorkforceCoreService.ParticipantType.AI, "legacy");
+        core.admitWorker("WORKER-GATEWAY-HEAD-01", "P-LEGACY");
+        core.participate("PART-LEGACY", "WORKER-GATEWAY-HEAD-01", "organization:metatron",
+                "position:gateway-head-legacy", "ROLE-HEAD-OF-GATEWAY");
+        core.setParticipationStatus("PART-LEGACY", WorkforceCoreService.ParticipationStatus.ENDED);
+        core.setWorkerStatus("WORKER-GATEWAY-HEAD-01", WorkforceCoreService.WorkerStatus.RETIRED);
+
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        WorkplaceDashboardService dashboard = new WorkplaceDashboardService(core, management, new WorkService());
+
+        WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
+        profiles.bind("WORKER-GATEWAY-DIRECTOR", WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
+                "workforce.staffing.gateway-director", Instant.now());
+
+        RuntimeRegistry registry = new RuntimeRegistry();
+        RuntimeCapacityCoordinator runtimeCapacity = new RuntimeCapacityCoordinator(registry);
+        WorkplaceControlRoomService service = new WorkplaceControlRoomService(
+                dashboard, core, profiles, registry, runtimeCapacity);
+
+        var snapshot = service.snapshot();
+        assertEquals(1, snapshot.workers().size());
+        assertEquals("WORKER-GATEWAY-DIRECTOR", snapshot.workers().getFirst().workerId());
+
+        var legacy = service.worker("WORKER-GATEWAY-HEAD-01");
+        assertFalse(legacy.chatAvailable());
+        assertEquals("WORKER-GATEWAY-DIRECTOR", legacy.canonicalReplacementWorkerId());
+
+        var prepared = service.prepareConversationWorker("WORKER-GATEWAY-HEAD-01");
+        assertEquals("WORKER-GATEWAY-DIRECTOR", prepared.workerId());
+        assertTrue(prepared.chatAvailable());
+        assertEquals("RUNNING", prepared.runtimeState());
     }
 }
