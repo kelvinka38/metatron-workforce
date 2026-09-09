@@ -33,9 +33,16 @@ public final class WorkplaceWorkerChatStore {
         try {
             Path file = file(workerId);
             if (!Files.exists(file)) return List.of();
-            List<ChatTurn> turns = json.readValue(Files.readString(file, StandardCharsets.UTF_8),
-                    new TypeReference<List<ChatTurn>>() {});
-            return List.copyOf(turns == null ? List.of() : turns);
+            List<PersistedTurn> stored = json.readValue(Files.readString(file, StandardCharsets.UTF_8),
+                    new TypeReference<List<PersistedTurn>>() {});
+            if (stored == null || stored.isEmpty()) return List.of();
+            return stored.stream().map(turn -> new ChatTurn(
+                    Instant.parse(turn.at()),
+                    turn.human(),
+                    turn.worker(),
+                    turn.requestReference(),
+                    turn.runtimeId(),
+                    turn.evidenceReferences())).toList();
         } catch (Exception failure) {
             return List.of();
         }
@@ -73,7 +80,14 @@ public final class WorkplaceWorkerChatStore {
             Files.createDirectories(root);
             Path target = file(workerId);
             Path temp = Files.createTempFile(root, "worker-chat-", ".tmp");
-            Files.writeString(temp, json.writeValueAsString(turns), StandardCharsets.UTF_8);
+            List<PersistedTurn> stored = turns.stream().map(turn -> new PersistedTurn(
+                    turn.at().toString(),
+                    turn.human(),
+                    turn.worker(),
+                    turn.requestReference(),
+                    turn.runtimeId(),
+                    turn.evidenceReferences())).toList();
+            Files.writeString(temp, json.writeValueAsString(stored), StandardCharsets.UTF_8);
             try {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
@@ -101,6 +115,14 @@ public final class WorkplaceWorkerChatStore {
         int remaining = maxChars - out.length();
         if (value.length() > remaining) value = value.substring(0, remaining);
         out.append(role).append(": ").append(value).append('\n');
+    }
+
+    private record PersistedTurn(
+            String at, String human, String worker, String requestReference,
+            String runtimeId, List<String> evidenceReferences) {
+        private PersistedTurn {
+            evidenceReferences = evidenceReferences == null ? List.of() : List.copyOf(evidenceReferences);
+        }
     }
 
     public record ChatTurn(
