@@ -1,0 +1,73 @@
+name: Aquaculture Self Pilot One Shot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/aquaculture-self-pilot-one-shot.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aquaculture-self-pilot-one-shot
+  cancel-in-progress: false
+
+jobs:
+  create-self-pilot:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Create founder self-pilot access
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIOS_BASE="$HOME/.metatron/bios"
+          test -r "$BIOS_BASE/.env"
+          set -a
+          source "$BIOS_BASE/.env"
+          set +a
+          test -n "${BIOS_API_KEY:-}"
+
+          request() {
+            local route="$1"
+            local payload="$2"
+            python3 - "$route" "$payload" "$BIOS_API_KEY" <<'PY'
+          import datetime, json, sys, urllib.request
+          route, payload_raw, key = sys.argv[1:4]
+          body = {
+              "request_id": "self-pilot-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S%f"),
+              "correlation_id": "self-pilot",
+              "actor_id": "FOUNDER",
+              "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "schema_version": "0.1",
+              "payload": json.loads(payload_raw),
+          }
+          req = urllib.request.Request(
+              "http://127.0.0.1:18080/v2/product/aquaculture" + route,
+              data=json.dumps(body).encode(),
+              headers={"Content-Type": "application/json", "X-BIOS-API-Key": key},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              out=json.load(resp)
+          if out.get("status") == "ERROR":
+              raise SystemExit(json.dumps(out, ensure_ascii=False))
+          print(json.dumps(out["payload"]["data"], ensure_ascii=False))
+          PY
+          }
+
+          PILOT_JSON=$(request "/field/pilots/create" '{"name":"Kelvin Self Pilot","phase":"FIELD-P1","authority_ref":"FOUNDER_SELF_PILOT"}')
+          PILOT_ID=$(printf '%s' "$PILOT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["pilot_id"])')
+
+          request "/field/pilots/activate" "{\"pilot_id\":\"$PILOT_ID\"}" >/tmp/aq-self-activate.json
+
+          INVITE_JSON=$(request "/field/enrollment/bootstrap" "{\"pilot_id\":\"$PILOT_ID\",\"display_name\":\"Kelvin\",\"farm_name\":\"Vùng nuôi pilot của Kelvin\",\"participant_role\":\"FARM_OWNER\",\"locale\":\"vi-VN\",\"invite_days\":7}")
+          ACCESS_CODE=$(printf '%s' "$INVITE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_code"])')
+          ACCESS_PATH=$(printf '%s' "$INVITE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_path"])')
+          EXPIRES_AT=$(printf '%s' "$INVITE_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["expires_at"])')
+
+          echo "SELF_PILOT_CREATED=PASS"
+          echo "SELF_PILOT_ACCESS_CODE=$ACCESS_CODE"
+          echo "SELF_PILOT_URL=https://gate.metatron.vn$ACCESS_PATH"
+          echo "SELF_PILOT_EXPIRES_AT=$EXPIRES_AT"
