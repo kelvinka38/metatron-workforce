@@ -39,6 +39,8 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
     private static final Pattern SECTION = Pattern.compile("(?m)(?=^##+\\s+)");
     private static final Map<String, String> DOMAIN_BINDINGS = Map.ofEntries(
             Map.entry("gateway", "06_GATEWAY"),
+            Map.entry("general code and runtime worker", "05_WORKFORCE"),
+            Map.entry("general engineering", "05_WORKFORCE"),
             Map.entry("workforce", "05_WORKFORCE"),
             Map.entry("knowledge", "07_KNOWLEDGE"),
             Map.entry("intelligence", "10_INTELLIGENCE"),
