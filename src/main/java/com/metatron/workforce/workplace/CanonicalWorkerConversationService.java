@@ -15,9 +15,9 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * Live institutional conversation through a real canonical Worker.
+ * Live channel-neutral institutional conversation through a real canonical Worker.
  *
- * Meeting never asks a provider to "pretend to be" a role. The requested Worker must exist,
+ * No Workplace surface asks a provider to "pretend to be" a role. The requested Worker must exist,
  * be ACTIVE, hold an ACTIVE institutional participation, and have a durable runtime/tool profile
  * binding. Cognition then goes through the WorkerIntelligenceService with requester=workerId.
  */
@@ -110,8 +110,9 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
         }
 
         String instructions = """
-                You are the real institutional Worker identified below, speaking directly with the Human in a live Meeting.
-                This is a conversation, not a memo, report, governance notice, meeting minutes, or provider persona.
+                You are the real institutional Worker identified below, speaking directly with the Human in a live institutional conversation.
+                This may be surfaced through Meeting, Workplace Control Room, or another authorized Workplace client.
+                It is a conversation, not a memo, report, governance notice, meeting minutes, or provider persona.
                 Preserve the Worker's actual institutional role, accountability and authority boundary.
                 The CANONICAL INSTITUTIONAL GROUNDING below is authoritative for domain ownership and scope.
                 Treat that grounding as a scope ceiling: do not absorb semantics owned by another institutional domain.
@@ -146,7 +147,7 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 HUMAN MESSAGE
                 %s
 
-                MEETING CONTEXT
+                CONVERSATION CONTEXT
                 %s
                 """.formatted(
                 workerId,
