@@ -24,12 +24,12 @@ permissions:
 
 env:
   METATRON_VERSION: "0.1.0"
-  # Worker lifecycle closure candidate v6: redeploy exact main after the live Meeting acceptance parser substrate repair.
+  # Production control-plane fallback: hosted Actions jobs are currently failing before step execution; run the exact tested lane on metatron-prod.
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
 
 jobs:
   supersede-stale-production:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 3
     steps:
       - name: Preempt stale production work explicitly
@@ -81,7 +81,7 @@ jobs:
           echo 'PRODUCTION_STALE_WORK_PREEMPTED=PASS'
 
   test-and-build:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 20
     concurrency:
       group: metatron-hosted-build-main
@@ -122,7 +122,7 @@ jobs:
           key: workforce-tested-${{ github.sha }}
   refresh-production-admission:
     needs: [supersede-stale-production, test-and-build]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 2
     concurrency:
       group: metatron-production-lane
