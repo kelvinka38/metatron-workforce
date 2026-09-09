@@ -38,12 +38,29 @@ final class WorkerConversationExecutionClaimGuard {
 
     static boolean hasSuccessfulExecutionEvidence(List<String> refs) {
         if (refs == null) return false;
-        return refs.stream().filter(ref -> ref != null && !ref.isBlank())
+        List<String> normalized = refs.stream()
+                .filter(ref -> ref != null && !ref.isBlank())
                 .map(ref -> ref.toLowerCase(Locale.ROOT))
-                .anyMatch(ref -> (ref.startsWith("action-fabric:") && ref.contains(":success=true"))
-                        || ref.startsWith("execution-receipt:")
-                        || ref.startsWith("execution:")
-                        || ref.startsWith("work-outcome:")
-                        || ref.startsWith("observation-report:"));
+                .toList();
+
+        boolean successfulActionReceipt = normalized.stream()
+                .anyMatch(ref -> ref.startsWith("action-fabric:") && ref.contains(":success=true"));
+        boolean explicitExecutionReceipt = normalized.stream()
+                .anyMatch(ref -> ref.startsWith("execution-receipt:"));
+        boolean executionIdentity = normalized.stream()
+                .anyMatch(ref -> ref.startsWith("execution:"));
+        boolean completedExecutionState = normalized.stream()
+                .anyMatch(ref -> ref.endsWith(":completed")
+                        || ref.contains(":state=completed")
+                        || ref.startsWith("execution-state:completed"));
+        boolean durableWorkOutcome = normalized.stream()
+                .anyMatch(ref -> ref.startsWith("work-outcome:"));
+
+        // An execution id alone is not success evidence. Observation evidence alone is also not
+        // proof that this Worker performed an action.
+        return successfulActionReceipt
+                || explicitExecutionReceipt
+                || (executionIdentity && completedExecutionState)
+                || durableWorkOutcome;
     }
 }
