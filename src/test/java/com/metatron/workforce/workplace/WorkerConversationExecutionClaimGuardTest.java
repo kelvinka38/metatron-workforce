@@ -40,6 +40,23 @@ class WorkerConversationExecutionClaimGuardTest {
     }
 
     @Test
+    void executionIdentityWithoutCompletedStateDoesNotAuthorizeExecutionClaim() {
+        String original = "I have executed the Gateway audit.";
+        String guarded = WorkerConversationExecutionClaimGuard.enforce(
+                original,
+                List.of("execution:EXEC-123", "gateway:audit:FAILED", "observation-report:OBS-123"));
+        assertNotEquals(original, guarded);
+    }
+
+    @Test
+    void executionIdentityWithCompletedStateAuthorizesExecutionClaim() {
+        String original = "I have executed the Gateway audit.";
+        assertEquals(original, WorkerConversationExecutionClaimGuard.enforce(
+                original,
+                List.of("execution:EXEC-123", "gateway:audit:COMPLETED")));
+    }
+
+    @Test
     void doesNotSuppressExplicitStatementThatExecutionDidNotOccur() {
         String original = "I have not executed the audit because there is no execution receipt.";
         assertEquals(original, WorkerConversationExecutionClaimGuard.enforce(original, List.of()));
