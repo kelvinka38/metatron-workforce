@@ -8,6 +8,11 @@ import java.util.Objects;
 public interface WorkerConversationGateway {
     Reply converse(String workerId, String role, String userMessage, String conversationContext);
 
+    default Reply converse(String workerId, String role, String userMessage, String conversationContext,
+                           List<String> trustedExecutionEvidence) {
+        return converse(workerId, role, userMessage, conversationContext);
+    }
+
     record Reply(String text, String requestReference, List<String> evidenceReferences, String runtimeId) {
         public Reply(String text, String requestReference, List<String> evidenceReferences) {
             this(text, requestReference, evidenceReferences, "");
