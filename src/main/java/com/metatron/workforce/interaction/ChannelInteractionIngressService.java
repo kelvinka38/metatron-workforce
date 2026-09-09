@@ -28,6 +28,7 @@ public final class ChannelInteractionIngressService {
     private static final int MEMORY_MAX_CHARS = 32000;
 
     private final MetatronInteractionOrchestrator orchestrator;
+    private final DirectWorkerConversationService directWorkerConversation;
 
     @Autowired
     public ChannelInteractionIngressService(
@@ -41,6 +42,7 @@ public final class ChannelInteractionIngressService {
             WorkplaceMeetingService workplaceMeetingService,
             MetatronInstitutionalStateChatService institutionalStateChatService,
             WorkerLifecycleControlService workerLifecycleControlService,
+            DirectWorkerConversationService directWorkerConversation,
             @Value("${METATRON_CONVERSATION_MEMORY_PATH:${METATRON_TELEGRAM_MEMORY_PATH:/var/lib/metatron-workforce/conversations}}") String conversationMemoryPath,
             @Value("${METATRON_CONVERSATION_SURFACE_MODE_PATH:/var/lib/metatron-workforce/conversation-surface-mode}") String conversationSurfaceModePath,
             ObjectMapper objectMapper) {
@@ -62,6 +64,7 @@ public final class ChannelInteractionIngressService {
                 MEMORY_MAX_TURNS,
                 MEMORY_MAX_CHARS);
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
+        this.directWorkerConversation = Objects.requireNonNull(directWorkerConversation, "directWorkerConversation");
     }
 
     /**
@@ -80,9 +83,22 @@ public final class ChannelInteractionIngressService {
 
     ChannelInteractionIngressService(MetatronInteractionOrchestrator orchestrator) {
         this.orchestrator = Objects.requireNonNull(orchestrator, "orchestrator");
+        this.directWorkerConversation = null;
     }
 
     public MetatronInteractionOrchestrator.InteractionResponse handle(MetatronInteraction interaction) {
-        return orchestrator.handle(Objects.requireNonNull(interaction, "interaction"));
+        MetatronInteraction normalized = Objects.requireNonNull(interaction, "interaction");
+        if (directWorkerConversation != null) {
+            java.util.Optional<DirectWorkerConversationService.HandledReply> direct =
+                    directWorkerConversation.handle(normalized);
+            if (direct.isPresent()) {
+                DirectWorkerConversationService.HandledReply reply = direct.get();
+                return new MetatronInteractionOrchestrator.InteractionResponse(
+                        normalized.conversationId(),
+                        reply.text(),
+                        reply.provenanceReference());
+            }
+        }
+        return orchestrator.handle(normalized);
     }
 }
