@@ -1,0 +1,33 @@
+name: BIOS Candidate Selfhosted Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-candidate-selfhosted-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - name: Test exact BIOS candidate SHA
+        shell: bash
+        env:
+          BIOS_CANDIDATE_SHA: 7ce85f2a406c048fc645d686026d2ed9543786b7
+        run: |
+          set -euo pipefail
+          WORKFORCE_BASE=/opt/metatron/metatron-workforce
+          STAGE=/tmp/bios-candidate-test
+          test -r "$WORKFORCE_BASE/.env"
+          set -a; source "$WORKFORCE_BASE/.env"; set +a
+          test -n "${GITHUB_TOKEN:-}"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          curl -fsSL             -H "Authorization: Bearer $GITHUB_TOKEN"             -H 'Accept: application/vnd.github+json'             "https://api.github.com/repos/kelvinka38/bios/tarball/$BIOS_CANDIDATE_SHA"             | tar -xz -C "$STAGE" --strip-components=1
+          cd "$STAGE"
+          python3 -m unittest discover -s tests -v
+          echo "BIOS_CANDIDATE_TEST=PASS"
+          echo "BIOS_CANDIDATE_SHA=$BIOS_CANDIDATE_SHA"
