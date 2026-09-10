@@ -1,0 +1,23 @@
+name: BIOS Aquaculture v1.3 Rollout Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-v13-rollout-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Show failed Highway task log
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="$HOME/.metatron/highway/state/logs/hw-b7c1f346f28642e581ef.log"
+          test -r "$LOG"
+          tail -n 500 "$LOG"
