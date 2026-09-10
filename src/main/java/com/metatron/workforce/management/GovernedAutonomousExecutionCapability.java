@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.action.ActionFabric;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.execution.Assignment;
 import com.metatron.workforce.execution.Authorization;
@@ -9,6 +10,9 @@ import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.ExecutionRequest;
 import com.metatron.workforce.execution.ExecutionState;
 import com.metatron.workforce.execution.governance.ExecutionAttemptGovernanceBinding;
+import com.metatron.workforce.execution.governance.ExecutionGate;
+import com.metatron.workforce.execution.governance.ExecutionIntent;
+import com.metatron.workforce.execution.governance.ExecutionPermit;
 import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
 import com.metatron.workforce.execution.governance.GovernanceDeniedException;
 import com.metatron.workforce.execution.governance.GovernanceExecutionContext;
@@ -19,6 +23,7 @@ import com.metatron.workforce.runtime.RuntimeInstance;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -35,6 +40,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * Execution owns attempt identity, lease/heartbeat/checkpoint/fencing. Runtime owns replaceable
  * computational embodiment. Worker and Assignment identity remain stable across runtime recovery.
+ * General Workspace obtains per-Action permits inside CognitiveWorkerRuntime; every other MUTATING
+ * capability obtains a capability-level permit here immediately before delegate effect invocation.
  */
 public final class GovernedAutonomousExecutionCapability implements AutonomousExecutionCapability {
     private static final Duration DEFAULT_CAPACITY_WAIT = Duration.ofSeconds(30);
@@ -54,13 +61,14 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     private final RuntimeCapacityCoordinator runtimeCapacity;
     private final GovernancePlanService governancePlans;
     private final GovernanceAttemptBindingService governanceAttempts;
+    private final ExecutionGate executionGate;
     private final ThreadLocal<List<String>> staffingEvidence = ThreadLocal.withInitial(ArrayList::new);
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
                                                   WorkforceCoreService core,
                                                   ExecutionAdmissionService admission,
                                                   Clock clock) {
-        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, null, null, null, null, null);
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, null, null, null, null, null, null);
     }
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -68,7 +76,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                                   ExecutionAdmissionService admission,
                                                   Clock clock,
                                                   AutonomousStaffingService staffing) {
-        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, null, null, null, null);
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, null, null, null, null, null);
     }
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -78,7 +86,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                                   AutonomousStaffingService staffing,
                                                   ExecutionAttemptService executionAttempts,
                                                   RuntimeCapacityCoordinator runtimeCapacity) {
-        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity, null, null);
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity,
+                null, null, null);
     }
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -91,7 +100,21 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                                   GovernancePlanService governancePlans,
                                                   GovernanceAttemptBindingService governanceAttempts) {
         this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity,
-                governancePlans, governanceAttempts);
+                governancePlans, governanceAttempts, null);
+    }
+
+    public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
+                                                  WorkforceCoreService core,
+                                                  ExecutionAdmissionService admission,
+                                                  Clock clock,
+                                                  AutonomousStaffingService staffing,
+                                                  ExecutionAttemptService executionAttempts,
+                                                  RuntimeCapacityCoordinator runtimeCapacity,
+                                                  GovernancePlanService governancePlans,
+                                                  GovernanceAttemptBindingService governanceAttempts,
+                                                  ExecutionGate executionGate) {
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity,
+                governancePlans, governanceAttempts, executionGate);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -99,7 +122,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           ExecutionAdmissionService admission,
                                           Clock clock,
                                           Duration capacityWait) {
-        this(delegate, core, admission, clock, capacityWait, null, null, null, null, null);
+        this(delegate, core, admission, clock, capacityWait, null, null, null, null, null, null);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -108,7 +131,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           Clock clock,
                                           Duration capacityWait,
                                           AutonomousStaffingService staffing) {
-        this(delegate, core, admission, clock, capacityWait, staffing, null, null, null, null);
+        this(delegate, core, admission, clock, capacityWait, staffing, null, null, null, null, null);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -119,7 +142,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           AutonomousStaffingService staffing,
                                           ExecutionAttemptService executionAttempts,
                                           RuntimeCapacityCoordinator runtimeCapacity) {
-        this(delegate, core, admission, clock, capacityWait, staffing, executionAttempts, runtimeCapacity, null, null);
+        this(delegate, core, admission, clock, capacityWait, staffing, executionAttempts, runtimeCapacity,
+                null, null, null);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -132,6 +156,21 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           RuntimeCapacityCoordinator runtimeCapacity,
                                           GovernancePlanService governancePlans,
                                           GovernanceAttemptBindingService governanceAttempts) {
+        this(delegate, core, admission, clock, capacityWait, staffing, executionAttempts, runtimeCapacity,
+                governancePlans, governanceAttempts, null);
+    }
+
+    GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
+                                          WorkforceCoreService core,
+                                          ExecutionAdmissionService admission,
+                                          Clock clock,
+                                          Duration capacityWait,
+                                          AutonomousStaffingService staffing,
+                                          ExecutionAttemptService executionAttempts,
+                                          RuntimeCapacityCoordinator runtimeCapacity,
+                                          GovernancePlanService governancePlans,
+                                          GovernanceAttemptBindingService governanceAttempts,
+                                          ExecutionGate executionGate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.core = Objects.requireNonNull(core, "core");
         this.admission = Objects.requireNonNull(admission, "admission");
@@ -142,6 +181,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         this.runtimeCapacity = runtimeCapacity;
         this.governancePlans = governancePlans;
         this.governanceAttempts = governanceAttempts;
+        this.executionGate = executionGate;
         if ((executionAttempts == null) != (runtimeCapacity == null)) {
             throw new IllegalArgumentException("ExecutionAttemptService and RuntimeCapacityCoordinator must be configured together");
         }
@@ -168,8 +208,9 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         boolean mutating = request.workSpec().consequence() == ExecutionWorkSpec.Consequence.MUTATING;
         GovernancePlanService.BoundPlan boundPlan = null;
         if (mutating) {
-            if (governancePlans == null || governanceAttempts == null) {
-                throw new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED", "mutating capability has no SoT governance composition");
+            if (governancePlans == null || governanceAttempts == null || executionGate == null) {
+                throw new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED",
+                        "mutating capability has no complete SoT governance composition");
             }
             boundPlan = governancePlans.bindAuthorizedWork(
                     request.objectiveId(), request.humanId(), request.workSpec(),
@@ -294,6 +335,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                 }, HEARTBEAT_PERIOD_MILLIS, HEARTBEAT_PERIOD_MILLIS, TimeUnit.MILLISECONDS);
 
                 try {
+                    ExecutionPermit capabilityPermit = authorizeCapabilityEffectIfRequired(governedRequest, attempt, boundPlan);
                     CapabilityResult result = delegate.execute(governedRequest);
                     RuntimeException leaseFailure = heartbeatFailure.get();
                     if (leaseFailure != null) throw leaseFailure;
@@ -302,12 +344,14 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                         ExecutionAttempt completed = executionAttempts.succeed(
                                 attempt.attemptId(), attempt.fencingToken(), clock.instant());
                         executionEvidence.add(attemptEvidence(completed));
+                        if (capabilityPermit != null) executionEvidence.add("execution-permit:" + capabilityPermit.permitId());
                         List<String> refs = new ArrayList<>(result.evidenceReferences()); refs.addAll(executionEvidence);
                         return new CapabilityResult(true, result.workerId(), result.assignmentReference(), result.workReference(), refs, result.summary());
                     }
                     ExecutionAttempt failed = executionAttempts.fail(
                             attempt.attemptId(), attempt.fencingToken(), nonBlank(result.summary(), "capability-unsuccessful"), clock.instant());
                     executionEvidence.add(attemptEvidence(failed));
+                    if (capabilityPermit != null) executionEvidence.add("execution-permit:" + capabilityPermit.permitId());
                     List<String> refs = new ArrayList<>(result.evidenceReferences()); refs.addAll(executionEvidence);
                     return new CapabilityResult(false, result.workerId(), result.assignmentReference(), result.workReference(), refs, result.summary());
                 } catch (RuntimeException failure) {
@@ -331,13 +375,36 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
     }
 
+    private ExecutionPermit authorizeCapabilityEffectIfRequired(CapabilityRequest request,
+                                                                 ExecutionAttempt attempt,
+                                                                 GovernancePlanService.BoundPlan boundPlan) {
+        if (boundPlan == null || request.workSpec().consequence() != ExecutionWorkSpec.Consequence.MUTATING) return null;
+        if (GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(delegate.capabilityRef())) {
+            // General Workspace authorizes every concrete mutating Action inside CognitiveWorkerRuntime.
+            return null;
+        }
+        String actionRef = "capability:" + request.workSpec().requiredCapability();
+        Instant now = clock.instant();
+        return executionGate.authorize(new ExecutionIntent(
+                request.objectiveId(), attempt.attemptId(), attempt.fencingToken(), assignmentWorker(request),
+                request.assignmentReference(), request.authorizationReference(), boundPlan.plan().planId(),
+                boundPlan.plan().version(), request.workSpec().stepId(), actionRef, ActionFabric.Consequence.MUTATING,
+                boundPlan.plan().targetScope(), boundPlan.snapshot().snapshotId(), boundPlan.derivation().receiptId(),
+                Map.of("capabilityRef", delegate.capabilityRef()), now));
+    }
+
+    private static String assignmentWorker(CapabilityRequest request) {
+        if (request.allocatedWorkerId() == null || request.allocatedWorkerId().isBlank()) {
+            throw new GovernanceDeniedException("PLAN_BINDING_MISMATCH", "allocated Worker missing at capability effect boundary");
+        }
+        return request.allocatedWorkerId();
+    }
+
     private void failAttemptIfOwned(ExecutionAttempt attempt, RuntimeException failure) {
         try {
             executionAttempts.fail(attempt.attemptId(), attempt.fencingToken(),
                     nonBlank(failure.getMessage(), failure.getClass().getSimpleName()), clock.instant());
-        } catch (RuntimeException staleOrTerminal) {
-            // stale/expired attempt remains fenced
-        }
+        } catch (RuntimeException staleOrTerminal) { }
     }
 
     private boolean retryableReadOnly(CapabilityRequest request, RuntimeException failure) {
