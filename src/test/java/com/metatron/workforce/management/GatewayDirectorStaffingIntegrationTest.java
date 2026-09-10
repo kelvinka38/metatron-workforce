@@ -1,18 +1,14 @@
 package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
-import com.metatron.workforce.execution.ExecutionAdmissionService;
-import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.observation.GatewayDirectorAppointmentObservationVerifier;
-import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.observation.ObservationReport;
 import com.metatron.workforce.observation.ObservationRequirement;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.junit.jupiter.api.Test;
 
-import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,37 +20,19 @@ class GatewayDirectorStaffingIntegrationTest {
     void founderAppointmentFormsPersistentGatewayDirectorWithRoleCapabilityAndRuntime() {
         WorkforceCoreService core = new WorkforceCoreService();
         WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
-        GatewayDirectorAppointmentCapability delegate =
+        GatewayDirectorAppointmentCapability capability =
                 new GatewayDirectorAppointmentCapability(core, profiles);
         WorkerConstitutionService constitution = WorkerConstitutionService.inMemory();
         AutonomousStaffingService staffing = new AutonomousStaffingService(
                 core, List.of(new GatewayDirectorStaffingPolicy()), profiles, constitution);
-        GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
-                delegate,
-                core,
-                new ExecutionAdmissionService(),
-                Clock.fixed(Instant.parse("2026-09-04T13:00:00Z"), ZoneOffset.UTC),
-                staffing);
+        Instant now = Instant.parse("2026-09-04T13:00:00Z");
 
-        ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "appoint-gateway-director",
-                "Form and appoint the canonical Gateway Director / Head of Gateway Worker through governed Workforce staffing",
-                GatewayDirectorAppointmentCapability.ROLE_REF,
-                GatewayDirectorAppointmentCapability.CAPABILITY,
-                List.of(),
-                ExecutionWorkSpec.Consequence.MUTATING,
-                List.of(
-                        "Gateway Director Worker is ACTIVE with ROLE-HEAD-OF-GATEWAY participation",
-                        "Gateway Director has the approved gateway.audit.read capability",
-                        "Gateway Director has a durable usable runtime/tool profile binding"),
-                List.of("staffing evidence", "role evidence", "runtime binding evidence"));
+        // Match production canonicalGatewayDirectorReconciliation: institutional formation is owned by
+        // Workforce staffing, not by the governed external-effect execution wrapper.
+        AutonomousStaffingService.StaffingOutcome outcome = staffing.ensureStaffed(capability, now);
 
-        AutonomousExecutionCapability.CapabilityResult result = governed.execute(
-                new AutonomousExecutionCapability.CapabilityRequest(
-                        "human-primary", "organization:metatron", "objective:gateway-director", work));
-
-        assertTrue(result.success());
-        assertEquals(GatewayDirectorAppointmentCapability.WORKER_ID, result.workerId());
+        assertTrue(outcome.staffed());
+        assertEquals(GatewayDirectorAppointmentCapability.WORKER_ID, outcome.workerId());
         assertEquals(WorkforceCoreService.WorkerStatus.ACTIVE,
                 core.worker(GatewayDirectorAppointmentCapability.WORKER_ID).status());
         assertTrue(core.participations(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(p ->
@@ -73,6 +51,7 @@ class GatewayDirectorStaffingIntegrationTest {
                 GatewayDirectorAppointmentCapability.CAPACITY_COST_MANAGEMENT_CAPABILITY.equals(c.capabilityRef())));
         assertTrue(core.capabilities(GatewayDirectorAppointmentCapability.WORKER_ID).stream().anyMatch(c ->
                 GatewayDirectorAppointmentCapability.INCIDENT_RECOVERY_CAPABILITY.equals(c.capabilityRef())));
+
         var constitutionContext = constitution.contextFor(
                 GatewayDirectorAppointmentCapability.WORKER_ID,
                 "participation:gateway-director:metatron");
@@ -85,14 +64,11 @@ class GatewayDirectorStaffingIntegrationTest {
                 constitutionContext.contract().operatingCoverage());
         assertEquals(WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
                 profiles.requireBinding(GatewayDirectorAppointmentCapability.WORKER_ID).profile().profileRef());
-        assertTrue(core.allAssignments().stream().anyMatch(a ->
-                a.workerId().equals(GatewayDirectorAppointmentCapability.WORKER_ID)
-                        && a.status() == WorkforceCoreService.AssignmentStatus.COMPLETED));
-        assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
+        assertTrue(outcome.evidenceReferences().stream().anyMatch(ref ->
                 ref.contains("staffing:policy=" + GatewayDirectorAppointmentCapability.CAPABILITY)));
-        assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
+        assertTrue(outcome.evidenceReferences().stream().anyMatch(ref ->
                 ref.contains("position-contract-bound:position-contract:position:gateway-director:v1")));
-        assertTrue(result.evidenceReferences().stream().anyMatch(ref ->
+        assertTrue(outcome.evidenceReferences().stream().anyMatch(ref ->
                 ref.contains("gateway.operational.management")));
 
         GatewayDirectorAppointmentObservationVerifier verifier =
@@ -107,7 +83,7 @@ class GatewayDirectorStaffingIntegrationTest {
                 List.of(GatewayDirectorAppointmentObservationVerifier.MARKER),
                 Instant.parse("2026-09-04T13:00:01Z"));
         ObservationReport report = verifier.observe(
-                requirement, result.evidenceReferences(), Instant.parse("2026-09-04T13:00:02Z")).orElseThrow();
+                requirement, outcome.evidenceReferences(), Instant.parse("2026-09-04T13:00:02Z")).orElseThrow();
 
         assertEquals(ObservationReport.CriterionResult.PASS, report.criterionResult());
         assertEquals("independent-workforce-core-and-runtime-profile-read", report.method());

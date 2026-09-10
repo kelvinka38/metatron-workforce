@@ -5,6 +5,18 @@ import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.execution.ExecutionAttempt;
 import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
+import com.metatron.workforce.execution.governance.AuthorityFreshnessValidator;
+import com.metatron.workforce.execution.governance.AuthorityManifestCatalog;
+import com.metatron.workforce.execution.governance.ConstraintEvaluator;
+import com.metatron.workforce.execution.governance.DerivationValidator;
+import com.metatron.workforce.execution.governance.ExecutionGate;
+import com.metatron.workforce.execution.governance.GovernanceAdmissionValidator;
+import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
+import com.metatron.workforce.execution.governance.GovernancePlanService;
+import com.metatron.workforce.execution.governance.GovernanceStateStore;
+import com.metatron.workforce.execution.governance.InMemoryGovernanceStateStore;
+import com.metatron.workforce.execution.governance.PlanConformanceValidator;
+import com.metatron.workforce.execution.governance.SotDiscoveryService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.FileRuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
@@ -92,23 +104,39 @@ class GovernedExecutionRecoveryIntegrationTest {
         RuntimeCapacityCoordinator runtimeCapacity = new RuntimeCapacityCoordinator(runtimes);
         AtomicInteger effects = new AtomicInteger();
 
+        GovernanceStateStore governanceStore = new InMemoryGovernanceStateStore();
+        AuthorityFreshnessValidator freshness = new AuthorityFreshnessValidator(governanceStore);
+        PlanConformanceValidator planConformance = new PlanConformanceValidator();
+        ConstraintEvaluator constraints = new ConstraintEvaluator();
+        SotDiscoveryService discovery = new SotDiscoveryService(
+                AuthorityManifestCatalog.classpath(), governanceStore, CLOCK);
+        DerivationValidator derivation = new DerivationValidator(governanceStore, CLOCK);
+        GovernancePlanService plans = new GovernancePlanService(discovery, derivation, governanceStore, CLOCK);
+        GovernanceAttemptBindingService attemptBindings = new GovernanceAttemptBindingService(governanceStore, CLOCK);
+        ExecutionGate gate = new ExecutionGate(
+                governanceStore, attempts, freshness, planConformance, constraints, CLOCK);
+        ExecutionAdmissionService admission = new ExecutionAdmissionService(
+                new GovernanceAdmissionValidator(governanceStore, freshness, planConformance));
+
         AutonomousExecutionCapability delegate = new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return "test.read"; }
             @Override public String authorityReference() { return "authority:test"; }
             @Override public String authorizationReference() { return "authorization:test"; }
             @Override public boolean supportsWorker(String workerId) { return workerId.equals("worker-a"); }
             @Override public CapabilityResult execute(CapabilityRequest request) {
+                assertTrue(request.governanceBound());
                 effects.incrementAndGet();
                 throw new IllegalStateException("unknown-mutation-effect");
             }
         };
 
         GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
-                delegate, core, new ExecutionAdmissionService(), CLOCK, null, attempts, runtimeCapacity);
+                delegate, core, admission, CLOCK, null, attempts, runtimeCapacity, plans, attemptBindings, gate);
         var request = new AutonomousExecutionCapability.CapabilityRequest(
                 "human:primary", "org-metatron", "objective-mutating",
-                new ExecutionWorkSpec("step-m", "Mutate repository", "repo", "test.read", List.of(),
-                        ExecutionWorkSpec.Consequence.MUTATING))
+                new ExecutionWorkSpec("step-m", "Mutate repository", "kelvinka38/metatron-workforce",
+                        "test.read", List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                        List.of("mutation outcome observed"), List.of("mutation evidence")))
                 .withDispatch("objective-mutating:graph:1:step:step-m:attempt:1", 1);
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> governed.execute(request));

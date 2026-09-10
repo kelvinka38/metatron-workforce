@@ -1,9 +1,12 @@
 package com.metatron.workforce.action;
 
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.testing.GovernanceTestHarness;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -14,42 +17,48 @@ import static org.junit.jupiter.api.Assertions.*;
 class Point4ActionFabricRuntimeConformanceTest {
     private static final String WORKER = "WORKER-COGNITIVE-TEST";
     private static final String AUTH = "authorization:test:cognitive";
+    private static final String ASSIGNMENT = "assignment-1";
+    private static final String OBJECTIVE = "objective-1";
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-10T08:15:00Z"), ZoneOffset.UTC);
 
     @Test
     void workerThinksActsObservesReflectsAndChangesItsNextActionFromObservation() {
         List<String> invoked = new ArrayList<>();
         List<CognitiveWorkerRuntime.Cycle> journaled = new ArrayList<>();
+        GovernanceTestHarness governance = new GovernanceTestHarness(CLOCK);
         ActionFabric fabric = new ActionFabric(List.of(
                 action("tool.inspect", ActionFabric.Consequence.READ_ONLY, request -> {
                     invoked.add("inspect");
                     return new ActionFabric.ActionObservation("tool.inspect", true, "found work",
-                            Map.of("revision", "abc123"), List.of("evidence:inspect"), Instant.now());
+                            Map.of("revision", "abc123"), List.of("evidence:inspect"), CLOCK.instant());
                 }),
-                action("tool.apply", ActionFabric.Consequence.MUTATING, request -> {
+                action("workspace.file.patch", ActionFabric.Consequence.MUTATING, request -> {
                     invoked.add("apply:" + request.inputs().get("revision"));
-                    return new ActionFabric.ActionObservation("tool.apply", true, "effect applied",
-                            Map.of("effect", "done"), List.of("evidence:apply"), Instant.now());
+                    return new ActionFabric.ActionObservation("workspace.file.patch", true, "effect applied",
+                            Map.of("effect", "done"), List.of("evidence:apply"), CLOCK.instant());
                 }),
                 action("tool.verify", ActionFabric.Consequence.READ_ONLY, request -> {
                     invoked.add("verify:" + request.inputs().get("effect"));
                     return new ActionFabric.ActionObservation("tool.verify", true, "verified",
-                            Map.of("verified", "true"), List.of("evidence:verify"), Instant.now());
-                })));
+                            Map.of("verified", "true"), List.of("evidence:verify"), CLOCK.instant());
+                })), governance.gate);
         ActionJournal journal = (a, b, c, d, e, f, cycle) -> journaled.add(cycle);
-        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, journal, 6);
-        ExecutionWorkSpec work = new ExecutionWorkSpec("step-1", "inspect, mutate and verify", "fixture",
-                "test.cognitive", List.of(), ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("verified effect"), List.of("tool evidence"));
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, journal, 6, governance.gate);
+        ExecutionWorkSpec work = new ExecutionWorkSpec("step-1", "inspect, mutate and verify",
+                "kelvinka38/metatron-workforce", "execution.general.workspace", List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING, List.of("verified effect"), List.of("tool evidence"));
+        GovernanceTestHarness.BoundMutation mutation = governance.bind(
+                OBJECTIVE, "founder-test", WORKER, ASSIGNMENT, AUTH, "runtime-1", work);
 
-        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(WORKER, "assignment-1", AUTH,
-                "objective-1", work, "objective-1:step-1", new CognitiveWorkerRuntime.Brain() {
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(WORKER, ASSIGNMENT, AUTH,
+                OBJECTIVE, work, "objective-1:step-1", mutation.context(), new CognitiveWorkerRuntime.Brain() {
                     @Override
                     public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
                         if (!context.memory().containsKey("revision")) {
                             return new CognitiveWorkerRuntime.Thought("tool.inspect", Map.of(), "need current revision");
                         }
                         if (!context.memory().containsKey("effect")) {
-                            return new CognitiveWorkerRuntime.Thought("tool.apply",
+                            return new CognitiveWorkerRuntime.Thought("workspace.file.patch",
                                     Map.of("revision", context.memory().get("revision")),
                                     "inspection identified revision to change");
                         }
@@ -75,7 +84,8 @@ class Point4ActionFabricRuntimeConformanceTest {
         assertEquals(3, outcome.cycles().size());
         assertEquals(3, journaled.size());
         assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, outcome.cycles().getLast().reflection().decision());
-        assertTrue(outcome.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("action-fabric:action=tool.apply")));
+        assertTrue(outcome.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("action-fabric:action=workspace.file.patch")));
+        assertTrue(outcome.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("execution-permit:")));
         assertTrue(outcome.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("cognitive-cycle:3:")));
     }
 
