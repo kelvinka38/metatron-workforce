@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - .github/workflows/aq-decision-product-v3-fix.yml
+      - scripts/aquaculture/decision_product_v3_patch.py
+      - scripts/aquaculture/decision_product_v3_compat.py
 
 permissions:
   contents: read
@@ -87,6 +89,7 @@ jobs:
           grep -q 'Cần làm gì tiếp theo' /tmp/aq-product-v3.js
           grep -q 'Chi phí lịch sử chỉ dùng để hiểu quy mô' /tmp/aq-product-v3.js
           grep -q 'const ready=s.eligibility==="ELIGIBLE"&&Number(s.blocking_unknowns||0)===0&&s.recommendation_state==="FINAL_FOR_CURRENT_EVIDENCE"' /tmp/aq-product-v3.js
+          grep -q 'CHƯA ĐỦ BẰNG CHỨNG ĐỂ KHUYẾN NGHỊ / CHỐT' /tmp/aq-product-v3.js
           if grep -q "html(p.environment_strategy?.strategy||\"Chưa chốt\")" /tmp/aq-product-v3.js; then
             echo 'raw environment strategy renderer still present' >&2
             exit 1
