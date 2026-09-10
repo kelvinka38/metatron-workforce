@@ -1,11 +1,7 @@
 name: BIOS P10 Release Readiness
 
 on:
-  push:
-    branches: [main]
-    paths: [".github/workflows/bios-p10-release-readiness.yml"]
   workflow_dispatch:
-
 permissions:
   contents: read
 
