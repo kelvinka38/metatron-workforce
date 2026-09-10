@@ -108,6 +108,14 @@ public final class ExecutionGate {
         }
     }
 
+    /** Gate owns the time source for permit validation; callers must not introduce a second clock. */
+    public void requirePermitMatches(ExecutionPermit permit, String objectiveId, String workerId,
+                                     String assignmentRef, String authorizationRef, String stepId,
+                                     String actionRef) {
+        requirePermitMatches(permit, objectiveId, workerId, assignmentRef, authorizationRef, stepId,
+                actionRef, clock.instant());
+    }
+
     public void requirePermitMatches(ExecutionPermit permit, String objectiveId, String workerId,
                                      String assignmentRef, String authorizationRef, String stepId,
                                      String actionRef, Instant at) {
