@@ -1,11 +1,7 @@
 name: Live Probe GS2 independent test 24a5d99
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-live-probe-general-gs2-dbd9674.yml'
-
+  workflow_dispatch:
 permissions:
   contents: read
 
