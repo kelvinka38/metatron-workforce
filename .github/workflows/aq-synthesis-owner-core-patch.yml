@@ -1,0 +1,97 @@
+name: AQ Synthesis Owner Core Patch
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/aq-synthesis-owner-core-patch.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  patch:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - name: Patch owner semantics and synthesis
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/metatron/metatron-workforce/.env
+          W=/tmp/aq-synth-owner-core
+          rm -rf "$W"
+          git clone --depth 1 --branch aquaculture-decision-synthesis-v2 "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/bios.git" "$W"
+          cd "$W"
+          git config user.name Metatron
+          git config user.email metatron@localhost
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('bios_runtime/domains/aquaculture/services.py')
+          s=p.read_text()
+          old='if "khong thuc an cong nghiep" in text or "khong dung thuc an cong nghiep" in text:\n            out.append({"constraint_type":"LOW_INPUT_REQUIRED","value":True,"scope":{},"authority_ref":actor_id})'
+          new='if "khong thuc an cong nghiep" in text or "khong dung thuc an cong nghiep" in text:\n            out.append({"constraint_type":"NO_COMMERCIAL_FEED_REQUIRED","value":True,"scope":{},"authority_ref":actor_id})\n        if "giam cam cong nghiep" in text or "giam thuc an cong nghiep" in text or "it dau vao" in text:\n            out.append({"constraint_type":"LOW_INPUT_REQUIRED","value":True,"scope":{},"authority_ref":actor_id})'
+          assert old in s
+          s=s.replace(old,new,1)
+          old='"low_input": any(x in text for x in ("không thức ăn công nghiệp","khong thuc an cong nghiep","thức ăn tự nhiên","thuc an tu nhien")),\n            "no_chemical":'
+          new='"low_input": any(x in text for x in ("không thức ăn công nghiệp","khong thuc an cong nghiep","thức ăn tự nhiên","thuc an tu nhien","giảm cám công nghiệp","giam cam cong nghiep")),\n            "no_commercial_feed": any(x in text for x in ("không thức ăn công nghiệp","khong thuc an cong nghiep","không dùng thức ăn công nghiệp","khong dung thuc an cong nghiep")),\n            "no_chemical":'
+          assert old in s
+          s=s.replace(old,new,1)
+          marker='    def _auto_candidates(self, species:str, discovery:dict, preferred_species:str|None, farm_id:str, farm_location:dict|None=None)->list[dict]:\n'
+          if '_sync_owner_constraints_from_discovery' not in s:
+              helper='''    def _sync_owner_constraints_from_discovery(self,farm_id:str,actor_id:str,discovery:dict)->None:
+              import json
+              def sig(items):
+                  out=[]
+                  for item in items:
+                      scope=dict(item.get("scope") or {});scope.pop("source_semantic",None)
+                      out.append((str(item.get("constraint_type")),json.dumps(item.get("value"),sort_keys=True,ensure_ascii=False),json.dumps(scope,sort_keys=True,ensure_ascii=False)))
+                  return sorted(out)
+              desired={"CD-06":[],"CD-08":[]}
+              cd6=discovery.get("CD-06") or {}
+              if cd6.get("owner_lock") and cd6.get("normalized_value") not in (None,"","OPEN","UNKNOWN"):
+                  value=cd6.get("normalized_value");species=value[0] if isinstance(value,list) and value else value
+                  if isinstance(species,dict):species=species.get("species") or species.get("scientific_name") or species.get("vi")
+                  resolved=self.knowledge.resolve_species_name(species) or species
+                  if resolved:desired["CD-06"]=[{"constraint_type":"SPECIES_LOCK","value":resolved,"scope":{},"authority_ref":actor_id}]
+              cd8=discovery.get("CD-08") or {}
+              if cd8.get("owner_lock"):desired["CD-08"]=self._owner_invariant_constraints(cd8.get("normalized_value"),actor_id)
+              active=self.repo.active_constraints(farm_id)
+              for semantic,items in desired.items():
+                  existing=[x for x in active if (x.get("scope") or {}).get("source_semantic")==semantic]
+                  if sig(existing)!=sig(items):self.repo.replace_semantic_constraints(farm_id,semantic,items,actor_id,(discovery.get(semantic) or {}).get("evidence_refs") or [])
+
+          '''
+              assert marker in s
+              s=s.replace(marker,helper+marker,1)
+          old='discovery={x["semantic_key"]:x for x in self.repo.get_discovery(farm["farm_id"])}\n        pref='
+          assert old in s
+          s=s.replace(old,'discovery={x["semantic_key"]:x for x in self.repo.get_discovery(farm["farm_id"])}\n        self._sync_owner_constraints_from_discovery(farm["farm_id"],actor_id,discovery)\n        pref=',1)
+          old='synthesize_candidate(species=species,culture_method=culture_method,input_strategy=input_strategy,discovery=discovery,farm_location=farm_location or {},economics=economics,preferred_species=preferred_species,owner_profile=profile,knowledge_refs=base_refs+econ_refs)'
+          assert old in s
+          s=s.replace(old,old[:-1]+',nutrition_items=nutrition.get("items") or [])',1)
+          p.write_text(s)
+
+          p=Path('bios_runtime/domains/aquaculture/synthesis.py')
+          s=p.read_text()
+          s=s.replace('knowledge_refs:list[str])->dict:','knowledge_refs:list[str],nutrition_items:list[dict]|None=None)->dict:',1)
+          anchor='    inp=INPUT_PROFILES.get(input_strategy,INPUT_PROFILES["OPEN"])\n'
+          assert anchor in s
+          if 'commercial_feed_relation=' not in s:
+              s=s.replace(anchor,anchor+'    nutrition_items=list(nutrition_items or [])\n    nutrition_text=" ".join(str(x.get("notes") or "")+" "+str(x.get("value") or "") for x in nutrition_items).casefold()\n    if input_strategy=="COMMERCIAL_FEED": commercial_feed_relation="REQUIRED"\n    elif input_strategy=="MIXED_LOW_INPUT" and any(x in nutrition_text for x in ("pellet","commercial feed","cám","cam")): commercial_feed_relation="PRESENT_IN_REFERENCE"\n    elif input_strategy=="NATURAL" and nutrition_items: commercial_feed_relation="NONE_IN_REFERENCE"\n    else: commercial_feed_relation="UNRESOLVED"\n',1)
+          anchor='    if context["water_source"]=="UNKNOWN":material_unknowns.append({"property":"water_source","impact":"BLOCKING","resolution":"resolve the actual water source and supply path"})\n'
+          assert anchor in s
+          if 'invariant_conflicts=[]' not in s:
+              s=s.replace(anchor,anchor+'    if owner_profile.get("no_commercial_feed") and commercial_feed_relation=="UNRESOLVED":material_unknowns.append({"property":"no_commercial_feed_pathway","impact":"BLOCKING","resolution":"prove a species/system nutrition pathway that does not depend on industrial/commercial feed"})\n    if owner_profile.get("no_chemical"):material_unknowns.append({"property":"no_chemical_protocol","impact":"BLOCKING","resolution":"validate a complete no-chemical operating protocol; owner intent alone is not evidence"})\n    if owner_profile.get("renewable"):material_unknowns.append({"property":"renewable_energy_design","impact":"BLOCKING","resolution":"size renewable generation/storage and backup against actual critical loads"})\n    invariant_conflicts=[]\n    if owner_profile.get("no_commercial_feed") and commercial_feed_relation in {"REQUIRED","PRESENT_IN_REFERENCE"}:invariant_conflicts.append("The evidence-backed nutrition pathway uses industrial/commercial feed, conflicting with the locked owner invariant.")\n',1)
+          s=s.replace('1 if owner_profile.get("low_input") and input_strategy not in {"NATURAL","MIXED_LOW_INPUT","LOW_INPUT"} else 0,','1 if owner_profile.get("no_commercial_feed") and commercial_feed_relation=="UNRESOLVED" else 0,\n            1 if owner_profile.get("low_input") and not owner_profile.get("no_commercial_feed") and input_strategy not in {"NATURAL","MIXED_LOW_INPUT","LOW_INPUT"} else 0,',1)
+          s=s.replace('"owner_targets":{"low_input":bool(owner_profile.get("low_input")),"no_chemical":bool(owner_profile.get("no_chemical")),"renewable":bool(owner_profile.get("renewable"))},','"owner_invariant_conflicts":invariant_conflicts,\n        "owner_targets":{"low_input":bool(owner_profile.get("low_input")),"no_commercial_feed":bool(owner_profile.get("no_commercial_feed")),"no_chemical":bool(owner_profile.get("no_chemical")),"renewable":bool(owner_profile.get("renewable"))},',1)
+          s=s.replace('"input_strategy_description":inp["description"],\n        "chemical_strategy":"NONE_TARGET" if owner_profile.get("no_chemical") else "OPEN",\n        "energy_strategy":"RENEWABLE_PRIORITY" if owner_profile.get("renewable") else "OPEN",','"input_strategy_description":inp["description"],\n        "commercial_feed_relation":commercial_feed_relation,\n        "chemical_strategy":"NO_CHEMICAL_REQUIRED_UNRESOLVED" if owner_profile.get("no_chemical") else "OPEN",\n        "energy_strategy":"RENEWABLE_REQUIRED_UNRESOLVED" if owner_profile.get("renewable") else "OPEN",',1)
+          anchor='    if not current_capital:why.append("It is not financially cleared: current capital requirement is still unresolved and must remain visible as a blocker.")\n'
+          assert anchor in s
+          if 'if invariant_conflicts:why.extend' not in s:s=s.replace(anchor,anchor+'    if invariant_conflicts:why.extend(invariant_conflicts)\n    if owner_profile.get("no_chemical"):why.append("No-chemical operation remains unproven until a complete protocol is evidenced.")\n    if owner_profile.get("renewable"):why.append("Renewable operation remains unproven until loads, generation, storage and backup are sized.")\n',1)
+          p.write_text(s)
+          PY
+          python3 -m py_compile bios_runtime/domains/aquaculture/services.py bios_runtime/domains/aquaculture/synthesis.py
+          git add bios_runtime/domains/aquaculture/services.py bios_runtime/domains/aquaculture/synthesis.py
+          git commit -m 'fix(aquaculture): derive strict owner invariants before synthesis'
+          git push origin HEAD:aquaculture-decision-synthesis-v2
