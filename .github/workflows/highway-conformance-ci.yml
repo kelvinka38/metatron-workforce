@@ -1,7 +1,7 @@
 name: Highway Conformance CI
 
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - 'scripts/**'
@@ -94,7 +94,7 @@ jobs:
               'workforce-build','workforce-deploy','production-highway-fast',
               'work-observability','control-room-fast','bios-deploy',
               'meeting-real-worker','general-engineering-go1',
-              'production-highway-full','worker-state-hygiene'
+              'production-highway-full','worker-state-hygiene','runtime-closure'
           }
           assert required <= set(reg), required-set(reg)
           def resources(kind):
@@ -107,11 +107,13 @@ jobs:
           assert ('prod:workforce','READ') in resources('work-observability')
           assert ('prod:workforce','READ') in resources('control-room-fast')
           fanout=set(reg['workforce-deploy'].get('on_success',[]))
-          assert {'production-highway-fast','work-observability','control-room-fast'} <= fanout
+          assert {'production-highway-fast','work-observability','control-room-fast','runtime-closure'} <= fanout
+          assert ('prod:workforce','READ') in resources('runtime-closure')
           print('HIGHWAY_PERSISTENT_SCHEDULER_CONTRACT=PASS')
           print('HIGHWAY_RESOURCE_AWARE_LOCKING_CONTRACT=PASS')
           print('HIGHWAY_MULTI_EXECUTOR_CONTRACT=PASS')
           print('HIGHWAY_POST_DEPLOY_PARALLEL_FANOUT_CONTRACT=PASS')
+          print('HIGHWAY_NATIVE_RUNTIME_CLOSURE_CONTRACT=PASS')
           print('HIGHWAY_GITHUB_INGRESS_ONLY_CONTRACT=PASS')
           PY
 
