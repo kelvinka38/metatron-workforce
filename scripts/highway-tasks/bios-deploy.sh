@@ -157,6 +157,29 @@ def post(route,payload):
     with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
     if out.get("status")=="ERROR": raise AssertionError(out)
     return out["payload"]["data"]
+# Never run acceptance against a mutable farmer pilot. Create a fresh farm inside
+# the synthetic acceptance Case and seed the exact reality this test asserts.
+fixture=post("/farms/create",{
+    "case_id":case_id,
+    "name":"BIOS Aquaculture deploy acceptance",
+    "location":{"country":"VN","province":"Bạc Liêu"}
+})
+farm_id=fixture["farm_id"]
+post("/discovery/update",{
+    "case_id":case_id,
+    "farm_id":farm_id,
+    "items":[
+      {"semantic_key":"CD-01","original_value":"Đông Hải, Bạc Liêu","normalized_value":{"label":"Đông Hải, Bạc Liêu","country":"VN","province":"Bạc Liêu"},"field_state":"DECLARED"},
+      {"semantic_key":"CD-02","original_value":"650 m2","normalized_value":{"value":650,"unit":"m2"},"field_state":"DECLARED"},
+      {"semantic_key":"CD-03","original_value":"Sông","normalized_value":"RIVER","field_state":"DECLARED"},
+      {"semantic_key":"CD-04","original_value":"Nước lợ","normalized_value":"BRACKISH","field_state":"DECLARED"},
+      {"semantic_key":"CD-05","original_value":"Nuôi thương phẩm","normalized_value":"GROW_OUT","field_state":"DECLARED"},
+      {"semantic_key":"CD-06","original_value":"Cá nâu","normalized_value":"Scatophagus argus","field_state":"DECLARED","owner_lock":False},
+      {"semantic_key":"CD-07","original_value":"500000000 VND","normalized_value":{"amount_minor":"500000000","currency":"VND"},"field_state":"DECLARED","owner_lock":True},
+      {"semantic_key":"CD-08","original_value":"Không thức ăn công nghiệp; không hóa chất; năng lượng tái tạo","normalized_value":"Không thức ăn công nghiệp; không hóa chất; năng lượng tái tạo","field_state":"DECLARED","owner_lock":True}
+    ]
+})
+print("AQ_ACCEPTANCE_ISOLATED_FARM=PASS",farm_id)
 generated=post("/scenarios/generate",{"case_id":case_id,"farm_id":farm_id,"refresh":True})
 assert generated["candidate_count"]>=8, generated
 scenarios=post("/scenarios/list",{"case_id":case_id,"farm_id":farm_id})
