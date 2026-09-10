@@ -1,14 +1,7 @@
 name: Highway Execution Fabric Acceptance
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'highway/**'
-      - 'scripts/highway-tasks/**'
-      - '.github/workflows/highway-execution-fabric-acceptance.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
   statuses: write
