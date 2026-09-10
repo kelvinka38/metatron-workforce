@@ -261,6 +261,310 @@
       "timeout_seconds": 120,
       "max_attempts": 1,
       "priority": 65
+    },
+    "intelligence-product-live": {
+      "name": "Intelligence product live forensic",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/intelligence-product-live.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "runtime-point2": {
+      "name": "Runtime conformance Point 2 forensic",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/runtime-point2.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "runtime-point5": {
+      "name": "Runtime conformance Point 5 Founder product",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/runtime-point5.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1500,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "bios-aquaculture-execution-verify": {
+      "name": "BIOS Aquaculture execution verify",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-aquaculture-execution-verify.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "bios-aquaculture-production-verify": {
+      "name": "BIOS Aquaculture production verify",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-aquaculture-production-verify.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "bios-aquaculture-public-reconcile": {
+      "name": "BIOS Aquaculture public Gateway reconcile",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-aquaculture-public-reconcile.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 480,
+      "max_attempts": 1,
+      "priority": 80
+    },
+    "bios-production-final-acceptance": {
+      "name": "BIOS production final acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-production-final-acceptance.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 600,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "gateway-bios-cluster-reconcile": {
+      "name": "Gateway BIOS cluster reconcile",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/gateway-bios-cluster-reconcile.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 480,
+      "max_attempts": 1,
+      "priority": 80
+    },
+    "gateway-bios-route-diagnostic": {
+      "name": "Gateway BIOS route diagnostic",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/gateway-bios-route-diagnostic.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 45
+    },
+    "gateway-final-live-acceptance": {
+      "name": "Gateway final live acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/gateway-final-live-acceptance.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "repository-audit-live-acceptance": {
+      "name": "Repository audit live acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/repository-audit-live-acceptance.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github:bios",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 50
+    },
+    "telegram-provider-live-acceptance": {
+      "name": "Telegram provider adapter live acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/telegram-provider-live-acceptance.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github:bios",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 50
+    },
+    "runtime-point4-mutation": {
+      "name": "Runtime Point 4 Cognitive mutation forensic",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/runtime-point4-mutation.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github:metatron-workforce",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1500,
+      "max_attempts": 1,
+      "priority": 45
+    },
+    "runtime-point4-read": {
+      "name": "Runtime Point 4 read-only Cognitive audit",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/runtime-point4-read.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github:bios",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 1500,
+      "max_attempts": 1,
+      "priority": 45
     }
   }
 }
