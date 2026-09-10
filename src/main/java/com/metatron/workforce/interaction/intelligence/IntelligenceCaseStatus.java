@@ -9,6 +9,7 @@ public enum IntelligenceCaseStatus {
     REASONING,
     RESULT_READY,
     WAITING_ON_EXTERNAL_STATE,
+    AWAITING_HUMAN_APPROVAL,
     REASSESSMENT,
     RESOLVED
 }
