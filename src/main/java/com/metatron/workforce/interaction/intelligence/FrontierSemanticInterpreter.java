@@ -40,12 +40,17 @@ public final class FrontierSemanticInterpreter {
             deterministic_computations: array of zero or more objects with fields label, operation, operands, unit. operation is one of SUM, AVERAGE, DIFFERENCE, PRODUCT, DIVIDE, PERCENT_OF, PERCENT_CHANGE. operands are canonical decimal strings.
             fresh_external_data_required: boolean
             explicitly_requested_provider: GOOGLE | ANTHROPIC | OPENAI | null
+            execution_authorization: NONE | NOW | AFTER_HUMAN_APPROVAL
             case_continuity: CONTINUE | NEW
             direct_response: concise natural answer in the Human's language ONLY when requested_depth=FAST, interaction_outcome=ANSWER, evidence_scope=NONE, mode is CASUAL or DISCUSSION, collaboration_mode=SINGLE, analytical_protocols=[], deterministic_capability=NONE, deterministic_computations=[] and fresh_external_data_required=false; otherwise empty string
 
             Rules:
             - Interpret meaning; do not emulate a keyword router.
             - interaction_outcome is the canonical product routing contract. Use ANSWER when the requested terminal product is the answer in this interaction, DURABLE_WORK when the Human delegates responsibility for institutional work that must persist/continue beyond the answer, and INSTITUTIONAL_DECISION only when Metatron itself is asked to make/approve an institutional decision.
+            - execution_authorization describes whether execution is authorized by THIS Human message. Use NOW only when the Human is delegating execution now. Use AFTER_HUMAN_APPROVAL when the Human explicitly asks for a proposal/design/plan first and states that execution may happen only after a later approval. Use NONE when no execution is requested.
+            - AFTER_HUMAN_APPROVAL is NOT DURABLE_WORK now. The current terminal product is the proposal/design/plan, so interaction_outcome=ANSWER and mode=DISCUSSION or REASONING. Do not create, admit, enqueue or accept a Workforce Objective before that later approval.
+            - Phrases equivalent to "Once I approve then execute", "execute after I approve", "sau khi tôi/tao duyệt thì mới thực hiện", or "chờ duyệt rồi mới triển khai" are an execution precondition, not present execution authorization.
+            - A later follow-up that explicitly approves and asks to execute may be classified as DURABLE_WORK/EXECUTION with execution_authorization=NOW, using the active Case/conversation as context.
             - evidence_scope describes what evidence is required to produce the requested terminal product. Use CURRENT_EXTERNAL whenever correctness depends on retrieving current external reality; use INSTITUTIONAL for internal/connected institutional evidence; otherwise NONE.
             - mode and fresh_external_data_required must agree with interaction_outcome and evidence_scope: DURABLE_WORK=>EXECUTION; INSTITUTIONAL_DECISION=>DECISION; ANSWER=>CASUAL, DISCUSSION or REASONING, never EXECUTION solely because evidence must be retrieved. CURRENT_EXTERNAL=>fresh_external_data_required=true.
             - ACTIVE INTELLIGENCE CASE is runtime coordination context only. It is not authority, evidence, or truth.
@@ -173,6 +178,16 @@ public final class FrontierSemanticInterpreter {
             IntelligenceMode proposedMode = enumValue(IntelligenceMode.class, requiredText(root, "mode"));
             boolean proposedFresh = root.path("fresh_external_data_required").asBoolean(false);
             InteractionOutcome outcome = interactionOutcome(root, proposedMode);
+            ExecutionAuthorization executionAuthorization = executionAuthorization(root, outcome);
+            if (ApprovalDeferredExecutionGuard.requiresApprovalBeforeExecution(humanText)) {
+                executionAuthorization = ExecutionAuthorization.AFTER_HUMAN_APPROVAL;
+            }
+            if (executionAuthorization == ExecutionAuthorization.AFTER_HUMAN_APPROVAL) {
+                outcome = InteractionOutcome.ANSWER;
+            } else if (outcome == InteractionOutcome.DURABLE_WORK
+                    && executionAuthorization != ExecutionAuthorization.NOW) {
+                outcome = InteractionOutcome.ANSWER;
+            }
             EvidenceScope evidenceScope = evidenceScope(root, proposedFresh);
             boolean explicitFreshness = explicitlyRequestsFreshness(humanText, temporalContext);
             if (outcome == InteractionOutcome.ANSWER && explicitFreshness) {
@@ -286,6 +301,15 @@ public final class FrontierSemanticInterpreter {
 
     private enum InteractionOutcome { ANSWER, DURABLE_WORK, INSTITUTIONAL_DECISION }
     private enum EvidenceScope { NONE, INSTITUTIONAL, CURRENT_EXTERNAL }
+    private enum ExecutionAuthorization { NONE, NOW, AFTER_HUMAN_APPROVAL }
+
+    private static ExecutionAuthorization executionAuthorization(JsonNode root, InteractionOutcome outcome) {
+        String value = optionalText(root, "execution_authorization");
+        if (!value.isBlank()) return enumValue(ExecutionAuthorization.class, value);
+        return outcome == InteractionOutcome.DURABLE_WORK
+                ? ExecutionAuthorization.NOW
+                : ExecutionAuthorization.NONE;
+    }
 
     private static String renderActiveCase(IntelligenceCase activeCase) {
         if (activeCase == null || activeCase.status() == IntelligenceCaseStatus.RESOLVED) return "NONE";
