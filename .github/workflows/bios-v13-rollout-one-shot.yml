@@ -1,0 +1,50 @@
+name: BIOS Aquaculture v1.3 Highway Rollout
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-v13-rollout-one-shot.yml'
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: bios-aquaculture-v13-rollout
+  cancel-in-progress: true
+
+jobs:
+  rollout:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish exact Workforce control-plane release
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+      - name: Submit and wait for BIOS v1.3 rollout
+        shell: bash
+        env:
+          BIOS_REQUESTED_SHA: 0d3503ba9b5efc1e6c4839dbfa49c449e66241ea
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit \
+            --kind bios-deploy \
+            --source-sha "$GITHUB_SHA" \
+            --dedupe-key "bios-deploy:0d3503ba9b5efc1e6c4839dbfa49c449e66241ea:v13-rollout" \
+            --priority 100 \
+            --env "BIOS_REQUESTED_SHA=$BIOS_REQUESTED_SHA" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_BIOS_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 1400 --poll 1
+          echo "AQUACULTURE_V13_HIGHWAY_ROLLOUT=PASS"
