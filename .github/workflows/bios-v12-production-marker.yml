@@ -1,0 +1,40 @@
+name: BIOS Aquaculture v1.2 Production Marker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-v12-production-marker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  marker:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Check BIOS image and readiness markers
+        shell: bash
+        env:
+          BIOS_EXPECTED_SHA: 5b3e39428c0a7f50cc0f16c0b39162ce7960097e
+        run: |
+          set -euo pipefail
+          IMAGE=$(docker inspect metatron-bios --format '{{.Config.Image}}')
+          echo "BIOS_IMAGE=$IMAGE"
+          test "$IMAGE" = "metatron-bios:$BIOS_EXPECTED_SHA"
+          BASE="$HOME/.metatron/bios"
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          CODE=$(curl -sS -o /tmp/aq-v12-ready.json -w '%{http_code}' -H "X-BIOS-API-Key: $BIOS_API_KEY" http://127.0.0.1:18080/health/ready)
+          test "$CODE" = 200
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-v12-ready.json'))
+          print("READY_STATUS="+str(d.get("status")))
+          print("AQ_BUNDLE_VERSION="+str(d.get("bundle_version")))
+          print("AQ_KNOWLEDGE_COUNT="+str((d.get("counts") or {}).get("knowledge")))
+          assert d.get("bundle_version")=="1.2.0", d
+          assert (d.get("counts") or {}).get("knowledge",0)>=35, d
+          PY
+          echo "AQUACULTURE_V12_PRODUCTION_MARKER=PASS"
