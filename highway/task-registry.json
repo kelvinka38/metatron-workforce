@@ -565,6 +565,174 @@
       "timeout_seconds": 1500,
       "max_attempts": 1,
       "priority": 45
+    },
+    "bios-p10-release-readiness": {
+      "name": "BIOS P10 release readiness",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/bios-p10-release-readiness.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "WRITE"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        },
+        {
+          "name": "github:bios",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 1800,
+      "max_attempts": 1,
+      "priority": 75
+    },
+    "gateway-director-live-acceptance": {
+      "name": "Gateway Director live acceptance",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/gateway-director-live-acceptance.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "mother-baby-bios-live-objective": {
+      "name": "Mother Baby BIOS live objective",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/mother-baby-bios-live-objective.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        },
+        {
+          "name": "state:management",
+          "mode": "WRITE"
+        },
+        {
+          "name": "github",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 1200,
+      "max_attempts": 1,
+      "priority": 55
+    },
+    "ops-diagnose-bios-objective": {
+      "name": "Diagnose BIOS objective",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/ops-diagnose-bios-objective.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 25
+    },
+    "ops-forensic-gs2-blocked": {
+      "name": "Forensic GS2 blocked objective",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/ops-forensic-gs2-blocked.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 25
+    },
+    "ops-inspect-runners": {
+      "name": "Inspect production runner services",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/ops-inspect-runners.sh"
+      ],
+      "resources": [
+        {
+          "name": "host:runner",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:workforce",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_attempts": 1,
+      "priority": 20
+    },
+    "ops-live-probe-gs2": {
+      "name": "Read GS2 independent probe evidence",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/ops-live-probe-gs2.sh"
+      ],
+      "resources": [
+        {
+          "name": "host:runner",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 180,
+      "max_attempts": 1,
+      "priority": 20
+    },
+    "ops-reconcile-bios-auth": {
+      "name": "Reconcile BIOS auth on production runner",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/ops-reconcile-bios-auth.sh"
+      ],
+      "resources": [
+        {
+          "name": "prod:bios",
+          "mode": "WRITE"
+        },
+        {
+          "name": "prod:gateway",
+          "mode": "READ"
+        }
+      ],
+      "timeout_seconds": 600,
+      "max_attempts": 1,
+      "priority": 70
     }
   }
 }
