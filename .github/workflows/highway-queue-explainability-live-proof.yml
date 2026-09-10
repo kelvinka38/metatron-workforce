@@ -1,0 +1,200 @@
+name: Highway Queue Explainability Live Proof
+
+on:
+  push:
+    branches: [verify/highway-queue-explainability-live]
+    paths:
+      - '.github/workflows/highway-queue-explainability-live-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: highway-queue-explainability-live-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 8
+    env:
+      TARGET_SHA: 88bdf5332cc95d8998209f8dbb12d16f51db72ed
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Wait for exact production runtime closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+
+          FOUND=''
+          for _ in $(seq 1 360); do
+            $CTL list --limit 500 > /tmp/highway-explainability-tasks.json
+            FOUND=$(python3 - /tmp/highway-explainability-tasks.json "$TARGET_SHA" <<'PY'
+          import json,sys
+          rows=[r for r in json.load(open(sys.argv[1])) if r.get('source_sha')==sys.argv[2] and r.get('kind')=='runtime-closure']
+          rows.sort(key=lambda r:r.get('created_at') or '')
+          if not rows:
+              print('')
+          else:
+              r=rows[-1]
+              if r.get('state')=='SUCCEEDED':
+                  print(r['task_id'])
+              elif r.get('state') in ('FAILED','DEAD_LETTERED','BLOCKED','CANCELLED'):
+                  raise SystemExit(f"runtime closure failed: {r}")
+              else:
+                  print('')
+          PY
+          )
+            [ -n "$FOUND" ] && break
+            sleep 1
+          done
+          test -n "$FOUND"
+          echo "EXACT_RUNTIME_CLOSURE_TASK=$FOUND"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          LIVE_HEALTH=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+          test "$LIVE_SHA" = "$TARGET_SHA"
+          test "$LIVE_HEALTH" = healthy
+          echo "HIGHWAY_EXPLAINABILITY_LIVE_SHA=$LIVE_SHA"
+          echo 'HIGHWAY_EXPLAINABILITY_EXACT_RUNTIME=PASS'
+
+      - name: Prove dependency wait explanation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          PFX="why-dep-$GITHUB_RUN_ID"
+
+          PARENT=$($CTL submit --kind fabric-probe-unrelated --source-sha "$TARGET_SHA" --dedupe-key "$PFX-parent" --priority 95             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          CHILD=$($CTL submit --kind fabric-probe-read --source-sha "$TARGET_SHA" --dedupe-key "$PFX-child" --priority 100 --dependency "$PARENT"             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+
+          for _ in $(seq 1 20); do
+            WHY=$($CTL why "$CHILD")
+            REASON=$(printf '%s' "$WHY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["reason"])')
+            [ "$REASON" = DEPENDENCY_WAIT ] && break
+            sleep .05
+          done
+          echo "$WHY"
+          test "$REASON" = DEPENDENCY_WAIT
+          printf '%s' "$WHY" | python3 - "$PARENT" <<'PY'
+          import json,sys
+          d=json.load(sys.stdin); parent=sys.argv[1]
+          assert any(x.get('task_id')==parent and x.get('state') in ('QUEUED','RUNNING') for x in d['dependency_blockers']),d
+          print('HIGHWAY_WHY_DEPENDENCY_WAIT=PASS')
+          PY
+          $CTL wait "$PARENT" --timeout 30 >/dev/null
+          $CTL wait "$CHILD" --timeout 30 >/dev/null
+
+      - name: Prove resource conflict explanation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          PFX="why-lock-$GITHUB_RUN_ID"
+
+          HOLDER=$($CTL submit --kind fabric-probe-write --source-sha "$TARGET_SHA" --dedupe-key "$PFX-holder" --priority 100             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          for _ in $(seq 1 40); do
+            STATE=$($CTL get "$HOLDER" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+            [ "$STATE" = RUNNING ] && break
+            sleep .05
+          done
+          test "$STATE" = RUNNING
+
+          WAITER=$($CTL submit --kind fabric-probe-read --source-sha "$TARGET_SHA" --dedupe-key "$PFX-waiter" --priority 90             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          WHY=$($CTL why "$WAITER")
+          echo "$WHY"
+          printf '%s' "$WHY" | python3 - "$HOLDER" <<'PY'
+          import json,sys
+          d=json.load(sys.stdin); holder=sys.argv[1]
+          assert d['reason']=='RESOURCE_CONFLICT',d
+          assert any(x.get('holderTaskId')==holder and x.get('holderMode')=='WRITE' for x in d['resource_blockers']),d
+          print('HIGHWAY_WHY_RESOURCE_CONFLICT=PASS')
+          PY
+          $CTL wait "$HOLDER" --timeout 30 >/dev/null
+          $CTL wait "$WAITER" --timeout 30 >/dev/null
+
+      - name: Prove executor capacity explanation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          PFX="why-cap-$GITHUB_RUN_ID"
+          IDS=()
+          for n in 1 2 3 4; do
+            ID=$($CTL submit --kind fabric-probe-read --source-sha "$TARGET_SHA" --dedupe-key "$PFX-$n" --priority 100               | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+            IDS+=("$ID")
+          done
+
+          for _ in $(seq 1 60); do
+            RUNNING=0
+            for ID in "${IDS[@]}"; do
+              STATE=$($CTL get "$ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+              [ "$STATE" = RUNNING ] && RUNNING=$((RUNNING+1))
+            done
+            [ "$RUNNING" -eq 4 ] && break
+            sleep .05
+          done
+          test "$RUNNING" -eq 4
+
+          TARGET=$($CTL submit --kind fabric-probe-unrelated --source-sha "$TARGET_SHA" --dedupe-key "$PFX-target" --priority 90             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          WHY=$($CTL why "$TARGET")
+          echo "$WHY"
+          printf '%s' "$WHY" | python3 - <<'PY'
+          import json,sys
+          d=json.load(sys.stdin)
+          assert d['reason']=='EXECUTOR_CAPACITY',d
+          assert d['executor_active']>=d['executor_capacity']>=4,d
+          assert d['executor_available']==0,d
+          assert not d['resource_blockers'],d
+          assert not d['dependency_blockers'],d
+          print('HIGHWAY_WHY_EXECUTOR_CAPACITY=PASS')
+          PY
+          for ID in "${IDS[@]}"; do $CTL wait "$ID" --timeout 30 >/dev/null; done
+          $CTL wait "$TARGET" --timeout 30 >/dev/null
+
+      - name: Prove terminal state explanation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          ID=$($CTL submit --kind fabric-probe-unrelated --source-sha "$TARGET_SHA" --dedupe-key "why-terminal-$GITHUB_RUN_ID"             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          $CTL wait "$ID" --timeout 30 >/dev/null
+          WHY=$($CTL why "$ID")
+          echo "$WHY"
+          printf '%s' "$WHY" | python3 - <<'PY'
+          import json,sys
+          d=json.load(sys.stdin)
+          assert d['reason']=='STATE_SUCCEEDED',d
+          print('HIGHWAY_WHY_TERMINAL_STATE=PASS')
+          print('HIGHWAY_QUEUE_EXPLAINABILITY_LIVE=PASS')
+          PY
