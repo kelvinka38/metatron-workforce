@@ -55,6 +55,7 @@ SYSTEM_STATE_NAMES = {
 
 LOCAL_WORKSPACE_NAMES = {
     "GeneralWorkspaceActionCatalog.java",
+    "ObjectiveWorkspaceService.java",
     "RepositoryWorkspaceMaterializationService.java",
     "AutonomyRecoveryProbeCapability.java",
     "CrossRepositoryAuditAnalysisCapability.java",
