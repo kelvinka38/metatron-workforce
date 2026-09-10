@@ -175,6 +175,19 @@ assert low["economic_model_state"]=="PARTIAL_REFERENCE", low
 assert low["production_volume_kg_range"], low
 assert low["historical_cycle_cost_reference_minor_range"], low
 assert low["capital_required_minor"] is None, low
+# Synthesis v2 must prove Step 1 was actually consumed, not merely decorate a species card.
+trace={x.get("semantic") for x in low.get("decision_trace") or []}
+assert {"CD-01","CD-02","CD-03","CD-04","CD-05","CD-06","CD-07","CD-08"}.issubset(trace), trace
+blueprint=low.get("production_blueprint") or {}
+assert (blueprint.get("area_basis") or {}).get("usable_area_m2")==650.0, blueprint
+assert (blueprint.get("environment_strategy") or {}).get("water_source")=="RIVER", blueprint
+gates={g["rule_id"]:g for g in low.get("gate_results") or []}
+assert gates["AQ-OWNER-NO-COMMERCIAL-FEED"]["result"]=="FAIL", gates
+assert gates["AQ-OWNER-NO-CHEMICAL"]["result"]=="CONDITIONAL", gates
+assert gates["AQ-OWNER-RENEWABLE"]["result"]=="CONDITIONAL", gates
+assert low["eligibility"]=="INELIGIBLE", low
+print("AQ_LIVE_FULL_CONTEXT_TRACE=PASS",sorted(trace))
+print("AQ_LIVE_STRICT_OWNER_INVARIANTS=PASS")
 market=post("/farmer/market",{"case_id":case_id,"farm_id":farm_id})
 scat_market=[x for x in market["evidence"] if x["product"]=="Cá nâu"]
 assert not any((x.get("region") or {}).get("province") in {"Huế","Thừa Thiên Huế"} for x in scat_market), scat_market
@@ -187,7 +200,7 @@ PY
 python3 - <<'PY'
 import json
 d=json.load(open('/tmp/bios-ready.json'))
-assert d["bundle_version"]=="1.2.0", d
+assert d["bundle_version"]=="1.2.1", d
 assert d["counts"]["knowledge"]>=35, d
 assert d["counts"]["market_evidence"]>=6, d
 print("AQ_BUNDLE_1_2=PASS")
@@ -196,6 +209,8 @@ PY
 curl -fsS -D /tmp/aq-decision-js.headers -o /tmp/aq-decision-app.js https://gate.metatron.vn/aquaculture/assets/app.js
 grep -qi '^cache-control: no-store' /tmp/aq-decision-js.headers
 grep -q 'Sản lượng tham chiếu' /tmp/aq-decision-app.js
+grep -q 'CHƯA ĐỦ BẰNG CHỨNG ĐỂ KHUYẾN NGHỊ / CHỐT' /tmp/aq-decision-app.js
+grep -q 'const ready=s.eligibility==="ELIGIBLE"&&Number(s.blocking_unknowns||0)===0&&s.recommendation_state==="FINAL_FOR_CURRENT_EVIDENCE"' /tmp/aq-decision-app.js
 grep -q 'Cam kết mua' /tmp/aq-decision-app.js
 grep -q 'Kế hoạch vận hành derive' /tmp/aq-decision-app.js
 echo 'AQ_DECISION_UX_V12_PUBLIC=PASS'
