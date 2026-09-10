@@ -1,0 +1,71 @@
+name: Aquaculture Synthesis v2 Closure Retry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/aq-synthesis-v2-closure-retry.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Apply closure patch, fix diagnosed market range, test, publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a; source "$BASE/.env"; set +a
+          test -n "${GITHUB_TOKEN:-}"
+          W=/tmp/aq-synthesis-v2-closure-retry
+          rm -rf "$W"
+          git clone --depth 1 --branch aquaculture-decision-synthesis-v2-fix "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/bios.git" "$W"
+
+          # Reuse the already-audited closure transform exactly, then add only the two
+          # issues exposed by that run's full-suite evidence.
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path('.github/workflows/aq-synthesis-v2-closure.yml').read_text()
+          start=wf.index("          python3 - <<'PY'\n")+len("          python3 - <<'PY'\n")
+          end=wf.index("\n          PY\n",start)
+          code=wf[start:end]
+          code='\n'.join(line[10:] if line.startswith('          ') else line for line in code.splitlines())+'\n'
+          Path('/tmp/aq_closure_transform.py').write_text(code)
+          PY
+
+          cd "$W"
+          python3 /tmp/aq_closure_transform.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('bios_runtime/domains/aquaculture/market.py')
+          s=p.read_text()
+          old='''    explicit=target.get("weight_kg") or target.get("volume_kg") or pathway.get("expected_volume_kg")\n    if explicit is not None:\n        try:\n            v=float(explicit);return v,v\n        except (TypeError,ValueError):\n            return None,None\n'''
+          new='''    explicit=target.get("weight_kg") or target.get("volume_kg") or pathway.get("expected_volume_kg")\n    if explicit is not None:\n        if isinstance(explicit,dict):\n            lo,hi=_range_from_quantity(explicit)\n            if lo is not None or hi is not None:\n                return lo,hi\n        else:\n            try:\n                v=float(explicit);return v,v\n            except (TypeError,ValueError):\n                pass\n        # A malformed/stale pathway projection must not erase an economics range.\n'''
+          assert old in s, 'expected-volume projection anchor missing'
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          p=Path('tests/test_aquaculture_execution_bundle.py')
+          s=p.read_text()
+          assert 'self.assertEqual("1.2.0",info["data"]["bundle_version"])' in s
+          s=s.replace('self.assertEqual("1.2.0",info["data"]["bundle_version"])','self.assertEqual("1.2.1",info["data"]["bundle_version"])',1)
+          p.write_text(s)
+          PY
+
+          python3 -m py_compile bios_runtime/domains/aquaculture/services.py bios_runtime/domains/aquaculture/synthesis.py bios_runtime/domains/aquaculture/market.py bios_runtime/domains/aquaculture/rules.py bios_runtime/domains/aquaculture/farmer_workspace.py
+          if command -v node >/dev/null 2>&1; then node --check bios_runtime/domains/aquaculture/web/app.js; fi
+          python3 -m unittest discover -s tests -v
+          git config user.name 'Metatron Selfhosted'
+          git config user.email 'metatron@localhost'
+          git add bios_runtime/domains/aquaculture/services.py bios_runtime/domains/aquaculture/synthesis.py bios_runtime/domains/aquaculture/market.py bios_runtime/domains/aquaculture/web/app.js KNOWLEDGE/DOMAINS/AQUACULTURE/data/vietnam_baseline_v1.json tests/test_aquaculture_correctness_v13.py tests/test_aquaculture_owner_invariants_v2.py tests/test_aquaculture_farmer_ux.py tests/test_aquaculture_execution_bundle.py
+          git commit -m 'fix(aquaculture): close full-context decision synthesis v2'
+          git push origin HEAD:aquaculture-decision-synthesis-v2-fix
+          echo "AQ_SYNTHESIS_V2_CANDIDATE_SHA=$(git rev-parse HEAD)"
+          echo "AQ_SYNTHESIS_V2_FULL_SUITE=PASS"
