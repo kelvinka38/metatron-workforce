@@ -21,7 +21,7 @@ jobs:
       - name: Test exact BIOS candidate SHA
         shell: bash
         env:
-          BIOS_CANDIDATE_SHA: 067f28fb2e280da9bc217459e9cfb410cb72fa0c
+          BIOS_CANDIDATE_SHA: b4f6b7c3f4fce41dd9482efa97ecc1e51dc970d8
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
@@ -30,7 +30,7 @@ jobs:
           set -a; source "$WORKFORCE_BASE/.env"; set +a
           test -n "${GITHUB_TOKEN:-}"
           rm -rf "$STAGE" && mkdir -p "$STAGE"
-          curl -fsSL             -H "Authorization: Bearer $GITHUB_TOKEN"             -H 'Accept: application/vnd.github+json'             "https://api.github.com/repos/kelvinka38/bios/tarball/$BIOS_CANDIDATE_SHA"             | tar -xz -C "$STAGE" --strip-components=1
+          curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/kelvinka38/bios/tarball/$BIOS_CANDIDATE_SHA" | tar -xz -C "$STAGE" --strip-components=1
           cd "$STAGE"
           python3 -m unittest discover -s tests -v
           echo "BIOS_CANDIDATE_TEST=PASS"
