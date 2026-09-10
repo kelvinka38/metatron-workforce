@@ -1,0 +1,43 @@
+name: Aquaculture Pilot Access Inspect
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/aquaculture-pilot-access-inspect.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect active Aquaculture pilot records
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec metatron-bios python3 - <<'PY'
+          import glob, json, os, sqlite3
+          candidates=[]
+          for pattern in ("/data/*.db","/app/*.db","/tmp/*.db","/*.db","/data/**/*.db","/app/**/*.db"):
+              candidates.extend(glob.glob(pattern,recursive=True))
+          seen=set()
+          for path in candidates:
+              if path in seen: continue
+              seen.add(path)
+              try:
+                  db=sqlite3.connect(path); db.row_factory=sqlite3.Row
+                  names={r["name"] for r in db.execute("select name from sqlite_master where type='table'")}
+                  if "aq_field_pilots" not in names: 
+                      db.close(); continue
+                  print("AQ_DB="+path)
+                  pilots=[dict(r) for r in db.execute("select pilot_id,name,owner_actor_id,status,current_phase,authority_ref,created_at from aq_field_pilots order by created_at desc")]
+                  participants=[dict(r) for r in db.execute("select participant_id,pilot_id,subject_id,case_id,farm_id,consent_status,evidence_mode,metadata_json,joined_at from aq_field_participants order by joined_at desc")]
+                  print("PILOTS_JSON="+json.dumps(pilots,ensure_ascii=False))
+                  print("PARTICIPANTS_JSON="+json.dumps(participants,ensure_ascii=False))
+                  db.close()
+              except Exception:
+                  pass
+          PY
