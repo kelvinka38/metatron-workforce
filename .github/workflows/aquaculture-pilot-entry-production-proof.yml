@@ -1,0 +1,121 @@
+name: Aquaculture Pilot Entry Production Proof
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/aquaculture-pilot-entry-production-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 8
+    steps:
+      - name: Prove public Start flow end-to-end
+        shell: bash
+        env:
+          BIOS_EXPECTED_SHA: 067f28fb2e280da9bc217459e9cfb410cb72fa0c
+        run: |
+          set -euo pipefail
+
+          IMAGE=$(docker inspect metatron-bios --format '{{.Config.Image}}')
+          echo "BIOS_IMAGE=$IMAGE"
+          test "$IMAGE" = "metatron-bios:$BIOS_EXPECTED_SHA"
+
+          curl -fsS -D /tmp/aq-entry.headers -o /tmp/aq-entry.html https://gate.metatron.vn/aquaculture
+          curl -fsS -D /tmp/aq-entry-js.headers -o /tmp/aq-entry.js https://gate.metatron.vn/aquaculture/assets/app.js
+          grep -qi '^cache-control: no-store' /tmp/aq-entry-js.headers
+          grep -q 'id="accessBtn"' /tmp/aq-entry.html
+          grep -q '\$("#accessBtn").onclick=' /tmp/aq-entry.js
+          python3 - <<'PY'
+          import re
+          js=open('/tmp/aq-entry.js',encoding='utf-8').read()
+          malformed=re.findall(r'(?m)^\s*(?:async\s+)?function\s+[A-Za-z_$][\w$]*\s*$',js)
+          assert not malformed, malformed
+          assert 'function timeline(events)' in js
+          assert 'function openSale(h)' in js
+          print('AQ_PUBLIC_JS_BINDING=PASS')
+          PY
+
+          BASE="$HOME/.metatron/bios"
+          test -r "$BASE/.env"
+          set -a; source "$BASE/.env"; set +a
+          test -n "${BIOS_API_KEY:-}"
+
+          python3 - "$BIOS_API_KEY" <<'PY' >/tmp/aq-new-invite.json
+          import datetime,json,sys,urllib.request
+          key=sys.argv[1]
+          envelope={
+            "request_id":"aq-entry-proof-reissue",
+            "correlation_id":"aq-entry-proof",
+            "actor_id":"FOUNDER",
+            "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "schema_version":"0.1",
+            "payload":{
+              "case_id":"case_d9b2e6f64a4a4b25a3c52d60339901cf",
+              "participant_id":"aq_field_participant_18913d6d2e3a4adc999c4f207cb50bf8",
+              "invite_days":7
+            }
+          }
+          req=urllib.request.Request(
+            "http://127.0.0.1:18080/v2/product/aquaculture/field/access/reissue",
+            data=json.dumps(envelope).encode(),
+            headers={"Content-Type":"application/json","X-BIOS-API-Key":key},
+            method="POST")
+          with urllib.request.urlopen(req,timeout=30) as r:
+              out=json.load(r)
+          print(json.dumps(out["payload"]["data"]))
+          PY
+
+          CODE=$(python3 -c 'import json; print(json.load(open("/tmp/aq-new-invite.json"))["access_code"])')
+          test -n "$CODE"
+
+          HTTP=$(curl -sS -c /tmp/aq-entry.cookies -o /tmp/aq-exchange.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -X POST https://gate.metatron.vn/v2/product/aquaculture/session/exchange \
+            --data '{"code":"'"$CODE"'"}')
+          test "$HTTP" = "200"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-exchange.json'))
+          assert d.get('status')=='OK',d
+          p=d.get('payload') or {}
+          assert (p.get('context') or {}).get('consent_status')=='GRANTED',p
+          print('AQ_PUBLIC_SESSION_EXCHANGE=PASS')
+          PY
+
+          HTTP=$(curl -sS -b /tmp/aq-entry.cookies -o /tmp/aq-me.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -X POST https://gate.metatron.vn/v2/product/aquaculture/session/me \
+            --data '{}')
+          test "$HTTP" = "200"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-me.json'))
+          assert d.get('status')=='OK',d
+          assert (d.get('payload') or {}).get('consent_status')=='GRANTED',d
+          print('AQ_PUBLIC_SESSION_ME=PASS')
+          PY
+
+          HTTP=$(curl -sS -b /tmp/aq-entry.cookies -o /tmp/aq-workspace.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -X POST https://gate.metatron.vn/v2/product/aquaculture/farmer/workspace \
+            --data '{"payload":{}}')
+          test "$HTTP" = "200"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-workspace.json'))
+          assert d.get('status')=='OK',d
+          data=((d.get('payload') or {}).get('data') or {})
+          assert data.get('stage'),data
+          print('AQ_PUBLIC_WORKSPACE=PASS '+str(data.get('stage')))
+          PY
+
+          EXPIRES=$(python3 -c 'import json; print(json.load(open("/tmp/aq-new-invite.json"))["expires_at"])')
+          echo "AQ_PILOT_ACCESS_CODE=$CODE"
+          echo "AQ_PILOT_ACCESS_LINK=https://gate.metatron.vn/aquaculture?code=$CODE"
+          echo "AQ_PILOT_ACCESS_EXPIRES=$EXPIRES"
+          echo "AQUACULTURE_START_FLOW=PASS"
