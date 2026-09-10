@@ -1,0 +1,39 @@
+name: Aquaculture Current Pilot Decision Inspect
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/aquaculture-current-pilot-decision-inspect.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect current farmer decision state
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="$HOME/.metatron/bios"
+          set -a; source "$BASE/.env"; set +a
+          python3 - "$BIOS_API_KEY" <<'PY'
+          import datetime,json,sys,urllib.request
+          key=sys.argv[1]
+          env={
+            "request_id":"aq-current-pilot-inspect","correlation_id":"aq-current-pilot-inspect",
+            "actor_id":"aq_farmer_b200f732435343a381484488563711fc",
+            "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),"schema_version":"0.1",
+            "payload":{"case_id":"case_d9b2e6f64a4a4b25a3c52d60339901cf","farm_id":"aq_farm_1f612ab9df4248af83275c4121c15cab"}
+          }
+          req=urllib.request.Request('http://127.0.0.1:18080/v2/product/aquaculture/farmer/workspace',data=json.dumps(env).encode(),headers={'Content-Type':'application/json','X-BIOS-API-Key':key},method='POST')
+          with urllib.request.urlopen(req,timeout=30) as r: out=json.load(r)
+          d=out['payload']['data']
+          print('ONBOARDING='+json.dumps(d['onboarding'],ensure_ascii=False))
+          print('STAGE='+str(d['stage']))
+          print('DECISION='+json.dumps(d['decision'],ensure_ascii=False))
+          print('SCENARIOS='+json.dumps(d['scenarios'],ensure_ascii=False))
+          PY
