@@ -31,6 +31,35 @@ Non-negotiable accepted target:
 
 Every relevant future PR must still identify the canonical clauses, domain owners, durability/idempotency/fencing behavior, failure/reconciliation behavior, evidence level and any production gate required by the changed scope.
 
+## FOUNDER-APPROVED SOT ENFORCEMENT PROGRAM — CURRENT EXECUTION GOVERNANCE
+
+Founder approved the SoT Enforcement Detailed Gap Closure on 2026-09-10. This is a post-Autonomy-Closure governance implementation program; it does not reopen the accepted Autonomy Closure.
+
+Before any consequential design, implementation, mutation, deployment, or completion work in this repository, read in this order:
+
+1. upstream canonical `kelvinka38/universal/SOT_DISCOVERY_PROTOCOL.md`;
+2. upstream canonical `kelvinka38/universal/SOT_DERIVATION_PROTOCOL.md`;
+3. upstream canonical `kelvinka38/universal/SOT_CHANGE_CONTROL.md`;
+4. `kelvinka38/metatron-institution/14_EXECUTION/SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md`;
+5. `docs/SOT_ENFORCEMENT_IMPLEMENTATION_DETAIL_CLOSURE.md`;
+6. `docs/SOT_ENFORCEMENT_EXECUTION_PLAN.md` for implementation sequencing.
+
+Until runtime enforcement is fully implemented, every Human/AI/Worker operating through repository tooling MUST manually respect the same boundary:
+
+```text
+NO APPLICABLE SOT DISCOVERY -> NO MATERIAL ACTION
+NO VERIFIED DERIVATION -> NO CONSEQUENTIAL EXECUTION PLAN
+NO APPROVED PLAN -> NO CONSEQUENTIAL MUTATION
+MATERIAL PLAN DEVIATION -> STOP AFFECTED SCOPE + CHANGE PROPOSAL
+MODEL/WORKER COMPLETE CLAIM != INSTITUTIONAL COMPLETION
+```
+
+A reasoning actor may propose a better design outside the currently approved plan, but it MUST classify that as a change proposal. It MUST NOT silently implement that redesign under an existing approval.
+
+Do not create a parallel execution/governance stack. The current implementation design explicitly reuses `ExecutionAdmissionService`, `ExecutionAttemptService`, `ActionFabric`, `CognitiveWorkerRuntime`, management lifecycle, existing lease/fencing and evidence infrastructure.
+
+No model/provider/channel/Worker receives authority merely from confidence, capability, technical credentials, repository write access, or role identity.
+
 ## Status
 
 **MANDATORY REPOSITORY ENTRY POINT**
@@ -122,6 +151,8 @@ For any proposed feature or implementation change:
 3. Does it steal canonical ownership? → REDESIGN using contracts/references.
 4. Is it compliant and valuable? → BUILD THE BEST VERSION.
 ```
+
+After a plan has been approved, step 2 has a stricter execution interpretation: if the better solution materially contradicts the approved plan or governing SoT, stop the affected scope and enter governed change control. Do not silently substitute the new design.
 
 Do not introduce keyword/continuation heuristics as the core semantic architecture for Human language understanding.
 
