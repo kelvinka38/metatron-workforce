@@ -19,37 +19,50 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Inspect MCP runtime without exposing credentials
+      - name: Inspect current MCP runtime and route without exposing credentials
         shell: bash
         run: |
           set -euo pipefail
 
-          echo '===== DOCKER MCP/TUNNEL CANDIDATES ====='
-          docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}' | grep -Ei 'mcp|cloudflare|tunnel' || true
+          echo '===== MCP/TUNNEL CONTAINERS ====='
+          docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}' | grep -Ei 'mcp|cloudflare|tunnel' || true
 
-          echo '===== PROCESS MCP/TUNNEL CANDIDATES ====='
-          ps -ef | grep -Ei '[m]cp|[c]loudflared' | sed -E 's/(token|secret|password|authorization)[^ ]*/REDACTED/Ig' || true
+          MCP_CID=$(docker ps -q --filter name=metatron-ssh-mcp | head -1 || true)
+          CF_CID=$(docker ps -q --filter name=source-cloudflared-1 | head -1 || true)
 
-          echo '===== LISTENERS ====='
-          ss -ltnp 2>/dev/null | grep -E '(:3000|:8080|:18090)\b' || true
+          if [ -n "$MCP_CID" ]; then
+            echo '===== MCP CONTAINER ====='
+            docker inspect "$MCP_CID" --format 'NAME={{.Name}} IMAGE={{.Config.Image}} STATE={{.State.Status}} RESTARTS={{.RestartCount}}'
+            docker inspect "$MCP_CID" --format 'ENTRYPOINT={{json .Config.Entrypoint}} CMD={{json .Config.Cmd}} NETWORKS={{json .NetworkSettings.Networks}}'
+            MCP_IP=$(docker inspect "$MCP_CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+            echo "MCP_CONTAINER_IP=$MCP_IP"
+          else
+            MCP_IP=''
+            echo 'MCP_CONTAINER_MISSING=true'
+          fi
 
-          echo '===== CLOUDFLARE ROUTING CONFIG (NON-SECRET FIELDS ONLY) ====='
-          for cfg in /etc/cloudflared/config.yml /etc/cloudflared/config.yaml "$HOME/.cloudflared/config.yml" "$HOME/.cloudflared/config.yaml"; do
-            if [ -r "$cfg" ]; then
-              echo "CONFIG=$cfg"
-              grep -E '^[[:space:]]*(tunnel:|hostname:|service:|protocol:)' "$cfg" || true
-            fi
-          done
+          if [ -n "$CF_CID" ]; then
+            echo '===== CLOUDFLARED CONTAINER ====='
+            docker inspect "$CF_CID" --format 'NAME={{.Name}} IMAGE={{.Config.Image}} STATE={{.State.Status}} RESTARTS={{.RestartCount}} NETWORKS={{json .NetworkSettings.Networks}}'
+            echo '===== CLOUDFLARED RECENT ROUTE/CONFIG LOGS ====='
+            docker logs --tail 600 "$CF_CID" 2>&1 \
+              | grep -Ei 'config|ingress|hostname|service|mcp|3002|tunnel' \
+              | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig' \
+              | tail -n 160 || true
+          fi
 
-          echo '===== MCP CONTAINER DETAILS ====='
-          while IFS= read -r cid; do
-            [ -n "$cid" ] || continue
-            name=$(docker inspect "$cid" --format '{{.Name}}' | sed 's#^/##')
-            image=$(docker inspect "$cid" --format '{{.Config.Image}}')
-            echo "CONTAINER=$name IMAGE=$image"
-            docker inspect "$cid" --format 'STATE={{.State.Status}} STARTED={{.State.StartedAt}} RESTARTS={{.RestartCount}}'
-            docker inspect "$cid" --format 'CMD={{json .Config.Cmd}} ENTRYPOINT={{json .Config.Entrypoint}} PORTS={{json .NetworkSettings.Ports}}'
-          done < <(docker ps -q --filter name=mcp)
+          echo '===== SAFE LOCAL SOURCE REFERENCES ====='
+          grep -RIl --exclude='*.env' --exclude='.env' --exclude='*token*' --exclude='*secret*' \
+            -E 'mcp\.metatron\.vn|metatron-ssh-mcp|streamableHttpPath|3002' /opt/metatron 2>/dev/null \
+            | head -n 40 || true
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            echo "FILE=$file"
+            grep -En 'mcp\.metatron\.vn|metatron-ssh-mcp|streamableHttpPath|3002|hostname:|service:' "$file" 2>/dev/null \
+              | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig' \
+              | head -n 80 || true
+          done < <(grep -RIl --exclude='*.env' --exclude='.env' --exclude='*token*' --exclude='*secret*' \
+            -E 'mcp\.metatron\.vn|metatron-ssh-mcp|streamableHttpPath|3002' /opt/metatron 2>/dev/null | head -n 20 || true)
 
           probe_get() {
             local url="$1" label="$2"
@@ -58,7 +71,7 @@ jobs:
             code=$(curl -sS --max-time 3 -D "$h" -o "$b" -w '%{http_code}' "$url" || true)
             ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
             echo "$label URL=$url STATUS=$code CONTENT_TYPE=${ctype:-none}"
-            head -c 400 "$b" | tr '\n' ' '; echo
+            head -c 500 "$b" | tr '\n' ' '; echo
             rm -f "$h" "$b"
           }
 
@@ -74,21 +87,29 @@ jobs:
             ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
             session=$(awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
             echo "$label URL=$url STATUS=$code CONTENT_TYPE=${ctype:-none} MCP_SESSION=${session:+present}"
-            head -c 1200 "$b" | sed -E 's/(token|secret|password|authorization)[^,}\"]*/REDACTED/Ig' | tr '\n' ' '; echo
+            head -c 1600 "$b" | sed -E 's/(token|secret|password|authorization)[^,}\"]*/REDACTED/Ig' | tr '\n' ' '; echo
             rm -f "$h" "$b"
           }
 
-          echo '===== LOCAL HTTP PROBES ====='
-          probe_get 'http://127.0.0.1:3000/' 'LOCAL_ROOT'
-          probe_get 'http://127.0.0.1:3000/health' 'LOCAL_HEALTH'
-          probe_get 'http://127.0.0.1:3000/mcp' 'LOCAL_MCP_GET'
-          probe_get 'http://127.0.0.1:3000/sse' 'LOCAL_SSE_GET'
-          probe_init 'http://127.0.0.1:3000/mcp' 'LOCAL_MCP_INIT'
+          if [ -n "$MCP_IP" ]; then
+            echo '===== DIRECT MCP CONTAINER PROBES ====='
+            probe_get "http://$MCP_IP:3002/" 'CONTAINER_ROOT'
+            probe_get "http://$MCP_IP:3002/mcp" 'CONTAINER_MCP_GET'
+            probe_get "http://$MCP_IP:3002/sse" 'CONTAINER_SSE_GET'
+            probe_init "http://$MCP_IP:3002/mcp" 'CONTAINER_MCP_INIT'
+          fi
 
-          echo '===== PUBLIC ROUTE PROBES FROM HOST ====='
+          echo '===== EXTERNAL DNS CHECK VIA PUBLIC RESOLVERS ====='
+          command -v dig >/dev/null 2>&1 && {
+            echo 'DNS_1_1_1_1_A:'; dig +short @1.1.1.1 mcp.metatron.vn A || true
+            echo 'DNS_1_1_1_1_CNAME:'; dig +short @1.1.1.1 mcp.metatron.vn CNAME || true
+            echo 'DNS_8_8_8_8_A:'; dig +short @8.8.8.8 mcp.metatron.vn A || true
+          } || echo 'dig unavailable'
+
+          echo '===== PUBLIC ROUTE PROBES ====='
           probe_get 'https://mcp.metatron.vn/' 'PUBLIC_ROOT'
           probe_get 'https://mcp.metatron.vn/mcp' 'PUBLIC_MCP_GET'
           probe_get 'https://mcp.metatron.vn/sse' 'PUBLIC_SSE_GET'
           probe_init 'https://mcp.metatron.vn/mcp' 'PUBLIC_MCP_INIT'
 
-          echo 'MCP_RUNTIME_AUDIT=PASS'
+          echo 'MCP_RUNTIME_AUDIT_V2=PASS'
