@@ -48,6 +48,7 @@ def main():
     sub.add_parser("stats")
     ls=sub.add_parser("list"); ls.add_argument("--limit",type=int,default=100)
     get=sub.add_parser("get"); get.add_argument("task_id")
+    why=sub.add_parser("why"); why.add_argument("task_id")
     wait=sub.add_parser("wait"); wait.add_argument("task_id"); wait.add_argument("--timeout",type=int,default=900); wait.add_argument("--poll",type=float,default=.5)
     submit=sub.add_parser("submit")
     submit.add_argument("--kind",required=True)
@@ -71,6 +72,8 @@ def main():
         print(json.dumps(request("GET",f"/tasks?limit={a.limit}"),sort_keys=True)); return
     if a.cmd=="get":
         print(json.dumps(request("GET",f"/tasks/{a.task_id}"),sort_keys=True)); return
+    if a.cmd=="why":
+        print(json.dumps(request("GET",f"/tasks/{a.task_id}/explain"),sort_keys=True)); return
     if a.cmd=="wait":
         deadline=time.monotonic()+a.timeout
         while True:
