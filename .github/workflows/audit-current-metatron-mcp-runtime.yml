@@ -19,97 +19,63 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Inspect current MCP runtime and route without exposing credentials
+      - name: Verify current remote MCP endpoint and capability surface
         shell: bash
         run: |
           set -euo pipefail
+          MCP_CID=$(docker ps -q --filter name=metatron-ssh-mcp | head -1)
+          test -n "$MCP_CID"
+          MCP_IP=$(docker inspect "$MCP_CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 
-          echo '===== MCP/TUNNEL CONTAINERS ====='
-          docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}' | grep -Ei 'mcp|cloudflare|tunnel' || true
+          echo '===== CURRENT ROUTE FROM CLOUDFLARED ====='
+          CF_CID=$(docker ps -q --filter name=source-cloudflared-1 | head -1)
+          test -n "$CF_CID"
+          docker logs "$CF_CID" 2>&1 | grep 'Updated to new configuration' | tail -1 \
+            | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig'
 
-          MCP_CID=$(docker ps -q --filter name=metatron-ssh-mcp | head -1 || true)
-          CF_CID=$(docker ps -q --filter name=source-cloudflared-1 | head -1 || true)
+          echo '===== MCP SERVER IMPLEMENTATION SURFACE ====='
+          docker exec "$MCP_CID" sh -lc "grep -En 'server\.tool|registerTool|name:|description:|ssh|exec|github|read|write|command' /app/server.mjs | head -n 220" \
+            | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig' || true
 
-          if [ -n "$MCP_CID" ]; then
-            echo '===== MCP CONTAINER ====='
-            docker inspect "$MCP_CID" --format 'NAME={{.Name}} IMAGE={{.Config.Image}} STATE={{.State.Status}} RESTARTS={{.RestartCount}}'
-            docker inspect "$MCP_CID" --format 'ENTRYPOINT={{json .Config.Entrypoint}} CMD={{json .Config.Cmd}} NETWORKS={{json .NetworkSettings.Networks}}'
-            MCP_IP=$(docker inspect "$MCP_CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
-            echo "MCP_CONTAINER_IP=$MCP_IP"
-          else
-            MCP_IP=''
-            echo 'MCP_CONTAINER_MISSING=true'
+          echo '===== DNS ====='
+          if command -v dig >/dev/null 2>&1; then
+            echo -n 'SSH_METATRON_A='; dig +short @1.1.1.1 ssh.metatron.vn A | tr '\n' ','; echo
+            echo -n 'SSH_METATRON_CNAME='; dig +short @1.1.1.1 ssh.metatron.vn CNAME | tr '\n' ','; echo
+            echo -n 'MCP_METATRON_A='; dig +short @1.1.1.1 mcp.metatron.vn A | tr '\n' ','; echo
           fi
 
-          if [ -n "$CF_CID" ]; then
-            echo '===== CLOUDFLARED CONTAINER ====='
-            docker inspect "$CF_CID" --format 'NAME={{.Name}} IMAGE={{.Config.Image}} STATE={{.State.Status}} RESTARTS={{.RestartCount}} NETWORKS={{json .NetworkSettings.Networks}}'
-            echo '===== CLOUDFLARED RECENT ROUTE/CONFIG LOGS ====='
-            docker logs --tail 600 "$CF_CID" 2>&1 \
-              | grep -Ei 'config|ingress|hostname|service|mcp|3002|tunnel' \
-              | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig' \
-              | tail -n 160 || true
-          fi
-
-          echo '===== SAFE LOCAL SOURCE REFERENCES ====='
-          grep -RIl --exclude='*.env' --exclude='.env' --exclude='*token*' --exclude='*secret*' \
-            -E 'mcp\.metatron\.vn|metatron-ssh-mcp|streamableHttpPath|3002' /opt/metatron 2>/dev/null \
-            | head -n 40 || true
-          while IFS= read -r file; do
-            [ -n "$file" ] || continue
-            echo "FILE=$file"
-            grep -En 'mcp\.metatron\.vn|metatron-ssh-mcp|streamableHttpPath|3002|hostname:|service:' "$file" 2>/dev/null \
-              | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig' \
-              | head -n 80 || true
-          done < <(grep -RIl --exclude='*.env' --exclude='.env' --exclude='*token*' --exclude='*secret*' \
-            -E 'mcp\.metatron\.vn|metatron-ssh-mcp|streamableHttpPath|3002' /opt/metatron 2>/dev/null | head -n 20 || true)
-
-          probe_get() {
-            local url="$1" label="$2"
-            local h b code ctype
+          probe_post() {
+            local url="$1" method="$2" label="$3"
+            local payload h b code ctype session
             h=$(mktemp); b=$(mktemp)
-            code=$(curl -sS --max-time 3 -D "$h" -o "$b" -w '%{http_code}' "$url" || true)
-            ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
-            echo "$label URL=$url STATUS=$code CONTENT_TYPE=${ctype:-none}"
-            head -c 500 "$b" | tr '\n' ' '; echo
-            rm -f "$h" "$b"
-          }
-
-          probe_init() {
-            local url="$1" label="$2"
-            local h b code ctype session
-            h=$(mktemp); b=$(mktemp)
-            code=$(curl -sS --max-time 5 -D "$h" -o "$b" -w '%{http_code}' \
+            if [ "$method" = initialize ]; then
+              payload='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"metatron-mcp-runtime-audit","version":"1.0"}}}'
+            else
+              payload='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+            fi
+            code=$(curl -sS --max-time 8 -D "$h" -o "$b" -w '%{http_code}' \
               -X POST "$url" \
               -H 'Content-Type: application/json' \
               -H 'Accept: application/json, text/event-stream' \
-              --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"metatron-mcp-runtime-audit","version":"1.0"}}}' || true)
+              --data "$payload" || true)
             ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
             session=$(awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
-            echo "$label URL=$url STATUS=$code CONTENT_TYPE=${ctype:-none} MCP_SESSION=${session:+present}"
-            head -c 1600 "$b" | sed -E 's/(token|secret|password|authorization)[^,}\"]*/REDACTED/Ig' | tr '\n' ' '; echo
+            echo "$label STATUS=$code CONTENT_TYPE=${ctype:-none} MCP_SESSION=${session:+present}"
+            head -c 5000 "$b" | sed -E 's/(token|secret|password|authorization)[^,}\"]*/REDACTED/Ig'; echo
             rm -f "$h" "$b"
           }
 
-          if [ -n "$MCP_IP" ]; then
-            echo '===== DIRECT MCP CONTAINER PROBES ====='
-            probe_get "http://$MCP_IP:3002/" 'CONTAINER_ROOT'
-            probe_get "http://$MCP_IP:3002/mcp" 'CONTAINER_MCP_GET'
-            probe_get "http://$MCP_IP:3002/sse" 'CONTAINER_SSE_GET'
-            probe_init "http://$MCP_IP:3002/mcp" 'CONTAINER_MCP_INIT'
-          fi
+          echo '===== DIRECT CONTAINER MCP ====='
+          probe_post "http://$MCP_IP:3002/mcp" initialize 'LOCAL_INIT_NO_AUTH'
+          probe_post "http://$MCP_IP:3002/mcp" tools 'LOCAL_TOOLS_NO_AUTH'
 
-          echo '===== EXTERNAL DNS CHECK VIA PUBLIC RESOLVERS ====='
-          command -v dig >/dev/null 2>&1 && {
-            echo 'DNS_1_1_1_1_A:'; dig +short @1.1.1.1 mcp.metatron.vn A || true
-            echo 'DNS_1_1_1_1_CNAME:'; dig +short @1.1.1.1 mcp.metatron.vn CNAME || true
-            echo 'DNS_8_8_8_8_A:'; dig +short @8.8.8.8 mcp.metatron.vn A || true
-          } || echo 'dig unavailable'
+          echo '===== PUBLIC CURRENT MCP ====='
+          probe_post 'https://ssh.metatron.vn/mcp' initialize 'PUBLIC_INIT_NO_AUTH'
+          probe_post 'https://ssh.metatron.vn/mcp' tools 'PUBLIC_TOOLS_NO_AUTH'
 
-          echo '===== PUBLIC ROUTE PROBES ====='
-          probe_get 'https://mcp.metatron.vn/' 'PUBLIC_ROOT'
-          probe_get 'https://mcp.metatron.vn/mcp' 'PUBLIC_MCP_GET'
-          probe_get 'https://mcp.metatron.vn/sse' 'PUBLIC_SSE_GET'
-          probe_init 'https://mcp.metatron.vn/mcp' 'PUBLIC_MCP_INIT'
+          echo '===== RETIRED/HISTORICAL MCP HOSTNAME ====='
+          set +e
+          curl -sS --max-time 5 -o /dev/null -w 'MCP_METATRON_HTTP=%{http_code}\n' https://mcp.metatron.vn/mcp
+          set -e
 
-          echo 'MCP_RUNTIME_AUDIT_V2=PASS'
+          echo 'MCP_CURRENT_ENDPOINT_AUDIT=PASS'
