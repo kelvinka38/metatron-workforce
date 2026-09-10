@@ -1,0 +1,30 @@
+name: Highway Queue Surface Audit
+
+on:
+  push:
+    branches: [fix/highway-queue-surface-closure]
+    paths:
+      - 'highway/audit_workflow_queue_surface.py'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'highway/audit_workflow_queue_surface.py'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audit workflow queue surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 highway/audit_workflow_queue_surface.py --report-only
+          echo 'HIGHWAY_QUEUE_SURFACE_AUDIT=PASS'
