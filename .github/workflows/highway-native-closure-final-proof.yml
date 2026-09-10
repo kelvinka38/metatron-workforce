@@ -1,0 +1,109 @@
+name: Highway Native Closure Final Proof
+
+on:
+  push:
+    branches: [verify/highway-native-closure-final]
+    paths:
+      - '.github/workflows/highway-native-closure-final-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: highway-native-closure-final-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    env:
+      TARGET_SHA: 2f32d4a1b0d7a7ef4dfafa7f0d39ef78c33171f4
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read native Highway closure evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+
+          FINAL_STATE=""
+          for _ in $(seq 1 240); do
+            $CTL list --limit 500 > /tmp/highway-final-tasks.json
+            RESULT=$(python3 - /tmp/highway-final-tasks.json "$TARGET_SHA" <<'PY'
+          import json,sys
+          rows=[r for r in json.load(open(sys.argv[1])) if r.get('source_sha')==sys.argv[2]]
+          by={}
+          for r in rows:
+              by.setdefault(r['kind'],[]).append(r)
+          for values in by.values():
+              values.sort(key=lambda r:r.get('created_at') or '')
+          latest={k:v[-1] for k,v in by.items()}
+          for kind in ('workforce-build','workforce-deploy'):
+              r=latest.get(kind)
+              if r and r.get('state') in ('FAILED','DEAD_LETTERED','BLOCKED','CANCELLED'):
+                  print('FAILED:'+kind+':'+r.get('state','')+':'+r.get('failure',''))
+                  raise SystemExit
+          r=latest.get('runtime-closure')
+          if r and r.get('state') in ('SUCCEEDED','FAILED','DEAD_LETTERED','BLOCKED','CANCELLED'):
+              print('TERMINAL:'+r['state']+':'+r['task_id'])
+          else:
+              print('WAIT')
+          PY
+          )
+            case "$RESULT" in
+              FAILED:*) echo "$RESULT"; FINAL_STATE="$RESULT"; break ;;
+              TERMINAL:*) echo "$RESULT"; FINAL_STATE="$RESULT"; break ;;
+            esac
+            sleep 1
+          done
+          test -n "$FINAL_STATE"
+
+          $CTL list --limit 500 > /tmp/highway-final-tasks.json
+          python3 - /tmp/highway-final-tasks.json "$TARGET_SHA" /tmp/highway-final-selected.json <<'PY'
+          import json,sys
+          rows=[r for r in json.load(open(sys.argv[1])) if r.get('source_sha')==sys.argv[2]]
+          kinds=('workforce-build','workforce-deploy','production-highway-fast','work-observability','control-room-fast','runtime-closure')
+          out={}
+          for kind in kinds:
+              candidates=[r for r in rows if r.get('kind')==kind]
+              candidates.sort(key=lambda r:r.get('created_at') or '')
+              if candidates: out[kind]=candidates[-1]
+          print(json.dumps(out,indent=2,sort_keys=True))
+          json.dump(out,open(sys.argv[3],'w'),indent=2,sort_keys=True)
+          missing=[k for k in kinds if k not in out]
+          assert not missing, f"MISSING={missing}"
+          for kind,row in out.items():
+              assert row.get('state')=='SUCCEEDED', f"{kind}:{row.get('state')}:{row.get('failure','')}"
+              print(f"FINAL_TASK kind={kind} id={row['task_id']} state={row['state']} started={row.get('started_at')} finished={row.get('finished_at')}")
+          PY
+
+          CLOSURE_LOG=$(python3 - /tmp/highway-final-selected.json <<'PY'
+          import json,sys
+          print(json.load(open(sys.argv[1]))['runtime-closure']['log_path'])
+          PY
+          )
+          test -r "$CLOSURE_LOG"
+          echo '===== NATIVE RUNTIME CLOSURE LOG ====='
+          cat "$CLOSURE_LOG"
+
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          LIVE_HEALTH=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+          echo "FINAL_LIVE_WORKFORCE_SHA=$LIVE_SHA"
+          echo "FINAL_LIVE_WORKFORCE_HEALTH=$LIVE_HEALTH"
+          test "$LIVE_SHA" = "$TARGET_SHA"
+          test "$LIVE_HEALTH" = healthy
+          grep -q 'HIGHWAY_RUNTIME_CLOSURE=PASS' "$CLOSURE_LOG"
+          grep -q 'HIGHWAY_POST_DEPLOY_PARALLEL_FANOUT=PASS' "$CLOSURE_LOG"
+          grep -q 'HIGHWAY_BUILD_DEPLOY_DAG=PASS' "$CLOSURE_LOG"
+          grep -q 'HIGHWAY_LIVE_EXACT_SHA=PASS' "$CLOSURE_LOG"
+          echo 'HIGHWAY_FINAL_NATIVE_CLOSURE_PROOF=PASS'
