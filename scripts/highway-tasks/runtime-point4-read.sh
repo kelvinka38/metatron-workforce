@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${GITHUB_RUN_ID:=${HIGHWAY_TASK_ID//[^0-9]/}}"
+export GITHUB_RUN_ID
+set -euo pipefail
+BASE=/opt/metatron/metatron-workforce
+OUT=/tmp/runtime-conformance-point4-read-${GITHUB_RUN_ID}
+mkdir -p "$OUT"
+test -r "$BASE/.env"
+set -a; source "$BASE/.env"; set +a
+test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+test -n "$CID"
+LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+test "$LIVE_SHA" = "$TARGET_SHA"
+test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+echo "POINT4_READ_TARGET_SHA=$TARGET_SHA"
+echo "POINT4_READ_LIVE_SHA=$LIVE_SHA"
+
+UPDATE_ID=$(date +%s%N | cut -c1-18)
+TEXT='Take ownership of one Objective: perform a governed single-repository read-only audit of kelvinka38/bios using the available repository audit capability, verify it through Observation, and deliver the resulting evidence. Do not mutate anything and do not perform cross-repository analysis.'
+python3 - "$TELEGRAM_ALLOWED_USER_ID" "$UPDATE_ID" "$TEXT" > "$OUT/request.json" <<'PY'
+import json,sys
+uid=int(sys.argv[1]); update=int(sys.argv[2]); text=sys.argv[3]
+print(json.dumps({'update_id':update,'message':{'message_id':update%2000000000,'from':{'id':uid,'is_bot':False,'first_name':'Founder'},'chat':{'id':uid,'type':'private'},'date':0,'text':text}}))
+PY
+STATUS=$(curl -sS -o "$OUT/response.json" -w '%{http_code}' --proto '=https' --tlsv1.2 --max-time 20 \
+  -X POST https://gate.metatron.vn/telegram/webhook \
+  -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
+  -H 'Content-Type: application/json' --data-binary "@$OUT/request.json")
+test "$STATUS" = 200
+echo 'POINT4_READ_NATURAL_OBJECTIVE_INGRESS=PASS'
+
+OID=''
+for _ in $(seq 1 150); do
+  curl -fsS --max-time 5 http://127.0.0.1:8080/workforce/management/objectives > "$OUT/objectives.json" || true
+  OID=$(python3 - "$OUT/objectives.json" "$UPDATE_ID" <<'PY' || true
+import json,sys
+try: rows=json.load(open(sys.argv[1]))
+except Exception: raise SystemExit(1)
+needle=f'telegram:update:{sys.argv[2]}'
+ids=[]
+for row in rows if isinstance(rows,list) else []:
+    if needle in json.dumps(row,sort_keys=True):
+        obj=row.get('objective') or {}; oid=obj.get('objectiveId') or obj.get('objective_id')
+        if oid: ids.append(oid)
+ids=list(dict.fromkeys(ids))
+if len(ids)!=1: raise SystemExit(1)
+print(ids[0])
+PY
+  )
+  [ -n "$OID" ] && break
+  sleep 2
+done
+test -n "$OID"
+echo "POINT4_READ_OBJECTIVE_ID=$OID"
+
+TERMINAL=''
+for _ in $(seq 1 450); do
+  curl -fsS --max-time 5 "http://127.0.0.1:8080/workforce/management/objectives/$OID" > "$OUT/objective.json" || true
+  TERMINAL=$(python3 - "$OUT/objective.json" <<'PY'
+import json,sys
+try: print((json.load(open(sys.argv[1])).get('objective') or {}).get('status',''))
+except Exception: print('')
+PY
+  )
+  case "$TERMINAL" in
+    COMPLETED|DELIVERED) break ;;
+    BLOCKED|ESCALATED|CANCELLED|FAILED) echo "POINT4_READ_BAD_TERMINAL=$TERMINAL" >&2; exit 2 ;;
+  esac
+  sleep 2
+done
+case "$TERMINAL" in COMPLETED|DELIVERED) ;; *) echo 'POINT4_READ_TERMINAL_TIMEOUT' >&2; exit 1 ;; esac
+echo "POINT4_READ_OBJECTIVE_TERMINAL=$TERMINAL"
+
+JOURNAL=$(docker exec "$CID" sh -c "grep -R -l -F '\"objectiveId\":\"$OID\"' /var/lib/metatron-workforce/runtime-evidence/action-journal 2>/dev/null | tail -1" || true)
+test -n "$JOURNAL"
+docker exec "$CID" cat "$JOURNAL" > "$OUT/action-journal.jsonl"
+python3 - "$OUT/action-journal.jsonl" <<'PY'
+import json,sys
+rows=[json.loads(line) for line in open(sys.argv[1],encoding='utf-8') if line.strip()]
+actions=[r.get('thoughtAction') for r in rows]
+assert len(rows)>=4, len(rows)
+assert actions[:3]==[
+  'github.repository.metadata.read',
+  'github.repository.head.read',
+  'github.repository.tree.read'], actions[:3]
+assert all(a=='github.repository.content.inspect' for a in actions[3:]), actions[3:]
+assert [r.get('cycle') for r in rows]==list(range(1,len(rows)+1))
+assert all(r.get('workerId')=='WORKER-REPOSITORY-AUDITOR' for r in rows)
+assert all(r.get('authorizationReference')=='authorization:founder-readonly-repository-audit:v1' for r in rows)
+assignments={r.get('assignmentReference') for r in rows}
+assert len(assignments)==1 and None not in assignments and '' not in assignments, assignments
+assert all(r.get('actionSuccess') is True for r in rows)
+assert rows[-1].get('reflection')=='COMPLETE'
+assert all(r.get('reflection')=='CONTINUE' for r in rows[:-1])
+assert all('merge' not in str(a).lower() and 'write' not in str(a).lower() for a in actions)
+print('POINT4_READ_COGNITIVE_SEQUENCE=PASS')
+print('POINT4_READ_PER_ACTION_WORKER_ATTRIBUTION=PASS')
+print('POINT4_READ_PER_ACTION_AUTHORIZATION=PASS')
+print('POINT4_READ_OBSERVATION_DRIVEN_REFLECTION=PASS')
+print('POINT4_READ_ONLY_ACTION_CATALOG=PASS')
+PY
+
+REPORT=$(docker exec "$CID" sh -c "grep -R -l -F 'executionModel=cognitive-action-fabric' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | xargs -r grep -l -F 'repository=kelvinka38/bios' | tail -1" || true)
+test -n "$REPORT"
+docker exec "$CID" cat "$REPORT" > "$OUT/repository-audit-report.txt"
+grep -F 'source=gateway-egress/github-api' "$OUT/repository-audit-report.txt" >/dev/null
+grep -F 'verdict=PASS' "$OUT/repository-audit-report.txt" >/dev/null
+docker exec "$CID" sh -c "grep -F '$OID' /var/lib/metatron-workforce/observation-state.json >/dev/null && grep -F 'PASS' /var/lib/metatron-workforce/observation-state.json >/dev/null"
+test "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy
+FINAL_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+test "$FINAL_SHA" = "$TARGET_SHA"
+echo 'POINT4_READ_REAL_GITHUB_TOOL_EVIDENCE=PASS'
+echo 'POINT4_READ_INDEPENDENT_OBSERVATION=PASS'
+echo 'POINT4_READ_EXACT_SHA_STABLE=PASS'
+echo 'RUNTIME_CONFORMANCE_POINT4_READ=PASS'
