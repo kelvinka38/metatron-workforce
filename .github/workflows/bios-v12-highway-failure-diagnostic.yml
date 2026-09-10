@@ -1,0 +1,54 @@
+name: BIOS v1.2 Highway Failure Diagnostic
+
+on:
+  push:
+    branches: [verify/bios-v12-highway-failure]
+    paths:
+      - '.github/workflows/bios-v12-highway-failure-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read exact Highway task failure and live BIOS state
+        shell: bash
+        env:
+          TASK_ID: hw-6beb374101bf42a6868b
+          EXPECTED_BIOS_SHA: 5b3e39428c0a7f50cc0f16c0b39162ce7960097e
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+
+          echo '===== TASK ====='
+          $CTL get "$TASK_ID"
+          echo '===== EXPLAIN ====='
+          $CTL why "$TASK_ID" || true
+
+          LOG="$HOME/.metatron/highway/state/logs/$TASK_ID.log"
+          test -r "$LOG"
+          echo '===== TASK LOG ====='
+          cat "$LOG"
+
+          echo '===== BIOS LIVE ====='
+          CID=$(docker ps --filter name=metatron-bios --format '{{.ID}}' | head -1 || true)
+          echo "BIOS_CID=$CID"
+          if [ -n "$CID" ]; then
+            docker inspect "$CID" --format 'BIOS_IMAGE={{.Config.Image}}'
+            docker inspect "$CID" --format 'BIOS_STATE={{.State.Status}} HEALTH={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
+          fi
+
+          echo '===== GATEWAY/BIOS HEALTH ====='
+          curl -sS -i --max-time 10 http://127.0.0.1:18080/health/ready || true
+          echo
+          curl -sS -i --max-time 10 https://gate.metatron.vn/v2/product/aquaculture/release || true
