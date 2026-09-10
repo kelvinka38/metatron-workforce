@@ -29,6 +29,8 @@ on:
       - '.github/workflows/ops-one-shot-p10-closure-71f2973.yml'
       - '.github/workflows/workforce-autonomy-p10-gs12-to-gs34.yml'
       - '.github/workflows/highway-conformance-ci.yml'
+      - '.github/workflows/highway-execution-fabric-acceptance.yml'
+      - 'highway/**'
   workflow_dispatch:
 
 permissions:
@@ -36,7 +38,7 @@ permissions:
 
 jobs:
   topology:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7

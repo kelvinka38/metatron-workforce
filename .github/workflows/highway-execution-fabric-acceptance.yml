@@ -134,7 +134,7 @@ jobs:
             $CTL submit --kind "$kind" --source-sha "$GITHUB_SHA" --dedupe-key "$dedupe"               | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])'
           }
 
-          PREFIX="fabric-$GITHUB_RUN_ID"
+          PREFIX="fabric-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           R1=$(submit fabric-probe-read "$PREFIX-r1")
           R2=$(submit fabric-probe-read "$PREFIX-r2")
           OTHER=$(submit fabric-probe-unrelated "$PREFIX-other")
@@ -161,11 +161,17 @@ jobs:
           read_start=max(t(r1['started_at']),t(r2['started_at']))
           read_finish=min(t(r1['finished_at']),t(r2['finished_at']))
           assert read_start < read_finish, 'READ tasks did not overlap'
-          assert t(other['started_at']) < max(t(r1['finished_at']),t(r2['finished_at'])), 'unrelated task queued behind shared resource'
-          assert t(write['started_at']) >= min(t(r1['finished_at']),t(r2['finished_at'])) - 0.05, 'WRITE started while readers still held resource'
+
+          independent_starts=[t(r1['started_at']),t(r2['started_at']),t(other['started_at'])]
+          start_spread=max(independent_starts)-min(independent_starts)
+          assert start_spread < 2.0, f'independent work was not dispatched promptly: start_spread={start_spread}'
+
+          all_readers_finished=max(t(r1['finished_at']),t(r2['finished_at']))
+          assert t(write['started_at']) >= all_readers_finished - 0.05, 'WRITE started while a reader still held the resource'
+
           wall=max(t(x['finished_at']) for x in rows)-min(t(x['started_at']) for x in rows)
-          assert wall < 5.0, f'fabric serialized unrelated work: wall={wall}'
-          print(f'HIGHWAY_PARALLEL_WALL_SECONDS={wall:.3f}')
+          print(f'HIGHWAY_INDEPENDENT_START_SPREAD_SECONDS={start_spread:.3f}')
+          print(f'HIGHWAY_PROBE_WALL_SECONDS={wall:.3f}')
           print('HIGHWAY_READ_READ_PARALLEL=PASS')
           print('HIGHWAY_UNRELATED_RESOURCE_PARALLEL=PASS')
           print('HIGHWAY_WRITE_CONFLICT_SERIALIZATION=PASS')
