@@ -16,10 +16,15 @@ public final class GovernanceAdmissionValidator {
         this.planConformance = Objects.requireNonNull(planConformance);
     }
 
-    public ExecutionPlanBinding validate(String objectiveId, ExecutionWorkSpec work,
+    public ExecutionPlanBinding validate(ExecutionWorkSpec work,
                                          String authoritySnapshotId, String derivationReceiptId,
                                          String planId, int planVersion) {
         Objects.requireNonNull(work, "work");
+        if (planVersion < 1) throw new GovernanceDeniedException("PLAN_NOT_APPROVED", "plan version missing");
+        ExecutionPlanBinding plan = store.planBinding(require(planId, "PLAN_NOT_APPROVED"), planVersion)
+                .orElseThrow(() -> new GovernanceDeniedException("PLAN_NOT_APPROVED", "plan binding not found"));
+        String objectiveId = plan.objectiveId();
+
         AuthoritySnapshot snapshot = store.snapshot(require(authoritySnapshotId, "SOT_DISCOVERY_REQUIRED"))
                 .orElseThrow(() -> new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED", "authority snapshot not found"));
         freshness.requireCurrent(snapshot);
@@ -27,17 +32,15 @@ public final class GovernanceAdmissionValidator {
 
         DerivationReceipt receipt = store.derivationReceipt(require(derivationReceiptId, "DERIVATION_UNVERIFIED"))
                 .orElseThrow(() -> new GovernanceDeniedException("DERIVATION_UNVERIFIED", "receipt not found"));
-        if (!receipt.executableCandidate() || !receipt.authoritySnapshotId().equals(snapshot.snapshotId())
+        if (!receipt.executableCandidate() || !receipt.objectiveId().equals(objectiveId)
+                || !receipt.authoritySnapshotId().equals(snapshot.snapshotId())
                 || !receipt.authorityDigest().equals(snapshot.digest()) || !receipt.workDigest().equals(WorkDigests.digest(work))) {
             throw new GovernanceDeniedException("DERIVATION_UNVERIFIED", "receipt does not match current work/authority");
         }
 
-        if (planVersion < 1) throw new GovernanceDeniedException("PLAN_NOT_APPROVED", "plan version missing");
-        ExecutionPlanBinding plan = store.planBinding(require(planId, "PLAN_NOT_APPROVED"), planVersion)
-                .orElseThrow(() -> new GovernanceDeniedException("PLAN_NOT_APPROVED", "plan binding not found"));
-        if (!plan.objectiveId().equals(objectiveId) || !plan.authoritySnapshotId().equals(snapshot.snapshotId())
-                || !plan.authorityDigest().equals(snapshot.digest()) || !plan.derivationReceiptId().equals(receipt.receiptId())) {
-            throw new GovernanceDeniedException("PLAN_BINDING_MISMATCH", "plan authority/receipt/objective mismatch");
+        if (!plan.authoritySnapshotId().equals(snapshot.snapshotId()) || !plan.authorityDigest().equals(snapshot.digest())
+                || !plan.derivationReceiptId().equals(receipt.receiptId())) {
+            throw new GovernanceDeniedException("PLAN_BINDING_MISMATCH", "plan authority/receipt mismatch");
         }
         planConformance.requireWork(plan, work);
         ExecutionPlanBinding active = store.approvedPlanForStep(objectiveId, work.stepId())
