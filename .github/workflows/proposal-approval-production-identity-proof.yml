@@ -1,0 +1,33 @@
+name: Proposal Approval Production Identity Proof
+
+on:
+  push:
+    branches: [verify/proposal-before-approval-live]
+    paths:
+      - '.github/workflows/proposal-approval-production-identity-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 3
+    env:
+      TARGET_SHA: af8b56ba55cea2c52825a90b97442b5355746f48
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify exact production identity and health
+        shell: bash
+        run: |
+          set -euo pipefail
+          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+          test -n "$CID"
+          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          LIVE_HEALTH=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+          echo "PROPOSAL_APPROVAL_PRODUCTION_SHA=$LIVE_SHA"
+          echo "PROPOSAL_APPROVAL_PRODUCTION_HEALTH=$LIVE_HEALTH"
+          test "$LIVE_SHA" = "$TARGET_SHA"
+          test "$LIVE_HEALTH" = healthy
+          curl -fsS --max-time 5 http://127.0.0.1:8080/actuator/health | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'
+          echo 'PROPOSAL_APPROVAL_PRODUCTION_IDENTITY=PASS'
