@@ -49,19 +49,19 @@ concurrency:
 jobs:
   topology:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Enforce SoT execution gate contracts before topology audit
+      - name: Enforce full build and SoT execution gate contracts before topology audit
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/sot_enforcement/inventory.py
           chmod +x gradlew
-          ./gradlew test --no-daemon --max-workers=1 \
-            --tests 'com.metatron.workforce.execution.governance.SotEnforcementRuntimeTest' \
-            --tests 'com.metatron.workforce.architecture.SotEnforcementArchitectureTest'
+          ./gradlew clean test bootJar --no-daemon --max-workers=1
+          METATRON_SANDBOX_TOKEN=compose-validation-only docker compose -f deploy/docker-compose.yml config >/dev/null
           echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
+          echo 'HIGHWAY_FULL_BUILD_PR_GATE=PASS'
       - name: Enforce single PR queue surface and fabric contracts
         shell: bash
         run: |
