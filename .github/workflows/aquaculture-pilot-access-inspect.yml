@@ -18,7 +18,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker exec metatron-bios python3 - <<'PY'
+          docker exec -i metatron-bios python3 - <<'PY'
           import glob, json, os, sqlite3
           candidates=[]
           for pattern in ("/data/*.db","/app/*.db","/tmp/*.db","/*.db","/data/**/*.db","/app/**/*.db"):
