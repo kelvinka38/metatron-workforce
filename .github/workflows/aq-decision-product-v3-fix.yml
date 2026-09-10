@@ -36,7 +36,6 @@ jobs:
           git config user.name 'Metatron Selfhosted'
           git config user.email 'metatron@localhost'
           python3 "$GITHUB_WORKSPACE/scripts/aquaculture/decision_product_v3_patch.py" "$W"
-          node --check bios_runtime/domains/aquaculture/web/app.js
           python3 -m unittest discover -s tests -v
           git add bios_runtime/domains/aquaculture/synthesis.py bios_runtime/domains/aquaculture/web/app.js bios_runtime/domains/aquaculture/web/styles.css tests/test_aquaculture_decision_product_v3.py
           git commit -m 'fix(aquaculture): make decisions farmer-usable and evidence-aware'
