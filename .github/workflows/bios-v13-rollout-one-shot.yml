@@ -28,7 +28,7 @@ jobs:
       - name: Submit and wait for BIOS v1.3 rollout
         shell: bash
         env:
-          BIOS_REQUESTED_SHA: 73a09c944841ccb6be6c76a5cf70f1f22a165a50
+          BIOS_REQUESTED_SHA: 067f28fb2e280da9bc217459e9cfb410cb72fa0c
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
@@ -41,7 +41,7 @@ jobs:
           TASK=$($CTL submit \
             --kind bios-deploy \
             --source-sha "$GITHUB_SHA" \
-            --dedupe-key "bios-deploy:73a09c944841ccb6be6c76a5cf70f1f22a165a50:v13-rollout" \
+            --dedupe-key "bios-deploy:067f28fb2e280da9bc217459e9cfb410cb72fa0c:v13-entry-hotfix" \
             --priority 100 \
             --env "BIOS_REQUESTED_SHA=$BIOS_REQUESTED_SHA" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
