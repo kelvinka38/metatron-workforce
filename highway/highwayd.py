@@ -221,6 +221,57 @@ class HighwayStore:
                 "locks": [dict(r) for r in locks],
             }
 
+    def queue_blockers(self, task_id: str) -> dict[str, Any] | None:
+        with self.conn() as c:
+            row = c.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if not row:
+                return None
+            task = dict(row)
+            deps = json.loads(task["dependencies_json"])
+            dep_rows = []
+            if deps:
+                rows = c.execute(
+                    f"SELECT task_id,state,failure FROM tasks WHERE task_id IN ({','.join('?' for _ in deps)})",
+                    deps,
+                ).fetchall()
+                found = {r["task_id"]: dict(r) for r in rows}
+                for dep in deps:
+                    dep_rows.append(found.get(dep, {
+                        "task_id": dep,
+                        "state": "MISSING",
+                        "failure": "dependency-not-found",
+                    }))
+
+            resources = json.loads(task["resources_json"])
+            lock_rows = c.execute(
+                "SELECT task_id,resource_name,mode,acquired_at FROM resource_locks WHERE task_id<>? ORDER BY acquired_at",
+                (task_id,),
+            ).fetchall()
+            resource_blockers = []
+            for lock in lock_rows:
+                for candidate_name, candidate_mode in resources.items():
+                    if not resource_names_conflict(candidate_name, lock["resource_name"]):
+                        continue
+                    if candidate_mode == "READ" and lock["mode"] == "READ":
+                        continue
+                    resource_blockers.append({
+                        "candidateResource": candidate_name,
+                        "candidateMode": candidate_mode,
+                        "holderTaskId": lock["task_id"],
+                        "holderResource": lock["resource_name"],
+                        "holderMode": lock["mode"],
+                        "acquiredAt": lock["acquired_at"],
+                    })
+
+            return {
+                "task_id": task_id,
+                "state": task["state"],
+                "priority": task["priority"],
+                "created_at": task["created_at"],
+                "dependencies": dep_rows,
+                "resource_blockers": resource_blockers,
+            }
+
     def _dependencies_state(self, c: sqlite3.Connection, deps: list[str]) -> tuple[bool, bool]:
         if not deps:
             return True, False
@@ -374,6 +425,43 @@ class HighwayFabric:
         task = self.store.create_task(payload, self.registry)
         self._github_status(task, "pending", "queued")
         return self.public_task(task)
+
+    def explain_task(self, task_id: str) -> dict[str, Any] | None:
+        structural = self.store.queue_blockers(task_id)
+        if structural is None:
+            return None
+
+        with self.active_lock:
+            active = len(self.active)
+
+        state = structural["state"]
+        reason = f"STATE_{state}"
+        dependency_blockers = []
+        if state == "QUEUED":
+            dependency_blockers = [
+                row for row in structural["dependencies"]
+                if row.get("state") != "SUCCEEDED"
+            ]
+            terminal_dependency_states = {"FAILED", "DEAD_LETTERED", "BLOCKED", "CANCELLED", "MISSING"}
+            if any(row.get("state") in terminal_dependency_states for row in dependency_blockers):
+                reason = "DEPENDENCY_FAILED_OR_MISSING"
+            elif dependency_blockers:
+                reason = "DEPENDENCY_WAIT"
+            elif structural["resource_blockers"]:
+                reason = "RESOURCE_CONFLICT"
+            elif active >= self.executors:
+                reason = "EXECUTOR_CAPACITY"
+            else:
+                reason = "SCHEDULABLE"
+
+        return {
+            **structural,
+            "reason": reason,
+            "dependency_blockers": dependency_blockers,
+            "executor_active": active,
+            "executor_capacity": self.executors,
+            "executor_available": max(0, self.executors - active),
+        }
 
     def public_task(self, task: dict[str, Any]) -> dict[str, Any]:
         out = dict(task)
@@ -566,6 +654,17 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/stats":
             self._json(200, self.fabric.store.stats())
+            return
+        if self.path.startswith("/tasks/") and self.path.endswith("/explain"):
+            task_id = self.path[len("/tasks/"):-len("/explain")].strip("/")
+            if not task_id:
+                self._json(404, {"error": "not_found"})
+                return
+            explanation = self.fabric.explain_task(task_id)
+            if not explanation:
+                self._json(404, {"error": "not_found"})
+            else:
+                self._json(200, explanation)
             return
         if self.path.startswith("/tasks/"):
             task_id = self.path.split("/", 2)[2]
