@@ -133,7 +133,7 @@ public final class ActionFabric {
             }
             executionGate.requirePermitMatches(permit, request.objectiveId(), request.workerId(),
                     request.assignmentReference(), request.authorizationReference(), request.workStepId(),
-                    request.actionRef(), Instant.now());
+                    request.actionRef());
         }
 
         ActionObservation observation = Objects.requireNonNull(action.invoke(request), "action observation");
