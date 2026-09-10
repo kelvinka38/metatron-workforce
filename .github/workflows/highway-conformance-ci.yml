@@ -37,6 +37,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: highway-conformance-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   topology:
     runs-on: [self-hosted, linux, x64, metatron-prod]
