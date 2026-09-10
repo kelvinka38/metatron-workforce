@@ -35,11 +35,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Publish immutable exact-SHA release
+      - name: Activate exact-SHA Highway control plane and release
         shell: bash
         run: |
           set -euo pipefail
-          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          test "$(cat "$HOME/.metatron/highway/releases/$GITHUB_SHA/.highway-source-sha")" = "$GITHUB_SHA"
+          grep -q '"runtime-closure"' "$HOME/.metatron/highway/current/task-registry.json"
+          echo 'HIGHWAY_EXACT_CONTROL_PLANE_ACTIVE=PASS'
 
       - name: Submit build and deploy DAG to persistent Highway
         shell: bash
