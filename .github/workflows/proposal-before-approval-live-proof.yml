@@ -1,0 +1,239 @@
+name: Proposal Before Approval Live Proof
+
+on:
+  push:
+    branches: [verify/proposal-before-approval-live]
+    paths:
+      - '.github/workflows/proposal-before-approval-live-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proposal-before-approval-live-proof
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: af8b56ba55cea2c52825a90b97442b5355746f48
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove Work proposal does not materialize Objective before approval
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          COMPOSE="$GITHUB_WORKSPACE/deploy/docker-compose.yml"
+          test -r "$BASE/.env"
+          set -a
+          source "$BASE/.env"
+          set +a
+          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
+
+          for _ in $(seq 1 360); do
+            if docker image inspect "metatron-workforce:$TARGET_SHA" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker image inspect "metatron-workforce:$TARGET_SHA" >/dev/null
+          echo 'APPROVAL_GATE_EXACT_IMAGE=PASS'
+
+          read -r SINK_PORT HOST_PORT < <(python3 <<'PY'
+          import socket
+          sockets=[]
+          try:
+              for _ in range(2):
+                  s=socket.socket()
+                  s.bind(('127.0.0.1',0))
+                  sockets.append(s)
+              print(*(s.getsockname()[1] for s in sockets))
+          finally:
+              for s in sockets: s.close()
+          PY
+          )
+
+          PROJECT="approval-gate-$GITHUB_RUN_ID"
+          OUT="/tmp/$PROJECT"
+          mkdir -p "$OUT"
+
+          python3 - "$SINK_PORT" "$OUT/telegram-sink.log" <<'PY' &
+          import json,sys
+          from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+          port=int(sys.argv[1]); log=sys.argv[2]
+          class H(BaseHTTPRequestHandler):
+              counter=7000
+              def do_POST(self):
+                  n=int(self.headers.get('content-length','0'))
+                  raw_body=self.rfile.read(n)
+                  try:
+                      body=json.loads(raw_body)
+                  except Exception:
+                      body={"raw":raw_body.decode(errors="replace")}
+                  H.counter+=1
+                  with open(log,'a',encoding='utf-8') as f:
+                      f.write(json.dumps({"path":self.path,"body":body},ensure_ascii=False)+"\n")
+                  raw=json.dumps({"ok":True,"result":{"message_id":H.counter}}).encode()
+                  self.send_response(200)
+                  self.send_header('Content-Type','application/json')
+                  self.send_header('Content-Length',str(len(raw)))
+                  self.end_headers()
+                  self.wfile.write(raw)
+              def log_message(self,*args): pass
+          ThreadingHTTPServer(('0.0.0.0',port),H).serve_forever()
+          PY
+          SINK_PID=$!
+
+          cleanup() {
+            set +e
+            METATRON_HOST_PORT="$HOST_PORT"             METATRON_STATE_VOLUME_NAME="${PROJECT}-state"             METATRON_WORKFORCE_NETWORK_NAME="${PROJECT}-network"             METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${PROJECT}"             TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT"             docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
+            kill "$SINK_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 30); do
+            curl -fsS --max-time 1 -X POST "http://127.0.0.1:$SINK_PORT/bottest/sendMessage"               -H 'Content-Type: application/json' -d '{}' >/dev/null && break
+            sleep 1
+          done
+          kill -0 "$SINK_PID"
+
+          METATRON_VERSION=0.1.0           METATRON_ENVIRONMENT=production           METATRON_IMAGE_TAG="$TARGET_SHA"           METATRON_COMMIT_SHA="$TARGET_SHA"           METATRON_HOST_PORT="$HOST_PORT"           METATRON_STATE_VOLUME_NAME="${PROJECT}-state"           METATRON_WORKFORCE_NETWORK_NAME="${PROJECT}-network"           METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${PROJECT}"           METATRON_CONTAINER_MEM_LIMIT=768m           METATRON_CONTAINER_MEM_RESERVATION=384m           METATRON_CONTAINER_CPUS=1.0           TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT"           docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate
+
+          CID=$(METATRON_HOST_PORT="$HOST_PORT"             METATRON_STATE_VOLUME_NAME="${PROJECT}-state"             METATRON_WORKFORCE_NETWORK_NAME="${PROJECT}-network"             METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${PROJECT}"             docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
+          test -n "$CID"
+
+          READY=0
+          for _ in $(seq 1 90); do
+            if curl -fsS --max-time 2 "http://127.0.0.1:$HOST_PORT/actuator/health" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
+              if [ "$(docker inspect "$CID" --format '{{.State.Health.Status}}')" = healthy ]; then
+                READY=1
+                break
+              fi
+            fi
+            sleep 2
+          done
+          test "$READY" = 1
+          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+          test "$LIVE_SHA" = "$TARGET_SHA"
+          echo 'APPROVAL_GATE_ISOLATED_RUNTIME=READY'
+
+          post_message() {
+            local update="$1" text="$2" response_file="$3"
+            local body
+            body=$(python3 - "$TELEGRAM_ALLOWED_USER_ID" "$update" "$text" <<'PY'
+          import json,sys
+          uid=int(sys.argv[1]); update=int(sys.argv[2]); text=sys.argv[3]
+          print(json.dumps({
+              "update_id": update,
+              "message": {
+                  "message_id": update % 2000000000,
+                  "from": {"id": uid, "is_bot": False, "first_name": "Founder"},
+                  "chat": {"id": uid, "type": "private"},
+                  "date": 0,
+                  "text": text
+              }
+          }, ensure_ascii=False))
+          PY
+            )
+            local status
+            status=$(curl -sS -o "$response_file" -w '%{http_code}'               -X POST "http://127.0.0.1:$HOST_PORT/telegram/webhook"               -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET"               -H 'Content-Type: application/json' --data-binary "$body")
+            test "$status" = 200
+          }
+
+          MODE_UPDATE=$(date +%s%N | cut -c1-15)
+          BEFORE_MODE=$(wc -l < "$OUT/telegram-sink.log" 2>/dev/null || echo 0)
+          post_message "$MODE_UPDATE" "/work" "$OUT/work-mode-http.json"
+          for _ in $(seq 1 60); do
+            NOW=$(wc -l < "$OUT/telegram-sink.log" 2>/dev/null || echo 0)
+            [ "$NOW" -gt "$BEFORE_MODE" ] && break
+            sleep .5
+          done
+          [ "$NOW" -gt "$BEFORE_MODE" ]
+          docker logs --since 2m "$CID" > "$OUT/logs-after-mode.txt" 2>&1 || true
+          grep -q "telegram_send_success update_id=$MODE_UPDATE" "$OUT/logs-after-mode.txt"
+          echo 'APPROVAL_GATE_WORK_SURFACE=PASS'
+
+          UPDATE_ID=$((MODE_UPDATE+1))
+          TEXT='Take it as your own company. Propose and design the org chart, budget, demand and plan for Gateway. Once I approve then execute.'
+          BEFORE=$(wc -l < "$OUT/telegram-sink.log" 2>/dev/null || echo 0)
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          post_message "$UPDATE_ID" "$TEXT" "$OUT/proposal-http.json"
+
+          DELIVERED=0
+          for _ in $(seq 1 180); do
+            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
+            if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS"; then
+              DELIVERED=1
+              break
+            fi
+            if grep -q "telegram_interaction_dead_letter update_id=$UPDATE_ID" <<<"$LOGS"; then
+              printf '%s\n' "$LOGS" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          test "$DELIVERED" = 1
+          printf '%s\n' "$LOGS" > "$OUT/proposal-runtime.log"
+
+          AFTER=$(wc -l < "$OUT/telegram-sink.log" 2>/dev/null || echo 0)
+          test "$AFTER" -gt "$BEFORE"
+          tail -n "$((AFTER-BEFORE))" "$OUT/telegram-sink.log" > "$OUT/proposal-delivery.jsonl"
+
+          curl -fsS --max-time 5 "http://127.0.0.1:$HOST_PORT/workforce/management/objectives" > "$OUT/objectives.json"
+          python3 - "$OUT/objectives.json" "$UPDATE_ID" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1]))
+          needle=f"telegram:update:{sys.argv[2]}"
+          matches=[row for row in rows if needle in json.dumps(row,sort_keys=True)]
+          assert matches==[], matches
+          print('APPROVAL_GATE_NO_WORKFORCE_OBJECTIVE=PASS')
+          PY
+
+          docker exec "$CID" sh -c             "grep -R -l '$UPDATE_ID' /var/lib/metatron-workforce/intelligence-cases/cases/*.json 2>/dev/null | tail -1"             > "$OUT/case-path.txt"
+          CASE_PATH=$(cat "$OUT/case-path.txt")
+          test -n "$CASE_PATH"
+          docker exec "$CID" cat "$CASE_PATH" > "$OUT/case.json"
+
+          python3 - "$OUT/case.json" <<'PY'
+          import json,sys
+          case=json.load(open(sys.argv[1]))
+          assert case.get('status')=='AWAITING_HUMAN_APPROVAL', case
+          conclusion=(case.get('latestConclusion') or '').strip()
+          assert conclusion, case
+          refs=case.get('externalInstitutionalReferences') or []
+          forbidden=('management-objective:','work-queue:','assignment:','execution:')
+          assert not any(str(ref).startswith(forbidden) for ref in refs), refs
+          print('APPROVAL_GATE_CASE_AWAITING_HUMAN_APPROVAL=PASS')
+          print('APPROVAL_GATE_CASE_HAS_PROPOSAL_RESULT=PASS')
+          print('APPROVAL_GATE_CASE_HAS_NO_EXECUTION_REFERENCES=PASS')
+          PY
+
+          python3 - "$OUT/proposal-delivery.jsonl" <<'PY'
+          import json,sys
+          texts=[]
+          for line in open(sys.argv[1],encoding='utf-8'):
+              if not line.strip(): continue
+              body=json.loads(line).get('body') or {}
+              text=body.get('text')
+              if isinstance(text,str): texts.append(text)
+          rendered='\n'.join(texts).strip()
+          assert rendered, texts
+          assert 'METATRON WORK ACCEPTED' not in rendered, rendered
+          assert 'objective_id=' not in rendered, rendered
+          print('APPROVAL_GATE_DIRECT_PROPOSAL_DELIVERED=PASS')
+          PY
+
+          grep -q 'approval_deferred_execution_guard' "$OUT/proposal-runtime.log"
+          ! grep -q 'route=execution-objective-workforce-accepted' "$OUT/proposal-runtime.log"
+          grep -q "telegram_send_success update_id=$UPDATE_ID" "$OUT/proposal-runtime.log"
+          grep -Eq "telegram_send_success update_id=$UPDATE_ID.*objective_id=$" "$OUT/proposal-runtime.log"
+
+          docker exec "$CID" sh -c             "grep -A 12 -B 6 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"
+
+          echo "APPROVAL_GATE_LIVE_SHA=$TARGET_SHA"
+          echo 'PROPOSAL_BEFORE_APPROVAL_LIVE=PASS'
