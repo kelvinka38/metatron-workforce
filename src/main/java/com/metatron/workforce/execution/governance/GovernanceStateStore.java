@@ -10,6 +10,7 @@ public interface GovernanceStateStore {
     void saveConstraintBundle(ConstraintBundle bundle);
     void saveDerivationReceipt(DerivationReceipt receipt);
     void savePlanBinding(ExecutionPlanBinding plan);
+    void saveAttemptBinding(ExecutionAttemptGovernanceBinding binding);
     void saveDenial(GovernanceDenial denial);
     void saveCompletionDecision(CompletionDecision decision);
     void setCurrentAuthorityDigest(String targetEntity, String digest);
@@ -20,6 +21,7 @@ public interface GovernanceStateStore {
     Optional<DerivationReceipt> derivationReceipt(String id);
     Optional<ExecutionPlanBinding> planBinding(String planId, int version);
     Optional<ExecutionPlanBinding> approvedPlanForStep(String objectiveId, String stepId);
+    Optional<ExecutionAttemptGovernanceBinding> attemptBinding(String attemptId);
     Optional<String> currentAuthorityDigest(String targetEntity);
     List<GovernanceDenial> denials();
     List<CompletionDecision> completionDecisions();
