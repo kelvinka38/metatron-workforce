@@ -10,6 +10,12 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 ALLOW_AUTOMATIC_SELF_HOSTED = {
     ".github/workflows/production-deploy.yml",
 }
+ALLOW_DIRECT_SELF_HOSTED_CONTROL = {
+    ".github/workflows/highway-conformance-ci.yml",
+    ".github/workflows/highway-execution-fabric-acceptance.yml",
+    ".github/workflows/highway-queue-surface-audit.yml",
+}
+SINGLE_SELF_HOSTED_PR_GATE = ".github/workflows/highway-conformance-ci.yml"
 
 def block_after_top_level(lines: list[str], key: str) -> list[str]:
     needle = key + ":"
@@ -62,10 +68,29 @@ def main() -> int:
                 f"WORKFLOW_RUN_SELF_HOSTED {rel} must be manual ingress or Highway-native"
             )
 
+        if self_hosted and "pull_request" in triggers and rel != SINGLE_SELF_HOSTED_PR_GATE:
+            violations.append(
+                f"MULTIPLE_SELF_HOSTED_PR_GATE {rel} must not compete with {SINGLE_SELF_HOSTED_PR_GATE}"
+            )
+
+        if rel == SINGLE_SELF_HOSTED_PR_GATE:
+            if "pull_request" not in triggers:
+                violations.append("SELF_HOSTED_PR_GATE_MISSING pull_request trigger")
+            if "cancel-in-progress: true" not in text:
+                violations.append("SELF_HOSTED_PR_GATE_NO_STALE_CANCEL cancel-in-progress must be true")
+
         if self_hosted and "workflow_dispatch" in triggers and not automatic:
-            # Long manual lanes are allowed temporarily, but must not auto-fanout.
-            if "highwayctl.py" not in text and "Legacy " not in text and "DISABLED" not in text:
-                print(f"MANUAL_DIRECT_SELF_HOSTED {rel}")
+            is_highway_ingress = (
+                "highwayctl.py" in text
+                or "highway-manual-ingress.sh" in text
+                or rel in ALLOW_DIRECT_SELF_HOSTED_CONTROL
+            )
+            if not is_highway_ingress:
+                violations.append(
+                    f"MANUAL_DIRECT_SELF_HOSTED {rel} must submit to Highway instead of executing on the Actions runner"
+                )
+            else:
+                print(f"MANUAL_HIGHWAY_INGRESS {rel}")
 
     print("=== HIGHWAY QUEUE SURFACE ===")
     for rel,triggers,runners,self_hosted in rows:
@@ -82,6 +107,9 @@ def main() -> int:
     else:
         print("HIGHWAY_QUEUE_SURFACE_VIOLATIONS=0")
         print("HIGHWAY_SINGLE_AUTOMATIC_SELF_HOSTED_INGRESS=PASS")
+        print("HIGHWAY_NO_DIRECT_MANUAL_SELF_HOSTED_EXECUTION=PASS")
+        print("HIGHWAY_SINGLE_SELF_HOSTED_PR_GATE=PASS")
+        print("HIGHWAY_STALE_PR_RUN_CANCELLATION=PASS")
 
     return 0
 

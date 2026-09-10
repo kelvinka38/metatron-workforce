@@ -1,135 +1,24 @@
-name: Gateway Final Live Acceptance
+name: Gateway Final Live Acceptance (Highway Ingress)
 
 on:
   workflow_dispatch:
     inputs:
       target_sha:
         description: Exact deployed production SHA to validate
-        required: false
+        required: true
         type: string
+
 permissions:
   contents: read
 
-concurrency:
-  group: metatron-gateway-final-live-acceptance
-  cancel-in-progress: true
-
 jobs:
-  gateway-final-live-acceptance:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
+    timeout-minutes: 2
     steps:
-      - name: Prove production Gateway boundary
+      - uses: actions/checkout@v7
+      - name: Submit to persistent Highway
         shell: bash
-        env:
-          TARGET_SHA: ${{ inputs.target_sha != '' && inputs.target_sha || github.sha }}
         run: |
           set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$TARGET_SHA"
-
-          set -a; source "$BASE/.env"; set +a
-          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-          test -n "${GITHUB_TOKEN:-}"
-
-          mkdir -p /tmp/gateway-final
-          REPORT=/tmp/gateway-final/acceptance.txt
-          : > "$REPORT"
-          pass(){ echo "$1=PASS" | tee -a "$REPORT"; }
-
-          test "$(docker inspect "$CID" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
-          test "$(docker inspect "$CID" --format '{{.HostConfig.Privileged}}')" = false
-          docker inspect "$CID" --format '{{json .HostConfig.PortBindings}}' | grep -q '127.0.0.1'
-          pass DATA_PLANE_INTERNAL_BINDING
-          pass RUNTIME_HARDENING
-
-          curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health >/tmp/gateway-final/public-health.json
-          grep -q '"status":"UP"' /tmp/gateway-final/public-health.json
-          pass HUMAN_MACHINE_PUBLIC_INGRESS
-          pass TLS_BOUNDARY
-
-          UNAUTH=$(curl -sS -o /tmp/gateway-final/unauthorized.out -w '%{http_code}' --max-time 10 \
-            -X POST https://gate.metatron.vn/telegram/webhook \
-            -H 'Content-Type: application/json' \
-            -d '{"update_id":991001,"message":{"from":{"id":1},"chat":{"id":1},"text":"unauthorized"}}')
-          test "$UNAUTH" = 401
-          pass AUTHENTICATION_FAIL_CLOSED
-
-          UNKNOWN=$(curl -sS -o /tmp/gateway-final/unknown.out -w '%{http_code}' \
-            -X POST http://127.0.0.1:8080/telegram/webhook \
-            -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_WEBHOOK_SECRET}" \
-            -H 'Content-Type: application/json' \
-            -d '{"update_id":991002,"message":{"from":{"id":922337203685477000},"chat":{"id":922337203685477000,"type":"private"},"text":"identity-probe"}}')
-          test "$UNKNOWN" = 200
-          docker logs --since 30s "$CID" > /tmp/gateway-final/identity-probe.log 2>&1 || true
-          grep -q 'Telegram user is not authorized for this Metatron workspace' /tmp/gateway-final/identity-probe.log
-          pass AUTHN_AUTHZ_IDENTITY_SEPARATION
-
-          BAD=$(curl -sS -o /tmp/gateway-final/bad.out -w '%{http_code}' \
-            -X POST http://127.0.0.1:8080/telegram/webhook \
-            -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_WEBHOOK_SECRET}" \
-            -H 'Content-Type: application/json' -d 'not-json')
-          test "$BAD" = 200
-          pass STRUCTURAL_VALIDATION_FAIL_CLOSED
-
-          U=991003
-          BODY="{\"update_id\":${U},\"my_chat_member\":{\"chat\":{\"id\":1,\"type\":\"private\"}}}"
-          A=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_WEBHOOK_SECRET}" -H 'Content-Type: application/json' -d "$BODY")
-          B=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: ${TELEGRAM_WEBHOOK_SECRET}" -H 'Content-Type: application/json' -d "$BODY")
-          test "$A" = 200; test "$B" = 200
-          pass REPLAY_DUPLICATE_BOUNDARY
-
-          AUDIT=$(curl -sS -o /tmp/gateway-final/audit.json -w '%{http_code}' -X POST \
-            http://127.0.0.1:8080/workforce/execution/repository-audit \
-            -H 'Content-Type: application/json' \
-            -H 'X-Metatron-Actor: GATEWAY-FINAL-ACCEPTANCE' \
-            -H 'X-Metatron-Authority: GATEWAY-OBSERVATION-AUTHORITY' \
-            -H 'X-Metatron-Authorization: GATEWAY-REPOSITORY-READ' \
-            -d '{"organizationContextId":"METATRON","repository":"kelvinka38/bios"}')
-          test "$AUDIT" = 200
-          python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/gateway-final/audit.json'))
-          e=d['workerResult']['evidence']
-          assert d['workerResult']['status']=='PASS'
-          assert d['work']['status']=='COMPLETED'
-          assert 'source=gateway-egress/github-api' in e
-          assert 'gatewayEgressCrossings=' in e
-          assert 'credential=isolated' in e
-          assert 'authorization=GATEWAY-REPOSITORY-READ' in e
-          assert 'destination=https://api.github.com' in e
-          PY
-          pass INSTITUTIONAL_EGRESS
-          pass DESTINATION_CREDENTIAL_ISOLATION
-          pass EXTERNAL_RETRIEVAL_PROVENANCE
-          pass CORRELATION_EVIDENCE
-
-          DENIED=$(curl -sS -o /tmp/gateway-final/denied.json -w '%{http_code}' -X POST \
-            http://127.0.0.1:8080/workforce/execution/repository-audit \
-            -H 'Content-Type: application/json' \
-            -H 'X-Metatron-Actor: GATEWAY-FINAL-ACCEPTANCE' \
-            -H 'X-Metatron-Authority: GATEWAY-OBSERVATION-AUTHORITY' \
-            -H 'X-Metatron-Authorization:' \
-            -d '{"organizationContextId":"METATRON","repository":"kelvinka38/bios"}')
-          test "$DENIED" != 200
-          pass UNAUTHORIZED_EGRESS_DENIAL
-
-          ! grep -Rqs "${GITHUB_TOKEN}" "$BASE/src" "$BASE/deploy" "$BASE/.github" 2>/dev/null
-          docker image inspect metatron-workforce:rollback >/dev/null
-          pass SECRET_SOURCE_SEPARATION
-          pass KNOWN_GOOD_ROLLBACK
-
-          echo "TARGET_SHA=$TARGET_SHA" | tee -a "$REPORT"
-          echo "DEPLOYED_SHA=$DEPLOYED_SHA" | tee -a "$REPORT"
-          echo 'GATEWAY_FINAL_LIVE_ACCEPTANCE=PASS' | tee -a "$REPORT"
-
-      - name: Upload Gateway evidence
-        uses: actions/upload-artifact@v7
-        with:
-          name: gateway-final-live-acceptance-${{ github.run_id }}
-          path: /tmp/gateway-final
-          if-no-files-found: error
-          retention-days: 14
+          bash scripts/highway-manual-ingress.sh 'gateway-final-live-acceptance' '${{ inputs.target_sha }}' '55'

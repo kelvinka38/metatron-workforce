@@ -1,4 +1,4 @@
-name: Runtime Conformance Point 5 Founder Product Acceptance (Manual Forensic)
+name: Runtime Conformance Point 5 (Highway Ingress)
 
 on:
   workflow_dispatch:
@@ -11,30 +11,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: metatron-production-forensic-point5
-  cancel-in-progress: true
-
 jobs:
-  founder-product:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
-    timeout-minutes: 25
-    env:
-      TARGET_SHA: ${{ inputs.target_sha }}
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@v7
-      - name: Accept Founder chat product end to end
+      - name: Submit to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x scripts/runtime-conformance-point5.sh
-          scripts/runtime-conformance-point5.sh
-      - name: Upload Point 5 evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-conformance-point5-${{ github.run_id }}
-          path: /tmp/runtime-conformance-point5-${{ github.run_id }}/
-          if-no-files-found: warn
-          retention-days: 90
+          bash scripts/highway-manual-ingress.sh 'runtime-point5' '${{ inputs.target_sha }}' '55'

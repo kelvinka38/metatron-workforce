@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export OBJECTIVE_ID="${OBJECTIVE_ID:-objective_43caf8a918ad4f4fb800cfb213f45292}"
+
+# migrated workflow step 1
+set -euo pipefail
+echo '=== WORKFORCE HEALTH ==='
+curl -sS -i http://127.0.0.1:8080/actuator/health | tail -20 || true
+
+echo '=== LIST OBJECTIVES ==='
+curl -sS -o /tmp/objectives.json -w 'HTTP=%{http_code}\n' http://127.0.0.1:8080/workforce/management/objectives || true
+python3 - <<'PY'
+import json
+try:
+    data=json.load(open('/tmp/objectives.json'))
+except Exception as e:
+    print('OBJECTIVE_LIST_JSON_ERROR='+type(e).__name__)
+    raise SystemExit(0)
+print('OBJECTIVE_LIST_COUNT='+str(len(data) if isinstance(data,list) else -1))
+for item in data if isinstance(data,list) else []:
+    obj=(item or {}).get('objective') or {}
+    oid=obj.get('objectiveId')
+    if oid:
+        print('OBJECTIVE_ID='+oid+' STATUS='+str(obj.get('status'))+' OWNER='+str(obj.get('ownerWorkerId')))
+PY
+
+echo '=== TARGET OBJECTIVE ==='
+curl -sS -o /tmp/objective-target.txt -w 'HTTP=%{http_code}\n' "http://127.0.0.1:8080/workforce/management/objectives/$OBJECTIVE_ID" || true
+head -c 4000 /tmp/objective-target.txt || true
+echo
+
+echo '=== GATEWAY NETWORK MEMBERS ==='
+docker network inspect metatron-gateway-online --format '{{json .Containers}}' | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(v.get("Name"),v.get("IPv4Address")) for v in d.values()]' || true
+
+echo '=== BIOS DNS VIEW OF WORKFORCE ==='
+BIOS_CID=$(docker ps --filter name=metatron-bios --format '{{.ID}}' | head -1)
+if [ -n "$BIOS_CID" ]; then
+  docker exec "$BIOS_CID" python - <<'PY' || true
+import json,socket,urllib.request
+print('DNS_WORKFORCE='+str(socket.gethostbyname_ex('workforce')))
+for path in ['/actuator/health','/workforce/management/objectives']:
+    try:
+        with urllib.request.urlopen('http://workforce:8080'+path,timeout=5) as r:
+            body=r.read().decode()
+            print('BIOS_TO_WORKFORCE_PATH='+path+' HTTP='+str(r.status)+' BODY_PREFIX='+body[:500].replace('\\n',' '))
+            if path.endswith('/objectives'):
+                data=json.loads(body)
+                print('BIOS_VIEW_OBJECTIVE_COUNT='+str(len(data) if isinstance(data,list) else -1))
+                print('BIOS_VIEW_HAS_TARGET='+str(any(((x or {}).get('objective') or {}).get('objectiveId')=='objective_f63706b177694898a33b9d436184860b' for x in data if isinstance(x,dict))))
+    except Exception as e:
+        print('BIOS_TO_WORKFORCE_ERROR='+path+':'+repr(e))
+PY
+fi
+
+echo '=== COGNITIVE ACTION JOURNAL ==='
+SAFE_OBJECTIVE=$(printf '%s' "$OBJECTIVE_ID" | sed 's#[\\/:*?"<>|]#_#g')
+CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+docker exec "$CID" sh -c "cat /var/lib/metatron-workforce/runtime-evidence/action-journal/$SAFE_OBJECTIVE/general-external-research.jsonl 2>/dev/null" | tail -20 || true
+
+echo '=== WORKFORCE LOGS FILTERED ==='
+CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+test -n "$CID"
+docker logs --since 15m "$CID" 2>&1 | grep -E "$OBJECTIVE_ID|Exception|ERROR|IllegalArgument|objective" | tail -300 || true

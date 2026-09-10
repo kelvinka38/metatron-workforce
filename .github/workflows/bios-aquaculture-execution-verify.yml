@@ -1,108 +1,25 @@
-name: BIOS Aquaculture Execution Verify
+name: BIOS Aquaculture Execution Verify (Highway Ingress)
 
 on:
   workflow_dispatch:
+    inputs:
+      bios_expected_sha:
+        description: Exact deployed BIOS SHA
+        required: false
+        default: 19214a7015e6b7a4af7403aa79854e2828d4ecb0
+        type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: bios-aquaculture-execution-verify
-  cancel-in-progress: true
-
 jobs:
-  verify:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 5
+    timeout-minutes: 2
     steps:
-      - name: Verify E0-E10 deployed build evidence
+      - uses: actions/checkout@v7
+      - name: Submit to persistent Highway
         shell: bash
-        env:
-          BIOS_EXPECTED_SHA: 19214a7015e6b7a4af7403aa79854e2828d4ecb0
         run: |
           set -euo pipefail
-          BIOS_BASE="$HOME/.metatron/bios"
-          test -r "$BIOS_BASE/.env"
-          set -a; source "$BIOS_BASE/.env"; set +a
-          test -n "${BIOS_API_KEY:-}"
-
-          IMAGE=$(docker inspect metatron-bios --format '{{.Config.Image}}')
-          test "$IMAGE" = "metatron-bios:$BIOS_EXPECTED_SHA"
-          echo "E0_RELEASE_SHA=PASS"
-
-          READY_CODE=$(curl -sS -o /tmp/aq-exec-ready.json -w '%{http_code}'             -H "X-BIOS-API-Key: $BIOS_API_KEY" http://127.0.0.1:18080/health/ready)
-          test "$READY_CODE" = 200
-          python3 -c 'import json; d=json.load(open("/tmp/aq-exec-ready.json")); assert d["aquaculture_ready"] is True; assert d["aquaculture_schema_version"]=="1.1"; assert d["data_bundle_ready"] is True; assert d["bundle_id"]=="vn-aquaculture-baseline"; assert d["bundle_version"]=="1.0.0"; c=d["counts"]; assert c["sources"]>=10 and c["knowledge"]>=20 and c["market_evidence"]>=5 and c["reference_cases"]>=5; print("E2_E4_DATA_FOUNDATION=PASS")'
-
-          printf '%s' '{"request_id":"aq-release","correlation_id":"aq-release","actor_id":"FOUNDER","timestamp":"2026-09-09T16:50:00+00:00","schema_version":"0.1","payload":{}}' >/tmp/aq-release-request.json
-
-          RELEASE_CODE=$(curl -sS -o /tmp/aq-release.json -w '%{http_code}'             -X POST http://127.0.0.1:18080/v2/product/aquaculture/release             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/aq-release-request.json)
-          test "$RELEASE_CODE" = 200
-          python3 -c 'import json,os; d=json.load(open("/tmp/aq-release.json"))["payload"]["data"]; assert d["bios_commit_sha"]==os.environ["BIOS_EXPECTED_SHA"]; assert d["execution_plan_version"]=="v1.0"; assert d["execution_build_status"]=="AQUACULTURE_BUILD_COMPLETE"; assert d["field_validation"]=="READY_NOT_EXECUTED"; assert d["field_runtime"]["field_runtime_status"]=="READY_FOR_FIELD_EXECUTION"; assert d["field_runtime"]["field_validation_status"]=="NOT_EXECUTED"; assert d["field_runtime"]["aquaculture_field_ready"] is True; assert d["data"]["data_bundle_ready"] is True; print("FIELD_RUNTIME_RELEASE=PASS")'
-
-          SOURCES_CODE=$(curl -sS -o /tmp/aq-sources.json -w '%{http_code}'             -X POST http://127.0.0.1:18080/v2/product/aquaculture/data/sources             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/aq-release-request.json)
-          test "$SOURCES_CODE" = 200
-          python3 -c 'import json; d=json.load(open("/tmp/aq-sources.json"))["payload"]["data"]; assert len(d)>=10; assert any(x["source_type"]=="GOVERNMENT" for x in d); assert any(x["source_type"]=="MARKET_SOURCE" for x in d); print("E2_PROVENANCE_REGISTRY=PASS")'
-
-          FIELD_READY_CODE=$(curl -sS -o /tmp/aq-field-ready.json -w '%{http_code}'             -X POST http://127.0.0.1:18080/v2/product/aquaculture/field/readiness             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/aq-release-request.json)
-          test "$FIELD_READY_CODE" = 200
-          python3 -c 'import json; d=json.load(open("/tmp/aq-field-ready.json"))["payload"]["data"]; assert d["aquaculture_field_ready"] is True; assert d["field_status"]=="READY_FOR_FIELD_EXECUTION"; print("FIELD_RUNTIME_READINESS=PASS")'
-
-          FIELD_WEB_CODE=$(curl -sS -o /tmp/aq-field.html -w '%{http_code}' https://gate.metatron.vn/aquaculture/field)
-          test "$FIELD_WEB_CODE" = 200
-          grep -q 'FIELD-P1' /tmp/aq-field.html
-          grep -q 'Pilot Console' /tmp/aq-field.html
-          echo 'FIELD_OPERATOR_CONSOLE=PASS'
-
-          FIELD_UNAUTH_CODE=$(curl -sS -o /tmp/aq-field-unauth.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/field/readiness             -H 'Content-Type: application/json' --data-binary @/tmp/aq-release-request.json)
-          test "$FIELD_UNAUTH_CODE" = 401
-          echo 'FIELD_API_FAIL_CLOSED=PASS'
-
-          WEB_CODE=$(curl -sS -o /tmp/aq-public.html -w '%{http_code}' https://gate.metatron.vn/aquaculture)
-          test "$WEB_CODE" = 200
-          grep -q '<title>BIOS Aquaculture</title>' /tmp/aq-public.html
-
-          UNAUTH_CODE=$(curl -sS -o /tmp/aq-public-unauth.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/release             -H 'Content-Type: application/json' --data-binary @/tmp/aq-release-request.json)
-          test "$UNAUTH_CODE" = 401
-
-          PUBLIC_AUTH_CODE=$(curl -sS -o /tmp/aq-public-release.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/release             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/aq-release-request.json)
-          test "$PUBLIC_AUTH_CODE" = 200
-          python3 -c 'import json,os; d=json.load(open("/tmp/aq-public-release.json"))["payload"]["data"]; assert d["bios_commit_sha"]==os.environ["BIOS_EXPECTED_SHA"]; print("E1_PUBLIC_PRODUCT_ACCESS=PASS")'
-
-          ss -ltn | grep -q '127.0.0.1:18080'
-          echo 'BIOS_DIRECT_PUBLIC_PORT=NOT_EXPOSED'
-          echo 'E5_E10_REFERENCE_WORKFLOWS=PASS_VIA_EXACT_SHA_CI'
-          echo 'FIELD_NON_FABRICATION_GUARD=PASS_VIA_EXACT_SHA_CI'
-          echo 'AQUACULTURE_FIELD_RUNTIME_VERIFY=PASS'
-          FARMER_CODE=$(curl -sS -o /tmp/aq-farmer.html -w '%{http_code}' https://gate.metatron.vn/aquaculture)
-          test "$FARMER_CODE" = 200
-          grep -q 'Mã tham gia pilot' /tmp/aq-farmer.html
-          grep -q 'Vùng nuôi' /tmp/aq-farmer.html
-          grep -q 'Nên nuôi gì?' /tmp/aq-farmer.html
-          grep -q 'Bán ở đâu?' /tmp/aq-farmer.html
-          grep -q 'Vụ nuôi' /tmp/aq-farmer.html
-          grep -q 'Kết quả' /tmp/aq-farmer.html
-          ! grep -q 'Actor ID' /tmp/aq-farmer.html
-          ! grep -q 'Case ID' /tmp/aq-farmer.html
-          ! grep -q 'Farm ID' /tmp/aq-farmer.html
-          ! grep -q 'API Key' /tmp/aq-farmer.html
-          ! grep -q 'BIOS CONNECTION' /tmp/aq-farmer.html
-          echo 'FARMER_UX_NO_INTERNAL_IDS=PASS'
-
-          FIELD_CODE=$(curl -sS -o /tmp/aq-field-console.html -w '%{http_code}' https://gate.metatron.vn/aquaculture/field)
-          test "$FIELD_CODE" = 200
-          grep -q 'BIOS API Key' /tmp/aq-field-console.html
-          grep -q 'Tạo link mời' /tmp/aq-field-console.html
-          echo 'PILOT_OPERATOR_INVITE_CONSOLE=PASS'
-
-          INVALID_SESSION_CODE=$(curl -sS -o /tmp/aq-invalid-session.json -w '%{http_code}'             -X POST https://gate.metatron.vn/v2/product/aquaculture/session/exchange             -H 'Content-Type: application/json'             --data '{"code":"AQ-NOT-VALID"}')
-          test "$INVALID_SESSION_CODE" = 401
-          echo 'PILOT_SESSION_INVALID_CODE_FAIL_CLOSED=PASS'
-
-          READY_SESSION=$(python3 -c 'import json; d=json.load(open("/tmp/aq-exec-ready.json")); print(str(d.get("aquaculture_pilot_session_ready")).lower())')
-          test "$READY_SESSION" = true
-          echo 'PILOT_SESSION_READINESS=PASS'
-
-          echo 'FARMER_UX_SESSION_CONSENT_FLOW=PASS_VIA_EXACT_SHA_CI'
-          echo 'AQUACULTURE_FARMER_UX_VERIFY=PASS'
-          echo 'AQUACULTURE_EXECUTION_VERIFY=PASS'
+          bash scripts/highway-manual-ingress.sh 'bios-aquaculture-execution-verify' '' '55' "BIOS_EXPECTED_SHA=${{ inputs.bios_expected_sha }}"

@@ -1,4 +1,4 @@
-name: Intelligence Product Live Acceptance (Manual Forensic)
+name: Intelligence Product Live Acceptance (Highway Ingress)
 
 on:
   workflow_dispatch:
@@ -12,17 +12,13 @@ permissions:
   contents: read
 
 jobs:
-  accept-intelligence-product:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
-    timeout-minutes: 15
-    env:
-      TARGET_SHA: ${{ inputs.target_sha }}
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@v7
-      - name: Run Intelligence forensic lane
+      - name: Submit to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x scripts/highway-intelligence-lane.sh
-          scripts/highway-intelligence-lane.sh
+          bash scripts/highway-manual-ingress.sh 'intelligence-product-live' '${{ inputs.target_sha }}' '55'

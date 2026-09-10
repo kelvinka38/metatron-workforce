@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export BIOS_EXPECTED_SHA="${BIOS_EXPECTED_SHA:-8493323a6535003f875fe5cf43114892fbae3626}"
+: "${GITHUB_RUN_ID:=${HIGHWAY_TASK_ID//[^0-9]/}}"
+export GITHUB_RUN_ID
+set -euo pipefail
+BIOS_BASE="$HOME/.metatron/bios"
+test -r "$BIOS_BASE/.env"
+set -a; source "$BIOS_BASE/.env"; set +a
+test -n "${BIOS_API_KEY:-}"
+[[ "$BIOS_EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+IMAGE=$(docker inspect metatron-bios --format '{{.Config.Image}}')
+test "$IMAGE" = "metatron-bios:$BIOS_EXPECTED_SHA"
+
+READY_CODE=$(curl -sS -o /tmp/aq-ready.json -w '%{http_code}'             -H "X-BIOS-API-Key: $BIOS_API_KEY"             http://127.0.0.1:18080/health/ready)
+test "$READY_CODE" = 200
+python3 - <<'PY'
+import json
+d=json.load(open('/tmp/aq-ready.json'))
+assert d['status']=='ready'
+assert d['aquaculture_ready'] is True
+assert d['aquaculture_schema_version']=='1.1'
+print('AQUACULTURE_SCHEMA_READINESS=PASS')
+PY
+
+WEB_CODE=$(curl -sS -o /tmp/aq-web.html -w '%{http_code}' http://127.0.0.1:18080/aquaculture)
+test "$WEB_CODE" = 200
+grep -q '<title>BIOS Aquaculture</title>' /tmp/aq-web.html
+grep -q 'Vùng nuôi' /tmp/aq-web.html
+grep -q 'Nên nuôi gì?' /tmp/aq-web.html
+grep -q 'Bán ở đâu?' /tmp/aq-web.html
+grep -q 'Vụ nuôi' /tmp/aq-web.html
+grep -q 'Kết quả' /tmp/aq-web.html
+
+JS_CODE=$(curl -sS -o /tmp/aq-app.js -w '%{http_code}' http://127.0.0.1:18080/aquaculture/assets/app.js)
+CSS_CODE=$(curl -sS -o /tmp/aq-styles.css -w '%{http_code}' http://127.0.0.1:18080/aquaculture/assets/styles.css)
+test "$JS_CODE" = 200
+test "$CSS_CODE" = 200
+grep -q '/v2/product/aquaculture' /tmp/aq-app.js
+
+python3 - <<'PY' >/tmp/aq-domain-request.json
+import json,datetime
+print(json.dumps({
+  "request_id":"aq-prod-readiness",
+  "correlation_id":"aq-prod-readiness",
+  "actor_id":"FOUNDER",
+  "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  "schema_version":"0.1",
+  "payload":{"case_id":"production-readiness"}
+}))
+PY
+DOMAIN_CODE=$(curl -sS -o /tmp/aq-domain.json -w '%{http_code}'             -X POST http://127.0.0.1:18080/v2/product/aquaculture/readiness             -H "X-BIOS-API-Key: $BIOS_API_KEY"             -H 'Content-Type: application/json'             --data-binary @/tmp/aq-domain-request.json)
+test "$DOMAIN_CODE" = 200
+python3 - <<'PY'
+import json
+d=json.load(open('/tmp/aq-domain.json'))
+assert d['status']=='OK'
+assert d['payload']['domain']=='AQUACULTURE'
+assert d['payload']['data']['aquaculture_ready'] is True
+assert d['payload']['data']['aquaculture_schema_version']=='1.1'
+print('AQUACULTURE_DOMAIN_API=PASS')
+PY
+
+echo "AQUACULTURE_PRODUCTION_SHA=$BIOS_EXPECTED_SHA"
+echo 'AQUACULTURE_WEB=PASS'
+echo 'AQUACULTURE_ASSETS=PASS'
+echo 'AQUACULTURE_PRODUCTION_VERIFY=PASS'

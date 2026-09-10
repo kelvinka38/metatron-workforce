@@ -1,10 +1,10 @@
-name: Runtime Conformance Point 2 (Manual Forensic)
+name: Runtime Conformance Point 2 (Highway Ingress)
 
 on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact deployed runtime SHA
+        description: Exact deployed production SHA to validate
         required: true
         type: string
 
@@ -12,17 +12,13 @@ permissions:
   contents: read
 
 jobs:
-  point2:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
-    timeout-minutes: 15
-    env:
-      TARGET_SHA: ${{ inputs.target_sha }}
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@v7
-      - name: Run Point 2 forensic lane
+      - name: Submit to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x scripts/runtime-conformance-point2.sh
-          scripts/runtime-conformance-point2.sh
+          bash scripts/highway-manual-ingress.sh 'runtime-point2' '${{ inputs.target_sha }}' '55'

@@ -1,57 +1,24 @@
-name: Legacy Telegram Highway Diagnostic (Manual Only)
+name: Legacy Telegram Diagnostic (Canonical Highway Ingress)
 
 on:
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: metatron-legacy-telegram-highway-diagnostic
-  cancel-in-progress: true
-
 jobs:
-  legacy-telegram-highway-diagnostic:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
+    timeout-minutes: 2
     steps:
-      - name: Prove legacy Telegram-shaped diagnostic path manually
+      - uses: actions/checkout@v7
+      - name: Submit canonical Telegram provider acceptance to persistent Highway
         shell: bash
-        env:
-          TARGET_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          echo "DEPLOYED_SHA=$DEPLOYED_SHA"
-          echo "REQUESTED_SHA=$TARGET_SHA"
-
-          ENVFILE=/opt/metatron/metatron-workforce/.env
-          test -r "$ENVFILE"
-          set -a
-          . "$ENVFILE"
-          set +a
-          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
-
-          UPDATE_ID=$(( $(date +%s) * 1000 + RANDOM ))
-          BODY=$(python3 - "$UPDATE_ID" "$TELEGRAM_ALLOWED_USER_ID" <<'PY'
-          import json,sys
-          update=int(sys.argv[1]); user=int(sys.argv[2])
-          print(json.dumps({"update_id":update,"message":{"message_id":update,"from":{"id":user,"is_bot":False,"first_name":"Founder"},"chat":{"id":user,"type":"private"},"date":0,"text":"Audit BIOS"}}))
-          PY
-          )
-          HTTP=$(curl -sS -o /tmp/legacy-telegram-diagnostic.out -w '%{http_code}' \
-            -X POST http://127.0.0.1:8080/telegram/webhook \
-            -H "Content-Type: application/json" \
-            -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
-            -d "$BODY")
-          echo "LEGACY_TELEGRAM_DIAGNOSTIC_HTTP=$HTTP"
-          test "$HTTP" = "200"
-
-          LOGS=$(docker logs --since 2m "$CID" 2>&1 || true)
-          printf '%s\n' "$LOGS" | grep -F "telegram_send_success update_id=$UPDATE_ID" >/dev/null
-
-          echo 'LEGACY_TELEGRAM_DIAGNOSTIC=PASS'
-          echo 'NOTE=This workflow is manual-only and is not a canonical production acceptance gate.'
+          bash scripts/highway-manual-ingress.sh 'telegram-provider-live-acceptance' '${{ inputs.target_sha }}' '50'

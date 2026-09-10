@@ -1,4 +1,4 @@
-name: Workforce Deployment Gate
+name: Workforce Deployment Gate (Highway Ingress)
 
 on:
   workflow_dispatch:
@@ -6,43 +6,14 @@ on:
 permissions:
   contents: read
 
-env:
-  METATRON_CI: "true"
-  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx384m -XX:MaxMetaspaceSize=192m -Dorg.gradle.workers.max=1 -Dorg.gradle.daemon=false"
-
-concurrency:
-  group: workforce-deployment-gate
-  cancel-in-progress: true
-
 jobs:
-  deployment-gate:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 2
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Normalize POSIX line endings
+      - uses: actions/checkout@v7
+      - name: Submit exact source build gate to persistent Highway
+        shell: bash
         run: |
-          find . -type f \( -name 'gradlew' -o -name '*.sh' \) -exec sed -i 's/\r$//' {} +
-
-      - name: Setup Java 22
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '22'
-          cache: gradle
-
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      - name: Test and build
-        run: ./gradlew clean test bootJar --no-daemon --max-workers=1
-
-      - name: Validate production compose
-        env:
-          METATRON_IMAGE_TAG: validation
-          METATRON_COMMIT_SHA: validation
-        run: docker compose -f deploy/docker-compose.yml config >/dev/null
-
-      - name: Run isolated deployment gate
-        run: bash deploy/deploy.sh
+          set -euo pipefail
+          bash scripts/highway-manual-ingress.sh 'workforce-build' '' '90'

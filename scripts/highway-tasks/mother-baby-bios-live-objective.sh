@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+
+# migrated workflow step 1
+set -euo pipefail
+BIOS_BASE=http://127.0.0.1:18080
+WF_BASE=http://127.0.0.1:8080
+ACTOR=FOUNDER
+CORR="mb-live-$(date +%s)"
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+BIOS_ENV=''
+if [ -r /opt/metatron/bios/.env ]; then
+  BIOS_ENV=/opt/metatron/bios/.env
+elif [ -r "$HOME/.metatron/bios/.env" ]; then
+  BIOS_ENV="$HOME/.metatron/bios/.env"
+fi
+if [ -z "$BIOS_ENV" ]; then
+  echo 'BIOS_ENV=ABSENT'
+  echo "HOME=$HOME"
+  ls -ld /opt/metatron /opt/metatron/bios "$HOME/.metatron" "$HOME/.metatron/bios" 2>/dev/null || true
+  exit 1
+fi
+echo "BIOS_ENV_SOURCE=$BIOS_ENV"
+set -a; source "$BIOS_ENV"; set +a
+if [ -z "${BIOS_API_KEY:-}" ]; then
+  echo 'BIOS_API_KEY=ABSENT'
+  exit 1
+fi
+echo 'BIOS_API_KEY=PRESENT'
+
+CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+if [ -z "$CID" ]; then
+  echo 'WORKFORCE_CONTAINER=ABSENT'
+  docker ps -a --format '{{.Names}} {{.Status}}' | grep -E 'workforce|bios' || true
+  exit 1
+fi
+echo "WORKFORCE_CONTAINER=$CID"
+DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+echo "WORKFORCE_DEPLOYED_SHA=${DEPLOYED_SHA:-ABSENT}"
+if [ "$DEPLOYED_SHA" != "$EXPECTED_WORKFORCE_SHA" ]; then
+  echo "WORKFORCE_SHA_MISMATCH expected=$EXPECTED_WORKFORCE_SHA actual=${DEPLOYED_SHA:-ABSENT}"
+  exit 1
+fi
+WORKFORCE_HEALTH=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+echo "WORKFORCE_CONTAINER_HEALTH=$WORKFORCE_HEALTH"
+test "$WORKFORCE_HEALTH" = healthy
+echo "WORKFORCE_EXACT_SHA=$DEPLOYED_SHA"
+
+BIOS_HTTP=$(curl -sS -o /tmp/mb-bios-health.json -w '%{http_code}' --connect-timeout 3 --max-time 10 "$BIOS_BASE/health" || true)
+echo "BIOS_HEALTH_HTTP=$BIOS_HTTP"
+test "$BIOS_HTTP" = 200
+cat /tmp/mb-bios-health.json; echo
+
+BIOS_READY_HTTP=$(curl -sS -o /tmp/mb-bios-ready.json -w '%{http_code}' --connect-timeout 3 --max-time 10 -H "X-BIOS-API-Key: $BIOS_API_KEY" "$BIOS_BASE/health/ready" || true)
+echo "BIOS_READY_HTTP=$BIOS_READY_HTTP"
+test "$BIOS_READY_HTTP" = 200
+cat /tmp/mb-bios-ready.json; echo
+
+WF_HEALTH_HTTP=$(curl -sS -o /tmp/mb-workforce-health.json -w '%{http_code}' --connect-timeout 3 --max-time 10 "$WF_BASE/actuator/health" || true)
+echo "WORKFORCE_HEALTH_HTTP=$WF_HEALTH_HTTP"
+test "$WF_HEALTH_HTTP" = 200
+cat /tmp/mb-workforce-health.json; echo
+echo 'BIOS_AND_WORKFORCE_INFRA_HEALTH=PASS'
+
+envelope () {
+  local request_id="$1"
+  local payload_file="$2"
+  python3 - "$request_id" "$CORR" "$ACTOR" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$payload_file" <<'PY'
+import json,sys
+rid,corr,actor,ts,payload_file=sys.argv[1:]
+print(json.dumps({
+  "request_id":rid,"correlation_id":corr,"actor_id":actor,
+  "timestamp":ts,"schema_version":"0.1","payload":json.load(open(payload_file))
+},ensure_ascii=False))
+PY
+}
+
+cat >/tmp/mb-case-payload.json <<'JSON'
+{
+  "objective":"Continuously improve Metatron Mother & Baby vetting by discovering the most useful new external research and regulatory evidence, prioritizing Vietnam.",
+  "system_exists":true,
+  "continuation_threat":false,
+  "desired_new_regime":false,
+  "reality":[],
+  "constraints":[
+    "Vietnam first",
+    "Top 5 only",
+    "Prefer primary, authoritative, peer-reviewed, standards or regulator sources",
+    "Focus on legal-first verification, evidence quality, KOL/KOC trust signals, and risk-scoring methods",
+    "Do not fabricate missing evidence"
+  ],
+  "feasibility":{"status":"UNKNOWN","basis":["Current-week external evidence has not yet been collected by BIOS."]}
+}
+JSON
+envelope "case-$CORR" /tmp/mb-case-payload.json >/tmp/mb-case-request.json
+curl -fsS -X POST "$BIOS_BASE/v1/cases/run"             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/mb-case-request.json >/tmp/mb-case-response.json
+
+read CASE_ID PROGRAM_ID < <(python3 - <<'PY'
+import json
+p=json.load(open('/tmp/mb-case-response.json'))['payload']
+assert p['observation_status']=='INSUFFICIENT', p['observation_status']
+assert p['program']['status']=='EVIDENCE_REQUIRED', p['program']
+print(p['id'],p['program']['id'])
+PY
+)
+echo "BIOS_CASE_ID=$CASE_ID"
+echo "BIOS_PROGRAM_ID=$PROGRAM_ID"
+echo 'BIOS_REALITY_EVIDENCE_GAP=PASS'
+
+cat >/tmp/mb-objective-payload.json <<JSON
+{
+  "case_id":"$CASE_ID",
+  "program_id":"$PROGRAM_ID",
+  "desired_outcome":"Find and shortlist exactly 5 of the most useful recent papers, reports, standards analyses, regulator publications, or substantive research for Metatron Mother & Baby vetting, prioritizing Vietnam. For each item state what is new, why it matters, and whether it suggests KEEP, TEST, CHANGE, or REJECT for the 100-point RED/YELLOW/GREEN model.",
+  "intent":"Use real external evidence to identify high-potential improvements to Metatron Mother & Baby vetting.",
+  "target":"Vietnam-first Mother & Baby legal-first verification, evidence quality, KOL/KOC trust signals, and risk-scoring methods.",
+  "constraints":[
+    "Top 5 only",
+    "Vietnam first",
+    "Current or materially recent sources",
+    "Prefer primary regulators, standards bodies, peer-reviewed papers, or authoritative research",
+    "Every shortlisted item must be traceable to source evidence",
+    "Do not invent citations, dates, findings, or model impacts"
+  ],
+  "authority_envelope":{"prohibitions":["No external mutation","No publishing","No purchases","No legal filing","No unsupported factual claims"]},
+  "acceptance_criteria":[
+    "Exactly 5 substantive candidates or an explicit evidence-backed statement that fewer than 5 qualified items exist",
+    "Each candidate includes title, issuer or authors, publication date, source reference, what is new, why it matters, and model implication",
+    "Each candidate ends in KEEP, TEST, CHANGE, or REJECT",
+    "The result identifies the highest-potential model experiment",
+    "No candidate is accepted solely from SEO, promotional, or low-substance commentary"
+  ],
+  "evidence_requirements":[
+    "Fresh external-source provenance for every candidate",
+    "Resolvable source URL or canonical publication identifier for every candidate",
+    "Publication or update date where available",
+    "Evidence quality and authority assessment",
+    "Explicit uncertainty where evidence is incomplete"
+  ]
+}
+JSON
+envelope "create-$CORR" /tmp/mb-objective-payload.json >/tmp/mb-create-request.json
+curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/create"             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/mb-create-request.json >/tmp/mb-create-response.json
+OBJECTIVE_ID=$(python3 - <<'PY'
+import json
+d=json.load(open('/tmp/mb-create-response.json'))
+assert d['status']=='OK',d
+print(d['payload']['objective_id'])
+PY
+)
+echo "BIOS_OBJECTIVE_ID=$OBJECTIVE_ID"
+
+cat >/tmp/mb-admit-payload.json <<JSON
+{"case_id":"$CASE_ID","organization_context_id":"METATRON"}
+JSON
+envelope "admit-$CORR" /tmp/mb-admit-payload.json >/tmp/mb-admit-request.json
+curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/admit"             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/mb-admit-request.json >/tmp/mb-admit-response.json
+WORKFORCE_OBJECTIVE_ID=$(python3 - "$OBJECTIVE_ID" <<'PY'
+import json,sys
+expected=sys.argv[1]
+d=json.load(open('/tmp/mb-admit-response.json'))
+assert d['status']=='OK',d
+wf=d['payload']['workforce']
+assert wf.get('accepted') is True,wf
+actual=str(wf.get('objectiveId') or '')
+assert actual==expected,(expected,actual,wf)
+print(actual)
+PY
+)
+echo 'BIOS_TO_WORKFORCE_ADMISSION=PASS'
+echo "WORKFORCE_OBJECTIVE_ID=$WORKFORCE_OBJECTIVE_ID"
+python3 - <<'PY'
+import json
+wf=json.load(open('/tmp/mb-admit-response.json'))['payload']['workforce']
+print('WORKFORCE_OWNER='+str(wf.get('ownerWorker')))
+print('WORKFORCE_ADMITTED_STATUS='+str(wf.get('objectiveStatus')))
+PY
+
+TERMINAL=''
+LOOKUP_FAILURES=0
+for i in $(seq 1 180); do
+  LOOKUP_HTTP=$(curl -sS -o /tmp/mb-workforce-view.json -w '%{http_code}' "$WF_BASE/workforce/management/objectives/$WORKFORCE_OBJECTIVE_ID" || true)
+  if [ "$LOOKUP_HTTP" != 200 ]; then
+    LOOKUP_FAILURES=$((LOOKUP_FAILURES + 1))
+    echo "WORKFORCE_OBJECTIVE_LOOKUP_HTTP=$LOOKUP_HTTP ATTEMPT=$i"
+    if [ "$LOOKUP_FAILURES" -ge 5 ]; then
+      head -c 2000 /tmp/mb-workforce-view.json || true
+      echo
+      exit 1
+    fi
+    sleep 2
+    continue
+  fi
+  LOOKUP_FAILURES=0
+  TERMINAL=$(python3 - <<'PY'
+import json
+d=json.load(open('/tmp/mb-workforce-view.json'))
+print((d.get('objective') or {}).get('status',''))
+PY
+  )
+  echo "WORKFORCE_OBJECTIVE_STATUS=$TERMINAL ATTEMPT=$i"
+  case "$TERMINAL" in
+    COMPLETED|DELIVERED|BLOCKED|ESCALATED|CANCELLED|FAILED) break ;;
+  esac
+  sleep 2
+done
+echo "WORKFORCE_TERMINAL_STATUS=${TERMINAL:-NON_TERMINAL}"
+
+cat >/tmp/mb-status-payload.json <<JSON
+{"case_id":"$CASE_ID"}
+JSON
+envelope "sync-$CORR" /tmp/mb-status-payload.json >/tmp/mb-status-request.json
+curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/status"             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/mb-status-request.json >/tmp/mb-status-response.json || true
+
+cat >/tmp/mb-trust-payload.json <<JSON
+{"case_id":"$CASE_ID","limit":200}
+JSON
+envelope "trust-$CORR" /tmp/mb-trust-payload.json >/tmp/mb-trust-request.json
+curl -fsS -X POST "$BIOS_BASE/v2/product/trust"             -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json'             --data-binary @/tmp/mb-trust-request.json >/tmp/mb-trust-response.json || true
+
+python3 - "$TERMINAL" <<'PY'
+import json,sys,re
+terminal=sys.argv[1]
+view=json.load(open('/tmp/mb-workforce-view.json'))
+obj=view.get('objective') or {}
+work=view.get('autonomousWork') or {}
+refs=list(obj.get('evidenceRefs') or [])
+outputs=[x[len('general-work-output:'):] for x in refs if isinstance(x,str) and x.startswith('general-work-output:')]
+urls=[]
+for x in refs:
+    if isinstance(x,str) and re.match(r'^https?://',x) and x not in urls:
+        urls.append(x)
+result={
+  'objective_id':obj.get('objectiveId'),
+  'status':obj.get('status'),
+  'owner':obj.get('ownerWorkerId'),
+  'blocker':work.get('blocker'),
+  'completed_steps':work.get('completedStepIds'),
+  'source_urls':urls,
+  'work_outputs':outputs,
+  'evidence_count':len(refs)
+}
+print('BIOS_MB_LIVE_RESULT='+json.dumps(result,ensure_ascii=False))
+if terminal not in ('COMPLETED','DELIVERED'):
+    raise SystemExit('REAL_BIOS_OBJECTIVE_NOT_COMPLETED:'+terminal)
+if not urls:
+    raise SystemExit('REAL_BIOS_OBJECTIVE_MISSING_SOURCE_URLS')
+if not outputs:
+    raise SystemExit('REAL_BIOS_OBJECTIVE_MISSING_DURABLE_WORK_OUTPUT')
+output=outputs[-1]
+numbered=sum(1 for line in output.splitlines() if re.match(r'\s*(?:\d+[.)]|[-*]\s*\d+[.)])',line))
+decisions=len(re.findall(r'\b(?:KEEP|TEST|CHANGE|REJECT)\b',output.upper()))
+if decisions < 5:
+    raise SystemExit('REAL_BIOS_OBJECTIVE_OUTPUT_MISSING_FIVE_MODEL_DECISIONS')
+print('BIOS_MB_SOURCE_ATTRIBUTION=PASS')
+print('BIOS_MB_DURABLE_OUTPUT=PASS')
+print('BIOS_MB_MODEL_DECISIONS='+str(decisions))
+print('BIOS_MB_REAL_OBJECTIVE=PASS')
+PY
