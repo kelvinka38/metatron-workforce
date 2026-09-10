@@ -23,6 +23,7 @@ public final class FileGovernanceStateStore implements GovernanceStateStore {
             Map<String, DerivationReceipt> receipts,
             Map<String, ExecutionPlanBinding> plans,
             Map<String, String> activePlanByStep,
+            Map<String, ExecutionAttemptGovernanceBinding> attemptBindings,
             Map<String, String> currentAuthority,
             List<GovernanceDenial> denials,
             List<CompletionDecision> completion) {
@@ -33,11 +34,12 @@ public final class FileGovernanceStateStore implements GovernanceStateStore {
             receipts = receipts == null ? Map.of() : Map.copyOf(receipts);
             plans = plans == null ? Map.of() : Map.copyOf(plans);
             activePlanByStep = activePlanByStep == null ? Map.of() : Map.copyOf(activePlanByStep);
+            attemptBindings = attemptBindings == null ? Map.of() : Map.copyOf(attemptBindings);
             currentAuthority = currentAuthority == null ? Map.of() : Map.copyOf(currentAuthority);
             denials = denials == null ? List.of() : List.copyOf(denials);
             completion = completion == null ? List.of() : List.copyOf(completion);
         }
-        static State empty() { return new State(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), List.of(), List.of()); }
+        static State empty() { return new State(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), List.of(), List.of()); }
     }
 
     private final Path path;
@@ -57,19 +59,19 @@ public final class FileGovernanceStateStore implements GovernanceStateStore {
 
     @Override public synchronized void saveDiscovery(SotDiscoveryRecord record) {
         Map<String, SotDiscoveryRecord> next = new LinkedHashMap<>(state.discoveries()); next.put(record.discoveryId(), record);
-        replace(new State(next, state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.currentAuthority(), state.denials(), state.completion()));
+        replace(new State(next, state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.attemptBindings(), state.currentAuthority(), state.denials(), state.completion()));
     }
     @Override public synchronized void saveSnapshot(AuthoritySnapshot snapshot) {
         Map<String, AuthoritySnapshot> next = new LinkedHashMap<>(state.snapshots()); next.put(snapshot.snapshotId(), snapshot);
-        replace(new State(state.discoveries(), next, state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.currentAuthority(), state.denials(), state.completion()));
+        replace(new State(state.discoveries(), next, state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.attemptBindings(), state.currentAuthority(), state.denials(), state.completion()));
     }
     @Override public synchronized void saveConstraintBundle(ConstraintBundle bundle) {
         Map<String, ConstraintBundle> next = new LinkedHashMap<>(state.bundles()); next.put(bundle.bundleId(), bundle);
-        replace(new State(state.discoveries(), state.snapshots(), next, state.receipts(), state.plans(), state.activePlanByStep(), state.currentAuthority(), state.denials(), state.completion()));
+        replace(new State(state.discoveries(), state.snapshots(), next, state.receipts(), state.plans(), state.activePlanByStep(), state.attemptBindings(), state.currentAuthority(), state.denials(), state.completion()));
     }
     @Override public synchronized void saveDerivationReceipt(DerivationReceipt receipt) {
         Map<String, DerivationReceipt> next = new LinkedHashMap<>(state.receipts()); next.put(receipt.receiptId(), receipt);
-        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), next, state.plans(), state.activePlanByStep(), state.currentAuthority(), state.denials(), state.completion()));
+        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), next, state.plans(), state.activePlanByStep(), state.attemptBindings(), state.currentAuthority(), state.denials(), state.completion()));
     }
     @Override public synchronized void savePlanBinding(ExecutionPlanBinding plan) {
         Map<String, ExecutionPlanBinding> plans = new LinkedHashMap<>(state.plans()); plans.put(planKey(plan.planId(), plan.version()), plan);
@@ -79,19 +81,23 @@ public final class FileGovernanceStateStore implements GovernanceStateStore {
             if (plan.status() == ExecutionPlanBinding.Status.APPROVED) active.put(stepKey, planKey(plan.planId(), plan.version()));
             else active.remove(stepKey, planKey(plan.planId(), plan.version()));
         }
-        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), plans, active, state.currentAuthority(), state.denials(), state.completion()));
+        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), plans, active, state.attemptBindings(), state.currentAuthority(), state.denials(), state.completion()));
+    }
+    @Override public synchronized void saveAttemptBinding(ExecutionAttemptGovernanceBinding binding) {
+        Map<String, ExecutionAttemptGovernanceBinding> next = new LinkedHashMap<>(state.attemptBindings()); next.put(binding.attemptId(), binding);
+        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), next, state.currentAuthority(), state.denials(), state.completion()));
     }
     @Override public synchronized void saveDenial(GovernanceDenial denial) {
         List<GovernanceDenial> next = new ArrayList<>(state.denials()); next.add(denial);
-        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.currentAuthority(), next, state.completion()));
+        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.attemptBindings(), state.currentAuthority(), next, state.completion()));
     }
     @Override public synchronized void saveCompletionDecision(CompletionDecision decision) {
         List<CompletionDecision> next = new ArrayList<>(state.completion()); next.add(decision);
-        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.currentAuthority(), state.denials(), next));
+        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.attemptBindings(), state.currentAuthority(), state.denials(), next));
     }
     @Override public synchronized void setCurrentAuthorityDigest(String targetEntity, String digest) {
         Map<String, String> next = new LinkedHashMap<>(state.currentAuthority()); next.put(targetEntity, digest);
-        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), next, state.denials(), state.completion()));
+        replace(new State(state.discoveries(), state.snapshots(), state.bundles(), state.receipts(), state.plans(), state.activePlanByStep(), state.attemptBindings(), next, state.denials(), state.completion()));
     }
 
     @Override public synchronized Optional<SotDiscoveryRecord> discovery(String id) { return Optional.ofNullable(state.discoveries().get(id)); }
@@ -103,6 +109,7 @@ public final class FileGovernanceStateStore implements GovernanceStateStore {
         String key = state.activePlanByStep().get(stepKey(objectiveId, stepId));
         return key == null ? Optional.empty() : Optional.ofNullable(state.plans().get(key)).filter(p -> p.status() == ExecutionPlanBinding.Status.APPROVED);
     }
+    @Override public synchronized Optional<ExecutionAttemptGovernanceBinding> attemptBinding(String attemptId) { return Optional.ofNullable(state.attemptBindings().get(attemptId)); }
     @Override public synchronized Optional<String> currentAuthorityDigest(String targetEntity) { return Optional.ofNullable(state.currentAuthority().get(targetEntity)); }
     @Override public synchronized List<GovernanceDenial> denials() { return List.copyOf(state.denials()); }
     @Override public synchronized List<CompletionDecision> completionDecisions() { return List.copyOf(state.completion()); }
