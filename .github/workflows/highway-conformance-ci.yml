@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - '.github/workflows/**'
       - 'scripts/**'
       - 'deploy/docker-compose.yml'
       - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
@@ -42,6 +43,34 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - name: Enforce single PR queue surface and fabric contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 highway/audit_workflow_queue_surface.py
+          python3 -m unittest discover -s highway/tests -v
+          python3 -m py_compile highway/highwayd.py highway/highwayctl.py highway/audit_workflow_queue_surface.py
+          bash -n highway/install.sh highway/ensure-running.sh highway/publish-release.sh
+          for script in scripts/highway-tasks/*.sh; do bash -n "$script"; done
+
+          TMP_HIGHWAY=$(mktemp -d)
+          cleanup_tmp_highway() { rm -rf "$TMP_HIGHWAY"; }
+          trap cleanup_tmp_highway EXIT
+          for n in 1 2 3 4; do
+            METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY"               bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >"/tmp/highway-pr-publish-$n.log" 2>&1 &
+          done
+          wait
+          test "$(cat "$TMP_HIGHWAY/releases/$GITHUB_SHA/.highway-source-sha")" = "$GITHUB_SHA"
+          test -f "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh"
+          test "$(find "$TMP_HIGHWAY/releases" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
+          SOURCE_HASH=$(sha256sum "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh")
+          METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY"             bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >/tmp/highway-pr-republish.log
+          test "$SOURCE_HASH" = "$(sha256sum "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh")"
+
+          echo 'HIGHWAY_SINGLE_PR_SELF_HOSTED_GATE=PASS'
+          echo 'HIGHWAY_QUEUE_SURFACE_AUDIT_STRICT=PASS'
+          echo 'HIGHWAY_SCHEDULER_UNIT_CONTRACT=PASS'
+          echo 'HIGHWAY_ATOMIC_IMMUTABLE_RELEASE_PUBLICATION=PASS'
       - name: Validate highway shells
         shell: bash
         run: |
