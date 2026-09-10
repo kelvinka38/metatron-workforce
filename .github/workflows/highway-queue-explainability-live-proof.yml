@@ -91,9 +91,10 @@ jobs:
           done
           echo "$WHY"
           test "$REASON" = DEPENDENCY_WAIT
-          printf '%s' "$WHY" | python3 - "$PARENT" <<'PY'
+          printf '%s' "$WHY" > /tmp/highway-why-dependency.json
+          python3 - /tmp/highway-why-dependency.json "$PARENT" <<'PY'
           import json,sys
-          d=json.load(sys.stdin); parent=sys.argv[1]
+          d=json.load(open(sys.argv[1])); parent=sys.argv[2]
           assert any(x.get('task_id')==parent and x.get('state') in ('QUEUED','RUNNING') for x in d['dependency_blockers']),d
           print('HIGHWAY_WHY_DEPENDENCY_WAIT=PASS')
           PY
@@ -123,9 +124,10 @@ jobs:
           WAITER=$($CTL submit --kind fabric-probe-read --source-sha "$TARGET_SHA" --dedupe-key "$PFX-waiter" --priority 90             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
           WHY=$($CTL why "$WAITER")
           echo "$WHY"
-          printf '%s' "$WHY" | python3 - "$HOLDER" <<'PY'
+          printf '%s' "$WHY" > /tmp/highway-why-resource.json
+          python3 - /tmp/highway-why-resource.json "$HOLDER" <<'PY'
           import json,sys
-          d=json.load(sys.stdin); holder=sys.argv[1]
+          d=json.load(open(sys.argv[1])); holder=sys.argv[2]
           assert d['reason']=='RESOURCE_CONFLICT',d
           assert any(x.get('holderTaskId')==holder and x.get('holderMode')=='WRITE' for x in d['resource_blockers']),d
           print('HIGHWAY_WHY_RESOURCE_CONFLICT=PASS')
@@ -164,9 +166,10 @@ jobs:
           TARGET=$($CTL submit --kind fabric-probe-unrelated --source-sha "$TARGET_SHA" --dedupe-key "$PFX-target" --priority 90             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
           WHY=$($CTL why "$TARGET")
           echo "$WHY"
-          printf '%s' "$WHY" | python3 - <<'PY'
+          printf '%s' "$WHY" > /tmp/highway-why-capacity.json
+          python3 - /tmp/highway-why-capacity.json <<'PY'
           import json,sys
-          d=json.load(sys.stdin)
+          d=json.load(open(sys.argv[1]))
           assert d['reason']=='EXECUTOR_CAPACITY',d
           assert d['executor_active']>=d['executor_capacity']>=4,d
           assert d['executor_available']==0,d
@@ -191,9 +194,10 @@ jobs:
           $CTL wait "$ID" --timeout 30 >/dev/null
           WHY=$($CTL why "$ID")
           echo "$WHY"
-          printf '%s' "$WHY" | python3 - <<'PY'
+          printf '%s' "$WHY" > /tmp/highway-why-terminal.json
+          python3 - /tmp/highway-why-terminal.json <<'PY'
           import json,sys
-          d=json.load(sys.stdin)
+          d=json.load(open(sys.argv[1]))
           assert d['reason']=='STATE_SUCCEEDED',d
           print('HIGHWAY_WHY_TERMINAL_STATE=PASS')
           print('HIGHWAY_QUEUE_EXPLAINABILITY_LIVE=PASS')
