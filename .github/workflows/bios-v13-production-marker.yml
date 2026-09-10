@@ -1,0 +1,83 @@
+name: BIOS Aquaculture v1.3 Production Marker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bios-v13-production-marker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  marker:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 8
+    steps:
+      - name: Verify exact production identity and live Aquaculture semantics
+        shell: bash
+        env:
+          BIOS_EXPECTED_SHA: 73a09c944841ccb6be6c76a5cf70f1f22a165a50
+        run: |
+          set -euo pipefail
+          IMAGE=$(docker inspect metatron-bios --format '{{.Config.Image}}')
+          echo "BIOS_IMAGE=$IMAGE"
+          test "$IMAGE" = "metatron-bios:$BIOS_EXPECTED_SHA"
+
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          set +a
+          test -n "${BIOS_API_KEY:-}"
+
+          CODE=$(curl -sS -o /tmp/aq-v13-ready.json -w '%{http_code}' \
+            -H "X-BIOS-API-Key: $BIOS_API_KEY" \
+            http://127.0.0.1:18080/health/ready)
+          test "$CODE" = 200
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-v13-ready.json'))
+          print("READY_STATUS="+str(d.get("status")))
+          print("AQ_BUNDLE_VERSION="+str(d.get("bundle_version")))
+          print("AQ_KNOWLEDGE_COUNT="+str((d.get("counts") or {}).get("knowledge")))
+          assert d.get("status")=="ready", d
+          assert d.get("bundle_version")=="1.2.0", d
+          assert (d.get("counts") or {}).get("knowledge",0)>=35, d
+          PY
+
+          python3 - "$BIOS_API_KEY" <<'PY'
+          import datetime,json,sys,urllib.request
+          key=sys.argv[1]
+          actor="aq_farmer_b200f732435343a381484488563711fc"
+          case_id="case_d9b2e6f64a4a4b25a3c52d60339901cf"
+          farm_id="aq_farm_1f612ab9df4248af83275c4121c15cab"
+          body={
+            "request_id":"aq-v13-production-marker",
+            "correlation_id":"aq-v13-production-marker",
+            "actor_id":actor,
+            "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "schema_version":"0.1",
+            "payload":{"case_id":case_id,"farm_id":farm_id},
+          }
+          req=urllib.request.Request(
+            "http://127.0.0.1:18080/v2/product/aquaculture/farmer/market",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type":"application/json","X-BIOS-API-Key":key},
+            method="POST",
+          )
+          with urllib.request.urlopen(req,timeout=30) as r:
+            out=json.load(r)
+          market=out["payload"]["data"]
+          scat=[x for x in market["evidence"] if x["product"]=="Cá nâu"]
+          assert not any((x.get("region") or {}).get("province") in {"Huế","Thừa Thiên Huế"} for x in scat), scat
+          assert all(x.get("geographic_match") in {"EXACT","PARTIAL"} for x in market["evidence"]), market["evidence"]
+          print("AQ_V13_FARMER_MARKET_RELEVANCE=PASS")
+          PY
+
+          curl -fsS -D /tmp/aq-v13-js.headers -o /tmp/aq-v13-app.js \
+            https://gate.metatron.vn/aquaculture/assets/app.js
+          grep -qi '^cache-control: no-store' /tmp/aq-v13-js.headers
+          grep -q 'tham chiếu rộng' /tmp/aq-v13-app.js
+          grep -q 'Chưa thể đánh giá lệch kế hoạch' /tmp/aq-v13-app.js
+          echo "AQ_V13_PUBLIC_UI=PASS"
+          echo "AQUACULTURE_V13_PRODUCTION_MARKER=PASS"
