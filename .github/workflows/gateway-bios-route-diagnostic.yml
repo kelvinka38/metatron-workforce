@@ -2,12 +2,7 @@ name: Gateway BIOS Route Diagnostic
 # Aquaculture E1 route audit
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/gateway-bios-route-diagnostic.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
 
