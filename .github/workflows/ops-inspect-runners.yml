@@ -1,10 +1,7 @@
 name: Inspect Production Runner Services
 
 on:
-  push:
-    branches: [main]
-    paths: [".github/workflows/ops-inspect-runners.yml"]
-
+  workflow_dispatch:
 permissions:
   contents: read
 
