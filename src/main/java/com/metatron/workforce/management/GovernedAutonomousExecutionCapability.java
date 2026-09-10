@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.action.ActionFabric;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.execution.Assignment;
 import com.metatron.workforce.execution.Authorization;
@@ -8,15 +9,25 @@ import com.metatron.workforce.execution.ExecutionAttempt;
 import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.ExecutionRequest;
 import com.metatron.workforce.execution.ExecutionState;
+import com.metatron.workforce.execution.governance.ExecutionAttemptGovernanceBinding;
+import com.metatron.workforce.execution.governance.ExecutionGate;
+import com.metatron.workforce.execution.governance.ExecutionIntent;
+import com.metatron.workforce.execution.governance.ExecutionPermit;
+import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
+import com.metatron.workforce.execution.governance.GovernanceExecutionContext;
+import com.metatron.workforce.execution.governance.GovernancePlanService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimeInstance;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -25,10 +36,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Governed Workforce execution boundary:
- * staffing -> capacity -> Assignment -> Authorization -> Execution attempt/runtime -> effect.
+ * staffing -> capacity -> Assignment -> Authorization -> SoT/plan binding -> Execution attempt/runtime -> effect.
  *
  * Execution owns attempt identity, lease/heartbeat/checkpoint/fencing. Runtime owns replaceable
  * computational embodiment. Worker and Assignment identity remain stable across runtime recovery.
+ * General Workspace obtains per-Action permits inside CognitiveWorkerRuntime; every other MUTATING
+ * capability obtains a capability-level permit here immediately before delegate effect invocation.
  */
 public final class GovernedAutonomousExecutionCapability implements AutonomousExecutionCapability {
     private static final Duration DEFAULT_CAPACITY_WAIT = Duration.ofSeconds(30);
@@ -46,13 +59,16 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     private final AutonomousStaffingService staffing;
     private final ExecutionAttemptService executionAttempts;
     private final RuntimeCapacityCoordinator runtimeCapacity;
+    private final GovernancePlanService governancePlans;
+    private final GovernanceAttemptBindingService governanceAttempts;
+    private final ExecutionGate executionGate;
     private final ThreadLocal<List<String>> staffingEvidence = ThreadLocal.withInitial(ArrayList::new);
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
                                                   WorkforceCoreService core,
                                                   ExecutionAdmissionService admission,
                                                   Clock clock) {
-        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, null, null, null);
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, null, null, null, null, null, null);
     }
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -60,7 +76,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                                   ExecutionAdmissionService admission,
                                                   Clock clock,
                                                   AutonomousStaffingService staffing) {
-        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, null, null);
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, null, null, null, null, null);
     }
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -70,7 +86,35 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                                   AutonomousStaffingService staffing,
                                                   ExecutionAttemptService executionAttempts,
                                                   RuntimeCapacityCoordinator runtimeCapacity) {
-        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity);
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity,
+                null, null, null);
+    }
+
+    public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
+                                                  WorkforceCoreService core,
+                                                  ExecutionAdmissionService admission,
+                                                  Clock clock,
+                                                  AutonomousStaffingService staffing,
+                                                  ExecutionAttemptService executionAttempts,
+                                                  RuntimeCapacityCoordinator runtimeCapacity,
+                                                  GovernancePlanService governancePlans,
+                                                  GovernanceAttemptBindingService governanceAttempts) {
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity,
+                governancePlans, governanceAttempts, null);
+    }
+
+    public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
+                                                  WorkforceCoreService core,
+                                                  ExecutionAdmissionService admission,
+                                                  Clock clock,
+                                                  AutonomousStaffingService staffing,
+                                                  ExecutionAttemptService executionAttempts,
+                                                  RuntimeCapacityCoordinator runtimeCapacity,
+                                                  GovernancePlanService governancePlans,
+                                                  GovernanceAttemptBindingService governanceAttempts,
+                                                  ExecutionGate executionGate) {
+        this(delegate, core, admission, clock, DEFAULT_CAPACITY_WAIT, staffing, executionAttempts, runtimeCapacity,
+                governancePlans, governanceAttempts, executionGate);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -78,7 +122,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           ExecutionAdmissionService admission,
                                           Clock clock,
                                           Duration capacityWait) {
-        this(delegate, core, admission, clock, capacityWait, null, null, null);
+        this(delegate, core, admission, clock, capacityWait, null, null, null, null, null, null);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -87,7 +131,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           Clock clock,
                                           Duration capacityWait,
                                           AutonomousStaffingService staffing) {
-        this(delegate, core, admission, clock, capacityWait, staffing, null, null);
+        this(delegate, core, admission, clock, capacityWait, staffing, null, null, null, null, null);
     }
 
     GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -98,6 +142,35 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                           AutonomousStaffingService staffing,
                                           ExecutionAttemptService executionAttempts,
                                           RuntimeCapacityCoordinator runtimeCapacity) {
+        this(delegate, core, admission, clock, capacityWait, staffing, executionAttempts, runtimeCapacity,
+                null, null, null);
+    }
+
+    GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
+                                          WorkforceCoreService core,
+                                          ExecutionAdmissionService admission,
+                                          Clock clock,
+                                          Duration capacityWait,
+                                          AutonomousStaffingService staffing,
+                                          ExecutionAttemptService executionAttempts,
+                                          RuntimeCapacityCoordinator runtimeCapacity,
+                                          GovernancePlanService governancePlans,
+                                          GovernanceAttemptBindingService governanceAttempts) {
+        this(delegate, core, admission, clock, capacityWait, staffing, executionAttempts, runtimeCapacity,
+                governancePlans, governanceAttempts, null);
+    }
+
+    GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
+                                          WorkforceCoreService core,
+                                          ExecutionAdmissionService admission,
+                                          Clock clock,
+                                          Duration capacityWait,
+                                          AutonomousStaffingService staffing,
+                                          ExecutionAttemptService executionAttempts,
+                                          RuntimeCapacityCoordinator runtimeCapacity,
+                                          GovernancePlanService governancePlans,
+                                          GovernanceAttemptBindingService governanceAttempts,
+                                          ExecutionGate executionGate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.core = Objects.requireNonNull(core, "core");
         this.admission = Objects.requireNonNull(admission, "admission");
@@ -106,8 +179,14 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         this.staffing = staffing;
         this.executionAttempts = executionAttempts;
         this.runtimeCapacity = runtimeCapacity;
+        this.governancePlans = governancePlans;
+        this.governanceAttempts = governanceAttempts;
+        this.executionGate = executionGate;
         if ((executionAttempts == null) != (runtimeCapacity == null)) {
             throw new IllegalArgumentException("ExecutionAttemptService and RuntimeCapacityCoordinator must be configured together");
+        }
+        if ((governancePlans == null) != (governanceAttempts == null)) {
+            throw new IllegalArgumentException("GovernancePlanService and GovernanceAttemptBindingService must be configured together");
         }
         if (capacityWait.isNegative()) throw new IllegalArgumentException("capacityWait must not be negative");
     }
@@ -126,6 +205,18 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         staffingEvidence.get().clear();
         String authorityRef = requireReference(delegate.authorityReference(), "authority-reference-missing");
         String authorizationRef = requireReference(delegate.authorizationReference(), "authorization-reference-missing");
+        boolean mutating = request.workSpec().consequence() == ExecutionWorkSpec.Consequence.MUTATING;
+        GovernancePlanService.BoundPlan boundPlan = null;
+        if (mutating) {
+            if (governancePlans == null || governanceAttempts == null || executionGate == null) {
+                throw new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED",
+                        "mutating capability has no complete SoT governance composition");
+            }
+            boundPlan = governancePlans.bindAuthorizedWork(
+                    request.objectiveId(), request.humanId(), request.workSpec(),
+                    "objective-owner:" + request.humanId(),
+                    "objective-authority:" + request.objectiveId(), Map.of());
+        }
 
         reconcileTerminalExecutionCapacity();
         WorkforceCoreService.Worker worker = awaitEligibleWorker();
@@ -146,19 +237,27 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     reservationId, participation.participationId(), authorityRef, authorizationRef, request.workSpec().objective());
             assignmentCreated = true;
 
-            ExecutionState admitted = admission.admit(new ExecutionRequest(
+            ExecutionRequest executionRequest = new ExecutionRequest(
                     executionId,
                     new Assignment(coreAssignment.assignmentId(), coreAssignment.workerId()),
                     new Authorization(coreAssignment.authorizationRef(), coreAssignment.workerId()),
-                    request.workSpec(),
-                    clock.instant()));
+                    request.workSpec(), clock.instant());
+            if (boundPlan != null) {
+                executionRequest = executionRequest.withGovernance(
+                        boundPlan.snapshot().snapshotId(), boundPlan.derivation().receiptId(),
+                        boundPlan.plan().planId(), boundPlan.plan().version());
+            }
+            ExecutionState admitted = admission.admit(executionRequest);
             if (admitted != ExecutionState.ADMITTED) throw new SecurityException("execution-not-admitted:" + admitted);
 
             CapabilityRequest allocated = request.withAllocation(
                     coreAssignment.workerId(), coreAssignment.assignmentId(), coreAssignment.authorizationRef());
+            if (mutating && executionAttempts == null) {
+                throw new GovernanceDeniedException("EXECUTION_ATTEMPT_REQUIRED", "mutating execution requires durable attempt/fencing");
+            }
             CapabilityResult result = executionAttempts == null
                     ? delegate.execute(allocated)
-                    : executeWithRecovery(allocated, coreAssignment);
+                    : executeWithRecovery(allocated, coreAssignment, boundPlan);
             verifyAttribution(result, coreAssignment);
 
             core.transitionAssignment(coreAssignment.assignmentId(), result.success()
@@ -172,6 +271,13 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     + ":capacity=" + delegate.requiredCapacity());
             evidence.add("execution-admission:execution=" + executionId
                     + ":authorization=" + coreAssignment.authorizationRef() + ":state=" + admitted);
+            if (boundPlan != null) {
+                evidence.add("sot-discovery:" + boundPlan.discovery().discoveryId());
+                evidence.add("authority-snapshot:" + boundPlan.snapshot().snapshotId() + ":digest=" + boundPlan.snapshot().digest());
+                evidence.add("derivation-receipt:" + boundPlan.derivation().receiptId());
+                evidence.add("approved-plan:" + boundPlan.plan().planId() + "@" + boundPlan.plan().version()
+                        + ":digest=" + boundPlan.plan().planDigest());
+            }
             return new CapabilityResult(result.success(), result.workerId(), result.assignmentReference(),
                     result.workReference(), evidence, result.summary());
         } catch (RuntimeException failure) {
@@ -183,7 +289,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     }
 
     private CapabilityResult executeWithRecovery(CapabilityRequest request,
-                                                  WorkforceCoreService.Assignment assignment) {
+                                                  WorkforceCoreService.Assignment assignment,
+                                                  GovernancePlanService.BoundPlan boundPlan) {
         executionAttempts.reconcileExpired(clock.instant());
         String dispatchRef = request.dispatchBound() ? request.dispatchReference() : "dispatch:" + stableKey(request);
         int dispatchAttempt = request.dispatchBound() ? request.dispatchAttempt() : 1;
@@ -200,6 +307,14 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                         dispatchRef, request.objectiveId(), request.workSpec().stepId(), assignment.workerId(),
                         assignment.assignmentId(), assignment.authorizationRef(), runtime.runtimeId(), attemptNumber,
                         EXECUTION_LEASE, clock.instant());
+                CapabilityRequest governedRequest = request;
+                if (boundPlan != null) {
+                    ExecutionAttemptGovernanceBinding governanceBinding = governanceAttempts.bind(attempt, boundPlan);
+                    governedRequest = request.withGovernance(new GovernanceExecutionContext(
+                            attempt.attemptId(), attempt.fencingToken(), governanceBinding.planId(), governanceBinding.planVersion(),
+                            governanceBinding.authoritySnapshotId(), governanceBinding.derivationReceiptId(),
+                            boundPlan.plan().targetScope()));
+                }
                 executionAttempts.heartbeat(attempt.attemptId(), attempt.fencingToken(), HEARTBEAT_EXTENSION, clock.instant());
                 executionAttempts.checkpoint(attempt.attemptId(), attempt.fencingToken(),
                         "prepared:" + request.idempotencyKey(), clock.instant());
@@ -220,7 +335,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                 }, HEARTBEAT_PERIOD_MILLIS, HEARTBEAT_PERIOD_MILLIS, TimeUnit.MILLISECONDS);
 
                 try {
-                    CapabilityResult result = delegate.execute(request);
+                    ExecutionPermit capabilityPermit = authorizeCapabilityEffectIfRequired(governedRequest, attempt, boundPlan);
+                    CapabilityResult result = delegate.execute(governedRequest);
                     RuntimeException leaseFailure = heartbeatFailure.get();
                     if (leaseFailure != null) throw leaseFailure;
                     verifyAttribution(result, assignment);
@@ -228,24 +344,21 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                         ExecutionAttempt completed = executionAttempts.succeed(
                                 attempt.attemptId(), attempt.fencingToken(), clock.instant());
                         executionEvidence.add(attemptEvidence(completed));
-                        List<String> refs = new ArrayList<>(result.evidenceReferences());
-                        refs.addAll(executionEvidence);
-                        return new CapabilityResult(true, result.workerId(), result.assignmentReference(),
-                                result.workReference(), refs, result.summary());
+                        if (capabilityPermit != null) executionEvidence.add("execution-permit:" + capabilityPermit.permitId());
+                        List<String> refs = new ArrayList<>(result.evidenceReferences()); refs.addAll(executionEvidence);
+                        return new CapabilityResult(true, result.workerId(), result.assignmentReference(), result.workReference(), refs, result.summary());
                     }
                     ExecutionAttempt failed = executionAttempts.fail(
                             attempt.attemptId(), attempt.fencingToken(), nonBlank(result.summary(), "capability-unsuccessful"), clock.instant());
                     executionEvidence.add(attemptEvidence(failed));
-                    List<String> refs = new ArrayList<>(result.evidenceReferences());
-                    refs.addAll(executionEvidence);
-                    return new CapabilityResult(false, result.workerId(), result.assignmentReference(),
-                            result.workReference(), refs, result.summary());
+                    if (capabilityPermit != null) executionEvidence.add("execution-permit:" + capabilityPermit.permitId());
+                    List<String> refs = new ArrayList<>(result.evidenceReferences()); refs.addAll(executionEvidence);
+                    return new CapabilityResult(false, result.workerId(), result.assignmentReference(), result.workReference(), refs, result.summary());
                 } catch (RuntimeException failure) {
                     terminalFailure = failure;
                     failAttemptIfOwned(attempt, failure);
                     executionEvidence.add("execution-attempt:" + attempt.attemptId()
-                            + ":runtime=" + attempt.runtimeId()
-                            + ":fence=" + attempt.fencingToken()
+                            + ":runtime=" + attempt.runtimeId() + ":fence=" + attempt.fencingToken()
                             + ":failure=" + failure.getClass().getSimpleName());
                     if (!retryableReadOnly(request, failure) || recoveryIndex >= maxAttempts) throw failure;
                     RuntimeInstance replacement = runtimeCapacity.replace(assignment.workerId(), runtime.runtimeId());
@@ -256,49 +369,64 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     heartbeat.shutdownNow();
                 }
             }
-            throw terminalFailure == null
-                    ? new IllegalStateException("execution recovery exhausted") : terminalFailure;
+            throw terminalFailure == null ? new IllegalStateException("execution recovery exhausted") : terminalFailure;
         } finally {
             releaseRuntimeIfPresent(assignment.workerId(), runtime);
         }
+    }
+
+    private ExecutionPermit authorizeCapabilityEffectIfRequired(CapabilityRequest request,
+                                                                 ExecutionAttempt attempt,
+                                                                 GovernancePlanService.BoundPlan boundPlan) {
+        if (boundPlan == null || request.workSpec().consequence() != ExecutionWorkSpec.Consequence.MUTATING) return null;
+        if (GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(delegate.capabilityRef())) {
+            // General Workspace authorizes every concrete mutating Action inside CognitiveWorkerRuntime.
+            return null;
+        }
+        String actionRef = "capability:" + request.workSpec().requiredCapability();
+        Instant now = clock.instant();
+        return executionGate.authorize(new ExecutionIntent(
+                request.objectiveId(), attempt.attemptId(), attempt.fencingToken(), assignmentWorker(request),
+                request.assignmentReference(), request.authorizationReference(), boundPlan.plan().planId(),
+                boundPlan.plan().version(), request.workSpec().stepId(), actionRef, ActionFabric.Consequence.MUTATING,
+                boundPlan.plan().targetScope(), boundPlan.snapshot().snapshotId(), boundPlan.derivation().receiptId(),
+                Map.of("capabilityRef", delegate.capabilityRef()), now));
+    }
+
+    private static String assignmentWorker(CapabilityRequest request) {
+        if (request.allocatedWorkerId() == null || request.allocatedWorkerId().isBlank()) {
+            throw new GovernanceDeniedException("PLAN_BINDING_MISMATCH", "allocated Worker missing at capability effect boundary");
+        }
+        return request.allocatedWorkerId();
     }
 
     private void failAttemptIfOwned(ExecutionAttempt attempt, RuntimeException failure) {
         try {
             executionAttempts.fail(attempt.attemptId(), attempt.fencingToken(),
                     nonBlank(failure.getMessage(), failure.getClass().getSimpleName()), clock.instant());
-        } catch (RuntimeException staleOrTerminal) {
-            // A stale/expired attempt must remain fenced; do not overwrite the authoritative terminal state.
-        }
+        } catch (RuntimeException staleOrTerminal) { }
     }
 
     private boolean retryableReadOnly(CapabilityRequest request, RuntimeException failure) {
         return request.workSpec().consequence() == ExecutionWorkSpec.Consequence.READ_ONLY
                 && !(failure instanceof SecurityException)
-                && !(failure instanceof IllegalArgumentException);
+                && !(failure instanceof IllegalArgumentException)
+                && !(failure instanceof GovernanceDeniedException);
     }
 
     private String attemptEvidence(ExecutionAttempt attempt) {
         return "execution-attempt:" + attempt.attemptId()
-                + ":dispatch=" + attempt.dispatchId()
-                + ":runtime=" + attempt.runtimeId()
-                + ":fence=" + attempt.fencingToken()
-                + ":checkpoint=" + attempt.checkpointRef()
+                + ":dispatch=" + attempt.dispatchId() + ":runtime=" + attempt.runtimeId()
+                + ":fence=" + attempt.fencingToken() + ":checkpoint=" + attempt.checkpointRef()
                 + ":status=" + attempt.status();
     }
 
     private void releaseRuntimeIfPresent(String workerId, RuntimeInstance runtime) {
         if (runtime == null) return;
         try { runtimeCapacity.release(workerId, runtime.runtimeId()); }
-        catch (RuntimeException ignored) { /* recovery/reconciliation owns any remaining runtime state */ }
+        catch (RuntimeException ignored) { }
     }
 
-    /**
-     * Restart reconciliation must happen before capability admission because stale Core reservations
-     * otherwise make every qualified Worker look capacity-exhausted and prevent Execution from ever
-     * reaching its own lease reconciler. Capacity is released only when the owning Execution lifecycle
-     * is terminal; a live lease remains authoritative and therefore retains its reservation fail-closed.
-     */
     private void reconcileTerminalExecutionCapacity() {
         if (executionAttempts == null) return;
         executionAttempts.reconcileExpired(clock.instant());
@@ -307,49 +435,36 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
             if (assignment.status() == WorkforceCoreService.AssignmentStatus.COMPLETED
                     || assignment.status() == WorkforceCoreService.AssignmentStatus.CANCELLED) continue;
             List<ExecutionAttempt> owned = attempts.stream()
-                    .filter(attempt -> attempt.assignmentRef().equals(assignment.assignmentId()))
-                    .toList();
+                    .filter(attempt -> attempt.assignmentRef().equals(assignment.assignmentId())).toList();
             if (owned.isEmpty() || owned.stream().anyMatch(attempt -> !attempt.terminal())) continue;
-
             ExecutionAttempt authoritative = owned.stream()
-                    .max(Comparator.comparingLong(ExecutionAttempt::fencingToken)
-                            .thenComparing(ExecutionAttempt::updatedAt))
-                    .orElseThrow();
-            WorkforceCoreService.AssignmentStatus terminalStatus =
-                    authoritative.status() == ExecutionAttempt.Status.SUCCEEDED
-                            ? WorkforceCoreService.AssignmentStatus.COMPLETED
-                            : WorkforceCoreService.AssignmentStatus.CANCELLED;
+                    .max(Comparator.comparingLong(ExecutionAttempt::fencingToken).thenComparing(ExecutionAttempt::updatedAt)).orElseThrow();
+            WorkforceCoreService.AssignmentStatus terminalStatus = authoritative.status() == ExecutionAttempt.Status.SUCCEEDED
+                    ? WorkforceCoreService.AssignmentStatus.COMPLETED : WorkforceCoreService.AssignmentStatus.CANCELLED;
             core.transitionAssignment(assignment.assignmentId(), terminalStatus);
             staffingEvidence.get().add("capacity-reconciled:assignment=" + assignment.assignmentId()
-                    + ":execution-attempt=" + authoritative.attemptId()
-                    + ":execution-status=" + authoritative.status()
+                    + ":execution-attempt=" + authoritative.attemptId() + ":execution-status=" + authoritative.status()
                     + ":assignment-status=" + terminalStatus);
         }
     }
 
     private WorkforceCoreService.Worker awaitEligibleWorker() {
-        long deadline = System.nanoTime() + capacityWait.toNanos();
-        boolean staffingAttempted = false;
+        long deadline = System.nanoTime() + capacityWait.toNanos(); boolean staffingAttempted = false;
         while (true) {
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
                             capabilityRef(), minimumCapabilityLevel(), requiredCapacity(), clock.instant()).stream()
-                    .filter(w -> supportsWorker(w.workerId()))
-                    .toList();
+                    .filter(w -> supportsWorker(w.workerId())).toList();
             if (!eligible.isEmpty()) return eligible.getFirst();
-
             if (!hasQualifiedParticipant() && !staffingAttempted) {
                 staffingAttempted = true;
                 if (staffing == null) throw new IllegalStateException("staffing-gap:orchestrator-unavailable:" + capabilityRef());
                 AutonomousStaffingService.StaffingOutcome outcome = staffing.ensureStaffed(delegate, clock.instant());
-                staffingEvidence.get().addAll(outcome.evidenceReferences());
-                continue;
+                staffingEvidence.get().addAll(outcome.evidenceReferences()); continue;
             }
             if (System.nanoTime() >= deadline) throw new IllegalStateException("capacity-unavailable:" + capabilityRef());
-            try {
-                Thread.sleep(CAPACITY_RETRY_MILLIS);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("capacity-wait-interrupted:" + capabilityRef(), interrupted);
+            try { Thread.sleep(CAPACITY_RETRY_MILLIS); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt(); throw new IllegalStateException("capacity-wait-interrupted:" + capabilityRef(), interrupted);
             }
         }
     }
@@ -400,7 +515,5 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         return value.trim();
     }
 
-    private static String nonBlank(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
+    private static String nonBlank(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
 }

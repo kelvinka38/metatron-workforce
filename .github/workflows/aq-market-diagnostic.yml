@@ -1,32 +1,8 @@
-name: Aquaculture Market Diagnostic
+name: Retired - aq-market-diagnostic
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/aq-market-diagnostic.yml']
-permissions:
-  contents: read
+  workflow_dispatch:
 jobs:
-  diagnose:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 5
+  retired:
+    runs-on: ubuntu-latest
     steps:
-      - name: Reproduce demand match dimensions
-        shell: bash
-        run: |
-          set -euo pipefail
-          source /opt/metatron/metatron-workforce/.env
-          W=/tmp/aq-market-diagnostic; rm -rf "$W"
-          git clone --depth 1 --branch aquaculture-decision-synthesis-v2-fix "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/bios.git" "$W"
-          cd "$W"
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('bios_runtime/domains/aquaculture/market.py');s=p.read_text()
-          old='''def _dimension_match(expected:Any,actual:Any,label:str)->tuple[str,str|None]:\n    if expected in (None,"",{},[]):\n        return "NOT_APPLICABLE",None\n    if actual in (None,"",{},[]):\n        return "UNKNOWN",f"{label} is unresolved in market evidence"\n    return ("MATCH",None) if _norm(expected)==_norm(actual) else ("MISMATCH",f"{label} mismatch")\n'''
-          new='''def _dimension_match(expected:Any,actual:Any,label:str)->tuple[str,str|None]:\n    symbolic_unknown={"unknown","unresolved","open","unspecified","not_assessable","none"}\n    if expected in (None,"",{},[]) or (isinstance(expected,str) and _norm(expected) in symbolic_unknown): return "NOT_APPLICABLE",None\n    if actual in (None,"",{},[]) or (isinstance(actual,str) and _norm(actual) in symbolic_unknown): return "UNKNOWN",f"{label} is unresolved in market evidence"\n    return ("MATCH",None) if _norm(expected)==_norm(actual) else ("MISMATCH",f"{label} mismatch")\n'''
-          assert old in s;s=s.replace(old,new);p.write_text(s)
-          p=Path('tests/test_aquaculture_decision_v2.py');s=p.read_text()
-          needle='''        self.assertEqual("L3_ACTIVE_DEMAND",match_scenario(self.svc.repo,self.farm["farm_id"],scenario)["evidence_level"])'''
-          repl='''        diag=match_scenario(self.svc.repo,self.farm["farm_id"],scenario)\n        print("AQ_DIAG_DIMENSIONS", {k:diag.get(k) for k in ("target_grade","expected_volume_kg","expected_harvest_window","evidence_level")})\n        print("AQ_DIAG_DEMAND_MATCHES", diag.get("demand_matches"))\n        self.assertEqual("L3_ACTIVE_DEMAND",diag["evidence_level"])'''
-          assert needle in s;s=s.replace(needle,repl,1);p.write_text(s)
-          PY
-          python3 -m unittest tests.test_aquaculture_decision_v2.AquacultureDecisionV2Test.test_l4_commitment_outranks_l3_and_l2 -v
+      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'

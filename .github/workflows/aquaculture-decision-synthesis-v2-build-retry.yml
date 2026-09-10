@@ -1,38 +1,8 @@
-name: Aquaculture Decision Synthesis v2 Build Retry
-
+name: Retired - aquaculture-decision-synthesis-v2-build-retry
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/aquaculture-decision-synthesis-v2-build-retry.yml'
-
-permissions:
-  contents: read
-
+  workflow_dispatch:
 jobs:
-  build:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 10
+  retired:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - name: Execute corrected synthesis build script
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          src=Path('.github/workflows/aquaculture-decision-synthesis-v2-build.yml').read_text()
-          block=src.split('        run: |\n',1)[1]
-          lines=[]
-          for line in block.splitlines():
-              lines.append(line[10:] if line.startswith('          ') else line)
-          script='\n'.join(lines)+'\n'
-          script=script.replace(
-              'git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" clone --depth 1 --branch aquaculture-decision-synthesis-v2 https://github.com/kelvinka38/bios.git "$WORK"',
-              'git clone --depth 1 --branch aquaculture-decision-synthesis-v2 "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/bios.git" "$WORK"')
-          script=script.replace(
-              'git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin HEAD:aquaculture-decision-synthesis-v2',
-              'git push origin HEAD:aquaculture-decision-synthesis-v2')
-          Path('/tmp/aq-synthesis-build.sh').write_text(script)
-          PY
-          bash /tmp/aq-synthesis-build.sh
+      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'

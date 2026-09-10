@@ -1,6 +1,15 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.execution.governance.CompletionCandidate;
+import com.metatron.workforce.execution.governance.CompletionDecision;
+import com.metatron.workforce.execution.governance.CompletionGate;
+import com.metatron.workforce.execution.governance.ExecutionPlanBinding;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
+import com.metatron.workforce.execution.governance.GovernanceStateStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.observation.ObservationClosureService;
+import com.metatron.workforce.observation.ObservationReport;
+import com.metatron.workforce.observation.ObservationRequirement;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -13,6 +22,7 @@ import java.util.Optional;
 /**
  * Durable P3/P4 coordination: inbox dedupe, versioned DAG, fenced dispatch lifecycle,
  * restart reconciliation and dead-letter handling. Workforce Objective remains authoritative.
+ * Consequential graph completion is additionally gated by current SoT/plan and independent Observation.
  */
 public final class AutonomyCoordinationService {
     private final Map<String, Integer> activeGraphVersions = new LinkedHashMap<>();
@@ -21,11 +31,25 @@ public final class AutonomyCoordinationService {
     private final Map<String, AutonomyCoordinationStateStore.InboxMessage> inbox = new LinkedHashMap<>();
     private final List<AutonomyCoordinationStateStore.DeadLetter> deadLetters = new ArrayList<>();
     private final AutonomyCoordinationStateStore store;
+    private final CompletionGate completionGate;
+    private final GovernanceStateStore governance;
+    private final ObservationClosureService observation;
 
-    public AutonomyCoordinationService() { this(new InMemoryAutonomyCoordinationStateStore()); }
+    public AutonomyCoordinationService() { this(new InMemoryAutonomyCoordinationStateStore(), null, null, null); }
 
     public AutonomyCoordinationService(AutonomyCoordinationStateStore store) {
+        this(store, null, null, null);
+    }
+
+    /** Production composition: consequential completion cannot bypass CompletionGate. */
+    public AutonomyCoordinationService(AutonomyCoordinationStateStore store,
+                                       CompletionGate completionGate,
+                                       GovernanceStateStore governance,
+                                       ObservationClosureService observation) {
         this.store = Objects.requireNonNull(store, "store");
+        this.completionGate = completionGate;
+        this.governance = governance;
+        this.observation = observation;
         var snapshot = store.load();
         activeGraphVersions.putAll(snapshot.activeGraphVersions());
         graphs.putAll(snapshot.graphs());
@@ -34,7 +58,6 @@ public final class AutonomyCoordinationService {
         deadLetters.addAll(snapshot.deadLetters());
     }
 
-    /** Returns true only for the first delivery of a message/idempotency key. */
     public synchronized boolean acceptInbox(String messageId, String idempotencyKey, String correlationId,
                                              String causationId, int schemaVersion, String payload, Instant at) {
         require(messageId, "messageId"); require(idempotencyKey, "idempotencyKey");
@@ -100,10 +123,6 @@ public final class AutonomyCoordinationService {
                 .toList();
     }
 
-    /**
-     * Reconcile an interrupted dispatch. READ_ONLY work may be retried at-least-once. MUTATING work is
-     * dead-lettered because an unknown external effect must never be blindly repeated.
-     */
     public synchronized List<String> reconcileInterrupted(String objectiveId, int graphVersion, Instant at) {
         DurableWorkGraph graph = requireActive(objectiveId, graphVersion);
         Map<String, DurableWorkGraph.Node> nodes = new LinkedHashMap<>(graph.nodes());
@@ -211,10 +230,85 @@ public final class AutonomyCoordinationService {
         DurableWorkGraph graph = requireActive(objectiveId, graphVersion);
         if (graph.nodes().values().stream().anyMatch(node -> node.status() != DurableWorkGraph.NodeStatus.SUCCEEDED))
             throw new IllegalStateException("graph cannot complete with non-success nodes");
+        if (graph.nodes().values().stream().anyMatch(node ->
+                node.spec().consequence() == ExecutionWorkSpec.Consequence.MUTATING)) {
+            requireGovernedCompletion(graph, at);
+        }
         DurableWorkGraph completed = new DurableWorkGraph(objectiveId, graphVersion,
                 DurableWorkGraph.Status.COMPLETED, graph.nodes(), graph.createdAt(), at);
         graphs.put(key(objectiveId, graphVersion), completed);
-        persist(); return completed;
+        persist();
+        return completed;
+    }
+
+    private void requireGovernedCompletion(DurableWorkGraph graph, Instant at) {
+        if (completionGate == null || governance == null || observation == null) {
+            throw new GovernanceDeniedException("COMPLETION_GATE_REQUIRED",
+                    "mutating graph completion requires production SoT/Observation governance");
+        }
+        if (observation.verdict(graph.objectiveId()) != ObservationClosureService.Verdict.PASSED) {
+            throw new GovernanceDeniedException("EVIDENCE_INSUFFICIENT",
+                    "independent Observation has not passed for objective " + graph.objectiveId());
+        }
+        List<String> verified = new ArrayList<>(observation.verifiedEvidenceReferences(graph.objectiveId()));
+        graph.nodes().values().forEach(node -> node.evidenceReferences().stream()
+                .filter(ref -> !verified.contains(ref)).forEach(verified::add));
+        List<String> completedSteps = graph.nodes().values().stream()
+                .filter(node -> node.status() == DurableWorkGraph.NodeStatus.SUCCEEDED)
+                .map(node -> node.spec().stepId()).toList();
+        Map<String, ObservationRequirement> requirements = new LinkedHashMap<>();
+        observation.requirements(graph.objectiveId()).forEach(r -> requirements.put(r.requirementId(), r));
+        Map<String, ObservationReport> reports = new LinkedHashMap<>();
+        observation.reports(graph.objectiveId()).forEach(r -> reports.put(r.requirementId(), r));
+
+        for (DurableWorkGraph.Node node : graph.nodes().values()) {
+            if (node.spec().consequence() != ExecutionWorkSpec.Consequence.MUTATING) continue;
+            ExecutionPlanBinding plan = governance.approvedPlanForStep(graph.objectiveId(), node.spec().stepId())
+                    .orElseThrow(() -> new GovernanceDeniedException("PLAN_NOT_APPROVED",
+                            "no active approved plan at completion for step " + node.spec().stepId()));
+            Map<String, String> acceptance = new LinkedHashMap<>();
+            Map<String, String> evidence = new LinkedHashMap<>();
+            for (ObservationRequirement requirement : requirements.values()) {
+                if (!requirement.stepId().equals(node.spec().stepId())) continue;
+                ObservationReport report = reports.get(requirement.requirementId());
+                if (report == null || report.criterionResult() != ObservationReport.CriterionResult.PASS
+                        || report.quality() == ObservationReport.Quality.INSUFFICIENT) continue;
+                acceptance.put(requirement.criterion(), "observation-report:" + report.reportId());
+                for (String requiredEvidence : requirement.evidenceRequirements()) {
+                    evidence.putIfAbsent(requiredEvidence, "observation-report:" + report.reportId());
+                }
+            }
+            CompletionCandidate candidate = new CompletionCandidate(
+                    graph.objectiveId(), node.spec().stepId(), plan.planId(), plan.version(), plan.authoritySnapshotId(),
+                    verified, completedSteps, List.of(), acceptance, evidence, true,
+                    artifact(verified, "source-sha:", "github-source-sha:", "HIGHWAY_SOURCE_SHA="),
+                    artifact(verified, "tested-sha:", "HIGHWAY_WORKFORCE_BUILD_SHA="),
+                    artifact(verified, "approved-sha:"),
+                    artifact(verified, "deployed-sha:", "DEPLOYED_SHA="),
+                    artifact(verified, "observed-sha:", "OBSERVED_SHA="), at);
+            CompletionDecision decision = completionGate.decide(candidate);
+            if (decision.verdict() != CompletionDecision.Verdict.ALLOW) {
+                throw new GovernanceDeniedException("COMPLETION_CONFORMANCE_FAILED",
+                        "step=" + node.spec().stepId() + ";codes=" + decision.codes());
+            }
+        }
+    }
+
+    private static String artifact(List<String> refs, String... prefixes) {
+        for (String ref : refs) {
+            if (ref == null) continue;
+            for (String prefix : prefixes) {
+                int index = ref.indexOf(prefix);
+                if (index < 0) continue;
+                String value = ref.substring(index + prefix.length()).trim();
+                int separator = value.indexOf(':');
+                if (separator > 0 && value.substring(0, separator).matches("[0-9a-fA-F]{40}")) {
+                    value = value.substring(0, separator);
+                }
+                if (value.matches("[0-9a-fA-F]{40}")) return value.toLowerCase(java.util.Locale.ROOT);
+            }
+        }
+        return "";
     }
 
     public synchronized List<DurableDispatch> dispatches() { return List.copyOf(dispatches.values()); }

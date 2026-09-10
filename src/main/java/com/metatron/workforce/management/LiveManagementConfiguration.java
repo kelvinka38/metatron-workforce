@@ -5,6 +5,11 @@ import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.ExecutionAttemptStore;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
+import com.metatron.workforce.execution.governance.CompletionGate;
+import com.metatron.workforce.execution.governance.GovernanceAdmissionValidator;
+import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
+import com.metatron.workforce.execution.governance.GovernancePlanService;
+import com.metatron.workforce.execution.governance.GovernanceStateStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.observation.FileObservationStateStore;
 import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
@@ -50,8 +55,12 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    AutonomyCoordinationService autonomyCoordinationService(AutonomyCoordinationStateStore store) {
-        return new AutonomyCoordinationService(store);
+    AutonomyCoordinationService autonomyCoordinationService(
+            AutonomyCoordinationStateStore store,
+            CompletionGate completionGate,
+            GovernanceStateStore governance,
+            ObservationClosureService observation) {
+        return new AutonomyCoordinationService(store, completionGate, governance, observation);
     }
 
     @Bean
@@ -106,8 +115,8 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    ExecutionAdmissionService executionAdmissionService() {
-        return new ExecutionAdmissionService();
+    ExecutionAdmissionService executionAdmissionService(GovernanceAdmissionValidator governance) {
+        return new ExecutionAdmissionService(governance);
     }
 
     @Bean
@@ -145,10 +154,6 @@ public class LiveManagementConfiguration {
         return new AutonomousStaffingService(core, policies, runtimeProfiles, constitution);
     }
 
-    /**
-     * Reconcile the canonical Gateway Director through the governed staffing service.
-     * This intentionally uses the existing formation policy instead of inventing a second Worker identity.
-     */
     @Bean
     ApplicationRunner canonicalGatewayDirectorReconciliation(
             AutonomousStaffingService staffing,
@@ -175,9 +180,6 @@ public class LiveManagementConfiguration {
                     canonicalParticipation.participationId(),
                     now);
 
-            // Collapse every historical/parallel Gateway Head identity onto the one governed canonical Worker.
-            // Production has accumulated more than one legacy ID over earlier acceptance/bootstrap iterations,
-            // so cleanup is role-based rather than hard-coded to one obsolete worker name.
             core.allWorkers().stream()
                     .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
                     .filter(w -> !GatewayDirectorAppointmentCapability.WORKER_ID.equals(w.workerId()))
@@ -191,16 +193,12 @@ public class LiveManagementConfiguration {
                                 try {
                                     core.setParticipationStatus(p.participationId(),
                                             WorkforceCoreService.ParticipationStatus.ENDED);
-                                } catch (RuntimeException ignored) {
-                                    // Canonical Meeting resolution is deterministic even if a reservation delays cleanup.
-                                }
+                                } catch (RuntimeException ignored) { }
                             }
                         }
                         try {
                             core.setWorkerStatus(legacy.workerId(), WorkforceCoreService.WorkerStatus.RETIRED);
-                        } catch (RuntimeException ignored) {
-                            // A live reservation may delay retirement; it must not make role resolution ambiguous.
-                        }
+                        } catch (RuntimeException ignored) { }
                     });
         };
     }
@@ -231,11 +229,14 @@ public class LiveManagementConfiguration {
             AutonomousStaffingService staffing,
             ExecutionAdmissionService admission,
             ExecutionAttemptService attempts,
-            RuntimeCapacityCoordinator runtimeCapacity) {
+            RuntimeCapacityCoordinator runtimeCapacity,
+            GovernancePlanService governancePlans,
+            GovernanceAttemptBindingService governanceAttempts) {
         Clock clock = Clock.systemUTC();
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
                 .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
-                        capability, core, admission, clock, staffing, attempts, runtimeCapacity))
+                        capability, core, admission, clock, staffing, attempts, runtimeCapacity,
+                        governancePlans, governanceAttempts))
                 .map(capability -> (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
                         capability, safety, clock))
                 .toList();

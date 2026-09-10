@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.execution.governance.GovernanceExecutionContext;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 
 import java.util.List;
@@ -34,7 +35,8 @@ public interface AutonomousExecutionCapability {
             String assignmentReference,
             String authorizationReference,
             String dispatchReference,
-            int dispatchAttempt) {
+            int dispatchAttempt,
+            GovernanceExecutionContext governanceContext) {
         public CapabilityRequest {
             Objects.requireNonNull(humanId, "humanId");
             Objects.requireNonNull(organizationContextId, "organizationContextId");
@@ -47,10 +49,19 @@ public interface AutonomousExecutionCapability {
             if (dispatchAttempt < 0) throw new IllegalArgumentException("dispatchAttempt must not be negative");
         }
 
+        /** Source-compatible primary-shape constructor used by existing callers. */
+        public CapabilityRequest(String humanId, String organizationContextId, String objectiveId,
+                                 ExecutionWorkSpec workSpec, String allocatedWorkerId,
+                                 String assignmentReference, String authorizationReference,
+                                 String dispatchReference, int dispatchAttempt) {
+            this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
+                    assignmentReference, authorizationReference, dispatchReference, dispatchAttempt, null);
+        }
+
         /** Compatibility request; production delegates receive allocation and dispatch bindings. */
         public CapabilityRequest(String humanId, String organizationContextId, String objectiveId,
                                  ExecutionWorkSpec workSpec) {
-            this(humanId, organizationContextId, objectiveId, workSpec, "", "", "", "", 0);
+            this(humanId, organizationContextId, objectiveId, workSpec, "", "", "", "", 0, null);
         }
 
         /** Compatibility constructor for callers that only bind allocation. */
@@ -58,19 +69,25 @@ public interface AutonomousExecutionCapability {
                                  ExecutionWorkSpec workSpec, String allocatedWorkerId,
                                  String assignmentReference, String authorizationReference) {
             this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
-                    assignmentReference, authorizationReference, "", 0);
+                    assignmentReference, authorizationReference, "", 0, null);
         }
 
         public CapabilityRequest withAllocation(String workerId, String assignmentRef, String authorizationRef) {
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
-                    workerId, assignmentRef, authorizationRef, dispatchReference, dispatchAttempt);
+                    workerId, assignmentRef, authorizationRef, dispatchReference, dispatchAttempt, governanceContext);
         }
 
         public CapabilityRequest withDispatch(String dispatchRef, int attempt) {
             if (dispatchRef == null || dispatchRef.isBlank()) throw new IllegalArgumentException("dispatchRef required");
             if (attempt < 1) throw new IllegalArgumentException("dispatch attempt must be positive");
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
-                    allocatedWorkerId, assignmentReference, authorizationReference, dispatchRef, attempt);
+                    allocatedWorkerId, assignmentReference, authorizationReference, dispatchRef, attempt, governanceContext);
+        }
+
+        public CapabilityRequest withGovernance(GovernanceExecutionContext context) {
+            return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
+                    allocatedWorkerId, assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
+                    Objects.requireNonNull(context, "context"));
         }
 
         public boolean allocated() {
@@ -80,6 +97,8 @@ public interface AutonomousExecutionCapability {
         public boolean dispatchBound() {
             return !dispatchReference.isBlank() && dispatchAttempt > 0;
         }
+
+        public boolean governanceBound() { return governanceContext != null; }
 
         /** Stable effect key adapters must use to make at-least-once dispatch safe. */
         public String idempotencyKey() {
