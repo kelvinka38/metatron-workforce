@@ -1,150 +1,24 @@
-name: Telegram Provider Adapter Live Acceptance
+name: Telegram Provider Adapter Live Acceptance (Highway Ingress)
 
 on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact deployed production SHA to validate; defaults to dispatched ref SHA
-        required: false
+        description: Exact deployed production SHA to validate
+        required: true
         type: string
+
 permissions:
   contents: read
 
-concurrency:
-  group: metatron-production-state
-  cancel-in-progress: false
-
 jobs:
-  accept-telegram-provider-adapter:
+  enqueue:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    environment: production
+    timeout-minutes: 2
     steps:
-      - name: Prove one natural-language Telegram Objective executes through the canonical Worker
+      - uses: actions/checkout@v7
+      - name: Submit to persistent Highway
         shell: bash
-        env:
-          TARGET_SHA: ${{ inputs.target_sha != '' && inputs.target_sha || github.sha }}
         run: |
           set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          test -r "$BASE/.env"
-          set -a; source "$BASE/.env"; set +a
-          test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-          test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
-
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          test "$DEPLOYED_SHA" = "$TARGET_SHA"
-
-          UPDATE_ID=$(date +%s%N | cut -c1-18)
-          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          BODY=$(python3 - <<PY
-          import json
-          uid=int('${TELEGRAM_ALLOWED_USER_ID}')
-          text='Execute a governed read-only repository audit of kelvinka38/bios and return evidence. Do not mutate anything.'
-          print(json.dumps({"update_id":int('${UPDATE_ID}'),"message":{"message_id":int('${UPDATE_ID}')%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"Founder"},"chat":{"id":uid,"type":"private"},"date":0,"text":text}}))
-          PY
-          )
-
-          HTTP_STATUS=$(curl -sS -o /tmp/telegram-provider-adapter.json -w '%{http_code}' \
-            --proto '=https' --tlsv1.2 --max-time 20 \
-            -X POST https://gate.metatron.vn/telegram/webhook \
-            -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" \
-            -H 'Content-Type: application/json' \
-            --data-binary "$BODY")
-          echo "TELEGRAM_PROVIDER_HTTP_STATUS=$HTTP_STATUS"
-          test "$HTTP_STATUS" = 200
-
-          OUTCOME=NONE
-          OBJECTIVE_ID=''
-          EVIDENCE=''
-          for i in $(seq 1 120); do
-            LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-
-            if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
-              && grep -q 'route=execution-objective-workforce-accepted' <<<"$LOGS" \
-              && docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
-              OBJECTIVE_ID=$(grep "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
-                | tail -1 | sed -n 's/.* objective_id=\([^ ]*\).*/\1/p')
-              if [ -n "$OBJECTIVE_ID" ] \
-                && docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json" \
-                && docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json" \
-                && docker exec "$CID" sh -c "grep -A 8 -B 4 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"; then
-                EVIDENCE=$(docker exec "$CID" sh -c "grep -R -l 'authorization=authorization:founder-readonly-repository-audit:v1' /var/lib/metatron-workforce/runtime-evidence 2>/dev/null | tail -1")
-                if [ -n "$EVIDENCE" ] \
-                  && docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'" \
-                  && docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'" \
-                  && docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'" \
-                  && docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json && grep -q '\"status\" : \"COMPLETED\"' /var/lib/metatron-workforce/management-state.json"; then
-                  OUTCOME=EXECUTED
-                  break
-                fi
-              fi
-            fi
-
-            if grep -q "telegram_send_success update_id=$UPDATE_ID" <<<"$LOGS" \
-              && grep -q "telegram_interaction_failed.*update_id=$UPDATE_ID" <<<"$LOGS" \
-              && grep -Eq 'semantic_provider_required|all semantic providers failed|execution_planning_provider_required|all execution planning providers failed' <<<"$LOGS"; then
-              if docker exec "$CID" sh -c "grep -q 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json"; then
-                echo 'FAIL_CLOSED_REQUEST_WAS_WRONGLY_ADMITTED_TO_WORKFORCE' >&2
-                exit 1
-              fi
-              OUTCOME=PROVIDER_UNAVAILABLE_FAIL_CLOSED
-              break
-            fi
-            sleep 2
-          done
-
-          LOGS=$(docker logs --since "$SINCE" "$CID" 2>&1 || true)
-          if [ "$OUTCOME" = NONE ]; then
-            echo 'NO_ARCHITECTURE_VALID_DETACHED_OUTCOME' >&2
-            printf '%s\n' "$LOGS" | tail -n 500 || true
-            echo '--- TELEGRAM RECEIPT CORRELATION ---' >&2
-            docker exec "$CID" sh -c "grep -n -C 2 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json || true" >&2
-            echo '--- MANAGEMENT CORRELATION ---' >&2
-            docker exec "$CID" sh -c "grep -n -C 2 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/management-state.json || true" >&2
-            echo '--- RUNTIME EVIDENCE FILES ---' >&2
-            docker exec "$CID" sh -c "find /var/lib/metatron-workforce/runtime-evidence -maxdepth 3 -type f -name execution.json -print | tail -20 || true" >&2
-            exit 1
-          fi
-
-          if grep -q "telegram_institutional_work_terminal update_id=$UPDATE_ID" <<<"$LOGS"; then
-            echo 'LEGACY_TELEGRAM_DISPATCHER_WAS_USED' >&2
-            exit 1
-          fi
-
-          curl -fsS --proto '=https' --tlsv1.2 --max-time 10 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
-
-          echo 'TELEGRAM_PROVIDER_AUTHENTICATION=PASS'
-          echo 'TELEGRAM_EXTERNAL_ID_CORRELATION=PASS'
-          echo 'CANONICAL_CONVERSATION_INGRESS=PASS'
-          echo 'FRONTIER_SEMANTIC_BOUNDARY_REQUIRED=PASS'
-          echo 'RAW_TEXT_EXECUTION_BYPASS_ABSENT=PASS'
-          echo 'LEGACY_COMMAND_ROUTER_BYPASSED=PASS'
-
-          if [ "$OUTCOME" = EXECUTED ]; then
-            test -n "$OBJECTIVE_ID"
-            test -n "$EVIDENCE"
-            docker exec "$CID" sh -c "grep -q '$OBJECTIVE_ID' /var/lib/metatron-workforce/management-state.json"
-            docker exec "$CID" sh -c "grep -q 'repository.audit.read' /var/lib/metatron-workforce/management-state.json"
-            docker exec "$CID" sh -c "grep -A 8 -B 4 'telegram:update:$UPDATE_ID' /var/lib/metatron-workforce/telegram-ingress-state.json | grep -q 'DELIVERED'"
-            docker exec "$CID" sh -c "grep -q 'source=gateway-egress/github-api' '$EVIDENCE'"
-            docker exec "$CID" sh -c "grep -q 'repository=kelvinka38/bios' '$EVIDENCE'"
-            docker exec "$CID" sh -c "grep -q 'verdict=PASS' '$EVIDENCE'"
-            echo 'DURABLE_OBJECTIVE_ACCEPTANCE=PASS'
-            echo 'DETACHED_OBJECTIVE_LIFETIME=PASS'
-            echo 'POST_CASE_EXECUTION_PLANNING=PASS'
-            echo 'SEMANTIC_CAPABILITY_BINDING=PASS'
-            echo 'AUTONOMOUS_REPOSITORY_AUDIT_WORKER=PASS'
-            echo 'WORK_EVIDENCE_PRESERVED=PASS'
-            echo 'TELEGRAM_ACCEPTANCE_DELIVERY=PASS'
-            echo 'DETACHED_WORKFORCE_COMPLETION_EVIDENCE=PASS'
-          else
-            echo 'PROVIDER_UNAVAILABLE_EXPLICIT=PASS'
-            echo 'NO_WORKFORCE_EXECUTION_ADMISSION=PASS'
-            echo 'FAIL_CLOSED_TERMINAL_DELIVERY=PASS'
-          fi
-
-          echo "TELEGRAM_PROVIDER_OBJECTIVE_ID=$OBJECTIVE_ID"
-          echo "TELEGRAM_PROVIDER_TERMINAL_OUTCOME=$OUTCOME"
-          echo 'TELEGRAM_PROVIDER_ADAPTER_ACCEPTANCE=PASS'
+          bash scripts/highway-manual-ingress.sh 'telegram-provider-live-acceptance' '${{ inputs.target_sha }}' '50'
