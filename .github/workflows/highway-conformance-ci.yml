@@ -10,7 +10,12 @@ on:
       - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
       - 'src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java'
       - 'src/main/java/com/metatron/workforce/interaction/intelligence/**'
+      - 'src/main/java/com/metatron/workforce/execution/**'
+      - 'src/main/java/com/metatron/workforce/action/**'
+      - 'src/main/java/com/metatron/workforce/management/**'
       - 'src/test/java/com/metatron/workforce/interaction/intelligence/**'
+      - 'src/test/java/com/metatron/workforce/execution/**'
+      - 'src/test/java/com/metatron/workforce/architecture/**'
       - '.github/workflows/production-deploy.yml'
       - '.github/workflows/production-acceptance-highway-v2.yml'
       - '.github/workflows/intelligence-product-live-acceptance.yml'
@@ -44,9 +49,19 @@ concurrency:
 jobs:
   topology:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - name: Enforce SoT execution gate contracts before topology audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/sot_enforcement/inventory.py
+          chmod +x gradlew
+          ./gradlew test --no-daemon --max-workers=1 \
+            --tests 'com.metatron.workforce.execution.governance.SotEnforcementRuntimeTest' \
+            --tests 'com.metatron.workforce.architecture.SotEnforcementArchitectureTest'
+          echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
       - name: Enforce single PR queue surface and fabric contracts
         shell: bash
         run: |
@@ -61,14 +76,16 @@ jobs:
           cleanup_tmp_highway() { rm -rf "$TMP_HIGHWAY"; }
           trap cleanup_tmp_highway EXIT
           for n in 1 2 3 4; do
-            METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY"               bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >"/tmp/highway-pr-publish-$n.log" 2>&1 &
+            METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY" \
+              bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >"/tmp/highway-pr-publish-$n.log" 2>&1 &
           done
           wait
           test "$(cat "$TMP_HIGHWAY/releases/$GITHUB_SHA/.highway-source-sha")" = "$GITHUB_SHA"
           test -f "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh"
           test "$(find "$TMP_HIGHWAY/releases" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
           SOURCE_HASH=$(sha256sum "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh")
-          METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY"             bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >/tmp/highway-pr-republish.log
+          METATRON_HIGHWAY_INSTALL_DIR="$TMP_HIGHWAY" \
+            bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA" >/tmp/highway-pr-republish.log
           test "$SOURCE_HASH" = "$(sha256sum "$TMP_HIGHWAY/releases/$GITHUB_SHA/scripts/highway-tasks/workforce-build.sh")"
 
           echo 'HIGHWAY_SINGLE_PR_SELF_HOSTED_GATE=PASS'
