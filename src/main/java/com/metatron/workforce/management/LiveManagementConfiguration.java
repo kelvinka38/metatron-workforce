@@ -5,9 +5,11 @@ import com.metatron.workforce.execution.ExecutionAdmissionService;
 import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.ExecutionAttemptStore;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
+import com.metatron.workforce.execution.governance.CompletionGate;
 import com.metatron.workforce.execution.governance.GovernanceAdmissionValidator;
 import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
 import com.metatron.workforce.execution.governance.GovernancePlanService;
+import com.metatron.workforce.execution.governance.GovernanceStateStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.observation.FileObservationStateStore;
 import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
@@ -53,8 +55,12 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    AutonomyCoordinationService autonomyCoordinationService(AutonomyCoordinationStateStore store) {
-        return new AutonomyCoordinationService(store);
+    AutonomyCoordinationService autonomyCoordinationService(
+            AutonomyCoordinationStateStore store,
+            CompletionGate completionGate,
+            GovernanceStateStore governance,
+            ObservationClosureService observation) {
+        return new AutonomyCoordinationService(store, completionGate, governance, observation);
     }
 
     @Bean
