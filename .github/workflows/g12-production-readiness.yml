@@ -2,10 +2,11 @@ name: G12 Production Readiness Evidence
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Workforce Live Acceptance"]
-    types: [completed]
-
+    inputs:
+      target_sha:
+        description: Exact deployed/source SHA to validate
+        required: false
+        type: string
 permissions:
   contents: read
 
@@ -18,10 +19,9 @@ concurrency:
 
 jobs:
   g12-acceptance:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     env:
-      TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+      TARGET_SHA: ${{ inputs.target_sha != '' && inputs.target_sha || github.sha }}
     steps:
       - name: Checkout exact accepted source
         uses: actions/checkout@v7

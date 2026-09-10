@@ -1,15 +1,12 @@
 name: Repository Audit Live Acceptance
 
 on:
-  workflow_run:
-    workflows: ["Production Deploy"]
-    types: [completed]
   workflow_dispatch:
-  push:
-    branches: ["main"]
-    paths:
-      - ".github/workflows/repository-audit-live-acceptance.yml"
-
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: false
+        type: string
 permissions:
   contents: read
 
@@ -19,7 +16,6 @@ concurrency:
 
 jobs:
   accept-live-repository-execution:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 5
@@ -27,15 +23,13 @@ jobs:
       - name: Prove one dispatch performs substantive private BIOS audit and reaches terminal Work
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          TARGET_SHA: ${{ inputs.target_sha != '' && inputs.target_sha || github.sha }}
         run: |
           set -euo pipefail
           CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
           test -n "$CID"
           DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            test "$DEPLOYED_SHA" = "$TARGET_SHA"
-          fi
+          test "$DEPLOYED_SHA" = "$TARGET_SHA"
           docker exec "$CID" sh -c 'test -n "$GITHUB_TOKEN"'
           BODY='{"organizationContextId":"METATRON","repository":"kelvinka38/bios"}'
           HTTP_STATUS=$(curl --connect-timeout 5 --max-time 60 -sS -o /tmp/repository-audit-live.json -w '%{http_code}' -X POST \

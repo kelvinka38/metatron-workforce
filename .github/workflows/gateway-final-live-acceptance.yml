@@ -1,11 +1,12 @@
 name: Gateway Final Live Acceptance
 
 on:
-  workflow_run:
-    workflows: ["Production Deploy"]
-    types: [completed]
   workflow_dispatch:
-
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: false
+        type: string
 permissions:
   contents: read
 
@@ -15,14 +16,13 @@ concurrency:
 
 jobs:
   gateway-final-live-acceptance:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     steps:
       - name: Prove production Gateway boundary
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          TARGET_SHA: ${{ inputs.target_sha != '' && inputs.target_sha || github.sha }}
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce

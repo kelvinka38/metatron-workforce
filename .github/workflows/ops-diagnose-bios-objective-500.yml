@@ -1,11 +1,7 @@
 name: Diagnose BIOS Objective 500
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/ops-diagnose-bios-objective-500.yml'
-
+  workflow_dispatch:
 permissions:
   contents: read
 

@@ -1,11 +1,7 @@
 name: Mother Baby BIOS Live Objective
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/mother-baby-bios-live-objective.yml'
-
+  workflow_dispatch:
 permissions:
   contents: read
 
