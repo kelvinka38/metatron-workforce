@@ -14,6 +14,7 @@ public final class InMemoryGovernanceStateStore implements GovernanceStateStore 
     private final Map<String, DerivationReceipt> receipts = new LinkedHashMap<>();
     private final Map<String, ExecutionPlanBinding> plans = new LinkedHashMap<>();
     private final Map<String, String> activePlanByStep = new LinkedHashMap<>();
+    private final Map<String, ExecutionAttemptGovernanceBinding> attemptBindings = new LinkedHashMap<>();
     private final Map<String, String> currentAuthority = new LinkedHashMap<>();
     private final List<GovernanceDenial> denials = new ArrayList<>();
     private final List<CompletionDecision> completion = new ArrayList<>();
@@ -30,6 +31,7 @@ public final class InMemoryGovernanceStateStore implements GovernanceStateStore 
             plan.steps().keySet().forEach(step -> activePlanByStep.remove(stepKey(plan.objectiveId(), step), planKey(plan.planId(), plan.version())));
         }
     }
+    @Override public synchronized void saveAttemptBinding(ExecutionAttemptGovernanceBinding binding) { attemptBindings.put(binding.attemptId(), binding); }
     @Override public synchronized void saveDenial(GovernanceDenial denial) { denials.add(denial); }
     @Override public synchronized void saveCompletionDecision(CompletionDecision decision) { completion.add(decision); }
     @Override public synchronized void setCurrentAuthorityDigest(String targetEntity, String digest) { currentAuthority.put(targetEntity, digest); }
@@ -43,6 +45,7 @@ public final class InMemoryGovernanceStateStore implements GovernanceStateStore 
         String key = activePlanByStep.get(stepKey(objectiveId, stepId));
         return key == null ? Optional.empty() : Optional.ofNullable(plans.get(key)).filter(p -> p.status() == ExecutionPlanBinding.Status.APPROVED);
     }
+    @Override public synchronized Optional<ExecutionAttemptGovernanceBinding> attemptBinding(String attemptId) { return Optional.ofNullable(attemptBindings.get(attemptId)); }
     @Override public synchronized Optional<String> currentAuthorityDigest(String targetEntity) { return Optional.ofNullable(currentAuthority.get(targetEntity)); }
     @Override public synchronized List<GovernanceDenial> denials() { return List.copyOf(denials); }
     @Override public synchronized List<CompletionDecision> completionDecisions() { return List.copyOf(completion); }
