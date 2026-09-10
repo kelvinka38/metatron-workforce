@@ -19,63 +19,47 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Verify current remote MCP endpoint and capability surface
+      - name: Diagnose Claude-compatible MCP handshake
         shell: bash
         run: |
           set -euo pipefail
           MCP_CID=$(docker ps -q --filter name=metatron-ssh-mcp | head -1)
           test -n "$MCP_CID"
-          MCP_IP=$(docker inspect "$MCP_CID" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          echo '===== PACKAGE ====='
+          docker exec "$MCP_CID" sh -lc 'cat /app/package.json 2>/dev/null || true'
+          echo '===== SERVER TRANSPORT IMPLEMENTATION ====='
+          docker exec "$MCP_CID" sh -lc 'nl -ba /app/server.mjs | sed -n "1,180p"'
 
-          echo '===== CURRENT ROUTE FROM CLOUDFLARED ====='
-          CF_CID=$(docker ps -q --filter name=source-cloudflared-1 | head -1)
-          test -n "$CF_CID"
-          docker logs "$CF_CID" 2>&1 | grep 'Updated to new configuration' | tail -1 \
-            | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig'
-
-          echo '===== MCP SERVER IMPLEMENTATION SURFACE ====='
-          docker exec "$MCP_CID" sh -lc "grep -En 'server\.tool|registerTool|name:|description:|ssh|exec|github|read|write|command' /app/server.mjs | head -n 220" \
-            | sed -E 's/(token|secret|password|authorization)[^ ,}]*/REDACTED/Ig' || true
-
-          echo '===== DNS ====='
-          if command -v dig >/dev/null 2>&1; then
-            echo -n 'SSH_METATRON_A='; dig +short @1.1.1.1 ssh.metatron.vn A | tr '\n' ','; echo
-            echo -n 'SSH_METATRON_CNAME='; dig +short @1.1.1.1 ssh.metatron.vn CNAME | tr '\n' ','; echo
-            echo -n 'MCP_METATRON_A='; dig +short @1.1.1.1 mcp.metatron.vn A | tr '\n' ','; echo
-          fi
-
-          probe_post() {
-            local url="$1" method="$2" label="$3"
-            local payload h b code ctype session
-            h=$(mktemp); b=$(mktemp)
-            if [ "$method" = initialize ]; then
-              payload='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"metatron-mcp-runtime-audit","version":"1.0"}}}'
-            else
-              payload='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-            fi
-            code=$(curl -sS --max-time 8 -D "$h" -o "$b" -w '%{http_code}' \
-              -X POST "$url" \
-              -H 'Content-Type: application/json' \
-              -H 'Accept: application/json, text/event-stream' \
-              --data "$payload" || true)
-            ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
-            session=$(awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/{sub(/\r$/,""); print substr($0,index($0,":")+2)}' "$h" | tail -1)
-            echo "$label STATUS=$code CONTENT_TYPE=${ctype:-none} MCP_SESSION=${session:+present}"
-            head -c 5000 "$b" | sed -E 's/(token|secret|password|authorization)[^,}\"]*/REDACTED/Ig'; echo
-            rm -f "$h" "$b"
-          }
-
-          echo '===== DIRECT CONTAINER MCP ====='
-          probe_post "http://$MCP_IP:3002/mcp" initialize 'LOCAL_INIT_NO_AUTH'
-          probe_post "http://$MCP_IP:3002/mcp" tools 'LOCAL_TOOLS_NO_AUTH'
-
-          echo '===== PUBLIC CURRENT MCP ====='
-          probe_post 'https://ssh.metatron.vn/mcp' initialize 'PUBLIC_INIT_NO_AUTH'
-          probe_post 'https://ssh.metatron.vn/mcp' tools 'PUBLIC_TOOLS_NO_AUTH'
-
-          echo '===== RETIRED/HISTORICAL MCP HOSTNAME ====='
+          echo '===== PUBLIC INITIALIZE RAW ====='
+          H=$(mktemp); B=$(mktemp)
           set +e
-          curl -sS --max-time 5 -o /dev/null -w 'MCP_METATRON_HTTP=%{http_code}\n' https://mcp.metatron.vn/mcp
+          curl -sS -N --max-time 5 -D "$H" -o "$B" \
+            -X POST 'https://ssh.metatron.vn/mcp' \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-03-26' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"claude-ai-compat-probe","version":"1.0"}}}'
+          RC=$?
           set -e
+          echo "CURL_RC=$RC"
+          echo '--- HEADERS ---'; sed -n '1,80p' "$H"
+          echo '--- BODY SIZE ---'; wc -c "$B"
+          echo '--- BODY ---'; cat "$B"; echo
 
-          echo 'MCP_CURRENT_ENDPOINT_AUDIT=PASS'
+          echo '===== PUBLIC GET RAW ====='
+          GH=$(mktemp); GB=$(mktemp)
+          set +e
+          curl -sS -N --max-time 3 -D "$GH" -o "$GB" \
+            -H 'Accept: text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-03-26' \
+            'https://ssh.metatron.vn/mcp'
+          GRC=$?
+          set -e
+          echo "GET_CURL_RC=$GRC"
+          echo '--- GET HEADERS ---'; sed -n '1,80p' "$GH"
+          echo '--- GET BODY SIZE ---'; wc -c "$GB"
+          echo '--- GET BODY ---'; head -c 3000 "$GB"; echo
+
+          echo '===== CLAUDE DOMAIN/TLS SURFACE ====='
+          curl -sS -I --max-time 5 https://ssh.metatron.vn/mcp | sed -n '1,40p' || true
+          echo 'CLAUDE_MCP_HANDSHAKE_DIAGNOSTIC=COMPLETE'
