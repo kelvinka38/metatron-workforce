@@ -1,0 +1,43 @@
+name: Aquaculture Deploy Contract v2 Patch
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/aq-deploy-contract-v2-patch.yml']
+permissions:
+  contents: read
+jobs:
+  patch:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Update canonical BIOS deployment acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/metatron/metatron-workforce/.env
+          W=/tmp/aq-deploy-contract-v2; rm -rf "$W"
+          git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/metatron-workforce.git" "$W"
+          cd "$W"
+          git config user.name 'Metatron Selfhosted'
+          git config user.email 'metatron@localhost'
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/highway-tasks/bios-deploy.sh')
+          s=p.read_text()
+          s=s.replace('assert d["bundle_version"]=="1.2.0", d','assert d["bundle_version"]=="1.2.1", d',1)
+          s=s.replace('echo \'AQ_BUNDLE_1_2=PASS\'','echo \'AQ_BUNDLE_1_2_1=PASS\'',1)
+          anchor='''assert low["capital_required_minor"] is None, low\nmarket=post("/farmer/market",{"case_id":case_id,"farm_id":farm_id})\n'''
+          injected='''assert low["capital_required_minor"] is None, low\n# Synthesis v2 must prove Step 1 was actually consumed, not merely decorate a species card.\ntrace={x.get("semantic") for x in low.get("decision_trace") or []}\nassert {"CD-01","CD-02","CD-03","CD-04","CD-05","CD-06","CD-07","CD-08"}.issubset(trace), trace\nblueprint=low.get("production_blueprint") or {}\nassert (blueprint.get("area_basis") or {}).get("usable_area_m2")==650.0, blueprint\nassert (blueprint.get("environment_strategy") or {}).get("water_source")=="RIVER", blueprint\ngates={g["rule_id"]:g for g in low.get("gate_results") or []}\nassert gates["AQ-OWNER-NO-COMMERCIAL-FEED"]["result"]=="FAIL", gates\nassert gates["AQ-OWNER-NO-CHEMICAL"]["result"]=="CONDITIONAL", gates\nassert gates["AQ-OWNER-RENEWABLE"]["result"]=="CONDITIONAL", gates\nassert low["eligibility"]=="INELIGIBLE", low\nprint("AQ_LIVE_FULL_CONTEXT_TRACE=PASS",sorted(trace))\nprint("AQ_LIVE_STRICT_OWNER_INVARIANTS=PASS")\nmarket=post("/farmer/market",{"case_id":case_id,"farm_id":farm_id})\n'''
+          assert anchor in s, 'live acceptance anchor missing'
+          s=s.replace(anchor,injected,1)
+          anchor2="grep -q 'Sản lượng tham chiếu' /tmp/aq-decision-app.js\n"
+          add2="""grep -q 'Sản lượng tham chiếu' /tmp/aq-decision-app.js\ngrep -q 'CHƯA ĐỦ BẰNG CHỨNG ĐỂ KHUYẾN NGHỊ / CHỐT' /tmp/aq-decision-app.js\ngrep -q 'const ready=s.eligibility===\"ELIGIBLE\"&&Number(s.blocking_unknowns||0)===0&&s.recommendation_state===\"FINAL_FOR_CURRENT_EVIDENCE\"' /tmp/aq-decision-app.js\n"""
+          assert anchor2 in s, 'public UI acceptance anchor missing'
+          s=s.replace(anchor2,add2,1)
+          p.write_text(s)
+          PY
+          bash -n scripts/highway-tasks/bios-deploy.sh
+          git add scripts/highway-tasks/bios-deploy.sh
+          git commit -m 'ops(aquaculture): enforce synthesis v2 live acceptance on BIOS deploy'
+          git push origin HEAD:main
+          echo "AQ_DEPLOY_CONTRACT_V2_SHA=$(git rev-parse HEAD)"
