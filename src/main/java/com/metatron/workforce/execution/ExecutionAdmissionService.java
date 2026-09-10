@@ -42,8 +42,8 @@ public final class ExecutionAdmissionService {
             if (!request.governanceBound() || governance == null) {
                 throw new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED", "mutating work is LEGACY_UNBOUND");
             }
-            governance.validate(request.assignment().assignmentId(), request.workSpec(),
-                    request.authoritySnapshotId(), request.derivationReceiptId(), request.planId(), request.planVersion());
+            governance.validate(request.workSpec(), request.authoritySnapshotId(), request.derivationReceiptId(),
+                    request.planId(), request.planVersion());
         }
         return ExecutionState.ADMITTED;
     }
