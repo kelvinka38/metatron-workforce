@@ -1,0 +1,86 @@
+name: Aquaculture v3 Deploy Retry
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/aq-v3-deploy-retry.yml']
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Patch canonical live acceptance fixture and publish Workforce main
+        id: workforce
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/metatron/metatron-workforce/.env
+          git config user.name 'Metatron Selfhosted'
+          git config user.email 'metatron@localhost'
+          python3 scripts/aquaculture/patch_bios_deploy_fixture.py scripts/highway-tasks/bios-deploy.sh
+          git add scripts/highway-tasks/bios-deploy.sh
+          git commit -m 'fix(aquaculture): isolate production acceptance fixture'
+          git pull --rebase origin main
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/metatron-workforce.git" HEAD:main
+          WF_SHA=$(git rev-parse HEAD)
+          echo "workforce_sha=$WF_SHA" >> "$GITHUB_OUTPUT"
+          echo "AQ_V3_WORKFORCE_SHA=$WF_SHA"
+
+      - name: Deploy exact BIOS v3 via patched Highway release
+        shell: bash
+        env:
+          WF_SHA: ${{ steps.workforce.outputs.workforce_sha }}
+          BIOS_REQUESTED_SHA: 7e03d8c40a421479e7c086e3ef879bd79336e03d
+        run: |
+          set -euo pipefail
+          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$WF_SHA"
+          set -a
+          source /opt/metatron/metatron-workforce/.env
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK_JSON=$($CTL submit --kind bios-deploy --source-sha "$WF_SHA" --dedupe-key "bios-deploy:$BIOS_REQUESTED_SHA:v3-isolated-fixture" --priority 100 --env "BIOS_REQUESTED_SHA=$BIOS_REQUESTED_SHA")
+          TASK=$(printf '%s' "$TASK_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_BIOS_TASK=$TASK"
+          set +e
+          $CTL wait "$TASK" --timeout 1400 --poll 1 | tee /tmp/aq-v3-retry.json
+          RC=${PIPESTATUS[0]}
+          set -e
+          LOG_PATH=$($CTL get "$TASK" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("log_path") or "")')
+          if [ -n "$LOG_PATH" ] && [ -r "$LOG_PATH" ]; then
+            echo '=== HIGHWAY BIOS DEPLOY LOG ==='
+            cat "$LOG_PATH"
+          fi
+          test "$RC" = 0
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-v3-retry.json'))
+          assert d['state']=='SUCCEEDED', d
+          assert d['exit_code']==0, d
+          print('AQ_PRODUCT_V3_HIGHWAY_DEPLOY=PASS')
+          PY
+
+      - name: Verify public farmer decision v3
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS -D /tmp/aq-v3.headers -o /tmp/aq-v3.js https://gate.metatron.vn/aquaculture/assets/app.js
+          grep -qi '^cache-control: no-store' /tmp/aq-v3.headers
+          grep -q 'function decisionPortfolio' /tmp/aq-v3.js
+          grep -q 'Nguồn nước mở có kiểm soát' /tmp/aq-v3.js
+          grep -q 'Cần làm gì tiếp theo' /tmp/aq-v3.js
+          grep -q 'Chi phí lịch sử chỉ dùng để hiểu quy mô' /tmp/aq-v3.js
+          grep -q 'CHƯA ĐỦ BẰNG CHỨNG ĐỂ KHUYẾN NGHỊ / CHỐT' /tmp/aq-v3.js
+          if grep -q 'html(p.environment_strategy?.strategy||"Chưa chốt")' /tmp/aq-v3.js; then
+            echo 'raw environment strategy renderer still present' >&2
+            exit 1
+          fi
+          echo 'AQ_PRODUCT_V3_PUBLIC_UX=PASS'

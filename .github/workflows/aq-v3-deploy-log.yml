@@ -1,0 +1,15 @@
+name: Aquaculture v3 Deploy Log
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/aq-v3-deploy-log.yml']
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 3
+    steps:
+      - name: Read failed Highway task log
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat /home/github-runner/.metatron/highway/state/logs/hw-40a77816a81c453fb6fb.log

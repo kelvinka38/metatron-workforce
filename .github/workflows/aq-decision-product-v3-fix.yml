@@ -1,0 +1,97 @@
+name: Aquaculture Decision Product v3 Fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/aq-decision-product-v3-fix.yml
+      - scripts/aquaculture/decision_product_v3_patch.py
+      - scripts/aquaculture/decision_product_v3_compat.py
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  fix-build-deploy:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - metatron-prod
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Workforce
+        uses: actions/checkout@v7
+
+      - name: Patch BIOS and run exact tests
+        id: patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/metatron/metatron-workforce/.env
+          W=/tmp/aq-decision-product-v3
+          rm -rf "$W"
+          git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/kelvinka38/bios.git" "$W"
+          cd "$W"
+          git config user.name 'Metatron Selfhosted'
+          git config user.email 'metatron@localhost'
+          python3 "$GITHUB_WORKSPACE/scripts/aquaculture/decision_product_v3_patch.py" "$W"
+          python3 "$GITHUB_WORKSPACE/scripts/aquaculture/decision_product_v3_compat.py" "$W"
+          python3 -m unittest discover -s tests -v
+          git add bios_runtime/domains/aquaculture/synthesis.py bios_runtime/domains/aquaculture/web/app.js bios_runtime/domains/aquaculture/web/styles.css tests/test_aquaculture_decision_product_v3.py
+          git commit -m 'fix(aquaculture): make decisions farmer-usable and evidence-aware'
+          git pull --rebase origin main
+          git push origin HEAD:main
+          BIOS_SHA=$(git rev-parse HEAD)
+          echo "bios_sha=$BIOS_SHA" >> "$GITHUB_OUTPUT"
+          echo "AQ_PRODUCT_V3_BIOS_SHA=$BIOS_SHA"
+
+      - name: Deploy exact BIOS via Highway
+        shell: bash
+        env:
+          BIOS_REQUESTED_SHA: ${{ steps.patch.outputs.bios_sha }}
+        run: |
+          set -euo pipefail
+          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          set -a
+          source /opt/metatron/metatron-workforce/.env
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK_JSON=$($CTL submit --kind bios-deploy --source-sha "$GITHUB_SHA" --dedupe-key "bios-deploy:$BIOS_REQUESTED_SHA" --priority 100 --env "BIOS_REQUESTED_SHA=$BIOS_REQUESTED_SHA")
+          TASK=$(printf '%s' "$TASK_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_BIOS_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 1400 --poll 1 | tee /tmp/aq-product-v3-final.json
+          LOG_PATH=$($CTL get "$TASK" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("log_path") or "")')
+          if [ -n "$LOG_PATH" ] && [ -r "$LOG_PATH" ]; then
+            echo '=== HIGHWAY BIOS DEPLOY LOG ==='
+            cat "$LOG_PATH"
+          fi
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/aq-product-v3-final.json'))
+          assert d['state']=='SUCCEEDED', d
+          assert d['exit_code']==0, d
+          print('AQ_PRODUCT_V3_HIGHWAY_DEPLOY=PASS')
+          PY
+
+      - name: Verify public farmer UI v3
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS -D /tmp/aq-product-v3.headers -o /tmp/aq-product-v3.js https://gate.metatron.vn/aquaculture/assets/app.js
+          grep -qi '^cache-control: no-store' /tmp/aq-product-v3.headers
+          grep -q 'function decisionPortfolio' /tmp/aq-product-v3.js
+          grep -q 'Nguồn nước mở có kiểm soát' /tmp/aq-product-v3.js
+          grep -q 'Cần làm gì tiếp theo' /tmp/aq-product-v3.js
+          grep -q 'Chi phí lịch sử chỉ dùng để hiểu quy mô' /tmp/aq-product-v3.js
+          grep -q 'const ready=s.eligibility==="ELIGIBLE"&&Number(s.blocking_unknowns||0)===0&&s.recommendation_state==="FINAL_FOR_CURRENT_EVIDENCE"' /tmp/aq-product-v3.js
+          grep -q 'CHƯA ĐỦ BẰNG CHỨNG ĐỂ KHUYẾN NGHỊ / CHỐT' /tmp/aq-product-v3.js
+          if grep -q "html(p.environment_strategy?.strategy||\"Chưa chốt\")" /tmp/aq-product-v3.js; then
+            echo 'raw environment strategy renderer still present' >&2
+            exit 1
+          fi
+          echo 'AQ_PRODUCT_V3_PUBLIC_UX=PASS'
