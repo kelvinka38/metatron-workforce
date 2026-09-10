@@ -1,52 +1,8 @@
-name: Aquaculture Pilot Access Reissue
-
+name: Retired - aquaculture-pilot-access-reissue
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/aquaculture-pilot-access-reissue.yml'
-
-permissions:
-  contents: read
-
+  workflow_dispatch:
 jobs:
-  reissue:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 5
+  retired:
+    runs-on: ubuntu-latest
     steps:
-      - name: Reissue Kelvin pilot access code
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE="$HOME/.metatron/bios"
-          test -r "$BASE/.env"
-          set -a; source "$BASE/.env"; set +a
-          python3 - "$BIOS_API_KEY" <<'PY'
-          import datetime,json,sys,urllib.request
-          key=sys.argv[1]
-          actor="FOUNDER"
-          payload={
-            "request_id":"aq-pilot-access-reissue",
-            "correlation_id":"aq-pilot-access-reissue",
-            "actor_id":actor,
-            "timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "schema_version":"0.1",
-            "payload":{
-              "case_id":"case_d9b2e6f64a4a4b25a3c52d60339901cf",
-              "participant_id":"aq_field_participant_18913d6d2e3a4adc999c4f207cb50bf8",
-              "invite_days":7
-            }
-          }
-          req=urllib.request.Request(
-            "http://127.0.0.1:18080/v2/product/aquaculture/field/access/reissue",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type":"application/json","X-BIOS-API-Key":key},
-            method="POST"
-          )
-          with urllib.request.urlopen(req,timeout=30) as r:
-              out=json.load(r)
-          data=out["payload"]["data"]
-          print("AQ_PILOT_ACCESS_CODE="+data["access_code"])
-          print("AQ_PILOT_ACCESS_PATH="+data["access_path"])
-          print("AQ_PILOT_ACCESS_EXPIRES="+data["expires_at"])
-          PY
+      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'

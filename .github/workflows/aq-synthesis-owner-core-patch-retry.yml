@@ -1,35 +1,8 @@
-name: AQ Synthesis Owner Core Patch Retry
-
+name: Retired - aq-synthesis-owner-core-patch-retry
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/aq-synthesis-owner-core-patch-retry.yml']
-
-permissions:
-  contents: read
-
+  workflow_dispatch:
 jobs:
-  patch:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 10
+  retired:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - name: Retry core patch with corrected embedded helper indentation
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          src=Path('.github/workflows/aq-synthesis-owner-core-patch.yml').read_text()
-          block=src.split('        run: |\n',1)[1]
-          script='\n'.join(line[10:] if line.startswith('          ') else line for line in block.splitlines())+'\n'
-          out=[];inside=False
-          for line in script.splitlines():
-              if "helper='''    def _sync_owner_constraints_from_discovery" in line:
-                  inside=True;out.append(line);continue
-              if inside and line.strip()=="'''":
-                  inside=False;out.append(line);continue
-              out.append(('    '+line) if inside else line)
-          Path('/tmp/aq-owner-core-retry.sh').write_text('\n'.join(out)+'\n')
-          PY
-          bash /tmp/aq-owner-core-retry.sh
+      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'

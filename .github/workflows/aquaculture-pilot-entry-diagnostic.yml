@@ -1,29 +1,8 @@
-name: Aquaculture Pilot Entry Diagnostic
-
+name: Retired - aquaculture-pilot-entry-diagnostic
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/aquaculture-pilot-entry-diagnostic.yml'
-
-permissions:
-  contents: read
-
+  workflow_dispatch:
 jobs:
-  diagnostic:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 5
+  retired:
+    runs-on: ubuntu-latest
     steps:
-      - name: Test public pilot entry assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsS -D /tmp/aq-index.headers -o /tmp/aq-index.html https://gate.metatron.vn/aquaculture
-          curl -fsS -D /tmp/aq-app.headers -o /tmp/aq-app.js https://gate.metatron.vn/aquaculture/assets/app.js
-          echo "INDEX_HTTP=PASS"
-          echo "APP_JS_HTTP=PASS"
-          node --check /tmp/aq-app.js
-          echo "APP_JS_PARSE=PASS"
-          grep -q 'id="accessBtn"' /tmp/aq-index.html
-          grep -q 'accessBtn.*onclick' /tmp/aq-app.js
-          echo "ACCESS_BUTTON_BINDING_PRESENT=PASS"
+      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'

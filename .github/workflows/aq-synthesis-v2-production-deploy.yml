@@ -1,63 +1,8 @@
-name: Aquaculture Synthesis v2 Production Deploy
-
+name: Retired - aq-synthesis-v2-production-deploy
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/aq-synthesis-v2-production-deploy.yml'
-
-permissions:
-  contents: read
-  statuses: write
-
-concurrency:
-  group: aquaculture-synthesis-v2-production-deploy
-  cancel-in-progress: false
-
+  workflow_dispatch:
 jobs:
-  deploy:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 25
+  retired:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Publish exact Workforce control-plane release
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
-
-      - name: Deploy exact BIOS synthesis v2 candidate and wait for terminal acceptance
-        shell: bash
-        env:
-          BIOS_REQUESTED_SHA: a9139c5747c542d94c47d3bcf6adc92aceb3f491
-        run: |
-          set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          set -a
-          source "$BASE/.env"
-          source "$HOME/.metatron/highway/highway.env"
-          set +a
-          bash "$HOME/.metatron/highway/current/ensure-running.sh"
-          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
-          TASK_JSON=$($CTL submit \
-            --kind bios-deploy \
-            --source-sha "$GITHUB_SHA" \
-            --dedupe-key "bios-deploy:$BIOS_REQUESTED_SHA" \
-            --priority 100 \
-            --env "BIOS_REQUESTED_SHA=$BIOS_REQUESTED_SHA")
-          TASK=$(printf '%s' "$TASK_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
-          echo "HIGHWAY_BIOS_TASK=$TASK"
-          $CTL wait "$TASK" --timeout 1400 --poll 1 | tee /tmp/aq-bios-highway-final.json
-          LOG_PATH=$($CTL get "$TASK" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("log_path") or "")')
-          if [ -n "$LOG_PATH" ] && [ -r "$LOG_PATH" ]; then
-            echo '=== HIGHWAY BIOS DEPLOY LOG ==='
-            cat "$LOG_PATH"
-          fi
-          python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/aq-bios-highway-final.json'))
-          assert d['state']=='SUCCEEDED', d
-          assert d['exit_code']==0, d
-          print('AQ_SYNTHESIS_V2_HIGHWAY_DEPLOY=PASS')
-          PY
+      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'
