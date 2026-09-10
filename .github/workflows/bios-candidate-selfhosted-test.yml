@@ -21,7 +21,7 @@ jobs:
       - name: Test exact BIOS candidate SHA
         shell: bash
         env:
-          BIOS_CANDIDATE_SHA: 73a09c944841ccb6be6c76a5cf70f1f22a165a50
+          BIOS_CANDIDATE_SHA: dab732bc04e4313fc3d8ab266309e0f02639dd67
         run: |
           set -euo pipefail
           WORKFORCE_BASE=/opt/metatron/metatron-workforce
