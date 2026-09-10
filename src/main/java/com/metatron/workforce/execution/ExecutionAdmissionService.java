@@ -1,5 +1,9 @@
 package com.metatron.workforce.execution;
 
+import com.metatron.workforce.execution.governance.GovernanceAdmissionValidator;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -10,15 +14,18 @@ import java.util.Map;
  * GUIDANCE != AUTHORIZATION and PUBLICATION != SOT.
  */
 public final class ExecutionAdmissionService {
+    private final GovernanceAdmissionValidator governance;
+
+    /** Compatibility/read-only composition. Mutating legacy requests fail closed. */
+    public ExecutionAdmissionService() { this(null); }
+
+    public ExecutionAdmissionService(GovernanceAdmissionValidator governance) {
+        this.governance = governance;
+    }
 
     public ExecutionState admit(ExecutionRequest request) {
-        if (request.assignment() == null) {
-            throw new IllegalStateException("assignment missing");
-        }
-
-        if (request.authorization() == null) {
-            throw new IllegalStateException("authorization missing");
-        }
+        if (request.assignment() == null) throw new IllegalStateException("assignment missing");
+        if (request.authorization() == null) throw new IllegalStateException("authorization missing");
         if (request.authorization().authorizationId() == null || request.authorization().authorizationId().isBlank()) {
             throw new IllegalStateException("authorization identifier missing");
         }
@@ -31,15 +38,19 @@ public final class ExecutionAdmissionService {
 
         verifyRequiredGuidance(request);
         verifyActualWork(request);
+        if (request.workSpec().consequence() == ExecutionWorkSpec.Consequence.MUTATING) {
+            if (!request.governanceBound() || governance == null) {
+                throw new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED", "mutating work is LEGACY_UNBOUND");
+            }
+            governance.validate(request.assignment().assignmentId(), request.workSpec(),
+                    request.authoritySnapshotId(), request.derivationReceiptId(), request.planId(), request.planVersion());
+        }
         return ExecutionState.ADMITTED;
     }
 
     private static void verifyActualWork(ExecutionRequest request) {
-        if (request.workSpec() == null) {
-            throw new IllegalStateException("actual work missing");
-        }
-        if (request.workSpec().stepId().isBlank()
-                || request.workSpec().objective().isBlank()
+        if (request.workSpec() == null) throw new IllegalStateException("actual work missing");
+        if (request.workSpec().stepId().isBlank() || request.workSpec().objective().isBlank()
                 || request.workSpec().requiredCapability().isBlank()) {
             throw new IllegalStateException("actual work incomplete");
         }
@@ -51,16 +62,12 @@ public final class ExecutionAdmissionService {
         Map<String, GuidanceReceipt> receipts = new HashMap<>();
         for (GuidanceReceipt receipt : request.guidanceReceipts()) {
             GuidanceReceipt duplicate = receipts.put(receipt.guidanceId(), receipt);
-            if (duplicate != null) {
-                throw new IllegalStateException("duplicate_guidance_receipt:" + receipt.guidanceId());
-            }
+            if (duplicate != null) throw new IllegalStateException("duplicate_guidance_receipt:" + receipt.guidanceId());
         }
 
         for (GuidanceRequirement requirement : request.assignment().requiredGuidance()) {
             GuidanceReceipt receipt = receipts.get(requirement.guidanceId());
-            if (receipt == null) {
-                throw new IllegalStateException("required_guidance_not_read:" + requirement.guidanceId());
-            }
+            if (receipt == null) throw new IllegalStateException("required_guidance_not_read:" + requirement.guidanceId());
             if (!requirement.publicResourcePath().equals(receipt.publicResourcePath())) {
                 throw new IllegalStateException("guidance_publication_mismatch:" + requirement.guidanceId());
             }
