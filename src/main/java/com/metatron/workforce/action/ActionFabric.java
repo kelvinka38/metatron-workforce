@@ -105,6 +105,12 @@ public final class ActionFabric {
         return List.copyOf(available);
     }
 
+    public Consequence consequenceOf(String actionRef) {
+        Action action = actions.get(require(actionRef, "actionRef"));
+        if (action == null) throw new IllegalArgumentException("unknown-action:" + actionRef);
+        return Objects.requireNonNull(action.consequence(), "action consequence");
+    }
+
     public ActionObservation execute(ActionRequest request) {
         return executeInternal(request, null);
     }
@@ -130,7 +136,6 @@ public final class ActionFabric {
                     request.actionRef(), Instant.now());
         }
 
-        // No real tool code is entered before all applicable checks above pass.
         ActionObservation observation = Objects.requireNonNull(action.invoke(request), "action observation");
         if (!request.actionRef().equals(observation.actionRef())) {
             throw new IllegalStateException("action observation attribution mismatch");
