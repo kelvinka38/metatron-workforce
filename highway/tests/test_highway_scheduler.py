@@ -85,5 +85,45 @@ class HighwaySchedulerTest(unittest.TestCase):
         self.assertTrue(highwayd.resource_conflicts({"a:b":"WRITE"},{"a":"READ"}))
         self.assertFalse(highwayd.resource_conflicts({"a":"WRITE"},{"b":"WRITE"}))
 
+    def fabric(self, executors=2):
+        root=Path(self.tmp.name)
+        fabric=highwayd.HighwayFabric(self.store,self.registry,root,root,executors)
+        self.addCleanup(lambda: fabric.pool.shutdown(wait=False, cancel_futures=True))
+        return fabric
+
+    def test_explain_reports_dependency_wait(self):
+        first=self.make("other",priority=50)
+        second=self.make("read",priority=100,dependencies=[first["task_id"]])
+        e=self.fabric().explain_task(second["task_id"])
+        self.assertEqual("DEPENDENCY_WAIT",e["reason"])
+        self.assertEqual(first["task_id"],e["dependency_blockers"][0]["task_id"])
+        self.assertEqual("QUEUED",e["dependency_blockers"][0]["state"])
+
+    def test_explain_reports_resource_conflict_with_holder(self):
+        writer=self.make("write",priority=100)
+        reader=self.make("read",priority=90)
+        claimed=self.store.claim_next("writer-executor")
+        self.assertEqual(writer["task_id"],claimed["task_id"])
+        e=self.fabric().explain_task(reader["task_id"])
+        self.assertEqual("RESOURCE_CONFLICT",e["reason"])
+        self.assertEqual(writer["task_id"],e["resource_blockers"][0]["holderTaskId"])
+        self.assertEqual("WRITE",e["resource_blockers"][0]["holderMode"])
+
+    def test_explain_reports_executor_capacity_only_without_structural_blocker(self):
+        task=self.make("other")
+        fabric=self.fabric(executors=1)
+        with fabric.active_lock:
+            fabric.active.add("already-running")
+        e=fabric.explain_task(task["task_id"])
+        self.assertEqual("EXECUTOR_CAPACITY",e["reason"])
+        self.assertEqual(1,e["executor_active"])
+        self.assertEqual(0,e["executor_available"])
+
+    def test_explain_reports_schedulable_when_nothing_blocks(self):
+        task=self.make("other")
+        e=self.fabric(executors=2).explain_task(task["task_id"])
+        self.assertEqual("SCHEDULABLE",e["reason"])
+        self.assertEqual(2,e["executor_available"])
+
 if __name__=="__main__":
     unittest.main()
