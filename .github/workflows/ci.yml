@@ -3,6 +3,11 @@ name: CI
 on:
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/**'
+      - 'highway/**'
+      - 'scripts/highway-tasks/**'
+      - 'scripts/highway-manual-ingress.sh'
   workflow_dispatch:
 
 permissions:
