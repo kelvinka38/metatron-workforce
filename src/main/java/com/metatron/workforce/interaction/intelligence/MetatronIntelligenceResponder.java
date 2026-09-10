@@ -225,8 +225,17 @@ public final class MetatronIntelligenceResponder {
             boolean deterministicControl = false;
             String deterministicControlRoute = "";
 
-            var explicitObjectiveControl = CanonicalObjectiveControlInterpreter.interpret(text);
-            var boundedFounderControl = BoundedFounderControlInterpreter.interpret(humanId, text);
+            boolean approvalDeferred = ApprovalDeferredExecutionGuard.requiresApprovalBeforeExecution(text);
+            var explicitObjectiveControl = approvalDeferred
+                    ? java.util.Optional.<NormalizedRequest>empty()
+                    : CanonicalObjectiveControlInterpreter.interpret(text);
+            var boundedFounderControl = approvalDeferred
+                    ? java.util.Optional.<NormalizedRequest>empty()
+                    : BoundedFounderControlInterpreter.interpret(humanId, text);
+            if (approvalDeferred) {
+                LOG.info("approval_deferred_execution_guard human_id={} channel={} deterministic_controls_suppressed=true",
+                        humanId, channel);
+            }
             if (explicitObjectiveControl.isPresent()) {
                 normalized = IntelligenceDepthApplication.apply(explicitObjectiveControl.orElseThrow(), depthContract);
                 deterministicControl = true;
@@ -248,6 +257,11 @@ public final class MetatronIntelligenceResponder {
                 // current Human message only. With no active Case present, the interpreter forces continuity NEW.
                 normalized = IntelligenceDepthApplication.apply(
                         semanticInterpreter.interpret(text, "", channel, (IntelligenceCase) null), depthContract);
+            }
+            if (approvalDeferred && normalized.mode() == IntelligenceMode.EXECUTION) {
+                normalized = asApprovalGatedPlanning(normalized);
+                LOG.warn("approval_deferred_execution_canonicalized_to_reasoning human_id={} channel={}",
+                        humanId, channel);
             }
             route = deterministicControl
                     ? deterministicControlRoute
@@ -296,6 +310,9 @@ public final class MetatronIntelligenceResponder {
             }
 
             if (normalized.mode() == IntelligenceMode.EXECUTION) {
+                if (approvalDeferred) {
+                    throw new IllegalStateException("approval_deferred_execution_must_not_reach_handoff");
+                }
                 if (!shouldAdmitExecution(deterministicControl,
                         semanticExecutionHandoffEnabled || executionSurfaceAuthorized)) {
                     route = "semantic-execution-objective-handoff-disabled";
@@ -381,7 +398,7 @@ public final class MetatronIntelligenceResponder {
             } catch (RuntimeException failure) {
                 if (acquisition.externalEvidenceAcquired() && !acquisition.groundedFallback().isBlank()) {
                     String fallback = acquisition.groundedFallback();
-                    caseStore.save(intelligenceCase.withResult(fallback, request.evidenceReferences()));
+                    caseStore.save(resultCase(intelligenceCase, fallback, request.evidenceReferences(), approvalDeferred));
                     LOG.warn("intelligence_provider_failed_grounded_acquisition_preserved case_id={} reason={}",
                             intelligenceCase.caseId(), failure.getMessage());
                     return fallback;
@@ -395,7 +412,7 @@ public final class MetatronIntelligenceResponder {
                 } catch (RuntimeException evidenceViolation) {
                     String fallback = acquisition.groundedFallback();
                     if (!fallback.isBlank()) {
-                        caseStore.save(intelligenceCase.withResult(fallback, request.evidenceReferences()));
+                        caseStore.save(resultCase(intelligenceCase, fallback, request.evidenceReferences(), approvalDeferred));
                         LOG.warn("intelligence_grounded_response_rejected case_id={} reason={}",
                                 intelligenceCase.caseId(), evidenceViolation.getMessage());
                         return fallback;
@@ -406,7 +423,7 @@ public final class MetatronIntelligenceResponder {
 
             List<String> resultEvidence = mergeEvidenceReferences(
                     request.evidenceReferences(), result.evidenceReferences());
-            caseStore.save(intelligenceCase.withResult(result.text(), resultEvidence));
+            caseStore.save(resultCase(intelligenceCase, result.text(), resultEvidence, approvalDeferred));
             return result.text();
         } finally {
             LOG.info("metatron_intelligence_latency channel={} route={} elapsed_ms={} text_length={}",
@@ -448,6 +465,41 @@ public final class MetatronIntelligenceResponder {
     static boolean shouldAdmitExecution(boolean deterministicControl,
                                         boolean semanticExecutionHandoffEnabled) {
         return deterministicControl || semanticExecutionHandoffEnabled;
+    }
+
+    static NormalizedRequest asApprovalGatedPlanning(NormalizedRequest request) {
+        Objects.requireNonNull(request, "request");
+        return new NormalizedRequest(
+                request.objective(),
+                request.target(),
+                request.constraints(),
+                request.requestedDepth(),
+                request.requestedOutput(),
+                request.explicitAssumptions(),
+                request.explicitProhibitions(),
+                request.temporalContext(),
+                request.unresolvedSemanticAmbiguity(),
+                IntelligenceMode.REASONING,
+                request.collaborationMode(),
+                request.analyticalProtocols(),
+                request.deterministicCapability(),
+                request.deterministicComputations(),
+                List.of(),
+                request.freshExternalDataRequired(),
+                request.explicitlyRequestedProvider(),
+                request.semanticProvider(),
+                request.caseContinuity(),
+                request.directResponse());
+    }
+
+    static IntelligenceCase resultCase(IntelligenceCase intelligenceCase,
+                                       String result,
+                                       List<String> evidenceReferences,
+                                       boolean approvalDeferred) {
+        IntelligenceCase ready = intelligenceCase.withResult(result, evidenceReferences);
+        return approvalDeferred
+                ? ready.transition(IntelligenceCaseStatus.AWAITING_HUMAN_APPROVAL)
+                : ready;
     }
 
     private static boolean canReturnDeterministicFast(NormalizedRequest normalized) {
