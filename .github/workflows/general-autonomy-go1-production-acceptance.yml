@@ -1,25 +1,26 @@
 name: General Autonomy GO1 Production Acceptance
 
 on:
-  workflow_run:
-    workflows: ["Highway Production Deploy"]
-    types: [completed]
-
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed production SHA to validate
+        required: false
+        type: string
 permissions:
   contents: read
 
 jobs:
   go1-unknown-java-bug:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: [self-hosted, linux, x64, metatron-prod]
     environment: production
     timeout-minutes: 20
     env:
-      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+      TARGET_SHA: ${{ inputs.target_sha != '' && inputs.target_sha || github.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.TARGET_SHA }}
 
       - uses: actions/setup-java@v5
         with:
