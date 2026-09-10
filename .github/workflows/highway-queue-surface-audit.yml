@@ -1,13 +1,7 @@
 name: Highway Queue Surface Audit
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'highway/audit_workflow_queue_surface.py'
-      - '.github/workflows/**'
   workflow_dispatch:
-
 permissions:
   contents: read
 
