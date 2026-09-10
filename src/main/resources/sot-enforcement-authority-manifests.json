@@ -1,0 +1,135 @@
+{
+  "manifests": [
+    {
+      "manifestId": "metatron-workforce-canonical",
+      "targetPatterns": [
+        "kelvinka38/metatron-workforce",
+        "https://github.com/kelvinka38/metatron-workforce*"
+      ],
+      "targetScope": "repository:kelvinka38/metatron-workforce",
+      "sources": [
+        {
+          "authorityLevel": "L0",
+          "repository": "kelvinka38/universal",
+          "artifactPath": "SOT_DISCOVERY_PROTOCOL.md",
+          "repositoryCommitSha": "b6cf76a71bcb656d18bf309b6a22bb83b198c03a",
+          "contentHash": "git-sha1:9161372be90c50b215d14b2897e0d43cb30ddace",
+          "status": "LOCKED",
+          "scope": "consequential-work-discovery"
+        },
+        {
+          "authorityLevel": "L0",
+          "repository": "kelvinka38/universal",
+          "artifactPath": "SOT_DERIVATION_PROTOCOL.md",
+          "repositoryCommitSha": "b6cf76a71bcb656d18bf309b6a22bb83b198c03a",
+          "contentHash": "git-sha1:e91d3fd18e5e707f3d85db86df7484df97c75db3",
+          "status": "LOCKED",
+          "scope": "downstream-derivation"
+        },
+        {
+          "authorityLevel": "L0",
+          "repository": "kelvinka38/universal",
+          "artifactPath": "SOT_CHANGE_CONTROL.md",
+          "repositoryCommitSha": "b6cf76a71bcb656d18bf309b6a22bb83b198c03a",
+          "contentHash": "git-sha1:6e1cbe39b9a6566dc10b96362c944452abc75c15",
+          "status": "GOVERNED",
+          "scope": "semantic-change-control"
+        },
+        {
+          "authorityLevel": "L2",
+          "repository": "kelvinka38/metatron-institution",
+          "artifactPath": "14_EXECUTION/SOT.md",
+          "repositoryCommitSha": "b41ff3a629400db8fccd8d85cf64363ff1923fd7",
+          "contentHash": "git-sha1:fa319aff5b941f0896c756e92fdc570a9ba8beae",
+          "status": "BASELINE",
+          "scope": "execution"
+        },
+        {
+          "authorityLevel": "L2",
+          "repository": "kelvinka38/metatron-institution",
+          "artifactPath": "05_WORKFORCE/WORKFORCE_SOT.md",
+          "repositoryCommitSha": "b41ff3a629400db8fccd8d85cf64363ff1923fd7",
+          "contentHash": "git-sha1:0121202c5b2674ace0f43a33ffbfab655ef2172e",
+          "status": "CANONICAL",
+          "scope": "workforce"
+        },
+        {
+          "authorityLevel": "L3",
+          "repository": "kelvinka38/metatron-institution",
+          "artifactPath": "05_WORKFORCE/WORKFORCE_AUTHORIZATION_EXECUTION_ATTRIBUTION_ARCHITECTURE.md",
+          "repositoryCommitSha": "b41ff3a629400db8fccd8d85cf64363ff1923fd7",
+          "contentHash": "git-sha1:e1a09fd865419f6616b9a72fd2d8239c512e531d",
+          "status": "G6_READY",
+          "scope": "workforce-authorization-execution"
+        },
+        {
+          "authorityLevel": "L5",
+          "repository": "kelvinka38/metatron-institution",
+          "artifactPath": "14_EXECUTION/SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md",
+          "repositoryCommitSha": "b41ff3a629400db8fccd8d85cf64363ff1923fd7",
+          "contentHash": "git-sha1:0c7284de56f4b7a9379a2066f4f67d9a564a697f",
+          "status": "FOUNDER_APPROVED",
+          "scope": "sot-enforcement-closure"
+        }
+      ],
+      "constraints": [
+        {
+          "constraintId": "SE-DISCOVERY-REQUIRED",
+          "authorityArtifactIdentity": "L0|kelvinka38/universal|SOT_DISCOVERY_PROTOCOL.md|b6cf76a71bcb656d18bf309b6a22bb83b198c03a|git-sha1:9161372be90c50b215d14b2897e0d43cb30ddace",
+          "kind": "MACHINE",
+          "predicateType": "AUTHORITY_CURRENT",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        },
+        {
+          "constraintId": "SE-PLAN-APPROVED",
+          "authorityArtifactIdentity": "L5|kelvinka38/metatron-institution|14_EXECUTION/SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md|b41ff3a629400db8fccd8d85cf64363ff1923fd7|git-sha1:0c7284de56f4b7a9379a2066f4f67d9a564a697f",
+          "kind": "MACHINE",
+          "predicateType": "PLAN_APPROVED",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        },
+        {
+          "constraintId": "SE-ASSIGNMENT-AUTHORIZATION",
+          "authorityArtifactIdentity": "L3|kelvinka38/metatron-institution|05_WORKFORCE/WORKFORCE_AUTHORIZATION_EXECUTION_ATTRIBUTION_ARCHITECTURE.md|b41ff3a629400db8fccd8d85cf64363ff1923fd7|git-sha1:e1a09fd865419f6616b9a72fd2d8239c512e531d",
+          "kind": "MACHINE",
+          "predicateType": "ASSIGNMENT_AUTHORIZATION_MATCH",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        },
+        {
+          "constraintId": "SE-PLAN-DIGEST-MATCH",
+          "authorityArtifactIdentity": "L0|kelvinka38/universal|SOT_DERIVATION_PROTOCOL.md|b6cf76a71bcb656d18bf309b6a22bb83b198c03a|git-sha1:e91d3fd18e5e707f3d85db86df7484df97c75db3",
+          "kind": "MACHINE",
+          "predicateType": "PLAN_DIGEST_MATCH",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        },
+        {
+          "constraintId": "SE-ACTION-IN-PLAN",
+          "authorityArtifactIdentity": "L5|kelvinka38/metatron-institution|14_EXECUTION/SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md|b41ff3a629400db8fccd8d85cf64363ff1923fd7|git-sha1:0c7284de56f4b7a9379a2066f4f67d9a564a697f",
+          "kind": "MACHINE",
+          "predicateType": "ACTION_IN_PLAN",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        },
+        {
+          "constraintId": "SE-SCOPE-IN-PLAN",
+          "authorityArtifactIdentity": "L5|kelvinka38/metatron-institution|14_EXECUTION/SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md|b41ff3a629400db8fccd8d85cf64363ff1923fd7|git-sha1:0c7284de56f4b7a9379a2066f4f67d9a564a697f",
+          "kind": "MACHINE",
+          "predicateType": "SCOPE_IN_PLAN",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        },
+        {
+          "constraintId": "SE-EVIDENCE-DECLARED",
+          "authorityArtifactIdentity": "L2|kelvinka38/metatron-institution|14_EXECUTION/SOT.md|b41ff3a629400db8fccd8d85cf64363ff1923fd7|git-sha1:fa319aff5b941f0896c756e92fdc570a9ba8beae",
+          "kind": "MACHINE",
+          "predicateType": "REQUIRED_EVIDENCE_DECLARED",
+          "predicatePayload": "",
+          "reviewRequirement": ""
+        }
+      ]
+    }
+  ]
+}
