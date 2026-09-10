@@ -24,7 +24,8 @@ jobs:
           echo "BIOS_IMAGE=$IMAGE"
           test "$IMAGE" = "metatron-bios:$BIOS_EXPECTED_SHA"
 
-          BASE=/opt/metatron/metatron-workforce
+          BASE="$HOME/.metatron/bios"
+          test -r "$BASE/.env"
           set -a
           source "$BASE/.env"
           set +a
