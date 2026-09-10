@@ -69,7 +69,8 @@ jobs:
           grep -q 'name: Highway Release Ingress' "$D"
           grep -q -- '--kind workforce-build' "$D"
           grep -q -- '--kind workforce-deploy' "$D"
-          grep -q 'highway/publish-release.sh' "$D"
+          grep -q 'bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"' "$D"
+          grep -q 'HIGHWAY_EXACT_CONTROL_PLANE_ACTIVE=PASS' "$D"
           ! grep -q './gradlew clean test bootJar' "$D"
           ! grep -q 'docker compose' "$D"
 
