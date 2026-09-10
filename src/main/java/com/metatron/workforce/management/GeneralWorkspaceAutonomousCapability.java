@@ -7,6 +7,7 @@ import com.metatron.workforce.action.GeneralCognitiveWorkerBrain;
 import com.metatron.workforce.action.GeneralCognitiveWorkerBrainFactory;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
 import com.metatron.workforce.action.GeneralWebResearchAction;
+import com.metatron.workforce.execution.governance.ExecutionGate;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
@@ -42,18 +43,21 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     private final WorkerRuntimeProfileBindingService profiles;
     private final ObjectiveWorkspaceService workspaces;
     private final WorkerConstitutionRuntimeMaterializer runtimeConstitution;
+    private final ExecutionGate executionGate;
 
     @Autowired
     public GeneralWorkspaceAutonomousCapability(GeneralWorkspaceActionCatalog actions,
                                                 GeneralCognitiveWorkerBrainFactory brains,
                                                 WorkerRuntimeProfileBindingService profiles,
                                                 ObjectiveWorkspaceService workspaces,
-                                                WorkerConstitutionRuntimeMaterializer runtimeConstitution) {
+                                                WorkerConstitutionRuntimeMaterializer runtimeConstitution,
+                                                ExecutionGate executionGate) {
         this.actions = Objects.requireNonNull(actions, "actions");
         this.brains = Objects.requireNonNull(brains, "brains");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.runtimeConstitution = Objects.requireNonNull(runtimeConstitution, "runtimeConstitution");
+        this.executionGate = Objects.requireNonNull(executionGate, "executionGate");
     }
 
     public GeneralWorkspaceAutonomousCapability(GeneralWorkspaceActionCatalog actions,
@@ -65,6 +69,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.runtimeConstitution = null;
+        this.executionGate = null;
     }
 
     @Override public String capabilityRef() { return CAPABILITY; }
@@ -87,6 +92,10 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         if (!AUTHORIZATION_REFERENCE.equals(request.authorizationReference())) {
             throw new SecurityException("general workspace authorization mismatch");
         }
+        if (request.workSpec().consequence() == ExecutionWorkSpec.Consequence.MUTATING
+                && (!request.governanceBound() || executionGate == null)) {
+            throw new SecurityException("sot-governance-binding-required-for-mutating-general-workspace");
+        }
         WorkerRuntimeProfileBindingService.Binding binding = profiles.requireBinding(request.allocatedWorkerId());
         if (!WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE.equals(binding.profile().profileRef())) {
             throw new SecurityException("general workspace runtime profile mismatch");
@@ -97,8 +106,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
 
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(
                 request.objectiveId(), request.allocatedWorkerId());
-        Map<String, String> objectiveMemory = new LinkedHashMap<>(
-                objectiveWorkspaceMemory(workspaces, workspace));
+        Map<String, String> objectiveMemory = new LinkedHashMap<>(objectiveWorkspaceMemory(workspaces, workspace));
         WorkerConstitutionRuntimeMaterializer.RuntimeConstitution constitutionSnapshot = null;
         if (runtimeConstitution != null) {
             constitutionSnapshot = runtimeConstitution.materializeForAssignment(
@@ -110,12 +118,12 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         List<ActionFabric.Action> governedActions = actionsForWork(
                 actions.actions(request.allocatedWorkerId(), request.authorizationReference(), request.objectiveId()),
                 request.workSpec(), objectiveMemory);
-        ActionFabric fabric = new ActionFabric(governedActions);
+        ActionFabric fabric = new ActionFabric(governedActions, executionGate);
         GeneralCognitiveWorkerBrain brain = brains.create();
         CognitiveWorkerRuntime.Brain contextualBrain = withObjectiveWorkspaceMemory(brain, objectiveMemory);
         ActionJournal actionJournal = ActionJournal.runtimeEvidenceJournal();
         CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(
-                fabric, actionJournal, MAX_COGNITIVE_CYCLES);
+                fabric, actionJournal, MAX_COGNITIVE_CYCLES, executionGate);
         CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
                 request.allocatedWorkerId(),
                 request.assignmentReference(),
@@ -123,74 +131,60 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 request.objectiveId(),
                 request.workSpec(),
                 request.idempotencyKey(),
+                request.governanceContext(),
                 contextualBrain);
 
         LinkedHashSet<String> durableEvidence = new LinkedHashSet<>(
                 actionJournal.objectiveEvidenceReferences(request.objectiveId()));
         durableEvidence.addAll(outcome.evidenceReferences());
         List<String> evidence = new ArrayList<>(durableEvidence);
-        if (outcome.success()) {
-            evidence.add("general-work-output:" + outcome.summary());
-        }
+        if (outcome.success()) evidence.add("general-work-output:" + outcome.summary());
         evidence.addAll(brain.evidenceReferences());
         evidence.add("general-action-composition:capability=" + request.workSpec().requiredCapability()
                 + ":workspace=" + workspace.workspaceRef()
                 + ":profile=" + binding.profile().profileRef());
+        if (request.governanceContext() != null) {
+            evidence.add("governance-plan:" + request.governanceContext().planId() + "@" + request.governanceContext().planVersion());
+            evidence.add("governance-authority-snapshot:" + request.governanceContext().authoritySnapshotId());
+            evidence.add("governance-attempt:" + request.governanceContext().attemptId()
+                    + ":fence=" + request.governanceContext().fencingToken());
+        }
         if (constitutionSnapshot != null) {
             evidence.add("worker-constitution-runtime-snapshot:" + constitutionSnapshot.snapshotId());
             constitutionSnapshot.evidenceReferences().stream()
-                    .filter(ref -> ref != null && !ref.isBlank())
-                    .limit(300)
-                    .forEach(evidence::add);
+                    .filter(ref -> ref != null && !ref.isBlank()).limit(300).forEach(evidence::add);
         }
         evidence.add("general-action-catalog:" + governedActions.stream().map(ActionFabric.Action::actionRef).sorted().toList());
         evidence.add("general-workspace-continuity:materialized="
                 + objectiveMemory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false")
                 + ":repository=" + objectiveMemory.getOrDefault("repository", "none")
                 + ":source=" + objectiveMemory.getOrDefault("sourceCommitSha", "none"));
-        return new CapabilityResult(
-                outcome.success(),
-                request.allocatedWorkerId(),
-                request.assignmentReference(),
-                workspace.workspaceRef(),
-                evidence,
-                outcome.summary());
+        return new CapabilityResult(outcome.success(), request.allocatedWorkerId(), request.assignmentReference(),
+                workspace.workspaceRef(), evidence, outcome.summary());
     }
 
     static Map<String, String> objectiveWorkspaceMemory(ObjectiveWorkspaceService workspaces,
                                                         ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        Objects.requireNonNull(workspaces, "workspaces");
-        Objects.requireNonNull(workspace, "workspace");
+        Objects.requireNonNull(workspaces, "workspaces"); Objects.requireNonNull(workspace, "workspace");
         Map<String, String> memory = new LinkedHashMap<>();
-        memory.put("workspaceRef", workspace.workspaceRef());
-        memory.put("workspaceKey", workspace.workspaceKey());
+        memory.put("workspaceRef", workspace.workspaceRef()); memory.put("workspaceKey", workspace.workspaceKey());
         memory.put(MEMORY_WORKSPACE_MATERIALIZED, "false");
-
         Path provenance = workspaces.resolve(workspace, ".metatron-repository");
         if (!Files.exists(provenance, LinkOption.NOFOLLOW_LINKS)) return Map.copyOf(memory);
-        if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IllegalStateException("objective workspace repository provenance is not a regular file");
-        }
-
+        if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS)) throw new IllegalStateException("objective workspace repository provenance is not a regular file");
         String baselineSha = RepositoryWorkspaceMaterializationState.completedBaselineSha(workspaces, workspace);
         if (baselineSha.isBlank()) return Map.copyOf(memory);
-
         Map<String, String> fields = new LinkedHashMap<>();
         for (String line : workspaces.read(workspace, ".metatron-repository").lines().toList()) {
-            int split = line.indexOf('=');
-            if (split > 0) fields.put(line.substring(0, split).trim(), line.substring(split + 1).trim());
+            int split = line.indexOf('='); if (split > 0) fields.put(line.substring(0, split).trim(), line.substring(split + 1).trim());
         }
         String repository = fields.getOrDefault("repository", "");
         String requestedRef = fields.getOrDefault("requestedRef", "");
         String sourceCommitSha = fields.getOrDefault("commitSha", "");
         if (repository.isBlank() || !repository.contains("/") || requestedRef.isBlank()
-                || !sourceCommitSha.matches("[0-9a-fA-F]{40}")) {
-            throw new IllegalStateException("objective workspace repository provenance is invalid");
-        }
-        memory.put(MEMORY_WORKSPACE_MATERIALIZED, "true");
-        memory.put("repository", repository);
-        memory.put("requestedRef", requestedRef);
-        memory.put("sourceCommitSha", sourceCommitSha.toLowerCase(Locale.ROOT));
+                || !sourceCommitSha.matches("[0-9a-fA-F]{40}")) throw new IllegalStateException("objective workspace repository provenance is invalid");
+        memory.put(MEMORY_WORKSPACE_MATERIALIZED, "true"); memory.put("repository", repository);
+        memory.put("requestedRef", requestedRef); memory.put("sourceCommitSha", sourceCommitSha.toLowerCase(Locale.ROOT));
         memory.put("localBaselineCommitSha", baselineSha);
         return Map.copyOf(memory);
     }
@@ -198,38 +192,29 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     static List<ActionFabric.Action> actionsForWork(List<ActionFabric.Action> candidates,
                                                     ExecutionWorkSpec workSpec,
                                                     Map<String, String> objectiveMemory) {
-        Objects.requireNonNull(candidates, "candidates");
-        Objects.requireNonNull(workSpec, "workSpec");
-        Map<String, String> memory = objectiveMemory == null ? Map.of() : objectiveMemory;
+        Objects.requireNonNull(candidates, "candidates"); Objects.requireNonNull(workSpec, "workSpec");
+        Map<String, String> memory = objectiveMemory == null ? Map.of() : Map.copyOf(objectiveMemory);
         if (requiresExternalResearch(workSpec)) {
-            return candidates.stream()
-                    .filter(action -> GeneralWebResearchAction.ACTION_REF.equals(action.actionRef()))
-                    .toList();
+            return candidates.stream().filter(action -> GeneralWebResearchAction.ACTION_REF.equals(action.actionRef())).toList();
         }
         boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
         if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(candidates);
-        return candidates.stream()
-                .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
-                .toList();
+        return candidates.stream().filter(action -> !"workspace.repository.materialize".equals(action.actionRef())).toList();
     }
 
     static boolean requiresExternalResearch(ExecutionWorkSpec workSpec) {
         String semantic = (workSpec.objective() + " " + workSpec.target() + " "
-                + workSpec.acceptanceCriteria() + " " + workSpec.evidenceRequirements())
-                .toLowerCase(Locale.ROOT);
-        boolean explicit = workSpec.evidenceRequirements().stream()
-                .map(value -> value.toLowerCase(Locale.ROOT))
+                + workSpec.acceptanceCriteria() + " " + workSpec.evidenceRequirements()).toLowerCase(Locale.ROOT);
+        boolean explicit = workSpec.evidenceRequirements().stream().map(value -> value.toLowerCase(Locale.ROOT))
                 .anyMatch(value -> value.contains("research-action:research.web.search")
                         || value.contains("requested-capability:") && value.contains("research"));
         if (explicit) return true;
         boolean researchIntent = semantic.contains("research") || semantic.contains("paper")
                 || semantic.contains("publication") || semantic.contains("report")
-                || semantic.contains("standard") || semantic.contains("regulator")
-                || semantic.contains("regulatory");
+                || semantic.contains("standard") || semantic.contains("regulator") || semantic.contains("regulatory");
         boolean externalEvidence = semantic.contains("source") || semantic.contains("evidence")
-                || semantic.contains("external") || semantic.contains("web")
-                || semantic.contains("internet") || semantic.contains("recent")
-                || semantic.contains("current") || semantic.contains("new ");
+                || semantic.contains("external") || semantic.contains("web") || semantic.contains("internet")
+                || semantic.contains("recent") || semantic.contains("current") || semantic.contains("new ");
         return researchIntent && externalEvidence;
     }
 
@@ -243,26 +228,25 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         Objects.requireNonNull(delegate, "delegate");
         Map<String, String> persistent = objectiveMemory == null ? Map.of() : Map.copyOf(objectiveMemory);
         return new CognitiveWorkerRuntime.Brain() {
-            @Override
-            public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+            @Override public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
                 return delegate.think(withMemory(context, persistent));
             }
-
-            @Override
-            public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
-                                                              ActionFabric.ActionObservation observation) {
+            @Override public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                        ActionFabric.ActionObservation observation) {
                 return delegate.reflect(withMemory(context, persistent), observation);
+            }
+            @Override public boolean blocksCompletionForUnresolvedFailure(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                           String actionRef) {
+                return delegate.blocksCompletionForUnresolvedFailure(withMemory(context, persistent), actionRef);
             }
         };
     }
 
     private static CognitiveWorkerRuntime.CognitiveContext withMemory(CognitiveWorkerRuntime.CognitiveContext context,
                                                                       Map<String, String> persistent) {
-        Map<String, String> merged = new LinkedHashMap<>(persistent);
-        merged.putAll(context.memory());
-        return new CognitiveWorkerRuntime.CognitiveContext(
-                context.workerId(), context.assignmentReference(), context.authorizationReference(),
-                context.objectiveId(), context.workSpec(), context.idempotencyKey(),
+        Map<String, String> merged = new LinkedHashMap<>(persistent); merged.putAll(context.memory());
+        return new CognitiveWorkerRuntime.CognitiveContext(context.workerId(), context.assignmentReference(),
+                context.authorizationReference(), context.objectiveId(), context.workSpec(), context.idempotencyKey(),
                 context.availableActions(), context.history(), Map.copyOf(merged));
     }
 }
