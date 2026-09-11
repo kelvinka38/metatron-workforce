@@ -17,14 +17,23 @@ import java.util.UUID;
 public final class IntelligenceOutcomeLearningBridge {
     private final LearningService learning;
     private final InstitutionalIntelligenceReferenceBridge references;
+    private final IntelligenceRoutingFeedbackService routingFeedback;
 
     public IntelligenceOutcomeLearningBridge(LearningService learning) {
-        this(learning, new InstitutionalIntelligenceReferenceBridge());
+        this(learning, new InstitutionalIntelligenceReferenceBridge(), null);
     }
 
     IntelligenceOutcomeLearningBridge(LearningService learning, InstitutionalIntelligenceReferenceBridge references) {
+        this(learning, references, null);
+    }
+
+    IntelligenceOutcomeLearningBridge(
+            LearningService learning,
+            InstitutionalIntelligenceReferenceBridge references,
+            IntelligenceRoutingFeedbackService routingFeedback) {
         this.learning = Objects.requireNonNull(learning, "learning");
         this.references = Objects.requireNonNull(references, "references");
+        this.routingFeedback = routingFeedback;
     }
 
     public FeedbackResult recordObservedOutcome(
@@ -66,6 +75,10 @@ public final class IntelligenceOutcomeLearningBridge {
                 evidence,
                 expectedVsActualStatement,
                 observedAt);
+
+        if (routingFeedback != null) {
+            routingFeedback.recordObservedOutcome(intelligenceCase.caseId(), observationBoundary, observedAt);
+        }
 
         IntelligenceCase linked = references.linkObservation(
                 intelligenceCase,

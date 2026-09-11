@@ -23,11 +23,19 @@ public final class IntelligenceCaseLifecycleService {
     private final IntelligenceKnowledgeAdmissionService knowledgeAdmission;
 
     public IntelligenceCaseLifecycleService(IntelligenceCaseStore store, Clock clock) {
-        this(store,
-                new InstitutionalIntelligenceReferenceBridge(),
-                new IntelligenceExecutionAdmissionService(clock),
-                new IntelligenceOutcomeLearningBridge(new LearningService()),
-                new IntelligenceKnowledgeAdmissionService(clock));
+        this(store, clock, null);
+    }
+
+    public IntelligenceCaseLifecycleService(
+            IntelligenceCaseStore store,
+            Clock clock,
+            IntelligenceRoutingFeedbackService routingFeedback) {
+        InstitutionalIntelligenceReferenceBridge refs = new InstitutionalIntelligenceReferenceBridge();
+        this.store = Objects.requireNonNull(store, "store");
+        this.references = refs;
+        this.executionAdmission = new IntelligenceExecutionAdmissionService(Objects.requireNonNull(clock, "clock"));
+        this.outcomeLearning = new IntelligenceOutcomeLearningBridge(new LearningService(), refs, routingFeedback);
+        this.knowledgeAdmission = new IntelligenceKnowledgeAdmissionService(clock);
     }
 
     IntelligenceCaseLifecycleService(

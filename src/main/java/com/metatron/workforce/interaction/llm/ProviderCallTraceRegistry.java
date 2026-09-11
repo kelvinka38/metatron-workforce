@@ -72,6 +72,12 @@ public final class ProviderCallTraceRegistry {
         return traces.stream().filter(item -> ref.equals(item.logicalRequestRef())).toList();
     }
 
+    public List<ProviderCallTrace> forCaseRef(String caseRef) {
+        String ref = caseRef == null ? "" : caseRef.trim();
+        if (ref.isBlank()) return List.of();
+        return traces.stream().filter(item -> ref.equals(item.caseRef())).toList();
+    }
+
     public long totalCallsForLogicalRequest(String logicalRequestRef) {
         return forLogicalRequest(logicalRequestRef).size();
     }
