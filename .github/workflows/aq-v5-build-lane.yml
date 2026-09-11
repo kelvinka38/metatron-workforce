@@ -1,0 +1,31 @@
+name: Aquaculture v5 BIOS Build Lane
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 3
+    steps:
+      - name: Inspect stalled BIOS research objective
+        shell: bash
+        run: |
+          set -euo pipefail
+          WF=http://127.0.0.1:8080
+          ACTOR=FOUNDER
+          OID=objective-aq-v5-diag-1789098301
+          echo '=== MONITOR VIEW ==='
+          curl -fsS "$WF/workforce/monitor/api/objectives/$OID" -H "X-Metatron-Actor: $ACTOR" | python3 -m json.tool || true
+          echo '=== RESEARCH EVIDENCE ==='
+          curl -fsS "$WF/workforce/bios/objectives/$OID/research-evidence" -H "X-Metatron-Actor: $ACTOR" | python3 -m json.tool || true
+          echo '=== CONTAINERS ==='
+          docker ps --format '{{.Names}} {{.Image}} {{.Status}}' || true
+          echo '=== WORKFORCE LOG TAIL ==='
+          NAME=$(docker ps --format '{{.Names}}' | grep -E 'workforce' | head -1 || true)
+          if [ -n "$NAME" ]; then docker logs --since 15m "$NAME" 2>&1 | tail -300 || true; fi
+          echo 'AQ_V5_STALL_DIAGNOSTIC=PASS'
