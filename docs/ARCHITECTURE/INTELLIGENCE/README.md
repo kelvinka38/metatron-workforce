@@ -17,6 +17,8 @@ UPSTREAM CANONICAL SOT / POLICY
         ↓
 03_TRACEABILITY_MATRIX.md + IMPLEMENTATION / RUNTIME EVIDENCE
         ↓
+11_INTELLIGENCE_FABRIC_UPGRADE_CLOSURE.md
+        ↓
 CONTRACT / STATE / EVENT DESIGN
         ↓
 IMPLEMENTATION
@@ -36,8 +38,13 @@ Upstream canonical SoT/policy always wins. If a downstream rule conflicts with s
 6. `08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md`
 7. `09_COGNITIVE_RUNTIME_P13_PRODUCTION_ACCEPTANCE.md`
 8. `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md`
+9. `11_INTELLIGENCE_FABRIC_UPGRADE_CLOSURE.md` — current implementation/status reconciliation
+10. `../INTELLIGENCE_ROUTING_CORRECTNESS_GAP_CLOSURE.md` — routing correctness evidence
+11. `../INTELLIGENCE_EVALUATION_ROUTING_FEEDBACK_GAP_CLOSURE.md` — observed-outcome routing feedback evidence
 
 `01_FINAL_ARCHITECTURE_PROPOSAL.md` and `02_DETAILED_ARCHITECTURE.md` are historical/compatibility architecture only. Any old downstream rule that makes a frontier semantic call mandatory before every deterministic/retrieval path, treats depth as provider count, or permits duplicate production provider-control loops is superseded by the Founder-approved Cognitive Runtime baseline above.
+
+Historical P13/P14 receipts retain the state and evidence known when they were written. Their historical status banners MUST NOT be interpreted as the current overall Intelligence Fabric status when later accepted/production evidence exists. `11_INTELLIGENCE_FABRIC_UPGRADE_CLOSURE.md` is the current downstream reconciliation record and supersedes stale historical "deploy pending" language for present-state interpretation without rewriting history.
 
 ## Cognitive runtime lock
 
@@ -88,11 +95,15 @@ Provider/model choice is an implementation detail of the Intelligence Fabric unl
 
 Production provider control is owned by `InstitutionalIntelligenceRuntime` and the shared `IntelligenceFabric`. Channel ingress, execution planning and Worker cognition consume that shared institutional Intelligence capacity; they MUST NOT create independent production-owned provider routers or policy loops.
 
-Compatibility/test constructors and overloads may remain only when clearly non-governing. See `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md` and the `interaction.intelligence` package documentation.
+AUTO routing may use evidence-backed capability quality, measured provider health/failure/concurrency/latency and authoritative cost data when available. Observed outcomes may feed future routing only through the governed routing-feedback loop. Unknown quality/cost remains unknown/neutral; provider brand is not evidence.
+
+Compatibility/test constructors and overloads may remain only when clearly non-governing. See `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md`, `11_INTELLIGENCE_FABRIC_UPGRADE_CLOSURE.md`, and the `interaction.intelligence` package documentation.
 
 ## Current implementation gate
 
-`08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md` records pre-production acceptance. `09_COGNITIVE_RUNTIME_P13_PRODUCTION_ACCEPTANCE.md` records the accepted production rollout. `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md` records final legacy retirement/closure and its final build/deploy gate.
+`08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md` records pre-production acceptance. `09_COGNITIVE_RUNTIME_P13_PRODUCTION_ACCEPTANCE.md` records the historical accepted production rollout. `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md` records the historical legacy-retirement gate. `11_INTELLIGENCE_FABRIC_UPGRADE_CLOSURE.md` reconciles those receipts with later routing correctness, outcome-feedback and current production evidence.
+
+Within the current Founder-approved Workforce-owned Intelligence scope, no additional runtime phase is implied by this closure. A new phase requires an observed defect, an unmet existing canonical requirement, or new Founder/upstream-approved scope.
 
 No production percentage savings claim is authorized without measured telemetry. Architecture-derived and fixture-level call reductions must remain labeled as such.
 
@@ -106,4 +117,6 @@ Before modifying conversational semantics, LLM/provider routing, reasoning, retr
 - prefer deterministic/retrieval paths when sufficient;
 - keep any second-or-later frontier call bounded and reason-coded;
 - do not create a second production provider-control loop;
-- do not claim execution, Observation, cost or savings without evidence.
+- do not convert routing feedback into provider identity or Worker identity;
+- do not claim execution, Observation, cost or savings without evidence;
+- do not invent a new roadmap phase merely because a future enhancement is technically possible.
