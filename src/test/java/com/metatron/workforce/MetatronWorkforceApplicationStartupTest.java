@@ -17,6 +17,7 @@ import org.springframework.boot.test.context.SpringBootTest;
                 "METATRON_WORKFORCE_CORE_STATE_PATH=build/test-runtime/workforce-core-state.json",
                 "METATRON_WORKER_CONSTITUTION_STATE_PATH=build/test-runtime/worker-constitution-state.json",
                 "METATRON_WORKER_CONSTITUTION_RUNTIME_STATE_PATH=build/test-runtime/worker-constitution-runtime-state.json",
+                "METATRON_WORKER_ACTOR_STATE_PATH=build/test-runtime/worker-actors",
                 "METATRON_MANAGEMENT_STATE_PATH=build/test-runtime/management-state.json",
                 "METATRON_AUTONOMY_COORDINATION_STATE_PATH=build/test-runtime/autonomy-coordination-state.json",
                 "METATRON_AUTONOMY_SAFETY_STATE_PATH=build/test-runtime/autonomy-safety-state.json",

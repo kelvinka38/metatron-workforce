@@ -1,10 +1,12 @@
 package com.metatron.workforce.workplace;
 
+import com.metatron.workforce.actor.WorkerActorMessage;
+import com.metatron.workforce.actor.WorkerActorRuntime;
+import com.metatron.workforce.actor.WorkerActorSnapshot;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.DirectWorkerConversationService;
 import com.metatron.workforce.interaction.memory.PersistentWorkerConversationMemoryStore;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -21,6 +23,7 @@ public final class WorkplaceControlRoomController {
     private final DirectWorkerConversationService directWorkerConversation;
     private final WorkerOperatingProfileService workerOperatingProfile;
     private final WorkplaceFounderControlService founderControl;
+    private final WorkerActorRuntime actors;
 
     public WorkplaceControlRoomController(
             WorkplaceDashboardAuthService authentication,
@@ -28,13 +31,15 @@ public final class WorkplaceControlRoomController {
             WorkforceCoreService core,
             DirectWorkerConversationService directWorkerConversation,
             WorkerOperatingProfileService workerOperatingProfile,
-            WorkplaceFounderControlService founderControl) {
+            WorkplaceFounderControlService founderControl,
+            WorkerActorRuntime actors) {
         this.authentication = authentication;
         this.controlRoom = controlRoom;
         this.core = core;
         this.directWorkerConversation = directWorkerConversation;
         this.workerOperatingProfile = workerOperatingProfile;
         this.founderControl = founderControl;
+        this.actors = actors;
     }
 
     @GetMapping("/control-room")
@@ -42,6 +47,47 @@ public final class WorkplaceControlRoomController {
             @RequestHeader(value="Authorization", required=false) String authorization) {
         requireAuthenticated(authorization);
         return controlRoom.snapshot();
+    }
+
+    /** Elastic Worker actor fleet truth, separate from model/provider capacity. */
+    @GetMapping("/actors")
+    public ActorFleetView actors(
+            @RequestHeader(value="Authorization", required=false) String authorization) {
+        requireAuthenticated(authorization);
+        return new ActorFleetView(actors.stats(), actors.allActors());
+    }
+
+    @GetMapping("/workers/{workerId}/actor")
+    public ActorDetail actor(
+            @PathVariable String workerId,
+            @RequestHeader(value="Authorization", required=false) String authorization) {
+        requireAuthenticated(authorization);
+        WorkerActorSnapshot snapshot = actors.find(workerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "worker actor not found"));
+        List<WorkerActorMessage> mailbox = actors.mailbox(workerId);
+        int from = Math.max(0, mailbox.size() - 100);
+        return new ActorDetail(snapshot, mailbox.subList(from, mailbox.size()));
+    }
+
+    @PostMapping("/workers/{workerId}/actor/{action}")
+    public WorkerActorSnapshot controlActor(
+            @PathVariable String workerId,
+            @PathVariable String action,
+            @RequestHeader(value="Authorization", required=false) String authorization) {
+        requireAuthenticated(authorization);
+        try {
+            return switch (action.toLowerCase(java.util.Locale.ROOT)) {
+                case "pause" -> actors.pause(workerId);
+                case "resume" -> actors.resume(workerId);
+                case "offline" -> actors.offline(workerId);
+                case "heartbeat" -> actors.heartbeat(workerId);
+                default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported actor control action");
+            };
+        } catch (IllegalArgumentException missing) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, missing.getMessage(), missing);
+        } catch (IllegalStateException conflict) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, conflict.getMessage(), conflict);
+        }
     }
 
     @GetMapping("/workers/{workerId}")
@@ -100,9 +146,7 @@ public final class WorkplaceControlRoomController {
             @RequestBody AvailabilityCommand command) {
         requireAuthenticated(authorization);
         if (command == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "command required");
-        double capacity = command.available()
-                ? (command.capacity() == null ? currentCapacity(workerId) : command.capacity())
-                : (command.capacity() == null ? currentCapacity(workerId) : command.capacity());
+        double capacity = command.capacity() == null ? currentCapacity(workerId) : command.capacity();
         return core.setAvailability(workerId, command.available(), capacity);
     }
 
@@ -132,6 +176,8 @@ public final class WorkplaceControlRoomController {
         }
     }
 
+    public record ActorFleetView(WorkerActorRuntime.RuntimeStats stats, List<WorkerActorSnapshot> actors) {}
+    public record ActorDetail(WorkerActorSnapshot actor, List<WorkerActorMessage> recentMailbox) {}
     public record ChatCommand(String message, String role) {}
     public record AvailabilityCommand(boolean available, Double capacity) {}
 }
