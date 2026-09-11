@@ -1,6 +1,7 @@
 package com.metatron.workforce.interaction;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.intelligence.CognitiveRequestScope;
 import com.metatron.workforce.interaction.intelligence.ExecutionObjectiveHandoff;
 import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
@@ -88,17 +89,19 @@ public final class ChannelInteractionIngressService {
 
     public MetatronInteractionOrchestrator.InteractionResponse handle(MetatronInteraction interaction) {
         MetatronInteraction normalized = Objects.requireNonNull(interaction, "interaction");
-        if (directWorkerConversation != null) {
-            java.util.Optional<DirectWorkerConversationService.HandledReply> direct =
-                    directWorkerConversation.handle(normalized);
-            if (direct.isPresent()) {
-                DirectWorkerConversationService.HandledReply reply = direct.get();
-                return new MetatronInteractionOrchestrator.InteractionResponse(
-                        normalized.conversationId(),
-                        reply.text(),
-                        reply.provenanceReference());
+        try (CognitiveRequestScope.Scope ignored = CognitiveRequestScope.open(normalized)) {
+            if (directWorkerConversation != null) {
+                java.util.Optional<DirectWorkerConversationService.HandledReply> direct =
+                        directWorkerConversation.handle(normalized);
+                if (direct.isPresent()) {
+                    DirectWorkerConversationService.HandledReply reply = direct.get();
+                    return new MetatronInteractionOrchestrator.InteractionResponse(
+                            normalized.conversationId(),
+                            reply.text(),
+                            reply.provenanceReference());
+                }
             }
+            return orchestrator.handle(normalized);
         }
-        return orchestrator.handle(normalized);
     }
 }

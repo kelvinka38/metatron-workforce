@@ -5,7 +5,7 @@ import com.metatron.workforce.interaction.llm.LlmProvider;
 import java.util.List;
 import java.util.Objects;
 
-/** Semantic normalization of one Human utterance, produced by a frontier model or a bounded governed control fallback, optionally enriched by downstream planning. */
+/** Semantic normalization of one Human utterance, optionally carrying the primary cognition result from the same frontier call. */
 public record NormalizedRequest(
         String objective,
         String target,
@@ -28,27 +28,14 @@ public record NormalizedRequest(
         CaseContinuity caseContinuity,
         String directResponse) {
 
-    /** Backward-compatible full constructor for callers predating bounded Case continuity. */
     public NormalizedRequest(
-            String objective,
-            String target,
-            List<String> constraints,
-            IntelligenceDepth requestedDepth,
-            String requestedOutput,
-            List<String> explicitAssumptions,
-            List<String> explicitProhibitions,
-            String temporalContext,
-            String unresolvedSemanticAmbiguity,
-            IntelligenceMode mode,
-            CollaborationMode collaborationMode,
-            List<AnalyticalProtocolType> analyticalProtocols,
-            DeterministicCapability deterministicCapability,
-            List<DeterministicComputationSpec> deterministicComputations,
-            List<ExecutionWorkSpec> executionWorkPlan,
-            boolean freshExternalDataRequired,
-            LlmProvider explicitlyRequestedProvider,
-            LlmProvider semanticProvider,
-            String directResponse) {
+            String objective, String target, List<String> constraints, IntelligenceDepth requestedDepth,
+            String requestedOutput, List<String> explicitAssumptions, List<String> explicitProhibitions,
+            String temporalContext, String unresolvedSemanticAmbiguity, IntelligenceMode mode,
+            CollaborationMode collaborationMode, List<AnalyticalProtocolType> analyticalProtocols,
+            DeterministicCapability deterministicCapability, List<DeterministicComputationSpec> deterministicComputations,
+            List<ExecutionWorkSpec> executionWorkPlan, boolean freshExternalDataRequired,
+            LlmProvider explicitlyRequestedProvider, LlmProvider semanticProvider, String directResponse) {
         this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
                 explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
                 analyticalProtocols, deterministicCapability, deterministicComputations, executionWorkPlan,
@@ -57,24 +44,13 @@ public record NormalizedRequest(
     }
 
     public NormalizedRequest(
-            String objective,
-            String target,
-            List<String> constraints,
-            IntelligenceDepth requestedDepth,
-            String requestedOutput,
-            List<String> explicitAssumptions,
-            List<String> explicitProhibitions,
-            String temporalContext,
-            String unresolvedSemanticAmbiguity,
-            IntelligenceMode mode,
-            CollaborationMode collaborationMode,
-            List<AnalyticalProtocolType> analyticalProtocols,
-            DeterministicCapability deterministicCapability,
-            List<DeterministicComputationSpec> deterministicComputations,
-            boolean freshExternalDataRequired,
-            LlmProvider explicitlyRequestedProvider,
-            LlmProvider semanticProvider,
-            String directResponse) {
+            String objective, String target, List<String> constraints, IntelligenceDepth requestedDepth,
+            String requestedOutput, List<String> explicitAssumptions, List<String> explicitProhibitions,
+            String temporalContext, String unresolvedSemanticAmbiguity, IntelligenceMode mode,
+            CollaborationMode collaborationMode, List<AnalyticalProtocolType> analyticalProtocols,
+            DeterministicCapability deterministicCapability, List<DeterministicComputationSpec> deterministicComputations,
+            boolean freshExternalDataRequired, LlmProvider explicitlyRequestedProvider,
+            LlmProvider semanticProvider, String directResponse) {
         this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
                 explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
                 analyticalProtocols, deterministicCapability, deterministicComputations, List.of(),
@@ -83,23 +59,12 @@ public record NormalizedRequest(
     }
 
     public NormalizedRequest(
-            String objective,
-            String target,
-            List<String> constraints,
-            IntelligenceDepth requestedDepth,
-            String requestedOutput,
-            List<String> explicitAssumptions,
-            List<String> explicitProhibitions,
-            String temporalContext,
-            String unresolvedSemanticAmbiguity,
-            IntelligenceMode mode,
-            CollaborationMode collaborationMode,
-            List<AnalyticalProtocolType> analyticalProtocols,
-            DeterministicCapability deterministicCapability,
-            boolean freshExternalDataRequired,
-            LlmProvider explicitlyRequestedProvider,
-            LlmProvider semanticProvider,
-            String directResponse) {
+            String objective, String target, List<String> constraints, IntelligenceDepth requestedDepth,
+            String requestedOutput, List<String> explicitAssumptions, List<String> explicitProhibitions,
+            String temporalContext, String unresolvedSemanticAmbiguity, IntelligenceMode mode,
+            CollaborationMode collaborationMode, List<AnalyticalProtocolType> analyticalProtocols,
+            DeterministicCapability deterministicCapability, boolean freshExternalDataRequired,
+            LlmProvider explicitlyRequestedProvider, LlmProvider semanticProvider, String directResponse) {
         this(objective, target, constraints, requestedDepth, requestedOutput, explicitAssumptions,
                 explicitProhibitions, temporalContext, unresolvedSemanticAmbiguity, mode, collaborationMode,
                 analyticalProtocols, deterministicCapability, List.of(), List.of(), freshExternalDataRequired,
@@ -140,11 +105,20 @@ public record NormalizedRequest(
         return !unresolvedSemanticAmbiguity.isBlank();
     }
 
+    /** Backward-compatible name; now means the first frontier call already produced the terminal response. */
     public boolean canReturnFastDirectly() {
-        return requestedDepth == IntelligenceDepth.FAST
-                && (mode == IntelligenceMode.CASUAL || mode == IntelligenceMode.DISCUSSION)
+        return canReturnPrimaryDirectly();
+    }
+
+    /**
+     * One-call-default path. A clarification question is also a valid terminal response for this
+     * interaction, so material ambiguity does not by itself force another frontier call.
+     */
+    public boolean canReturnPrimaryDirectly() {
+        return (mode == IntelligenceMode.CASUAL
+                    || mode == IntelligenceMode.DISCUSSION
+                    || mode == IntelligenceMode.REASONING)
                 && collaborationMode == CollaborationMode.SINGLE
-                && analyticalProtocols.isEmpty()
                 && deterministicCapability == DeterministicCapability.NONE
                 && deterministicComputations.isEmpty()
                 && executionWorkPlan.isEmpty()

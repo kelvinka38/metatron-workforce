@@ -8,9 +8,16 @@ import org.springframework.context.annotation.Configuration;
 import java.nio.file.Path;
 import java.time.Clock;
 
-/** Production composition for shared provider-neutral Intelligence plus durable Case/depth state. */
+/** Production composition for shared provider-neutral Intelligence plus durable Case/depth/cognitive state. */
 @Configuration
 public class IntelligenceRuntimeConfiguration {
+    @Bean
+    CognitiveArtifactStore cognitiveArtifactStore(
+            ObjectMapper objectMapper,
+            @Value("${METATRON_COGNITIVE_ARTIFACT_PATH:/var/lib/metatron-workforce/cognitive-artifacts}") String configured) {
+        return new PersistentCognitiveArtifactStore(Path.of(configured), objectMapper);
+    }
+
     @Bean
     InstitutionalIntelligenceRuntime institutionalIntelligenceRuntime(
             @Value("${OPENAI_API_KEY:}") String openAiApiKey,
@@ -19,10 +26,11 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${OPENAI_MODEL:}") String openAiModel,
             @Value("${GEMINI_MODEL:}") String googleModel,
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            CognitiveArtifactStore artifactStore) {
         return new InstitutionalIntelligenceRuntime(
                 openAiApiKey, googleApiKey, anthropicApiKey,
-                openAiModel, googleModel, anthropicModel, objectMapper);
+                openAiModel, googleModel, anthropicModel, objectMapper, artifactStore);
     }
 
     @Bean
@@ -34,6 +42,16 @@ public class IntelligenceRuntimeConfiguration {
     WorkerIntelligenceService workerIntelligenceService(InstitutionalIntelligenceRuntime runtime) {
         return WorkerIntelligenceService.backedBy(
                 runtime.fabric(), runtime.configuredProviders().size());
+    }
+
+    @Bean
+    CognitionNeedGate cognitionNeedGate() {
+        return new CognitionNeedGate();
+    }
+
+    @Bean
+    InstitutionalContextResolver institutionalContextResolver() {
+        return new InstitutionalContextResolver.Default();
     }
 
     @Bean IntelligenceCaseStore intelligenceCaseStore(

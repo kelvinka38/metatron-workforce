@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Executes the post-independent phases of multi-model deliberation:
+ * Executes the post-independent phases of explicitly justified multi-model deliberation:
  * normalization -> contradiction map -> evidence acquisition when appropriate -> one targeted challenge round.
  * Initial provider responses remain independent. Consensus is never treated as correctness.
  */
@@ -34,10 +34,21 @@ public final class MultiModelDeliberationCoordinator {
     }
 
     public DeliberationOutcome deliberate(IntelligenceRequest request, List<LlmResponse> independentResponses) {
+        return deliberate(request, independentResponses,
+                IntelligenceFabric.defaultBudget(request).withExplicitMultiModelRequest(request.maxProviders()));
+    }
+
+    public DeliberationOutcome deliberate(IntelligenceRequest request,
+                                           List<LlmResponse> independentResponses,
+                                           ProviderBudget providerBudget) {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(independentResponses, "independentResponses");
+        Objects.requireNonNull(providerBudget, "providerBudget");
         if (independentResponses.size() < 2) {
             return DeliberationOutcome.noop(independentResponses);
+        }
+        if (!providerBudget.multiModelAllowed()) {
+            throw new IllegalStateException("multi_model_deliberation_requires_explicit_budget");
         }
 
         Assessment assessment;
@@ -52,7 +63,8 @@ public final class MultiModelDeliberationCoordinator {
                     request.context(),
                     request.evidenceReferences(),
                     "deliberation-normalization");
-            normalizationResponse = engine.execute(normalizer, normalizationRequest);
+            normalizationResponse = engine.execute(
+                    normalizer, normalizationRequest, EscalationReason.EXPLICIT_HUMAN_REQUEST, providerBudget);
             assessment = parseAssessment(normalizationResponse.text());
         } catch (RuntimeException failure) {
             return DeliberationOutcome.noop(independentResponses);
@@ -86,7 +98,8 @@ public final class MultiModelDeliberationCoordinator {
                         challengeContext,
                         mergeEvidence(request.evidenceReferences(), additionalEvidence),
                         "targeted-challenge");
-                LlmResponse revised = engine.execute(initial.provider(), challengeRequest);
+                LlmResponse revised = engine.execute(
+                        initial.provider(), challengeRequest, EscalationReason.MATERIAL_CONTRADICTION, providerBudget);
                 revisedByProvider.put(initial.provider(), revised);
             } catch (RuntimeException ignored) {
                 revisedByProvider.put(initial.provider(), initial);

@@ -35,6 +35,7 @@ SYSTEM_STATE_NAMES = {
     "PersistentIntelligenceDepthPreferenceStore.java",
     "PersistentConversationMemoryStore.java",
     "PersistentWorkerConversationMemoryStore.java",
+    "PersistentCognitiveArtifactStore.java",
     "FileAutonomyCoordinationStateStore.java",
     "FileAutonomySafetyStateStore.java",
     "FileAutonomySchedulingStateStore.java",

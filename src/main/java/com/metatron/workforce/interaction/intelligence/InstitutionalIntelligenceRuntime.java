@@ -21,16 +21,18 @@ import java.util.function.Function;
 /**
  * One shared institutional Intelligence runtime for every production consumer.
  *
- * Provider transports, capacity telemetry and model selection are owned here inside
- * the Intelligence domain. Human interaction, Workforce planning and Cognitive
- * Workers consume Intelligence; they do not own provider routers.
+ * Provider transports, capacity telemetry, reusable cognitive state and model selection are owned
+ * here inside the Intelligence domain. Human interaction, Workforce planning and Cognitive Workers
+ * consume Intelligence; they do not own provider routers.
  */
 public final class InstitutionalIntelligenceRuntime {
     private final List<LlmProvider> configuredProviders;
     private final FrontierSemanticInterpreter semanticInterpreter;
     private final DefaultToolFabric toolFabric;
     private final IntelligenceFabric fabric;
+    private final LlmProviderRouter router;
 
+    /** Backward-compatible composition using process-local cognitive artifacts. */
     public InstitutionalIntelligenceRuntime(
             String openAiApiKey,
             String googleApiKey,
@@ -39,7 +41,22 @@ public final class InstitutionalIntelligenceRuntime {
             String googleModel,
             String anthropicModel,
             ObjectMapper objectMapper) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey,
+                openAiModel, googleModel, anthropicModel, objectMapper,
+                new InMemoryCognitiveArtifactStore());
+    }
+
+    public InstitutionalIntelligenceRuntime(
+            String openAiApiKey,
+            String googleApiKey,
+            String anthropicApiKey,
+            String openAiModel,
+            String googleModel,
+            String anthropicModel,
+            ObjectMapper objectMapper,
+            CognitiveArtifactStore artifactStore) {
         Objects.requireNonNull(objectMapper, "objectMapper");
+        Objects.requireNonNull(artifactStore, "artifactStore");
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(2))
                 .version(HttpClient.Version.HTTP_2)
@@ -65,7 +82,7 @@ public final class InstitutionalIntelligenceRuntime {
             case GOOGLE -> model(googleModel, "gemini-3.7-flash");
             case ANTHROPIC -> model(anthropicModel, "claude-sonnet-4-20250514");
         };
-        LlmProviderRouter router = new LlmProviderRouter(clients);
+        this.router = new LlmProviderRouter(clients);
         this.semanticInterpreter = new FrontierSemanticInterpreter(
                 router, modelSelector, configuredProviders, objectMapper);
         this.toolFabric = new DefaultToolFabric(List.of(
@@ -79,13 +96,15 @@ public final class InstitutionalIntelligenceRuntime {
                 new EvidencePreservingIntelligenceSynthesizer(),
                 new EvidenceBackedGovernance(),
                 toolFabric,
-                deliberation);
+                deliberation,
+                artifactStore);
     }
 
     public List<LlmProvider> configuredProviders() { return configuredProviders; }
     public FrontierSemanticInterpreter semanticInterpreter() { return semanticInterpreter; }
     public DefaultToolFabric toolFabric() { return toolFabric; }
     public IntelligenceFabric fabric() { return fabric; }
+    public LlmProviderRouter router() { return router; }
 
     private static boolean present(String value) {
         return value != null && !value.isBlank();
