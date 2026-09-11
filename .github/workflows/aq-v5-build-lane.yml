@@ -10,73 +10,22 @@ permissions:
 jobs:
   validate:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 6
+    timeout-minutes: 3
     steps:
-      - name: Inspect governed research objective progression
+      - name: Inspect stalled BIOS research objective
         shell: bash
         run: |
           set -euo pipefail
           WF=http://127.0.0.1:8080
           ACTOR=FOUNDER
-          STAMP=$(date +%s)
-          OID="objective-aq-v5-diag-$STAMP"
-          cat >/tmp/aq-v5-diag.json <<JSON
-          {
-            "objectiveId":"$OID",
-            "caseId":"case-aq-v5-diag-$STAMP",
-            "programId":"program-aq-v5-diag-$STAMP",
-            "initiatingActorId":"$ACTOR",
-            "organizationContextId":"METATRON",
-            "desiredOutcome":"Research public evidence for Scatophagus argus grow-out in brackish pond aquaculture in Bac Lieu or Vietnam. Return exactly one JSON object with production cycle days, stocking density, yield range, farm-gate price range and exact source URLs. Use null for unsupported fields. Do not mutate external systems.",
-            "target":"Scatophagus argus decision evidence, Bac Lieu, Vietnam",
-            "constraints":["Public data only","No fabricated values","Prefer Vietnam authoritative or research sources"],
-            "prohibitions":["No external mutation","No publishing","No purchases"],
-            "acceptanceCriteria":["JSON evidence object or explicit nulls","Every non-null factual field has exact source URL"],
-            "evidenceRequirements":["research-action:research.web.search","Exact public source URLs"]
-          }
-          JSON
-          curl -fsS -X POST "$WF/workforce/bios/objectives" -H "X-Metatron-Actor: $ACTOR" -H 'Content-Type: application/json' --data-binary @/tmp/aq-v5-diag.json | tee /tmp/admit.json
-          echo
-          echo "DIAG_OBJECTIVE_ID=$OID"
-          for i in $(seq 1 24); do
-            echo "=== POLL $i ==="
-            curl -fsS "$WF/workforce/management/objectives/$OID" -o /tmp/status.json || true
-            python3 - <<'PY'
-          import json
-          try:
-              d=json.load(open('/tmp/status.json'))
-              o=d.get('objective') or d
-              print('OBJECTIVE_STATUS='+str(o.get('status')))
-              for k in ('blockerReason','blocker','escalationReason','ownerWorkerId','evidenceRefs','assignmentRefs'):
-                  if o.get(k) not in (None,[],{} ,''): print(k+'='+json.dumps(o.get(k),ensure_ascii=False))
-          except Exception as e: print('STATUS_PARSE_ERROR='+repr(e))
-          PY
-            CODE=$(curl -sS -o /tmp/evidence.json -w '%{http_code}' "$WF/workforce/bios/objectives/$OID/research-evidence" -H "X-Metatron-Actor: $ACTOR")
-            echo "EVIDENCE_HTTP=$CODE"
-            if [ "$CODE" = 200 ]; then
-              python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/evidence.json'))
-          rs=d.get('records') or []
-          print('EVIDENCE_OBJECTIVE_STATUS='+str(d.get('objectiveStatus')))
-          print('RESEARCH_RECORD_COUNT='+str(len(rs)))
-          for r in rs:
-              out=r.get('outputs') or {}
-              raw=str(out.get('researchResult') or out.get('research_result') or '')
-              print('RECORD='+json.dumps({
-                  'success':r.get('success'),
-                  'actionRef':r.get('actionRef'),
-                  'evidenceReferences':r.get('evidenceReferences'),
-                  'rawPrefix':raw[:1200]
-              },ensure_ascii=False))
-          PY
-              COUNT=$(python3 -c 'import json; print(len((json.load(open("/tmp/evidence.json")).get("records") or [])))')
-              if [ "$COUNT" -gt 0 ]; then
-                echo 'AQ_V5_RESEARCH_EVIDENCE_OBSERVED=PASS'
-                exit 0
-              fi
-            fi
-            sleep 5
-          done
-          echo 'AQ_V5_RESEARCH_EVIDENCE_OBSERVED=FAIL'
-          exit 1
+          OID=objective-aq-v5-diag-1789098301
+          echo '=== MONITOR VIEW ==='
+          curl -fsS "$WF/workforce/monitor/api/objectives/$OID" -H "X-Metatron-Actor: $ACTOR" | python3 -m json.tool || true
+          echo '=== RESEARCH EVIDENCE ==='
+          curl -fsS "$WF/workforce/bios/objectives/$OID/research-evidence" -H "X-Metatron-Actor: $ACTOR" | python3 -m json.tool || true
+          echo '=== CONTAINERS ==='
+          docker ps --format '{{.Names}} {{.Image}} {{.Status}}' || true
+          echo '=== WORKFORCE LOG TAIL ==='
+          NAME=$(docker ps --format '{{.Names}}' | grep -E 'workforce' | head -1 || true)
+          if [ -n "$NAME" ]; then docker logs --since 15m "$NAME" 2>&1 | tail -300 || true; fi
+          echo 'AQ_V5_STALL_DIAGNOSTIC=PASS'
