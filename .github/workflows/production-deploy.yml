@@ -31,7 +31,7 @@ concurrency:
 jobs:
   enqueue-release:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 3
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -44,7 +44,7 @@ jobs:
           grep -q '"runtime-closure"' "$HOME/.metatron/highway/current/task-registry.json"
           echo 'HIGHWAY_EXACT_CONTROL_PLANE_ACTIVE=PASS'
 
-      - name: Submit build and deploy DAG to persistent Highway
+      - name: Submit build, deploy, and one-shot governed research closure DAG to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
@@ -58,13 +58,41 @@ jobs:
           bash "$HOME/.metatron/highway/current/ensure-running.sh"
           CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
 
-          BUILD=$($CTL submit             --kind workforce-build             --source-sha "$GITHUB_SHA"             --dedupe-key "workforce-build:$GITHUB_SHA"             --priority 90             --env "TARGET_SHA=$GITHUB_SHA"             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          BUILD=$($CTL submit \
+            --kind workforce-build \
+            --source-sha "$GITHUB_SHA" \
+            --dedupe-key "workforce-build:$GITHUB_SHA" \
+            --priority 90 \
+            --env "TARGET_SHA=$GITHUB_SHA" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 
-          DEPLOY=$($CTL submit             --kind workforce-deploy             --source-sha "$GITHUB_SHA"             --dependency "$BUILD"             --dedupe-key "workforce-deploy:$GITHUB_SHA"             --priority 100             --env "TARGET_SHA=$GITHUB_SHA"             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          DEPLOY=$($CTL submit \
+            --kind workforce-deploy \
+            --source-sha "$GITHUB_SHA" \
+            --dependency "$BUILD" \
+            --dedupe-key "workforce-deploy:$GITHUB_SHA" \
+            --priority 100 \
+            --env "TARGET_SHA=$GITHUB_SHA" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+
+          RESEARCH=$($CTL submit \
+            --kind mother-baby-bios-live-objective \
+            --source-sha "$GITHUB_SHA" \
+            --dependency "$DEPLOY" \
+            --dedupe-key "aq-v5-governed-research-proof:$GITHUB_SHA" \
+            --priority 110 \
+            --env "EXPECTED_WORKFORCE_SHA=$GITHUB_SHA" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 
           echo "HIGHWAY_BUILD_TASK=$BUILD"
           echo "HIGHWAY_DEPLOY_TASK=$DEPLOY"
+          echo "HIGHWAY_AQ_V5_RESEARCH_PROOF_TASK=$RESEARCH"
           $CTL get "$BUILD"
           $CTL get "$DEPLOY"
+          $CTL get "$RESEARCH"
           echo 'HIGHWAY_GITHUB_EXECUTION_PLANE=BYPASSED'
           echo 'HIGHWAY_RELEASE_INGRESS=PASS'
+
+          # GitHub remains ingress/observer only. All work above executes in the persistent Highway.
+          $CTL wait "$RESEARCH" --timeout 1200 --poll 2
+          echo 'AQ_V5_GOVERNED_RESEARCH_RUNTIME=PASS'
