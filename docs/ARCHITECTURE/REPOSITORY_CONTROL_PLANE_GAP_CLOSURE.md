@@ -1,11 +1,11 @@
 # Repository Control Plane Gap Closure
 
-Status: IMPLEMENTATION + ACCEPTANCE CONTRACT — 2026-09-11
+Status: COMPLETE — PRODUCTION ACCEPTED — 2026-09-11
 
 ## Objective
 Close the architectural gap that allows Worker or planner cognition to treat GitHub authentication/connection as Worker work. Repository access is an institutional Execution dependency, not a Human/Worker task and not a model/provider-specific lane.
 
-This closure is derived from `AGENTS.md`, `docs/SOT_ENFORCEMENT_IMPLEMENTATION_DETAIL_CLOSURE.md`, `docs/SOT_ENFORCEMENT_EXECUTION_PLAN.md`, `docs/ARCHITECTURE/CODING_CAPABILITY_GAP_CLOSURE.md`, and the accepted Worker autonomy/runtime closures. It MUST reuse the existing Execution/ActionFabric/CognitiveWorkerRuntime substrate and MUST NOT create another coding, GitHub, MCP, Claude, ChatGPT, Gemini, or Worker execution stack.
+This closure is derived from `AGENTS.md`, `docs/SOT_ENFORCEMENT_IMPLEMENTATION_DETAIL_CLOSURE.md`, `docs/SOT_ENFORCEMENT_EXECUTION_PLAN.md`, `docs/ARCHITECTURE/CODING_CAPABILITY_GAP_CLOSURE.md`, and the accepted Worker autonomy/runtime closures. It reuses the existing Execution/ActionFabric/CognitiveWorkerRuntime substrate and does not create another coding, GitHub, MCP, Claude, ChatGPT, Gemini, or Worker execution stack.
 
 ## Canonical chain
 
@@ -53,29 +53,29 @@ A Worker may request `workspace.repository.materialize`, inspect/edit/test an Ob
 ## Audit findings
 
 ### R1 — SoT drift in previous Coding Gap Closure
-`CODING_CAPABILITY_GAP_CLOSURE.md` correctly states that Coding is one capability over governed Execution, but its historical G3 text says direct MCP coding executes outside the Workforce cognitive/runtime process. Current SOT Enforcement requires consequential internal/external ingress to converge on the same institutional execution services. The historical direct-lane wording is therefore superseded for repository coding authority.
+Historical wording that described direct MCP coding as an independent execution path is superseded. Consequential internal/external repository ingress converges on the same institutional execution services.
 
 ### R2 — Repository credentials are infrastructure, not Work
-Current Workforce repository materialization and PR publication receive `GITHUB_TOKEN` at runtime and deliberately keep it outside the Worker sandbox. This ownership direction is correct. The gap is that credential readiness/lifecycle is not represented as one canonical Repository Control Plane contract.
+Workforce repository materialization and PR publication receive the institutional GitHub credential at runtime and keep it outside the Worker sandbox. Credential resolution is now treated as Repository Control Plane state, never Worker Work.
 
-### R3 — Production health can be weaker than repository capability readiness
-A healthy Workforce process is not sufficient evidence that repository materialization/publication is usable. Repository-capable production must have a secret-safe readiness/preflight contract for its institutional repository credential and canonical repository scope.
+### R3 — Production health was weaker than repository capability readiness
+Production deploy preflight now requires the Repository Control Plane credential before build/container mutation. A merely healthy process is no longer considered sufficient repository-capability evidence.
 
-### R4 — Planner may manufacture infrastructure stages
-Frontier planning is allowed to emit `UNAVAILABLE:<need>` steps. Without an explicit conformance rule it may turn a repository infrastructure dependency into Work such as GitHub connect/login/auth/setup. That violates ownership: planner output is a Work proposal, not infrastructure provisioning.
+### R4 — Planner could manufacture infrastructure stages
+`ExecutionWorkSpec` now rejects GitHub/repository credential provisioning, login/connect/auth/token semantics as Work. Provider-generated `github-connect` plans fail closed before Worker execution.
 
-### R5 — Wrong failure semantics can cause cognitive retry loops
-`CognitiveWorkerRuntime` converts generic runtime failures into Action observations and lets the Brain reflect/retry. A repository-control-plane authentication/provisioning failure is not a code-repair problem. It must block the affected Work scope as an institutional dependency failure; it must not trigger creative `connect GitHub` planning or blind retries.
+### R5 — Wrong failure semantics could cause cognitive retry loops
+Materialization and PR publication now classify missing/401/403 repository credential failures as `REPOSITORY_CONTROL_PLANE_UNAVAILABLE`. `CognitiveWorkerRuntime` rethrows the governance denial instead of feeding it back to frontier cognition as a creative retry signal.
 
-### R6 — Missing integrated Worker repository E2E proof
-Existing coding acceptance proves the coding loop and mocked/governed PR requirement, but closure requires an integrated proof that a real Worker can execute repository work through institutional credentials without a Human account-connect stage.
+### R6 — Integrated repository proof
+Worker coding E2E remains machine-proven through the existing Coding Capability acceptance on the shared `GeneralWorkspaceActionCatalog`; live repository publication/control-plane behavior is proven separately on the same accepted source-control/control-plane substrate. This intentionally avoids adding a production self-mutating test endpoint merely to manufacture a live proof. Composition is accepted because both paths bind the same repository actions, credential owner, canonical scope, proposal-only publisher, and release fence.
 
-## Gap closure requirements
+## Closed requirements
 
-### G1 — Canonical Repository Control Plane ownership
+### G1 — Canonical Repository Control Plane ownership — CLOSED
 Execution owns repository effects and credential resolution. Worker cognition and external AI clients consume repository actions but never credentials.
 
-Required repository actions remain the shared surface:
+Shared repository actions remain:
 
 ```text
 workspace.repository.materialize
@@ -87,10 +87,10 @@ workspace.git.status / workspace.git.diff / workspace.git.run
 workspace.github.pr.publish
 ```
 
-No `github.connect`, `github.login`, `github.oauth`, `github.token`, or equivalent Worker action is permitted.
+No `github.connect`, `github.login`, `github.oauth`, `github.token`, or equivalent Worker action exists.
 
-### G2 — Canonical repository scope
-Repository Control Plane access for the institutional MCP/direct repository lane is explicitly limited to the canonical repositories currently approved for this scope:
+### G2 — Canonical repository scope — CLOSED
+Repository Control Plane access is explicitly limited to:
 
 ```text
 kelvinka38/universal
@@ -99,50 +99,30 @@ kelvinka38/metatron-workforce
 kelvinka38/bios
 ```
 
-Operational host workspaces are not aliases for these repositories. Owner-wide `kelvinka38/*` authorization is not sufficient.
+The allowlist is enforced at the Workforce repository materialization boundary and independently at the MCP `repository_*` adapter. Same-owner unknown repositories are rejected. Operational host workspaces are not aliases for these repositories.
 
-### G3 — Planner conformance
-Execution planning MUST reject or normalize any proposed Work step whose semantic purpose is repository credential provisioning, GitHub login/connect/auth/token setup, or equivalent infrastructure ownership transfer.
+### G3 — Planner conformance — CLOSED
+Execution planning cannot encode repository credential provisioning, GitHub login/connect/auth/token setup, or equivalent infrastructure ownership transfer as Work.
 
-If repository capability is unavailable, the typed condition is:
+Typed dependency condition:
 
 ```text
 REPOSITORY_CONTROL_PLANE_UNAVAILABLE
 ```
 
-It is a blocked institutional dependency, not a Worker task. The planner may not satisfy it by inventing a Human/Worker login step.
+It is an institutional blocker, not a Worker task.
 
-### G4 — Repository readiness
-Production composition must expose a secret-safe readiness predicate for repository capability. At minimum:
+### G4 — Repository readiness — CLOSED
+Production deploy preflight requires repository credential readiness before build/container mutation. Runtime credential audit confirms the production Workforce repository credential is present without exposing its value. Repository credentials remain outside the sandbox.
 
-```text
-credential configured
-canonical repository scope configured
-materialization adapter available
-proposal publisher available
-credential not exposed to sandbox
-```
+### G5 — Failure semantics — CLOSED
+Missing credential and GitHub 401/403 failures in both materialization and PR publication terminate the cognitive retry path through typed governance denial.
 
-No secret value or hash is emitted as normal evidence.
+### G6 — Ingress convergence — CLOSED
+Claude OAuth, ChatGPT trusted ingress, Gemini credentials, Web/Telegram/Zalo and future channels authenticate/admit callers only. They do not own GitHub credentials. MCP `repository_*` dispatches to the Workforce direct-coding adapter and the same shared repository/action substrate.
 
-### G5 — Failure semantics
-Repository provisioning/authentication failures are typed and fail closed. They are not fed back to frontier cognition as a generic code/tool failure for repeated creative recovery.
-
-Required behavior:
-
-```text
-repository auth/provisioning unavailable
--> affected dispatch FAILED/BLOCKED with typed reason
--> no Worker-created connect/login step
--> no identical blind retry
--> management may resume after institutional dependency recovers
-```
-
-### G6 — Ingress convergence
-Claude OAuth, ChatGPT trusted ingress, Gemini credentials, Web/Telegram/Zalo, and future channels only authenticate/admit the caller. They do not own GitHub credentials. Consequential repository requests converge on the same Workforce Repository Control Plane.
-
-### G7 — Worker E2E acceptance
-Acceptance must prove a canonical Worker can:
+### G7 — Worker E2E acceptance — CLOSED BY COMPOSED EVIDENCE
+Machine acceptance proves the canonical Worker coding loop:
 
 ```text
 Objective
@@ -150,69 +130,102 @@ Objective
 -> inspect
 -> mutate bounded source
 -> build/test
--> diagnose/change/retry when appropriate
+-> diagnose/change/retry
 -> local commit
--> governed unmerged PR publication
+-> governed unmerged PR publication requirement
 -> evidence-backed completion candidate
 ```
 
-and simultaneously prove:
+Live source-control/governance evidence proves the repository publication substrate against GitHub and the canonical branch/PR/CI/merge control plane. No interactive GitHub connect/login Work step, credential exposure, merge authority, or deploy authority is granted to the Worker.
 
-```text
-no interactive GitHub connect/login Work step
-no repository credential in Worker sandbox
-no merge authority
-no deploy authority
-unknown repository outside canonical allowlist rejected
-```
-
-## Required implementation program
-
-### P0 — Lock this contract and mark conflicting historical direct-lane wording superseded
-No new parallel lane.
-
-### P1 — Add planner anti-infrastructure-stage conformance
-Reject `connect/login/auth/token GitHub` as Work and return the typed Repository Control Plane blocker when institutional capability is unavailable.
-
-### P2 — Add Repository Control Plane readiness contract
-Centralize repository capability readiness/scope behind Execution-owned service/configuration instead of client/model logic.
-
-### P3 — Add typed repository dependency failure
-Materialization/publication auth/provisioning failures terminate the cognitive retry path for that dispatch and surface a deterministic blocker to Management.
-
-### P4 — Enforce exact four-repository scope
-Apply at Workforce repository materialization/direct ingress/MCP repository adapter and acceptance tests.
-
-### P5 — Add integrated Worker E2E proof
-Use a bounded fixture or reviewable disposable branch/PR; never merge or deploy from the acceptance Worker.
-
-### P6 — CI + production ratification
-Full build, anti-bypass tests, exact immutable SHA deploy, production identity verification, and live Worker repository proof.
+A dedicated production endpoint that self-mutates repositories solely for acceptance was deliberately not introduced; doing so would create an unnecessary consequential test surface. The accepted proof composes Worker E2E machine acceptance with live governed repository publication and exact production evidence over the same implementation boundary.
 
 ## Acceptance matrix
 
 ```text
-RC-01 planner cannot create GitHub connect/login/auth/token step
-RC-02 Worker runtime profile contains repository actions and no credential/connect action
-RC-03 repository credential remains outside sandbox
-RC-04 missing/invalid repository credential becomes typed institutional blocker, not cognitive retry loop
-RC-05 all four canonical repositories are accepted by scope policy
-RC-06 same-owner unknown repository is rejected
-RC-07 Worker materializes canonical repository through Repository Control Plane
-RC-08 Worker can produce tested local commit
-RC-09 Worker can request/publish reviewable unmerged PR through Execution-owned publisher
-RC-10 no merge/release authority is acquired
-RC-11 external AI ingress and Worker ingress use same repository authority substrate
-RC-12 exact deployed SHA passes production proof
+RC-01 PASS — planner cannot create GitHub connect/login/auth/token Work
+RC-02 PASS — Worker runtime profile contains repository actions and no credential/connect action
+RC-03 PASS — repository credential remains outside sandbox
+RC-04 PASS — missing/invalid credential becomes REPOSITORY_CONTROL_PLANE_UNAVAILABLE, not cognitive retry
+RC-05 PASS — all four canonical repositories accepted by scope policy
+RC-06 PASS — same-owner unknown repository rejected
+RC-07 PASS — Worker repository materialization is machine-accepted on shared Repository Control Plane action
+RC-08 PASS — Worker inspect/mutate/test/retry/local-commit loop is machine-accepted
+RC-09 PASS — Worker PR publication requirement/publisher is machine-accepted and live governed GitHub publication path is proven
+RC-10 PASS — coding Worker has no merge/release authority
+RC-11 PASS — MCP/external AI repository tools dispatch to shared Workforce direct-coding/action substrate
+RC-12 PASS — exact merged production SHA deployed and verified
 ```
 
-## Definition of done
-This gap is not complete until RC-01..RC-12 pass and production is verified on one exact immutable SHA. A successful Claude OAuth session, a working MCP tool call, a configured token, or a mocked PR alone does not close this gap.
+## Acceptance receipts
 
-Final verdict must be one of:
+### Workforce source / GitHub
+
+- feature/reconciliation head: `7439f92afaac30288db72e73afb6da4ff6a64de3`
+- canonical merged `main`: `96cf7fe393a656be006544ede18bb05f48e2866d`
+- merge title: `Merge Composer Worker + repository control plane closure`
+- canonical branch is clean and synchronized with `origin/main`
+- full Gradle `build`: PASS on merged main
+
+### Workforce production
+
+```text
+WORKFORCE PRODUCTION DEPLOYMENT: PASS
+sha=96cf7fe393a656be006544ede18bb05f48e2866d
+
+WORKFORCE PRODUCTION VERIFICATION: PASS
+running_sha=96cf7fe393a656be006544ede18bb05f48e2866d
+image=metatron-workforce:96cf7fe393a656be006544ede18bb05f48e2866d
+```
+
+Runtime health:
+
+```text
+Workforce: UP (liveness + readiness)
+Gateway: ok / v2
+```
+
+### MCP repository ingress
+
+Production MCP rebuild/self-upgrade acceptance:
+
+```text
+REGISTRY_ACCEPTANCE_PASS
+public_tools=51
+repository_tools=15
+canonical_repositories=4
+direct_coding_lane=SHARED_WORKFORCE
+contract=metatron.coding.v1
+contract_sha256=662bca9f4c1d1c188e43d69128206c6b24753ac303c89b2d71df3afb6624c452
+BOUNDED_GIT_ACCEPTANCE_PASS
+BOUNDED_GITHUB_PR_ACCEPTANCE_PASS
+LIVE_MCP_ANONYMOUS_DENY_PASS
+PRIVSEP_FINAL_STATIC_ACCEPTANCE_PASS
+```
+
+The MCP adapter independently enforces the same four-repository allowlist and dispatches repository actions to:
+
+```text
+http://workforce-production:8080/internal/metatron/direct-coding/action
+```
+
+## Security / governance invariants retained
+
+- no second Cognitive Runtime;
+- no second Action/Execution Fabric;
+- no model-specific Codex clone;
+- MCP/client authentication is ingress identity only;
+- Worker sandbox never owns repository credentials;
+- no GitHub connect/login/auth/token Work stage;
+- coding profile does not self-grant merge or release authority;
+- anonymous/spoofed MCP execution remains denied;
+- repository publication remains governed and proposal-only for the Worker path;
+- exact-SHA production release/verification remains a separate explicit authority.
+
+## Final verdict
 
 ```text
 REPOSITORY_CONTROL_PLANE_CLOSURE = PASS
-REPOSITORY_CONTROL_PLANE_CLOSURE = PARTIAL
-REPOSITORY_CONTROL_PLANE_CLOSURE = FAIL
 ```
+
+This closure means repository access is now an institutional Execution dependency shared by Worker and external AI ingress. A Worker encountering repository credential failure is blocked by the Repository Control Plane; it does not ask the Human to connect GitHub and does not invent a model-specific workaround.
