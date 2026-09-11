@@ -1,12 +1,12 @@
 {
   "manifests": [
     {
-      "manifestId": "metatron-workforce-canonical",
+      "manifestId": "metatron-founder-repository-coding",
       "targetPatterns": [
-        "kelvinka38/metatron-workforce",
-        "https://github.com/kelvinka38/metatron-workforce*"
+        "kelvinka38/*",
+        "https://github.com/kelvinka38/*"
       ],
-      "targetScope": "repository:kelvinka38/metatron-workforce",
+      "targetScope": "repository:kelvinka38/*",
       "sources": [
         {
           "authorityLevel": "L0",

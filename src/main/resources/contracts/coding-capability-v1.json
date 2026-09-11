@@ -18,13 +18,12 @@
         "workspace.git.diff"
       ],
       "directTools": [
-        "workspace_list",
-        "workspace_search",
-        "workspace_read_file",
-        "workspace_git_diff",
-        "workspace_git_fetch",
-        "workspace_git_compare",
-        "workspace_git_show"
+        "repository_open",
+        "repository_list",
+        "repository_search",
+        "repository_read",
+        "repository_git_status",
+        "repository_git_diff"
       ]
     },
     {
@@ -36,7 +35,10 @@
         "workspace.shell.run"
       ],
       "directTools": [
-        "workspace_write_file"
+        "repository_patch",
+        "repository_write",
+        "repository_process",
+        "repository_shell"
       ]
     },
     {
@@ -47,7 +49,9 @@
         "workspace.test.run"
       ],
       "directTools": [
-        "workforce_gradle"
+        "repository_dependencies_install",
+        "repository_build",
+        "repository_test"
       ]
     },
     {
@@ -57,8 +61,8 @@
         "workspace.github.pr.publish"
       ],
       "directTools": [
-        "workspace_git_branch",
-        "workspace_git_commit_local"
+        "repository_git_run",
+        "repository_pr_publish"
       ]
     },
     {
@@ -73,8 +77,11 @@
   ],
   "invariants": {
     "workerReleaseSelfGrant": false,
-    "directRequiresWorkforceProcess": false,
+    "directRequiresWorkforceProcess": true,
     "rawRootShellCanonical": false,
-    "sourcePublicationGoverned": true
+    "sourcePublicationGoverned": true,
+    "repositoryCodingUsesObjectiveWorkspace": true,
+    "hostWorkspaceToolsAreOperationalCompatibilityOnly": true,
+    "repositoryCredentialsRemainInWorkforce": true
   }
 }
