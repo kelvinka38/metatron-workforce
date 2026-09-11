@@ -1,0 +1,62 @@
+name: Ops Real Coding Worker Pilot
+
+on:
+  push:
+    branches:
+      - ops/real-coding-worker-pilot-20260911
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  pilot:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Submit real coding objective through persistent Highway
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_SHA=d635e857831c189df1011c45c0b3a48a8af5deea
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          test "$($CTL health | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = UP
+
+          TASK=$($CTL submit \
+            --kind general-engineering-go1 \
+            --source-sha "$TARGET_SHA" \
+            --dedupe-key "real-coding-worker-pilot:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            --priority 95 \
+            --env "TARGET_SHA=$TARGET_SHA" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+
+          echo "REAL_CODING_PILOT_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 1350 --poll 2 > /tmp/real-coding-pilot-task.json
+          python3 - /tmp/real-coding-pilot-task.json <<'PY'
+          import json,sys
+          t=json.load(open(sys.argv[1]))
+          assert t['state']=='SUCCEEDED', t
+          print('REAL_CODING_PILOT_STATE=SUCCEEDED')
+          print('REAL_CODING_PILOT_SOURCE_SHA='+t['source_sha'])
+          print('REAL_CODING_PILOT_LOG='+t['log_path'])
+          print(t['log_path'])
+          PY
+          LOG=$(python3 -c 'import json; print(json.load(open("/tmp/real-coding-pilot-task.json"))["log_path"])')
+          test -r "$LOG"
+          grep -E '^(GO1_OBJECTIVE_ID|GO1_PR_URL|GO1_[A-Z0-9_]+=PASS|GENERAL_ENGINEERING_GO1=PASS|HIGHWAY_GENERAL_ENGINEERING_GO1_TASK=PASS)' "$LOG"
+          grep -q '^GENERAL_ENGINEERING_GO1=PASS$' "$LOG"
+          grep -q '^GO1_REAL_CODE_MUTATION=PASS$' "$LOG"
+          grep -q '^GO1_REAL_TEST_EXECUTION=PASS$' "$LOG"
+          grep -q '^GO1_REAL_GITHUB_PR=PASS$' "$LOG"
+          grep -q '^GO1_INDEPENDENT_OBSERVATION=PASS$' "$LOG"
+          echo 'REAL_CODING_WORKER_PILOT=PASS'
