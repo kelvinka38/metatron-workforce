@@ -15,7 +15,7 @@ jobs:
       - name: Fetch exact BIOS v5 candidate and run full suite
         shell: bash
         env:
-          BIOS_SHA: b1cb17290256e3a712c73dcd32bf42927e676fd4
+          BIOS_SHA: 0e4dae8c4cf2f50ab0ddf1e28d4fd845f01612c1
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
