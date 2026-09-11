@@ -60,6 +60,55 @@ Do not create a parallel execution/governance stack. The current implementation 
 
 No model/provider/channel/Worker receives authority merely from confidence, capability, technical credentials, repository write access, or role identity.
 
+## FOUNDER-APPROVED ELASTIC EXECUTION WORKSPACE & RESOURCE ISOLATION PROGRAM
+
+Founder approved the Final Proposal and six architecture amendments on 2026-09-12. This program closes the concurrency gap proven when concurrent agents interfered through the same mutable checkout/build/branch/deployment source. It does not reopen Worker identity or Repository Control Plane closures and MUST NOT create duplicate institutional authorities.
+
+Before changing execution concurrency, mutable repository workspaces, build isolation, resource scheduling/leases/fencing, integration/merge queues, operator mutation paths, or deployment materialization, read in this order:
+
+1. `docs/ARCHITECTURE/ELASTIC_EXECUTION_WORKSPACE_RESOURCE_ISOLATION_GAP_CLOSURE.md`;
+2. `docs/ARCHITECTURE/ELASTIC_EXECUTION_WORKSPACE_RESOURCE_ISOLATION_DETAILED_SPEC.md`;
+3. `docs/ARCHITECTURE/ELASTIC_EXECUTION_WORKSPACE_RESOURCE_ISOLATION_EXECUTION_PLAN.md`.
+
+Required ownership chain:
+
+```text
+Objective / Work Graph
+        ↓
+AutonomySchedulingService          # WHAT is eligible / worker allocation
+        ↓
+ExecutionAttempt                   # canonical attempt lifecycle + attempt fencing
+        ↓
+ExecutionResourceScheduler         # WHEN / WHERE infra capacity is granted
+        ↓
+ExecutionResourceManager           # shared-resource ownership + resource fencing
+        ↓
+ExecutionWorkspaceManager          # per-attempt mutable workspace
+        ↓
+Governed Capability / ActionFabric
+        ↓
+RepositoryIntegrationController
+        ↓
+Highway / Release Controller       # release authority remains Highway
+```
+
+Non-negotiable anti-duplication rules:
+
+```text
+DO NOT create a second ExecutionAttempt lifecycle.
+DO NOT create a scheduler parallel to AutonomySchedulingService for Work eligibility.
+DO NOT collapse ExecutionAttempt fencing and ResourceLease fencing into one token.
+DO NOT create a second mutable workspace authority beside ExecutionWorkspaceManager; ObjectiveWorkspaceService migrates to a facade.
+DO NOT create a second Repository Control Plane or ActionFabric.
+DO NOT create a second release/production lock universe beside Highway; Highway resource claims must converge through the canonical Resource Manager.
+DO NOT require mutable isolated workspaces for safe read-only canonical-mirror inspection.
+DO require an ExecutionAttempt + isolated workspace for normal repository mutation by Human, Worker, ChatGPT, Claude, Gemini or other operator AI.
+```
+
+The primary acceptance regression remains: two simultaneous same-repository clean/build executions must use distinct mutable workspace/branch/build state and produce zero cross-agent interference.
+
+Founder approval authorizes implementation of this contract; it is not itself production acceptance. The program is complete only after its EE acceptance matrix, CI and exact production evidence pass.
+
 ## Status
 
 **MANDATORY REPOSITORY ENTRY POINT**

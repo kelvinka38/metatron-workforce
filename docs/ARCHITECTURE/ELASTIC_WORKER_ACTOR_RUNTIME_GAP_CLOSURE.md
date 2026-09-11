@@ -2,6 +2,13 @@
 
 Status: IMPLEMENTATION + ACCEPTANCE CONTRACT — 2026-09-11
 
+> **Downstream concurrency program — Founder approved 2026-09-12:** Worker actor elasticity does not by itself prove safe concurrent execution. Any work involving execution concurrency, repository mutation, mutable workspaces, build isolation, resource capacity/leases, integration/merge, or deployment isolation MUST also read and follow:
+> - `docs/ARCHITECTURE/ELASTIC_EXECUTION_WORKSPACE_RESOURCE_ISOLATION_GAP_CLOSURE.md`
+> - `docs/ARCHITECTURE/ELASTIC_EXECUTION_WORKSPACE_RESOURCE_ISOLATION_DETAILED_SPEC.md`
+> - `docs/ARCHITECTURE/ELASTIC_EXECUTION_WORKSPACE_RESOURCE_ISOLATION_EXECUTION_PLAN.md`
+>
+> The downstream program extends the existing `ExecutionAttempt` / `AutonomySchedulingService` / ActionFabric / Highway authorities; it does not replace them.
+
 ## Problem
 Metatron already has durable Worker identity, participation, constitution, capability, memory, Assignment, ExecutionAttempt and logical RuntimeInstance state. However, Worker cognition is multiplexed through one shared IntelligenceFabric and autonomous execution is coordinated by one central management loop. A large Worker registry therefore does not yet prove that each Worker is an independently operating institutional actor.
 
