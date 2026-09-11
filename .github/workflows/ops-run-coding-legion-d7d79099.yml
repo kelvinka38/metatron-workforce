@@ -1,0 +1,72 @@
+name: Ops Run Coding Legion d7d79099
+on:
+  push:
+    branches: [ops/run-coding-legion-d7d79099]
+jobs:
+  legion:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: d7d790999aae5b5c650421323a0814044327bb8f
+          fetch-depth: 1
+      - name: Assert canonical source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d7d790999aae5b5c650421323a0814044327bb8f"
+      - name: Prove SoT safety contracts
+        run: |
+          set -euo pipefail
+          ./gradlew test --no-daemon --max-workers=1 \
+            --tests com.metatron.workforce.execution.governance.SotEnforcementRuntimeTest \
+            --tests com.metatron.workforce.management.LiveManagementConfigurationGovernanceWiringTest
+          echo 'LEGION_SOT_SAFETY_CONTRACTS=PASS'
+      - name: Wait exact healthy production
+        run: |
+          set -euo pipefail
+          TARGET=d7d790999aae5b5c650421323a0814044327bb8f
+          for _ in $(seq 1 600); do
+            CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+            if [ -n "$CID" ]; then
+              LIVE=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+              HEALTH=$(docker inspect "$CID" --format '{{.State.Health.Status}}' 2>/dev/null || true)
+              if [ "$LIVE" = "$TARGET" ] && [ "$HEALTH" = healthy ]; then
+                echo "LEGION_PRODUCTION_SHA=$LIVE"
+                echo 'LEGION_PRODUCTION_HEALTH=PASS'
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Attack production with orthogonal pilot legion
+        run: |
+          set -euo pipefail
+          TARGET=d7d790999aae5b5c650421323a0814044327bb8f
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          run_pilot() {
+            KIND="$1"; PRIORITY="$2"; LABEL="$3"
+            TASK=$($CTL submit --kind "$KIND" --source-sha "$TARGET" --priority "$PRIORITY" \
+              --dedupe-key "coding-legion:$KIND:$TARGET:$GITHUB_RUN_ID" --env "TARGET_SHA=$TARGET" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+            echo "LEGION_${LABEL}_TASK=$TASK"
+            $CTL get "$TASK"
+            $CTL wait "$TASK" --timeout 1800 --poll 2
+            $CTL get "$TASK"
+            echo "LEGION_${LABEL}=PASS"
+          }
+          run_pilot production-highway-fast 80 PREFLIGHT
+          run_pilot runtime-point4-read 65 COGNITION_READ
+          run_pilot repository-audit-live-acceptance 60 REPOSITORY_AUDIT
+          run_pilot general-engineering-go1 55 REAL_CODING
+          run_pilot runtime-point4-mutation 50 SECOND_MUTATION_PATH
+          run_pilot runtime-closure 70 RUNTIME_CLOSURE
+          run_pilot production-highway-fast 80 POSTFLIGHT
+          echo 'CODING_PILOT_LEGION=PASS'
