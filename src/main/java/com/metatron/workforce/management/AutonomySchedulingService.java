@@ -110,7 +110,7 @@ public final class AutonomySchedulingService {
 
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
                             capability.capabilityRef(), capability.minimumCapabilityLevel(), requiredCapacity, at)
-                    .stream().filter(worker -> capability.supportsWorker(worker.workerId())).toList();
+                    .stream().filter(worker -> capability.supportsWorker(worker.workerId(), node.spec())).toList();
             WorkforceCoreService.Worker projectedWorker = null;
             for (WorkforceCoreService.Worker candidate : eligible) {
                 double projectedRemaining = projectedRemainingCapacity.computeIfAbsent(

@@ -9,11 +9,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Deterministic semantic bridge for the canonical explicit Objective control grammar.
+ * Deterministic semantic bridge for explicit institutional Objective controls.
  *
- * <p>This is intentionally narrow. It recognizes only explicit institutional "Take ownership of one
- * ... Objective" control forms used by production acceptance and governed Human control. Ordinary
- * Human language remains owned by the frontier semantic boundary.</p>
+ * <p>This remains intentionally narrow. It recognizes the canonical "Take ownership of one ...
+ * Objective" grammar and explicit assignment of work to a named canonical WORKER-* identity.
+ * Ordinary Human language remains owned by the frontier semantic boundary.</p>
  */
 public final class CanonicalObjectiveControlInterpreter {
     private static final String PREFIX_OBJECTIVE = "take ownership of one objective:";
@@ -26,6 +26,7 @@ public final class CanonicalObjectiveControlInterpreter {
             "(?i)(?:https://github\\.com/)?(" + NAME + ")/(" + NAME + ")(?:\\.git)?(?=$|[,.;:)\\s])");
     private static final Pattern EXPLICIT_URI_TARGET = Pattern.compile(
             "(?i)\\b(?:against\\s+(?:exact\\s+)?target|target)\\s+([a-z][a-z0-9+.-]*://\\S+)");
+    private static final Pattern WORKER_REF = Pattern.compile("(?i)\\b(WORKER-[A-Z0-9._:-]+)\\b");
     private static final Pattern DO_NOT = Pattern.compile("(?i)\\bdo\\s+not\\s+([^.;]+)");
 
     private CanonicalObjectiveControlInterpreter() {}
@@ -34,7 +35,8 @@ public final class CanonicalObjectiveControlInterpreter {
         if (humanText == null) return false;
         String normalized = humanText.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
         return normalized.startsWith(PREFIX_OBJECTIVE)
-                || QUALIFIED_OBJECTIVE.matcher(normalized).matches();
+                || QUALIFIED_OBJECTIVE.matcher(normalized).matches()
+                || isExplicitWorkerAssignment(humanText);
     }
 
     public static Optional<NormalizedRequest> interpret(String humanText) {
@@ -42,8 +44,13 @@ public final class CanonicalObjectiveControlInterpreter {
 
         String original = humanText.trim();
         String lower = original.toLowerCase(Locale.ROOT);
-        String target = explicitUriTarget(original);
-        if (target.isBlank()) target = repositoryTargets(original);
+        String target;
+        if (isExplicitWorkerAssignment(original)) {
+            target = workerTarget(original);
+        } else {
+            target = explicitUriTarget(original);
+            if (target.isBlank()) target = repositoryTargets(original);
+        }
         List<String> prohibitions = prohibitions(original);
         List<AnalyticalProtocolType> protocols = new ArrayList<>();
         if (lower.contains("audit")) protocols.add(AnalyticalProtocolType.AUDIT);
@@ -54,13 +61,16 @@ public final class CanonicalObjectiveControlInterpreter {
 
         boolean fresh = lower.contains(" current ") || lower.contains(" latest ")
                 || lower.contains(" today ") || lower.contains(" right now ");
+        String requestedOutput = isExplicitWorkerAssignment(original)
+                ? "evidence-backed durable work product from the explicitly assigned canonical Worker"
+                : "evidence-backed completion with independent Observation";
 
         return Optional.of(new NormalizedRequest(
                 original,
                 target,
                 List.of(original),
                 IntelligenceDepth.DEEP,
-                "evidence-backed completion with independent Observation",
+                requestedOutput,
                 List.of(),
                 prohibitions,
                 "",
@@ -76,6 +86,22 @@ public final class CanonicalObjectiveControlInterpreter {
                 null,
                 CaseContinuity.NEW,
                 ""));
+    }
+
+    static boolean isExplicitWorkerAssignment(String text) {
+        if (text == null || text.isBlank() || workerTarget(text).isBlank()) return false;
+        String q = text.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+        return q.startsWith("assign ")
+                || q.startsWith("delegate ")
+                || q.startsWith("give ") && q.contains(" task")
+                || q.startsWith("giao ")
+                || q.contains(" giao viec ")
+                || q.contains(" giao việc ");
+    }
+
+    static String workerTarget(String text) {
+        Matcher matcher = WORKER_REF.matcher(text == null ? "" : text);
+        return matcher.find() ? matcher.group(1).toUpperCase(Locale.ROOT) : "";
     }
 
     static String explicitUriTarget(String text) {
