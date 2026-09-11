@@ -1,6 +1,8 @@
 package com.metatron.workforce.interaction.intelligence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.actor.ActorScopedWorkerIntelligenceService;
+import com.metatron.workforce.actor.WorkerActorRuntime;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,9 +41,12 @@ public class IntelligenceRuntimeConfiguration {
     }
 
     @Bean
-    WorkerIntelligenceService workerIntelligenceService(InstitutionalIntelligenceRuntime runtime) {
-        return WorkerIntelligenceService.backedBy(
+    WorkerIntelligenceService workerIntelligenceService(
+            InstitutionalIntelligenceRuntime runtime,
+            WorkerActorRuntime actorRuntime) {
+        WorkerIntelligenceService providerBacked = WorkerIntelligenceService.backedBy(
                 runtime.fabric(), runtime.configuredProviders().size());
+        return new ActorScopedWorkerIntelligenceService(providerBacked, actorRuntime);
     }
 
     @Bean
