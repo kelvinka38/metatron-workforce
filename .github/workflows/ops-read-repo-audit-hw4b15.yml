@@ -1,0 +1,32 @@
+name: Ops Read Repository Audit hw4b15
+
+on:
+  push:
+    branches:
+      - ops/read-repo-audit-hw4b15-20260911
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - name: Inspect exact Highway task evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=hw-4b15ec7dd46c462daf4b
+          echo '=== TASK ==='
+          $CTL get "$TASK" || true
+          echo '=== TASK LOG ==='
+          LOG="$HOME/.metatron/highway/state/logs/$TASK.log"
+          test -r "$LOG"
+          cat "$LOG"
