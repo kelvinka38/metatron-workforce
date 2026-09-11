@@ -1,6 +1,6 @@
 # METATRON COGNITIVE RUNTIME — EXECUTION PLAN
 
-**Status: P0-P12 IMPLEMENTED / PRE-PRODUCTION ACCEPTANCE GREEN — P13 NOT STARTED — 2026-09-11**
+**Status: P0-P13 COMPLETE / P14 IMPLEMENTATION + FULL BUILD COMPLETE — FINAL DEPLOY VERIFICATION PENDING — 2026-09-11**
 
 ## Dependency order
 
@@ -84,25 +84,45 @@ Acceptance: transport-only channel decoration cannot change otherwise equivalent
 
 Run unit, integration and representative workload acceptance. Compare baseline vs new call-count/token/latency behavior using observed metrics only.
 
-Acceptance: AC-01..AC-17 from the Final Proposal are backed by tests/runtime evidence; no fabricated savings claim. Current pre-production evidence is recorded in `08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md`.
+Acceptance: AC-01..AC-17 from the Final Proposal are backed by tests/runtime evidence; no fabricated savings claim. Pre-production evidence is recorded in `08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md`.
+
+**Status: COMPLETE.** Full clean Gradle build passed before production rollout.
 
 ## P13 — Controlled production rollout
 
 Roll out behind compatibility-safe defaults. Observe failure rate, latency, zero/one-call rate, fallback/escalation/reuse and authority/evidence regressions. Roll back on institutional correctness regressions.
 
-**Not started in this tranche.** Production must remain on the known-good image until the reconciled branch passes the full Gradle build and a separately authorized deployment begins.
+**Status: COMPLETE.** Production acceptance is recorded in `09_COGNITIVE_RUNTIME_P13_PRODUCTION_ACCEPTANCE.md`.
+
+Accepted production candidate:
+
+```text
+6c7cd1c8739e920fcb2fa0f0af7c8307b68d8847
+```
+
+Workforce, sandbox and Gateway were healthy after rollout; Telegram webhook remained configured; live Cognitive Runtime emitted `cognitive_artifact_saved` events. External provider credit/quota exhaustion remained explicit failure state rather than false completion.
 
 ## P14 — Legacy retirement and docs closure
 
-Remove superseded mandatory semantic-call assumptions and duplicated provider-control paths only after production acceptance. Update traceability/evidence docs and mark compatibility code clearly.
+Retire superseded mandatory semantic-call assumptions and duplicated provider-control semantics without deleting useful compatibility/test surfaces blindly. Mark production ownership and compatibility boundaries clearly and add machine-verifiable retirement tests.
 
-**Not started.** Requires P13 production evidence.
+**Status: IMPLEMENTATION + FULL BUILD COMPLETE — FINAL DEPLOY VERIFICATION PENDING.** Details are recorded in `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md`.
+
+P14 build receipt:
+
+```text
+BUILD SUCCESSFUL in 34s
+8 actionable tasks: 8 executed
+```
+
+Final P14 closure requires one immutable commit on top of the P13 candidate, exact-SHA deployment, and final production health/runtime verification.
 
 ## Change discipline
 
-- Preserve current upstream Workforce schema/runtime additions when reconciling old work.
+- Preserve current upstream Workforce schema/runtime additions when reconciling older work.
 - Never overwrite current main wholesale with an older branch.
-- Port only Cognitive Runtime-specific deltas.
-- Build/test before any deploy.
+- Production provider control belongs to the shared institutional Intelligence runtime.
+- Compatibility constructors/overloads must not become production-owned duplicate provider paths.
+- Build/test before every deploy.
 - Do not claim runtime/production completion without successful evidence.
-- Do not deploy as part of P0-P12 implementation unless separately authorized.
+- Do not claim provider billing/cost savings without measured telemetry.

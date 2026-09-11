@@ -34,8 +34,10 @@ Upstream canonical SoT/policy always wins. If a downstream rule conflicts with s
 4. `03_TRACEABILITY_MATRIX.md`
 5. `07_COGNITIVE_RUNTIME_P0_BASELINE.md`
 6. `08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md`
+7. `09_COGNITIVE_RUNTIME_P13_PRODUCTION_ACCEPTANCE.md`
+8. `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md`
 
-`01_FINAL_ARCHITECTURE_PROPOSAL.md` and `02_DETAILED_ARCHITECTURE.md` remain historical/compatibility architecture. Any old downstream rule that makes a frontier semantic call mandatory before every deterministic/retrieval path is superseded by the Founder-approved Cognitive Runtime rule below.
+`01_FINAL_ARCHITECTURE_PROPOSAL.md` and `02_DETAILED_ARCHITECTURE.md` are historical/compatibility architecture only. Any old downstream rule that makes a frontier semantic call mandatory before every deterministic/retrieval path, treats depth as provider count, or permits duplicate production provider-control loops is superseded by the Founder-approved Cognitive Runtime baseline above.
 
 ## Cognitive runtime lock
 
@@ -61,7 +63,7 @@ BOUNDED REASON-CODED ESCALATION ONLY WHEN JUSTIFIED
 
 Raw Human text MUST NOT be routed to institutional execution through keyword/regex/continuation heuristics as the principal semantic architecture. At the same time, deterministic controls, deterministic computation, authoritative retrieval and existing valid cognitive artifacts MUST NOT pay an unnecessary frontier call merely to satisfy an obsolete semantic toll.
 
-FAST / ANALYZE / DEEP represent investigation depth, not provider count.
+FAST / ANALYZE / DEEP represent investigation depth, not provider count. Multi-model is exceptional and explicitly bounded.
 
 ## Ownership locks
 
@@ -82,9 +84,17 @@ Workplace retains meeting/conversation ownership. Workforce retains Worker/work/
 
 Provider/model choice is an implementation detail of the Intelligence Fabric unless the Human explicitly requests a provider. Provider sessions never own institutional memory.
 
+## Production composition lock
+
+Production provider control is owned by `InstitutionalIntelligenceRuntime` and the shared `IntelligenceFabric`. Channel ingress, execution planning and Worker cognition consume that shared institutional Intelligence capacity; they MUST NOT create independent production-owned provider routers or policy loops.
+
+Compatibility/test constructors and overloads may remain only when clearly non-governing. See `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md` and the `interaction.intelligence` package documentation.
+
 ## Current implementation gate
 
-`08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md` is the current pre-production acceptance receipt. P0-P12 evidence may be marked green only when the repository test suite and full Gradle build pass on the reconciled current-main branch. P13 production rollout and P14 legacy retirement remain separate later gates and require live runtime evidence.
+`08_COGNITIVE_RUNTIME_P12_ACCEPTANCE.md` records pre-production acceptance. `09_COGNITIVE_RUNTIME_P13_PRODUCTION_ACCEPTANCE.md` records the accepted production rollout. `10_COGNITIVE_RUNTIME_P14_LEGACY_RETIREMENT.md` records final legacy retirement/closure and its final build/deploy gate.
+
+No production percentage savings claim is authorized without measured telemetry. Architecture-derived and fixture-level call reductions must remain labeled as such.
 
 ## Change discipline
 
@@ -95,4 +105,5 @@ Before modifying conversational semantics, LLM/provider routing, reasoning, retr
 - retain measurable evidence for provider consumption;
 - prefer deterministic/retrieval paths when sufficient;
 - keep any second-or-later frontier call bounded and reason-coded;
+- do not create a second production provider-control loop;
 - do not claim execution, Observation, cost or savings without evidence.
