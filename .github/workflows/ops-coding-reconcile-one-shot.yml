@@ -1,0 +1,62 @@
+name: Ops Coding Canonical Reconcile One Shot
+
+on:
+  push:
+    branches:
+      - ops/coding-reconcile-one-shot
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ops-coding-canonical-reconcile-one-shot
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Reconcile local accepted coding closure onto current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE=/opt/metatron/metatron-workforce
+          TARGET=closure/coding-capability-canonical
+          COMMITS=(
+            b64e417846abd62524aebf37db9d314e4cf1e628
+            6c7cd1c8739e920fcb2fa0f0af7c8307b68d8847
+            095381e2c06945368b48af0253207e7f32029614
+            cf819b2f8ee62b762abcb6c7419364dd46c5db00
+            507c2927817b616dc26fdda9fc1b9171f47b9d9a
+          )
+
+          test -d "$SOURCE/.git"
+          for c in "${COMMITS[@]}"; do
+            git -C "$SOURCE" cat-file -e "$c^{commit}"
+          done
+
+          git config user.name "metatron-canonical-reconcile"
+          git config user.email "kelvinka38@users.noreply.github.com"
+          git fetch origin main
+          git reset --hard origin/main
+          git fetch "$SOURCE" "${COMMITS[-1]}"
+
+          for c in "${COMMITS[@]}"; do
+            echo "CHERRY_PICK=$c"
+            git cherry-pick "$c"
+          done
+
+          chmod +x gradlew
+          ./gradlew clean test bootJar --no-daemon --max-workers=1
+          test -f docs/ARCHITECTURE/CODING_CAPABILITY_GAP_CLOSURE.md
+          test -f src/test/java/com/metatron/workforce/action/CodingCapabilityGapClosureAcceptanceTest.java
+          grep -q 'Status: COMPLETE' docs/ARCHITECTURE/CODING_CAPABILITY_GAP_CLOSURE.md
+
+          echo "RECONCILED_HEAD=$(git rev-parse HEAD)"
+          git log --oneline -8
+          git push origin HEAD:refs/heads/$TARGET
+          echo 'CODING_CANONICAL_RECONCILE_PASS'
