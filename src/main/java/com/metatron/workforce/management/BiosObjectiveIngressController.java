@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.action.ActionJournal;
 import com.metatron.workforce.interaction.intelligence.CollaborationMode;
 import com.metatron.workforce.interaction.intelligence.DeterministicCapability;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepth;
@@ -8,6 +9,8 @@ import com.metatron.workforce.interaction.intelligence.NormalizedRequest;
 import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -94,6 +97,31 @@ public final class BiosObjectiveIngressController {
                 objective.status().name(), "OBJECTIVE_ACCEPTED_FOR_AUTONOMOUS_MANAGEMENT");
     }
 
+    /**
+     * Returns the durable read-only research observations produced for one BIOS Objective.
+     * Raw public-source result payloads stay attributable here instead of being collapsed into
+     * opaque evidence-reference strings. BIOS domain adapters can then normalize only the exact
+     * fields they understand and keep unsupported fields unresolved.
+     */
+    @GetMapping("/objectives/{objectiveId}/research-evidence")
+    public BiosResearchEvidence researchEvidence(@PathVariable String objectiveId,
+                                                  @RequestHeader("X-Metatron-Actor") String actor) {
+        require(objectiveId, "objectiveId");
+        require(actor, "actor");
+        ManagementObjective objective = management.get(objectiveId);
+        AutonomousObjectiveWork work = management.findAutonomousWork(objectiveId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "objective has no durable autonomous work context"));
+        if (!actor.equals(work.humanId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "caller attribution mismatch");
+        }
+        List<ActionJournal.ActionRecord> records = ActionJournal.runtimeEvidenceJournal()
+                .objectiveActionRecords(objectiveId).stream()
+                .filter(record -> "research.web.search".equals(record.actionRef()))
+                .toList();
+        return new BiosResearchEvidence(objectiveId, objective.status().name(), records);
+    }
+
     private static String render(BiosObjectiveCommand command) {
         return command.desiredOutcome() + "\nBIOS Case: " + command.caseId()
                 + "\nBIOS Program: " + command.programId()
@@ -114,4 +142,7 @@ public final class BiosObjectiveIngressController {
 
     public record BiosHandoffReceipt(boolean accepted, String objectiveId, String ownerWorker,
                                      String objectiveStatus, String reason) {}
+
+    public record BiosResearchEvidence(String objectiveId, String objectiveStatus,
+                                       List<ActionJournal.ActionRecord> records) {}
 }
