@@ -36,6 +36,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     public static final String AUTHORITY_REFERENCE = "policy:founder-general-engineering-workspace:v1";
     public static final String AUTHORIZATION_REFERENCE = "authorization:founder-general-engineering-workspace:v1";
     private static final int MAX_COGNITIVE_CYCLES = 48;
+    private static final int MAX_RESEARCH_QUERY_CHARS = 20_000;
     static final String MEMORY_WORKSPACE_MATERIALIZED = "workspaceMaterialized";
 
     private final GeneralWorkspaceActionCatalog actions;
@@ -119,8 +120,19 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 actions.actions(request.allocatedWorkerId(), request.authorizationReference(), request.objectiveId()),
                 request.workSpec(), objectiveMemory);
         ActionFabric fabric = new ActionFabric(governedActions, executionGate);
-        GeneralCognitiveWorkerBrain brain = brains.create();
-        CognitiveWorkerRuntime.Brain contextualBrain = withObjectiveWorkspaceMemory(brain, objectiveMemory);
+
+        GeneralCognitiveWorkerBrain frontierBrain = null;
+        CognitiveWorkerRuntime.Brain selectedBrain;
+        List<String> brainEvidence = new ArrayList<>();
+        if (requiresExternalResearch(request.workSpec())) {
+            selectedBrain = deterministicExternalResearchBrain(request.workSpec());
+            brainEvidence.add("deterministic-governed-research-brain:v1");
+            brainEvidence.add("deterministic-governed-research-action:" + GeneralWebResearchAction.ACTION_REF);
+        } else {
+            frontierBrain = brains.create();
+            selectedBrain = frontierBrain;
+        }
+        CognitiveWorkerRuntime.Brain contextualBrain = withObjectiveWorkspaceMemory(selectedBrain, objectiveMemory);
         ActionJournal actionJournal = ActionJournal.runtimeEvidenceJournal();
         CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(
                 fabric, actionJournal, MAX_COGNITIVE_CYCLES, executionGate);
@@ -139,7 +151,8 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         durableEvidence.addAll(outcome.evidenceReferences());
         List<String> evidence = new ArrayList<>(durableEvidence);
         if (outcome.success()) evidence.add("general-work-output:" + outcome.summary());
-        evidence.addAll(brain.evidenceReferences());
+        if (frontierBrain != null) evidence.addAll(frontierBrain.evidenceReferences());
+        evidence.addAll(brainEvidence);
         evidence.add("general-action-composition:capability=" + request.workSpec().requiredCapability()
                 + ":workspace=" + workspace.workspaceRef()
                 + ":profile=" + binding.profile().profileRef());
@@ -216,6 +229,53 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 || semantic.contains("external") || semantic.contains("web") || semantic.contains("internet")
                 || semantic.contains("recent") || semantic.contains("current") || semantic.contains("new ");
         return researchIntent && externalEvidence;
+    }
+
+    static CognitiveWorkerRuntime.Brain deterministicExternalResearchBrain(ExecutionWorkSpec workSpec) {
+        Objects.requireNonNull(workSpec, "workSpec");
+        if (!requiresExternalResearch(workSpec)) {
+            throw new IllegalArgumentException("deterministic research brain requires explicit external research work");
+        }
+        String query = deterministicResearchQuery(workSpec);
+        return new CognitiveWorkerRuntime.Brain() {
+            @Override
+            public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                return new CognitiveWorkerRuntime.Thought(
+                        GeneralWebResearchAction.ACTION_REF,
+                        Map.of("query", query),
+                        "execute the explicitly governed read-only public research action without frontier cognition");
+            }
+
+            @Override
+            public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                               ActionFabric.ActionObservation observation) {
+                if (!GeneralWebResearchAction.ACTION_REF.equals(observation.actionRef())) {
+                    return CognitiveWorkerRuntime.Reflection.failed("unexpected research action observation");
+                }
+                if (!observation.success()) {
+                    return CognitiveWorkerRuntime.Reflection.failed(
+                            "governed public research failed: " + observation.summary());
+                }
+                return CognitiveWorkerRuntime.Reflection.complete(
+                        "governed public research completed with attributable Action evidence");
+            }
+        };
+    }
+
+    static String deterministicResearchQuery(ExecutionWorkSpec workSpec) {
+        StringBuilder query = new StringBuilder();
+        query.append(workSpec.objective().trim());
+        if (!workSpec.target().isBlank()) query.append("\nTarget: ").append(workSpec.target().trim());
+        if (!workSpec.acceptanceCriteria().isEmpty()) {
+            query.append("\nAcceptance criteria: ").append(String.join("; ", workSpec.acceptanceCriteria()));
+        }
+        if (!workSpec.evidenceRequirements().isEmpty()) {
+            query.append("\nEvidence requirements: ").append(String.join("; ", workSpec.evidenceRequirements()));
+        }
+        String value = query.toString().trim();
+        if (value.length() > MAX_RESEARCH_QUERY_CHARS) value = value.substring(0, MAX_RESEARCH_QUERY_CHARS);
+        if (value.isBlank()) throw new IllegalArgumentException("research query must not be blank");
+        return value;
     }
 
     static boolean requiresRepositoryMaterialization(ExecutionWorkSpec workSpec) {
