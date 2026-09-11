@@ -1,0 +1,116 @@
+name: Coding Pilot Legion
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact deployed Workforce SHA to attack
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: coding-pilot-legion
+  cancel-in-progress: false
+
+jobs:
+  legion:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout legion source
+        uses: actions/checkout@v7
+
+      - name: Resolve exact target
+        id: target
+        shell: bash
+        env:
+          REQUESTED_TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          TARGET="${REQUESTED_TARGET_SHA:-$GITHUB_SHA}"
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "$TARGET"
+          git checkout --detach "$TARGET"
+          test "$(git rev-parse HEAD)" = "$TARGET"
+          echo "sha=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "LEGION_TARGET_SHA=$TARGET"
+
+      - name: Prove SoT fail-closed safety contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew test --no-daemon --max-workers=1 \
+            --tests com.metatron.workforce.execution.governance.SotEnforcementRuntimeTest \
+            --tests com.metatron.workforce.management.LiveManagementConfigurationGovernanceWiringTest
+          echo 'LEGION_SOT_SAFETY_CONTRACTS=PASS'
+
+      - name: Wait for exact healthy production
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 600); do
+            CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+            if [ -n "$CID" ]; then
+              LIVE=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+              HEALTH=$(docker inspect "$CID" --format '{{.State.Health.Status}}' 2>/dev/null || true)
+              if [ "$LIVE" = "$TARGET" ] && [ "$HEALTH" = healthy ]; then
+                echo "LEGION_PRODUCTION_SHA=$LIVE"
+                echo 'LEGION_PRODUCTION_HEALTH=PASS'
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo "production did not converge to $TARGET" >&2
+          exit 1
+
+      - name: Attack production with orthogonal pilot legion
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+
+          run_pilot() {
+            KIND="$1"
+            PRIORITY="$2"
+            LABEL="$3"
+            TASK=$($CTL submit \
+              --kind "$KIND" \
+              --source-sha "$TARGET" \
+              --priority "$PRIORITY" \
+              --dedupe-key "coding-legion:$KIND:$TARGET:$GITHUB_RUN_ID" \
+              --env "TARGET_SHA=$TARGET" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+            echo "LEGION_${LABEL}_TASK=$TASK"
+            $CTL get "$TASK"
+            $CTL wait "$TASK" --timeout 1800 --poll 2
+            $CTL get "$TASK"
+            echo "LEGION_${LABEL}=PASS"
+          }
+
+          run_pilot production-highway-fast 80 PREFLIGHT
+          run_pilot runtime-point4-read 65 COGNITION_READ
+          run_pilot repository-audit-live-acceptance 60 REPOSITORY_AUDIT
+          run_pilot general-engineering-go1 55 REAL_CODING
+          run_pilot runtime-point4-mutation 50 SECOND_MUTATION_PATH
+          run_pilot runtime-closure 70 RUNTIME_CLOSURE
+          run_pilot production-highway-fast 80 POSTFLIGHT
+
+          echo 'CODING_PILOT_LEGION=PASS'

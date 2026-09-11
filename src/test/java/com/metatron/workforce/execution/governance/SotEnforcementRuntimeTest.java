@@ -71,6 +71,21 @@ class SotEnforcementRuntimeTest {
     }
 
     @Test
+    void unknownMutatingTargetStillFailsClosed() {
+        Fixture f = new Fixture();
+        ExecutionWorkSpec unknown = new ExecutionWorkSpec(
+                "step-unknown", "attempt mutation outside discovered authority", "unknown-owner/unknown-repository",
+                "execution.general.workspace", List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass"), List.of("test-report"));
+
+        GovernanceDeniedException denied = assertThrows(GovernanceDeniedException.class, () ->
+                f.plans.bindAuthorizedWork("objective-unknown", "founder", unknown,
+                        "founder", "approval:objective-unknown", Map.of()));
+
+        assertEquals("AUTHORITY_UNRESOLVED", denied.code());
+    }
+
+    @Test
     void completionIsInstitutionalDecisionNotWorkerClaim() {
         Fixture f = new Fixture();
         ExecutionWorkSpec work = work("step-1", "complete governed repair");
