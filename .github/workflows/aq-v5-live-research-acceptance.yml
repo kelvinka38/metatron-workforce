@@ -1,4 +1,4 @@
-name: Aquaculture v5 Live Research Acceptance
+name: Aquaculture v5 Live Research Acceptance Dispatcher
 
 on:
   pull_request:
@@ -8,151 +8,24 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
-  live-acceptance:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 15
+  dispatch-canonical-highway-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
-      - name: Verify exact Workforce production SHA and governed BIOS research plane
+      - name: Dispatch existing canonical governed-research acceptance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: e34fe81fcf97e21439c439eb1b0249f0fe89a950
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED_SHA=e34fe81fcf97e21439c439eb1b0249f0fe89a950
-          BUILD_TASK=hw-49e45f2a19614f7790b3
-          DEPLOY_TASK=hw-ee9e941f14d44215b17b
-          WF_BASE=http://127.0.0.1:8080
-          BIOS_BASE=http://127.0.0.1:18080
-          ACTOR=FOUNDER
-
-          test -r "$HOME/.metatron/highway/highway.env"
-          set -a; source "$HOME/.metatron/highway/highway.env"; set +a
-          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
-
-          wait_task() {
-            local task="$1"
-            local state=''
-            for _ in $(seq 1 180); do
-              state=$($CTL get "$task" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))')
-              case "$state" in
-                SUCCEEDED) echo "HIGHWAY_TASK_${task}=SUCCEEDED"; return 0 ;;
-                FAILED|CANCELLED|BLOCKED) echo "HIGHWAY_TASK_${task}=$state" >&2; $CTL get "$task" >&2 || true; return 1 ;;
-              esac
-              sleep 2
-            done
-            echo "HIGHWAY_TASK_${task}=TIMEOUT:$state" >&2
-            $CTL get "$task" >&2 || true
-            return 1
-          }
-          wait_task "$BUILD_TASK"
-          wait_task "$DEPLOY_TASK"
-
-          CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
-          test -n "$CID"
-          LIVE_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
-          HEALTH=$(curl -fsS --connect-timeout 3 --max-time 10 "$WF_BASE/actuator/health")
-          test "$LIVE_SHA" = "$EXPECTED_SHA"
-          printf '%s' "$HEALTH" | grep -q '"status":"UP"'
-          echo "WORKFORCE_PRODUCTION_SHA=$LIVE_SHA"
-          echo 'WORKFORCE_PRODUCTION_HEALTH=PASS'
-
-          test -r /opt/metatron/bios/.env
-          set -a; source /opt/metatron/bios/.env; set +a
-          test -n "${BIOS_API_KEY:-}"
-          curl -fsS --connect-timeout 3 --max-time 10 "$BIOS_BASE/health" >/tmp/aq-v5-bios-health.json
-
-          CORR="aq-v5-live-$(date +%s)"
-          envelope() {
-            local rid="$1" path="$2"
-            python3 - "$rid" "$CORR" "$ACTOR" "$path" <<'PY'
-          import json,sys
-          from datetime import datetime,timezone
-          rid,corr,actor,path=sys.argv[1:]
-          print(json.dumps({
-            "request_id":rid,
-            "correlation_id":corr,
-            "actor_id":actor,
-            "timestamp":datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),
-            "schema_version":"0.1",
-            "payload":json.load(open(path,encoding='utf-8'))
-          },ensure_ascii=False))
-          PY
-          }
-
-          cat >/tmp/aq-v5-case.json <<'JSON'
-          {"objective":"Acquire source-attributed public evidence required for an aquaculture decision for a 650 m2 brackish-water pond in Bac Lieu.","system_exists":true,"continuation_threat":false,"desired_new_regime":false,"reality":[],"constraints":["Public external data only","No external mutation","Never fabricate evidence"],"feasibility":{"status":"UNKNOWN","basis":["Decision fields require current public evidence"]}}
-          JSON
-          envelope "case-$CORR" /tmp/aq-v5-case.json >/tmp/aq-v5-case-req.json
-          curl -fsS -X POST "$BIOS_BASE/v1/cases/run" -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json' --data-binary @/tmp/aq-v5-case-req.json >/tmp/aq-v5-case-res.json
-          CASE_ID=$(python3 -c 'import json; d=json.load(open("/tmp/aq-v5-case-res.json")); print(d["payload"]["id"])')
-          PROGRAM_ID=$(python3 -c 'import json; d=json.load(open("/tmp/aq-v5-case-res.json")); print(d["payload"]["program"]["id"])')
-
-          cat >/tmp/aq-v5-objective.json <<JSON
-          {"case_id":"$CASE_ID","program_id":"$PROGRAM_ID","desired_outcome":"Research current public evidence for Litopenaeus vannamei pond culture in Bac Lieu/Vietnam. Return EXACTLY one JSON object with production cycle days, stocking density per m2, survival or yield, production cost/capital basis, farm-gate price, buyer or demand evidence, confidence, unresolved fields, and a field_sources map binding every non-null factual field to an exact source URL. Use null for unsupported fields; never estimate or interpolate.","intent":"Fill exact decision fields before aquaculture recommendation.","target":"Litopenaeus vannamei decision evidence for 650 m2 brackish pond, Bac Lieu, Vietnam","constraints":["Public external data only","Prefer Bac Lieu, Mekong Delta and Vietnam primary, regulator, university or peer-reviewed sources","Never invent a number","State unresolved when exact evidence is absent"],"authority_envelope":{"prohibitions":["No external mutation","No publishing","No purchases","No contacting buyers"]},"acceptance_criteria":["Return one JSON decision-evidence object or explicit nulls","Every non-null factual field is source-bound","Units, geography and observation/reference date are explicit where available"],"evidence_requirements":["research-action:research.web.search","Current externally attributable evidence","Exact source URLs"]}
-          JSON
-          envelope "obj-$CORR" /tmp/aq-v5-objective.json >/tmp/aq-v5-objective-req.json
-          curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/create" -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json' --data-binary @/tmp/aq-v5-objective-req.json >/tmp/aq-v5-objective-res.json
-          OBJECTIVE_ID=$(python3 -c 'import json; d=json.load(open("/tmp/aq-v5-objective-res.json")); print(d["payload"]["objective_id"])')
-
-          printf '{"case_id":"%s","organization_context_id":"METATRON"}\n' "$CASE_ID" >/tmp/aq-v5-admit.json
-          envelope "admit-$CORR" /tmp/aq-v5-admit.json >/tmp/aq-v5-admit-req.json
-          curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/admit" -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json' --data-binary @/tmp/aq-v5-admit-req.json >/tmp/aq-v5-admit-res.json
-
-          TERMINAL=''
-          for i in $(seq 1 120); do
-            printf '{"case_id":"%s"}\n' "$CASE_ID" >/tmp/aq-v5-status.json
-            envelope "status-$CORR-$i" /tmp/aq-v5-status.json >/tmp/aq-v5-status-req.json
-            curl -fsS -X POST "$BIOS_BASE/v2/product/objectives/status" -H "X-BIOS-API-Key: $BIOS_API_KEY" -H 'Content-Type: application/json' --data-binary @/tmp/aq-v5-status-req.json >/tmp/aq-v5-status-res.json || true
-            TERMINAL=$(python3 - <<'PY'
-          import json
-          try:
-              d=json.load(open('/tmp/aq-v5-status-res.json'))
-              s=str(((d.get('payload') or {}).get('objective') or {}).get('status','')).upper()
-              print(s if s in {'COMPLETED','DELIVERED','BLOCKED','ESCALATED','FAILED','CANCELLED'} else '')
-          except Exception:
-              print('')
-          PY
-            )
-            [ -n "$TERMINAL" ] && break
-            sleep 2
-          done
-          echo "AQ_RESEARCH_OBJECTIVE=$OBJECTIVE_ID"
-          echo "AQ_RESEARCH_TERMINAL=$TERMINAL"
-          [ "$TERMINAL" = COMPLETED ] || [ "$TERMINAL" = DELIVERED ]
-
-          curl -fsS -H "X-Metatron-Actor: $ACTOR" "$WF_BASE/workforce/bios/objectives/$OBJECTIVE_ID/research-evidence" >/tmp/aq-v5-evidence.json
-          python3 - <<'PY'
-          import json,re
-          p='/tmp/aq-v5-evidence.json'
-          d=json.load(open(p,encoding='utf-8'))
-          records=d.get('records') or []
-          if not records:
-              raise SystemExit('NO_RESEARCH_ACTION_RECORDS')
-          research=[]
-          for r in records:
-              ref=r.get('actionRef') or r.get('action_ref')
-              if ref == 'research.web.search':
-                  research.append(r)
-          if not research:
-              raise SystemExit('RESEARCH_ACTION_NOT_ATTRIBUTED')
-          blob=json.dumps(research,ensure_ascii=False)
-          urls=[]
-          for u in re.findall(r'https?://[^\s\]\\"<>),]+',blob):
-              u=u.rstrip('.;')
-              if u not in urls: urls.append(u)
-          if not urls:
-              raise SystemExit('NO_EXTERNAL_SOURCE_URLS')
-          # The action must have succeeded; tolerate either camelCase or snake_case serialization.
-          successes=[]
-          for r in research:
-              if 'success' in r: successes.append(bool(r['success']))
-              cycle=r.get('cycle') or {}
-              obs=(cycle.get('observation') or {}) if isinstance(cycle,dict) else {}
-              if 'success' in obs: successes.append(bool(obs['success']))
-          if successes and not any(successes):
-              raise SystemExit('RESEARCH_ACTION_NOT_SUCCESSFUL')
-          print('AQ_RESEARCH_ACTION_RECORDS='+str(len(research)))
-          print('AQ_RESEARCH_SOURCE_COUNT='+str(len(urls)))
-          print('AQ_RESEARCH_SOURCE_SAMPLE='+json.dumps(urls[:5],ensure_ascii=False))
-          PY
-          echo 'AQ_V5_LIVE_GOVERNED_RESEARCH=PASS'
+          curl --fail-with-body -sS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/mother-baby-bios-live-objective.yml/dispatches" \
+            -d "{\"ref\":\"main\",\"inputs\":{\"target_sha\":\"$TARGET_SHA\"}}"
+          echo "CANONICAL_HIGHWAY_RESEARCH_ACCEPTANCE_DISPATCHED=$TARGET_SHA"
