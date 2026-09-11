@@ -1,0 +1,21 @@
+name: Ops Cancel Stuck Verifier
+
+on:
+  push:
+    branches:
+      - ops/coding-reconcile-trigger-final
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel stale verifier run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST repos/${{ github.repository }}/actions/runs/34566360745/cancel
+          echo STALE_VERIFIER_CANCEL_REQUESTED=PASS
