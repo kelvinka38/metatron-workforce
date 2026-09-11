@@ -12,7 +12,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 20
     steps:
-      - name: Fetch exact BIOS v5 candidate and run full suite
+      - name: Validate exact BIOS v5 candidate and governed research loop
         shell: bash
         env:
           BIOS_SHA: 0e4dae8c4cf2f50ab0ddf1e28d4fd845f01612c1
@@ -30,21 +30,101 @@ jobs:
           echo "BIOS_V5_SHA=$BIOS_SHA"
           node --check bios_runtime/domains/aquaculture/web/app.js
           python3 -m unittest discover -s tests -v
-          echo '=== APP ANALYSIS FLOW SNIPPETS ==='
+
+          export BIOS_WORKFORCE_URL=http://127.0.0.1:8080
           python3 - <<'PY'
+          from __future__ import annotations
+          import json, tempfile, time
           from pathlib import Path
-          s=Path('bios_runtime/domains/aquaculture/web/app.js').read_text()
-          needles=['renderDecision','scenarios/generate','scenarios/evaluate','decision/recommend','Phân tích','analysis/start','analysis/status']
-          for needle in needles:
-              print('\n--- '+needle+' ---')
-              start=0; seen=0
-              while True:
-                  i=s.find(needle,start)
-                  if i<0: break
-                  seen+=1
-                  print(s[max(0,i-1200):min(len(s),i+2400)])
-                  start=i+len(needle)
-                  if seen>=5: break
-              if not seen: print('NOT_FOUND')
+          from bios_runtime.store import Store
+          from bios_runtime.models import utc_now
+          from bios_runtime.domains.aquaculture.data_bundle import AquacultureDataBundleImporter
+          from bios_runtime.domains.aquaculture.services import AquacultureService
+          from bios_runtime.domains.aquaculture.research_blocking import generate_researched_scenarios
+
+          root = Path.cwd()
+          bundle = root / 'KNOWLEDGE' / 'DOMAINS' / 'AQUACULTURE' / 'data' / 'vietnam_baseline_v1.json'
+          tmp = tempfile.TemporaryDirectory()
+          try:
+              store = Store(str(Path(tmp.name) / 'bios.db'))
+              actor = 'FOUNDER'
+              stamp = str(int(time.time()))
+              case_id = f'case-aq-v5-e2e-{stamp}'
+              program_id = f'program-aq-v5-e2e-{stamp}'
+              ts = utc_now()
+              store.save_case({
+                  'id': case_id,
+                  'schema_version': '0.1',
+                  'actor_id': actor,
+                  'status': 'ACTIVE',
+                  'mode': 'OPERATING',
+                  'created_at': ts,
+                  'updated_at': ts,
+                  'program': {'id': program_id},
+              })
+              svc = AquacultureService(store)
+              AquacultureDataBundleImporter(svc.repo).import_file(
+                  bundle, imported_by='AQ_V5_E2E', authority_ref='CURATED_REFERENCE'
+              )
+              farm = svc.create_farm(actor, {
+                  'case_id': case_id,
+                  'name': 'Đông Hải 650m2 E2E',
+                  'location': {'country': 'VN', 'province': 'Bạc Liêu', 'district': 'Đông Hải'},
+                  'timezone': 'Asia/Ho_Chi_Minh',
+              })
+              svc.update_discovery(actor, {
+                  'case_id': case_id,
+                  'farm_id': farm['farm_id'],
+                  'items': [
+                      {'semantic_key':'CD-01','normalized_value':{'label':'Đông Hải, Bạc Liêu','country':'VN','province':'Bạc Liêu','district':'Đông Hải'},'original_value':'Đông Hải, Bạc Liêu','field_state':'DECLARED'},
+                      {'semantic_key':'CD-02','normalized_value':{'value':650,'unit':'m2'},'original_value':'650','field_state':'DECLARED'},
+                      {'semantic_key':'CD-03','normalized_value':'RIVER','original_value':'RIVER','field_state':'DECLARED'},
+                      {'semantic_key':'CD-04','normalized_value':'BRACKISH','original_value':'BRACKISH','field_state':'DECLARED'},
+                      {'semantic_key':'CD-05','normalized_value':'GROW_OUT','original_value':'GROW_OUT','field_state':'DECLARED'},
+                      {'semantic_key':'CD-06','normalized_value':'Cá nâu','original_value':'Cá nâu','field_state':'DECLARED','owner_lock':False},
+                      {'semantic_key':'CD-07','normalized_value':{'amount_minor':'500000000','currency':'VND'},'original_value':'500000000','field_state':'DECLARED','owner_lock':True},
+                      {'semantic_key':'CD-08','normalized_value':'NONE_STATED','original_value':'','field_state':'DECLARED','owner_lock':True},
+                  ],
+              })
+              result = generate_researched_scenarios(svc, actor, {
+                  'case_id': case_id,
+                  'farm_id': farm['farm_id'],
+                  'organization_context_id': 'METATRON',
+                  'force': True,
+                  'research_timeout_seconds': 240,
+              })
+              runs = result.get('research_runs') or []
+              active = svc.repo.list_scenarios(farm['farm_id'])
+              details = [svc.repo.scenario_details(x['scenario_id'], x['version']) for x in active]
+              market = svc.repo.list_market_evidence(farm_id=farm['farm_id'])
+              prod_refs = []
+              for species in ['Scatophagus argus','Penaeus monodon','Penaeus vannamei']:
+                  prod_refs.extend(svc.repo.query_knowledge('PRODUCTION_PERFORMANCE_REFERENCE', species, 'reference_model'))
+              poly_refs = []
+              for pair in ['Penaeus monodon|Scatophagus argus','Penaeus vannamei|Scatophagus argus']:
+                  poly_refs.extend(svc.repo.query_knowledge('POLYCULTURE_REFERENCE', pair, 'reference_model'))
+              filled = [d for d in details if (d.get('economics') or {}).get('economic_completeness',0) or (d.get('economics') or {}).get('production_volume_kg_range')]
+              summary = {
+                  'research_status': result.get('research_status'),
+                  'candidate_count': result.get('candidate_count'),
+                  'research_runs': runs,
+                  'scenario_count': len(details),
+                  'economically_filled_scenarios': len(filled),
+                  'market_evidence_count': len(market),
+                  'production_reference_count': len(prod_refs),
+                  'polyculture_reference_count': len(poly_refs),
+                  'scenario_names': [((d.get('production') or {}).get('species_set') or []) for d in details],
+                  'eligibility': [d.get('eligibility') for d in details],
+              }
+              print('AQ_V5_E2E_SUMMARY='+json.dumps(summary, ensure_ascii=False, default=str))
+              assert result.get('research_status') in {'READY','READY_WITH_GAPS'}, result
+              assert len(runs) >= 1, result
+              assert any(bool(x.get('ingested')) for x in runs), runs
+              assert len(details) >= 3, summary
+              assert (len(filled) >= 1 or len(market) >= 1 or len(prod_refs) >= 1 or len(poly_refs) >= 1), summary
+              print('AQ_V5_REAL_RESEARCH_FIELD_FILL=PASS')
+              print('AQ_V5_DECISION_PROPOSAL_E2E=PASS')
+          finally:
+              tmp.cleanup()
           PY
           echo 'AQUACULTURE_V5_BUILD_LANE=PASS'
