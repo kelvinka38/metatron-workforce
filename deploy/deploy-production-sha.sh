@@ -26,6 +26,38 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 5
 fi
 
+# Production preflight: the sandbox entrypoint is fail-closed and refuses to start
+# without SANDBOX_TOKEN. Because Compose gives the shell environment precedence over
+# --env-file, distinguish an explicitly exported (possibly empty) value from an unset one.
+if [[ ${METATRON_SANDBOX_TOKEN+x} == x ]]; then
+  EFFECTIVE_SANDBOX_TOKEN="$METATRON_SANDBOX_TOKEN"
+else
+  EFFECTIVE_SANDBOX_TOKEN="$(python3 - "$ENV_FILE" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+value = ""
+for raw in path.read_text().splitlines():
+    line = raw.strip()
+    if not line or line.startswith('#'):
+        continue
+    if line.startswith('export '):
+        line = line[7:].lstrip()
+    if not line.startswith('METATRON_SANDBOX_TOKEN='):
+        continue
+    value = line.split('=', 1)[1].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    break
+print(value, end='')
+PY
+)"
+fi
+if [[ -z "$EFFECTIVE_SANDBOX_TOKEN" ]]; then
+  echo "production preflight failed: METATRON_SANDBOX_TOKEN is required before container recreation" >&2
+  exit 7
+fi
+unset EFFECTIVE_SANDBOX_TOKEN
+
 ./gradlew --no-daemon clean build
 
 export METATRON_IMAGE_TAG="$SHA"
@@ -62,6 +94,12 @@ RUNNING_SHA="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' dep
 if [[ "$RUNNING_SHA" != "$SHA" ]]; then
   echo "running container commit mismatch: expected=$SHA actual=$RUNNING_SHA" >&2
   exit 6
+fi
+
+SANDBOX_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' deploy-workforce-sandbox-1 2>/dev/null || true)"
+if [[ "$SANDBOX_HEALTH" != "healthy" ]]; then
+  echo "sandbox health check failed after deployment: status=$SANDBOX_HEALTH" >&2
+  exit 8
 fi
 
 echo "WORKFORCE PRODUCTION DEPLOYMENT: PASS"
