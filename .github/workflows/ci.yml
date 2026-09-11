@@ -22,10 +22,9 @@ env:
 
 jobs:
   test:
-    # PR unit/contract tests do not require production-local state, credentials, Docker,
-    # or the production network. Keep the single metatron-prod runner reserved for
-    # exact-SHA deploy and live production acceptance so ordinary CI cannot serialize them.
-    runs-on: ubuntu-latest
+    # GitHub-hosted capacity is not reliable for this private repository. Keep this
+    # job read/test-only and run it on the registered Metatron self-hosted runner.
+    runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 20
     steps:
       - name: Checkout
