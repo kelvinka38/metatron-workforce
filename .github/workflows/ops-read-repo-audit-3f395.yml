@@ -1,0 +1,16 @@
+name: Ops Read Repository Audit 3f395
+on:
+  push:
+    branches: [ops/read-repo-audit-3f395]
+jobs:
+  read-log:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    steps:
+      - name: Read failed Highway task log
+        run: |
+          set -euo pipefail
+          LOG=/home/github-runner/.metatron/highway/state/logs/hw-3f395c3b49114b47ba93.log
+          test -r "$LOG"
+          echo '=== REPOSITORY AUDIT INNER LOG BEGIN ==='
+          cat "$LOG"
+          echo '=== REPOSITORY AUDIT INNER LOG END ==='
