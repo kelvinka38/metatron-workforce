@@ -12,13 +12,20 @@ import java.util.function.Function;
 /** Adapts the low-level provider router into the shared Intelligence Fabric. */
 public final class RouterBackedIntelligenceEngine implements IntelligenceEngine {
     private final LlmProviderRouter router;
-    private final Function<LlmProvider, String> modelSelector;
+    private final IntelligenceModelRoutingPolicy modelRoutingPolicy;
 
+    /** Compatibility constructor: one static configured model per provider. */
     public RouterBackedIntelligenceEngine(
             LlmProviderRouter router,
             Function<LlmProvider, String> modelSelector) {
+        this(router, (provider, request) -> Objects.requireNonNull(modelSelector, "modelSelector").apply(provider));
+    }
+
+    public RouterBackedIntelligenceEngine(
+            LlmProviderRouter router,
+            IntelligenceModelRoutingPolicy modelRoutingPolicy) {
         this.router = Objects.requireNonNull(router, "router");
-        this.modelSelector = Objects.requireNonNull(modelSelector, "modelSelector");
+        this.modelRoutingPolicy = Objects.requireNonNull(modelRoutingPolicy, "modelRoutingPolicy");
     }
 
     @Override
@@ -41,7 +48,7 @@ public final class RouterBackedIntelligenceEngine implements IntelligenceEngine 
         Objects.requireNonNull(provider, "provider");
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(providerBudget, "providerBudget");
-        String model = Objects.requireNonNull(modelSelector.apply(provider), "selected model");
+        String model = Objects.requireNonNull(modelRoutingPolicy.select(provider, request), "selected model");
         if (model.isBlank()) throw new IllegalArgumentException("selected model must not be blank");
 
         return router.complete(new LlmRequest(

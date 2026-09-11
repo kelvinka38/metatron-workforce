@@ -21,9 +21,8 @@ import java.util.function.Function;
 /**
  * One shared institutional Intelligence runtime for every production consumer.
  *
- * Provider transports, capacity telemetry, reusable cognitive state and model selection are owned
- * here inside the Intelligence domain. Human interaction, Workforce planning and Cognitive Workers
- * consume Intelligence; they do not own provider routers.
+ * Provider transports, measured capacity/quality telemetry, reusable cognitive state and model
+ * routing are owned here inside the Intelligence domain. Worker identity never owns or pins an LLM.
  */
 public final class InstitutionalIntelligenceRuntime {
     private final List<LlmProvider> configuredProviders;
@@ -31,6 +30,8 @@ public final class InstitutionalIntelligenceRuntime {
     private final DefaultToolFabric toolFabric;
     private final IntelligenceFabric fabric;
     private final LlmProviderRouter router;
+    private final ProviderCapabilityQualityRegistry qualityRegistry;
+    private final AdaptiveModelRoutingPolicy modelRoutingPolicy;
 
     /** Backward-compatible composition using process-local cognitive artifacts. */
     public InstitutionalIntelligenceRuntime(
@@ -77,21 +78,24 @@ public final class InstitutionalIntelligenceRuntime {
         }
         this.configuredProviders = List.copyOf(providers);
 
-        Function<LlmProvider, String> modelSelector = provider -> switch (provider) {
+        Function<LlmProvider, String> configuredDefaultModel = provider -> switch (provider) {
             case OPENAI -> model(openAiModel, "gpt-4.1-mini");
             case GOOGLE -> model(googleModel, "gemini-3.7-flash");
             case ANTHROPIC -> model(anthropicModel, "claude-sonnet-4-20250514");
         };
+        this.modelRoutingPolicy = AdaptiveModelRoutingPolicy.fromEnvironment(configuredDefaultModel);
+        this.qualityRegistry = new ProviderCapabilityQualityRegistry();
         this.router = new LlmProviderRouter(clients);
         this.semanticInterpreter = new FrontierSemanticInterpreter(
-                router, modelSelector, configuredProviders, objectMapper);
+                router, configuredDefaultModel, configuredProviders, objectMapper);
         this.toolFabric = new DefaultToolFabric(List.of(
                 new CurrentTimeToolAdapter(), new WebSearchToolAdapter()));
-        RouterBackedIntelligenceEngine engine = new RouterBackedIntelligenceEngine(router, modelSelector);
+        RouterBackedIntelligenceEngine engine = new RouterBackedIntelligenceEngine(router, modelRoutingPolicy);
         MultiModelDeliberationCoordinator deliberation = new MultiModelDeliberationCoordinator(
                 engine, toolFabric, objectMapper);
         this.fabric = new IntelligenceFabric(
-                new IntelligencePlanner(new AdaptiveProviderRoutingPolicy(configuredProviders, router.telemetry())),
+                new IntelligencePlanner(new AdaptiveProviderRoutingPolicy(
+                        configuredProviders, router.telemetry(), qualityRegistry)),
                 engine,
                 new EvidencePreservingIntelligenceSynthesizer(),
                 new EvidenceBackedGovernance(),
@@ -105,6 +109,8 @@ public final class InstitutionalIntelligenceRuntime {
     public DefaultToolFabric toolFabric() { return toolFabric; }
     public IntelligenceFabric fabric() { return fabric; }
     public LlmProviderRouter router() { return router; }
+    public ProviderCapabilityQualityRegistry qualityRegistry() { return qualityRegistry; }
+    public AdaptiveModelRoutingPolicy modelRoutingPolicy() { return modelRoutingPolicy; }
 
     private static boolean present(String value) {
         return value != null && !value.isBlank();
