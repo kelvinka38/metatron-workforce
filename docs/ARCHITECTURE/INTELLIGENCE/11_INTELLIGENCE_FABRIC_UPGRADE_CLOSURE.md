@@ -1,6 +1,6 @@
 # METATRON INTELLIGENCE FABRIC UPGRADE — CURRENT-SCOPE CLOSURE
 
-**Status: CLOSURE CANDIDATE — CURRENT FOUNDER-APPROVED SCOPE**
+**Status: CANONICAL — CLOSED FOR CURRENT FOUNDER-APPROVED SCOPE**
 
 Date: 2026-09-11
 
@@ -111,7 +111,7 @@ Canonical implementation PR: #331.
 Canonical P3 merge SHA: `c66936a664c243f4053dbfabfddb70ceef3a5eff`.
 P3 exact-SHA production verification passed before later main advances.
 
-## Current production checkpoint before this closure commit
+## Current production checkpoint and closure release
 
 At closure audit time, repository and production were aligned on:
 
@@ -120,6 +120,26 @@ c8006157b1616e9e8ad2f6f0210428a11f53a602
 ```
 
 The exact Workforce image was running on that SHA. This checkpoint includes subsequent separately governed repository-coding work on top of the P3 merge; this Intelligence closure does not redefine or overwrite that work.
+
+The governing closure itself was published through PR #334 and merged as:
+
+```text
+580783030b329bacbed085841391f29e74eb3610
+```
+
+Release evidence for that exact merge SHA:
+
+```text
+GitHub CI                 PASS
+clean Gradle build        PASS
+immutable-SHA deployment  PASS
+production verification   PASS
+Workforce liveness        UP
+Workforce readiness       UP
+Gateway v2                OK
+```
+
+After release, local `main`, `origin/main`, running Workforce commit and immutable Workforce image were all verified on the same merge SHA.
 
 ## Historical receipt rule
 
