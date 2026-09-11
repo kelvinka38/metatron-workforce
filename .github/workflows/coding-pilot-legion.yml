@@ -1,11 +1,6 @@
 name: Coding Pilot Legion
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/coding-pilot-legion.yml'
-      - 'src/test/java/com/metatron/workforce/execution/governance/SotEnforcementRuntimeTest.java'
   workflow_dispatch:
     inputs:
       target_sha:
