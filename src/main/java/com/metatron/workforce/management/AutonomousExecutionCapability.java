@@ -24,6 +24,16 @@ public interface AutonomousExecutionCapability {
     default double requiredCapacity() { return 1.0; }
     default boolean supportsWorker(String workerId) { return true; }
 
+    /**
+     * Target-aware allocation hook. Existing capabilities keep their historical worker predicate;
+     * capabilities that represent a shared role family may additionally bind an explicit Work target
+     * to one canonical Worker without moving allocation semantics into the channel or planner.
+     */
+    default boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
+        Objects.requireNonNull(workSpec, "workSpec");
+        return supportsWorker(workerId);
+    }
+
     CapabilityResult execute(CapabilityRequest request);
 
     record CapabilityRequest(

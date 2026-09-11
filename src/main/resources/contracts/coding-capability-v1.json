@@ -1,0 +1,80 @@
+{
+  "version": "metatron.coding.v1",
+  "owner": "execution",
+  "ingresses": [
+    "workforce",
+    "direct-mcp"
+  ],
+  "releaseOwner": "highway",
+  "stages": [
+    {
+      "id": "inspect",
+      "workerActions": [
+        "workspace.repository.materialize",
+        "workspace.file.list",
+        "workspace.file.search",
+        "workspace.file.read",
+        "workspace.git.status",
+        "workspace.git.diff"
+      ],
+      "directTools": [
+        "workspace_list",
+        "workspace_search",
+        "workspace_read_file",
+        "workspace_git_diff",
+        "workspace_git_fetch",
+        "workspace_git_compare",
+        "workspace_git_show"
+      ]
+    },
+    {
+      "id": "mutate",
+      "workerActions": [
+        "workspace.file.patch",
+        "workspace.file.write",
+        "workspace.process.run",
+        "workspace.shell.run"
+      ],
+      "directTools": [
+        "workspace_write_file"
+      ]
+    },
+    {
+      "id": "verify",
+      "workerActions": [
+        "workspace.dependencies.install",
+        "workspace.build.run",
+        "workspace.test.run"
+      ],
+      "directTools": [
+        "workforce_gradle"
+      ]
+    },
+    {
+      "id": "version",
+      "workerActions": [
+        "workspace.git.run",
+        "workspace.github.pr.publish"
+      ],
+      "directTools": [
+        "workspace_git_branch",
+        "workspace_git_commit_local"
+      ]
+    },
+    {
+      "id": "release",
+      "workerActions": [],
+      "directTools": [
+        "workforce_deploy_local_sha",
+        "workforce_verify_production",
+        "production_identity"
+      ]
+    }
+  ],
+  "invariants": {
+    "workerReleaseSelfGrant": false,
+    "directRequiresWorkforceProcess": false,
+    "rawRootShellCanonical": false,
+    "sourcePublicationGoverned": true
+  }
+}
