@@ -44,7 +44,7 @@ jobs:
           grep -q '"runtime-closure"' "$HOME/.metatron/highway/current/task-registry.json"
           echo 'HIGHWAY_EXACT_CONTROL_PLANE_ACTIVE=PASS'
 
-      - name: Submit build, deploy, and one-shot governed research closure DAG to persistent Highway
+      - name: Submit exact-SHA build and deploy to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
@@ -75,24 +75,17 @@ jobs:
             --env "TARGET_SHA=$GITHUB_SHA" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 
-          RESEARCH=$($CTL submit \
-            --kind mother-baby-bios-live-objective \
-            --source-sha "$GITHUB_SHA" \
-            --dependency "$DEPLOY" \
-            --dedupe-key "aq-v5-governed-research-proof:$GITHUB_SHA" \
-            --priority 110 \
-            --env "EXPECTED_WORKFORCE_SHA=$GITHUB_SHA" \
-            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
-
           echo "HIGHWAY_BUILD_TASK=$BUILD"
           echo "HIGHWAY_DEPLOY_TASK=$DEPLOY"
-          echo "HIGHWAY_AQ_V5_RESEARCH_PROOF_TASK=$RESEARCH"
           $CTL get "$BUILD"
           $CTL get "$DEPLOY"
-          $CTL get "$RESEARCH"
           echo 'HIGHWAY_GITHUB_EXECUTION_PLANE=BYPASSED'
           echo 'HIGHWAY_RELEASE_INGRESS=PASS'
 
-          # GitHub remains ingress/observer only. All work above executes in the persistent Highway.
-          $CTL wait "$RESEARCH" --timeout 1200 --poll 2
-          echo 'AQ_V5_GOVERNED_RESEARCH_RUNTIME=PASS'
+          # GitHub is release ingress/observer only. The persistent Highway performs
+          # build, production mutation and the deploy task's canonical on-success
+          # production acceptance fanout. Vertical product/research proofs are
+          # intentionally separate from generic Workforce release success.
+          $CTL wait "$DEPLOY" --timeout 1200 --poll 2
+          echo "PRODUCTION_RELEASE_SHA=$GITHUB_SHA"
+          echo 'WORKFORCE_EXACT_SHA_RELEASE=PASS'
