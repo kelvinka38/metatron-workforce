@@ -6,6 +6,7 @@ import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.ExecutionAttemptStore;
 import com.metatron.workforce.execution.FileExecutionAttemptStore;
 import com.metatron.workforce.execution.governance.CompletionGate;
+import com.metatron.workforce.execution.governance.ExecutionGate;
 import com.metatron.workforce.execution.governance.GovernanceAdmissionValidator;
 import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
 import com.metatron.workforce.execution.governance.GovernancePlanService;
@@ -231,12 +232,13 @@ public class LiveManagementConfiguration {
             ExecutionAttemptService attempts,
             RuntimeCapacityCoordinator runtimeCapacity,
             GovernancePlanService governancePlans,
-            GovernanceAttemptBindingService governanceAttempts) {
+            GovernanceAttemptBindingService governanceAttempts,
+            ExecutionGate executionGate) {
         Clock clock = Clock.systemUTC();
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
                 .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
                         capability, core, admission, clock, staffing, attempts, runtimeCapacity,
-                        governancePlans, governanceAttempts))
+                        governancePlans, governanceAttempts, executionGate))
                 .map(capability -> (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
                         capability, safety, clock))
                 .toList();
