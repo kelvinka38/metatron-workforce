@@ -22,17 +22,25 @@ services:
     volumes:
       - workforce-objective-workspaces:/workspaces
 
+  workforce-execution-workspace-init:
+    image: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 10001:10001 /executions && chmod 700 /executions"]
+    restart: "no"
+    read_only: true
+    network_mode: none
+    volumes:
+      - workforce-execution-workspaces:/executions
+
   workforce-sandbox:
     depends_on:
-      workforce-workspace-init:
+      workforce-execution-workspace-init:
         condition: service_completed_successfully
     build:
       context: ..
       dockerfile: runtime-sandbox/Dockerfile
     image: metatron-workforce-sandbox:${METATRON_IMAGE_TAG:-0.1.0}
     restart: unless-stopped
-    # The sandbox may run a bounded build coordinator and one test/compiler JVM concurrently.
-    # 768 MiB was lower than that verified peak and caused the Gradle daemon to be OOM-killed.
     mem_limit: ${METATRON_SANDBOX_MEM_LIMIT:-1280m}
     mem_reservation: ${METATRON_SANDBOX_MEM_RESERVATION:-512m}
     cpus: ${METATRON_SANDBOX_CPUS:-1.00}
@@ -44,7 +52,7 @@ services:
       SANDBOX_WORKSPACE_ROOT: "/workspaces"
       SANDBOX_ALLOWED_EXECUTABLES: "git,java,javac,sh,bash,gradle,mvn,./gradlew,./mvnw,node,npm,npx,pnpm,yarn,python3,python,pip3"
     volumes:
-      - workforce-objective-workspaces:/workspaces
+      - workforce-execution-workspaces:/workspaces
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2))['status']=='UP'"]
       interval: 2s
@@ -71,6 +79,8 @@ services:
       workforce-state-init:
         condition: service_completed_successfully
       workforce-workspace-init:
+        condition: service_completed_successfully
+      workforce-execution-workspace-init:
         condition: service_completed_successfully
       workforce-sandbox:
         condition: service_healthy
@@ -103,6 +113,16 @@ services:
       METATRON_RUNTIME_EXECUTION_TOKEN: "${METATRON_RUNTIME_EXECUTION_TOKEN:-}"
       METATRON_RUNTIME_PROFILE_BINDINGS_PATH: "${METATRON_RUNTIME_PROFILE_BINDINGS_PATH:-/var/lib/metatron-workforce/runtime-profile-bindings.tsv}"
       METATRON_OBJECTIVE_WORKSPACE_ROOT: "${METATRON_OBJECTIVE_WORKSPACE_ROOT:-/var/lib/metatron-workforce/objective-workspaces}"
+      METATRON_EXECUTION_WORKSPACE_ROOT: "${METATRON_EXECUTION_WORKSPACE_ROOT:-/var/lib/metatron/executions}"
+      METATRON_EXECUTION_WORKSPACE_BINDINGS_PATH: "${METATRON_EXECUTION_WORKSPACE_BINDINGS_PATH:-/var/lib/metatron-workforce/execution-workspace-bindings.json}"
+      METATRON_EXECUTION_RESOURCE_STATE_PATH: "${METATRON_EXECUTION_RESOURCE_STATE_PATH:-/var/lib/metatron-workforce/execution-resource-state.json}"
+      METATRON_EXECUTION_RESOURCE_QUEUE_PATH: "${METATRON_EXECUTION_RESOURCE_QUEUE_PATH:-/var/lib/metatron-workforce/execution-resource-queue.json}"
+      METATRON_EXECUTION_SLOTS: "${METATRON_EXECUTION_SLOTS:-4}"
+      METATRON_JVM_BUILD_SLOTS: "${METATRON_JVM_BUILD_SLOTS:-2}"
+      METATRON_GITHUB_MUTATION_SLOTS: "${METATRON_GITHUB_MUTATION_SLOTS:-2}"
+      METATRON_DOCKER_BUILD_SLOTS: "${METATRON_DOCKER_BUILD_SLOTS:-1}"
+      METATRON_MAX_ACTIVE_EXECUTIONS_PER_OBJECTIVE: "${METATRON_MAX_ACTIVE_EXECUTIONS_PER_OBJECTIVE:-4}"
+      METATRON_RESOURCE_LEASE_SECONDS: "${METATRON_RESOURCE_LEASE_SECONDS:-60}"
       METATRON_SANDBOX_URL: "${METATRON_SANDBOX_URL:-http://workforce-sandbox:8090}"
       METATRON_SANDBOX_TOKEN: "${METATRON_SANDBOX_TOKEN:-}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
@@ -126,6 +146,7 @@ services:
     volumes:
       - workforce-state:/var/lib/metatron-workforce
       - workforce-objective-workspaces:/var/lib/metatron-workforce/objective-workspaces
+      - workforce-execution-workspaces:/var/lib/metatron/executions
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null"]
       interval: 2s
@@ -150,6 +171,8 @@ volumes:
     name: ${METATRON_STATE_VOLUME_NAME:-metatron-workforce-state}
   workforce-objective-workspaces:
     name: ${METATRON_WORKSPACE_VOLUME_NAME:-metatron-workforce-objective-workspaces}
+  workforce-execution-workspaces:
+    name: ${METATRON_EXECUTION_WORKSPACE_VOLUME_NAME:-metatron-workforce-execution-workspaces}
 
 networks:
   workforce:

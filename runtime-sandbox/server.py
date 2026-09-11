@@ -21,7 +21,6 @@ except FileNotFoundError:
 if not TOKEN:
     raise SystemExit("SANDBOX_TOKEN_REQUIRED")
 
-# The long-lived server keeps the transport token only in memory and is non-dumpable.
 try:
     libc = ctypes.CDLL(None)
     PR_SET_DUMPABLE = 4
@@ -29,8 +28,6 @@ try:
 except Exception:
     pass
 
-# Drop root after reading/removing the root-owned token file. Worker child processes therefore
-# never receive the transport credential and cannot recover it from the server environment.
 if os.getuid() == 0:
     os.setgid(10001)
     os.setuid(10001)
@@ -93,8 +90,6 @@ def executable_command(working_directory: Path, executable: str, args):
         command_executable = tokens[0]
         if command_executable not in ALLOWED - {"sh", "bash"}:
             raise PermissionError("shell command executable denied")
-        # Execute the parsed command directly. The 'shell' action is a governed command surface,
-        # not a way to bypass the executable profile through pipes/substitution/redirection.
         executable = command_executable
         args = tokens[1:]
 
@@ -107,14 +102,8 @@ def executable_command(working_directory: Path, executable: str, args):
 
 
 def child_environment(workspace: Path):
-    # Deliberately do not inherit the server environment: it can contain transport/runtime
-    # configuration that must never reach Worker child processes. JAVA_HOME is the one bounded
-    # runtime capability required by Gradle/Maven wrappers in the Temurin JDK sandbox image.
     java_home = os.environ.get("JAVA_HOME", DEFAULT_JAVA_HOME).strip() or DEFAULT_JAVA_HOME
     java_bin = str(Path(java_home) / "bin")
-    # Build tools frequently create a coordinator JVM plus a test/compiler JVM. Bound both the
-    # coordinator and its parallelism explicitly so a repository build cannot consume the whole
-    # sandbox cgroup or disappear under OOM pressure. These are runtime controls, never credentials.
     gradle_opts = (
         "-Dorg.gradle.jvmargs=-Xms32m\\ -Xmx256m\\ -XX:MaxMetaspaceSize=160m\\ -Dfile.encoding=UTF-8 "
         "-Dorg.gradle.workers.max=1 -Dorg.gradle.parallel=false -Dorg.gradle.daemon=false"
@@ -143,13 +132,22 @@ def run_process(payload):
     started = time.monotonic()
     workspace_key = str(payload.get("workspaceKey", ""))
     workspace = workspace_for(workspace_key)
+    attempt_id = str(payload.get("attemptId", "")).strip()
+    try:
+        attempt_fence = int(payload.get("attemptFencingToken", 0) or 0)
+    except (TypeError, ValueError):
+        raise ValueError("invalid attempt fencing token")
+    workspace_ref = str(payload.get("workspaceRef", "")).strip()
+    if bool(attempt_id) != (attempt_fence > 0):
+        raise ValueError("attempt identity/fence must be paired")
+    if attempt_id and not workspace_ref.startswith("execution-workspace:"):
+        raise ValueError("attempt-bound sandbox request requires execution workspace reference")
+
     working_directory = working_directory_for(workspace, str(payload.get("workingDirectory", "")))
     executable = str(payload.get("executable", ""))
     command = executable_command(working_directory, executable, payload.get("args") or [])
     timeout = max(1, min(int(payload.get("timeoutSeconds", 60)), 300))
     max_output = max(1024, min(int(payload.get("maxOutputBytes", 512000)), 4_000_000))
-    # Process output is sandbox transport state, not Objective work product. Keeping this log out of
-    # the workspace prevents Git baselines/Observation from treating command plumbing as a mutation.
     log = LOG_ROOT / f"{workspace_key}.log"
     env = child_environment(workspace)
     timed_out = False
@@ -188,11 +186,14 @@ def run_process(payload):
         "workspaceKey": workspace_key,
         "executable": str(payload.get("executable", "")),
         "durationMillis": duration,
+        "attemptId": attempt_id,
+        "attemptFencingToken": attempt_fence,
+        "workspaceRef": workspace_ref,
     }
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "MetatronWorkerSandbox/1"
+    server_version = "MetatronWorkerSandbox/2"
 
     def log_message(self, fmt, *args):
         return
@@ -207,7 +208,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._json(200, {"status": "UP", "workspaceRoot": str(ROOT), "credentialsPresent": False})
+            self._json(200, {"status": "UP", "workspaceRoot": str(ROOT), "credentialsPresent": False, "executionAttribution": True})
             return
         self._json(404, {"error": "not_found"})
 
