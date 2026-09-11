@@ -40,8 +40,12 @@ public record CompletionCandidate(
         Objects.requireNonNull(proposedAt, "proposedAt");
     }
 
+    /**
+     * Source SHA alone is provenance for proposal-producing work and does not mean a released artifact exists.
+     * Once any downstream artifact identity is asserted, CompletionGate requires the full exact-SHA release chain.
+     */
     public boolean carriesArtifactIdentity() {
-        return !(sourceSha.isBlank() && testedSha.isBlank() && approvedSha.isBlank() && deployedSha.isBlank() && observedSha.isBlank());
+        return !(testedSha.isBlank() && approvedSha.isBlank() && deployedSha.isBlank() && observedSha.isBlank());
     }
 
     private static String clean(String value) { return value == null ? "" : value.trim(); }
