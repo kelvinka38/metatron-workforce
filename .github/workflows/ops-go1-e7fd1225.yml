@@ -1,0 +1,65 @@
+name: Ops GO1 Rerun e7fd1225
+
+on:
+  push:
+    branches: [ops/go1-e7fd1225]
+    paths:
+      - '.github/workflows/ops-go1-e7fd1225.yml'
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  rerun-go1:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout canonical release source
+        uses: actions/checkout@v7
+        with:
+          ref: e7fd12251075aa1c830c733b7a32b93841eef060
+          fetch-depth: 1
+      - name: Wait for exact production SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=e7fd12251075aa1c830c733b7a32b93841eef060
+          for _ in $(seq 1 300); do
+            CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+            if [ -n "$CID" ]; then
+              LIVE=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+              HEALTH=$(docker inspect "$CID" --format '{{.State.Health.Status}}' 2>/dev/null || true)
+              if [ "$LIVE" = "$TARGET" ] && [ "$HEALTH" = healthy ]; then
+                echo "GO1_PRODUCTION_SHA=$LIVE"
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo 'production did not reach exact target SHA' >&2
+          exit 1
+      - name: Submit same real GO1 objective to persistent Highway
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=e7fd12251075aa1c830c733b7a32b93841eef060
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit \
+            --kind general-engineering-go1 \
+            --source-sha "$TARGET" \
+            --priority 50 \
+            --dedupe-key "general-engineering-go1:$TARGET:$GITHUB_RUN_ID" \
+            --env "TARGET_SHA=$TARGET" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_GO1_TASK=$TASK"
+          $CTL get "$TASK"
+          $CTL wait "$TASK" --timeout 1500 --poll 2
+          $CTL get "$TASK"
+          echo 'REAL_GO1_RERUN=PASS'
