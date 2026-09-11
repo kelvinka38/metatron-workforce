@@ -59,6 +59,21 @@ public class IntelligenceRuntimeConfiguration {
         return new InstitutionalContextResolver.Default();
     }
 
+    @Bean
+    IntelligenceRoutingFeedbackStore intelligenceRoutingFeedbackStore(
+            ObjectMapper objectMapper,
+            @Value("${METATRON_INTELLIGENCE_ROUTING_FEEDBACK_PATH:/var/lib/metatron-workforce/intelligence-routing-feedback.json}") String configured) {
+        return new FileIntelligenceRoutingFeedbackStore(Path.of(configured), objectMapper);
+    }
+
+    @Bean
+    IntelligenceRoutingFeedbackService intelligenceRoutingFeedbackService(
+            InstitutionalIntelligenceRuntime runtime,
+            IntelligenceRoutingFeedbackStore store) {
+        return new IntelligenceRoutingFeedbackService(
+                runtime.qualityRegistry(), runtime.router().callTrace(), store);
+    }
+
     @Bean IntelligenceCaseStore intelligenceCaseStore(
             ObjectMapper objectMapper,
             @Value("${METATRON_INTELLIGENCE_CASE_PATH:/var/lib/metatron-workforce/intelligence-cases}") String configured) {
@@ -71,7 +86,9 @@ public class IntelligenceRuntimeConfiguration {
     @Bean IntelligenceDepthControlService intelligenceDepthControlService(IntelligenceDepthPreferenceStore store) {
         return new IntelligenceDepthControlService(store);
     }
-    @Bean IntelligenceCaseLifecycleService intelligenceCaseLifecycleService(IntelligenceCaseStore store) {
-        return new IntelligenceCaseLifecycleService(store,Clock.systemUTC());
+    @Bean IntelligenceCaseLifecycleService intelligenceCaseLifecycleService(
+            IntelligenceCaseStore store,
+            IntelligenceRoutingFeedbackService routingFeedback) {
+        return new IntelligenceCaseLifecycleService(store, Clock.systemUTC(), routingFeedback);
     }
 }
