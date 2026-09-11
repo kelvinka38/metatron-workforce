@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Locks Worker and Direct MCP coding ingress to one versioned Execution-owned capability contract. */
 class CodingCapabilityContractConsistencyTest {
     private static final String CONTRACT = "/contracts/coding-capability-v1.json";
-    private static final String CONTRACT_SHA256 = "3c2a8fe63aebf1e2e9b3393dd4c14a95c5b7b0ea48962e002d6485acff4eff88";
+    private static final String CONTRACT_SHA256 = "f34e82996eeeaad4f39f75e81597c1173b501a585c6dc7ae83c6b735c357449f";
 
     @Test
     void workerAndDirectIngressShareOneVersionedExecutionContract() throws Exception {
@@ -36,9 +36,12 @@ class CodingCapabilityContractConsistencyTest {
         assertEquals("execution", root.path("owner").asText());
         assertEquals("highway", root.path("releaseOwner").asText());
         assertFalse(root.path("invariants").path("workerReleaseSelfGrant").asBoolean(true));
-        assertFalse(root.path("invariants").path("directRequiresWorkforceProcess").asBoolean(true));
+        assertTrue(root.path("invariants").path("directRequiresWorkforceProcess").asBoolean(false));
         assertFalse(root.path("invariants").path("rawRootShellCanonical").asBoolean(true));
         assertTrue(root.path("invariants").path("sourcePublicationGoverned").asBoolean(false));
+        assertTrue(root.path("invariants").path("repositoryCodingUsesObjectiveWorkspace").asBoolean(false));
+        assertTrue(root.path("invariants").path("hostWorkspaceToolsAreOperationalCompatibilityOnly").asBoolean(false));
+        assertTrue(root.path("invariants").path("repositoryCredentialsRemainInWorkforce").asBoolean(false));
 
         Set<String> workerActions = new LinkedHashSet<>();
         Set<String> directTools = new LinkedHashSet<>();
@@ -50,17 +53,15 @@ class CodingCapabilityContractConsistencyTest {
         WorkerRuntimeProfileBindingService.ToolProfile profile = WorkerRuntimeProfileBindingService.inMemory().profile(
                 WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
                 "execution.general.workspace");
-        assertTrue(profile.actionRefs().containsAll(workerActions),
-                "general engineering Worker must implement every contract Worker action");
-        assertFalse(profile.actionRefs().contains(InstitutionalActionAdapters.GITHUB_DEPLOY_DISPATCH),
-                "release authority remains outside the coding Worker profile");
+        assertTrue(profile.actionRefs().containsAll(workerActions));
+        assertFalse(profile.actionRefs().contains(InstitutionalActionAdapters.GITHUB_DEPLOY_DISPATCH));
 
         assertEquals(Set.of(
-                "workspace_list", "workspace_search", "workspace_read_file", "workspace_git_diff",
-                "workspace_git_fetch", "workspace_git_compare", "workspace_git_show",
-                "workspace_write_file", "workforce_gradle", "workspace_git_branch",
-                "workspace_git_commit_local", "workforce_deploy_local_sha",
-                "workforce_verify_production", "production_identity"), directTools,
-                "Direct MCP mapping changed without a coding contract version change");
+                "repository_open", "repository_list", "repository_search", "repository_read",
+                "repository_git_status", "repository_git_diff",
+                "repository_patch", "repository_write", "repository_process", "repository_shell",
+                "repository_dependencies_install", "repository_build", "repository_test",
+                "repository_git_run", "repository_pr_publish",
+                "workforce_deploy_local_sha", "workforce_verify_production", "production_identity"), directTools);
     }
 }
