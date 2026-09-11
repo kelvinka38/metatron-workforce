@@ -1,0 +1,60 @@
+name: Ops Verify PR325 Exact SHA
+
+on:
+  push:
+    branches:
+      - ops/verify-pr325-exact-20260911
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 463c6f17ede9ae4bb676e31a724dbf2872812ae6
+          fetch-depth: 1
+
+      - name: Prove exact SHA
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "463c6f17ede9ae4bb676e31a724dbf2872812ae6"
+          echo "EXACT_CANDIDATE_SHA=PASS"
+
+      - name: Verify repository audit acceptance remains fail closed
+        run: |
+          set -euo pipefail
+          f=scripts/highway-tasks/repository-audit-live-acceptance.sh
+          ! grep -Fq 'treeHttpStatus=200' "$f"
+          for marker in \
+            'source=gateway-egress/github-api' \
+            'authenticated=true' \
+            'repository=kelvinka38/bios' \
+            'repositoryFilesObserved=' \
+            'contentFilesRead=' \
+            'contentBytesRead=' \
+            'gatewayEgressCrossings=' \
+            'gatewayEgressProvenance=' \
+            'authorization=LIVE-ACCEPTANCE-REPOSITORY-READ' \
+            'credential=isolated' \
+            'verdict=PASS' \
+            'commitSha=' \
+            "assert files>0" \
+            "assert size>0" \
+            "assert crossings>=4" \
+            "d['work']['status']=='COMPLETED'" \
+            "runtime-evidence:"; do
+            grep -Fq "$marker" "$f"
+          done
+          echo "REPOSITORY_AUDIT_VERIFIER_FAIL_CLOSED=PASS"
+
+      - name: Full test and build
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew clean test bootJar --no-daemon --max-workers=1
+          echo "EXACT_SHA_FULL_BUILD=PASS"
