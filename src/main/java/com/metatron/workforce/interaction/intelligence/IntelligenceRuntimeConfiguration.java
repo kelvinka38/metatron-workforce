@@ -3,6 +3,8 @@ package com.metatron.workforce.interaction.intelligence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.actor.ActorScopedWorkerIntelligenceService;
 import com.metatron.workforce.actor.WorkerActorRuntime;
+import com.metatron.workforce.deliberation.DeliberatingWorkerIntelligenceService;
+import com.metatron.workforce.deliberation.WorkerDeliberationRuntime;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -41,12 +43,21 @@ public class IntelligenceRuntimeConfiguration {
     }
 
     @Bean
+    WorkerDeliberationRuntime workerDeliberationRuntime(
+            ObjectMapper objectMapper,
+            @Value("${METATRON_WORKER_DELIBERATION_PATH:/var/lib/metatron-workforce/worker-deliberation.json}") String configured) {
+        return new WorkerDeliberationRuntime(Path.of(configured), objectMapper);
+    }
+
+    @Bean
     WorkerIntelligenceService workerIntelligenceService(
             InstitutionalIntelligenceRuntime runtime,
-            WorkerActorRuntime actorRuntime) {
+            WorkerActorRuntime actorRuntime,
+            WorkerDeliberationRuntime deliberationRuntime) {
         WorkerIntelligenceService providerBacked = WorkerIntelligenceService.backedBy(
                 runtime.fabric(), runtime.configuredProviders().size());
-        return new ActorScopedWorkerIntelligenceService(providerBacked, actorRuntime);
+        WorkerIntelligenceService deliberating = new DeliberatingWorkerIntelligenceService(providerBacked, deliberationRuntime);
+        return new ActorScopedWorkerIntelligenceService(deliberating, actorRuntime);
     }
 
     @Bean
