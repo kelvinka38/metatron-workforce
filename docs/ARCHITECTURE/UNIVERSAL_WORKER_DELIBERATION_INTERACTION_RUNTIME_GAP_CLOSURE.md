@@ -1,6 +1,6 @@
 # Universal Worker Deliberation & Interaction Runtime Gap Closure
 
-Status: IMPLEMENTED — RELEASE CANDIDATE
+Status: CANONICAL — CLOSED FOR CURRENT FOUNDER-APPROVED SCOPE
 Owner: Metatron Workforce
 Approval: Founder-approved 2026-09-11
 
@@ -67,7 +67,7 @@ Roles may add domain workflows and quality criteria above this vocabulary but ma
 
 `CONVERSE, CLARIFY, PROPOSE, PLAN, ACT, INSPECT, CRITIQUE, REVISE, VERIFY, DELIVER, ESCALATE`.
 
-The current runtime uses deterministic, provider-independent pre-routing policy to prevent obvious one-shot collapse and to keep cheap/simple work direct. Provider cognition then executes under the chosen move using the existing Intelligence Fabric.
+The runtime uses deterministic, provider-independent pre-routing policy to prevent obvious one-shot collapse and to keep cheap/simple work direct. Provider cognition then executes under the chosen move using the existing Intelligence Fabric.
 
 ## 7. Behavior
 
@@ -158,21 +158,42 @@ The Founder-approved execution breakdown P0-P12 maps as follows:
 - P9 role-profile integration -> role grounding/constitution remain upstream inputs; no role-specific control branches.
 - P10 UX/API exposure -> authenticated deliberation state endpoint.
 - P11 generic conformance -> arbitrary-role + Vietnamese + direct/non-conversation boundary tests.
-- P12 production rollout -> requires merge, immutable-SHA deploy and exact production verification before this document may be marked CANONICAL/CLOSED.
+- P12 production rollout -> CLOSED by the release evidence below.
 
 ## 14. Non-goals
 
 This closure does not train a model, build Composer-specific intelligence, replace Intelligence Fabric, replace Worker Actor Runtime, expose chain-of-thought, or bypass Authorization/Gateway/Execution/Observation.
 
-## 15. Release gate
+## 15. Release evidence
 
-Do not mark this closure complete from source/tests alone. Final closure requires:
+Implementation release:
 
-1. full clean build PASS;
-2. GitHub PR CI PASS;
-3. merge to canonical `main`;
-4. exact immutable-SHA production deployment PASS;
-5. exact production verification PASS;
-6. Workforce liveness/readiness UP;
-7. Gateway health OK;
-8. local main == origin/main == running commit == immutable image SHA.
+- PR #336: merged after CI PASS.
+- Merge SHA: `96cf7fe393a656be006544ede18bb05f48e2866d`.
+- Full clean Gradle build on the integrated head: PASS.
+- GitHub CI: PASS.
+- General Runtime Polyglot Acceptance: PASS.
+- Typed Work Ingress Acceptance: PASS.
+- Highway Conformance CI: PASS.
+- Canonical exact-SHA production verification for `96cf7fe393a656be006544ede18bb05f48e2866d`: PASS.
+- Workforce liveness/readiness: UP.
+- Gateway v2 health: OK.
+- Production identity verified with local `main`, running commit and immutable image all at `96cf7fe393a656be006544ede18bb05f48e2866d` at the implementation release.
+
+A first post-merge local build attempt was invalidated by concurrent build-directory cleanup from another lane and produced broad `NoClassDefFoundError`/missing test-output artifacts. A subsequent uncontended clean build passed. That transient shared-build-directory race is not treated as product evidence and did not bypass any release gate.
+
+## 16. Final closure decision
+
+```text
+UNIVERSAL WORKER DELIBERATION RUNTIME   CLOSED
+ROLE-INDEPENDENT CONTROL LOOP           CLOSED
+PERSISTENT DELIBERATION STATE           CLOSED
+ANTI-ONE-SHOT COMPLEX OBJECTIVE GATE    CLOSED
+FOLLOW-UP OBJECTIVE CONTINUITY           CLOSED
+CROSS-CHANNEL CANONICAL INTEGRATION      CLOSED
+GENERIC ROLE INHERITANCE                 CLOSED
+PRODUCTION EXACT-SHA VERIFICATION        PASS
+NEW ROLE-SPECIFIC COGNITIVE STACK        NONE
+```
+
+This closure is canonical for the current Founder-approved scope. Future behavior changes must be driven by observed Worker defects or newly approved scope, not by adding role-specific control loops.
