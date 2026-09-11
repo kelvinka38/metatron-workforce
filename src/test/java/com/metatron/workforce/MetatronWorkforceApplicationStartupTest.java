@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
         properties = {
                 "METATRON_INTELLIGENCE_CASE_PATH=build/test-runtime/intelligence-cases",
                 "METATRON_INTELLIGENCE_DEPTH_PATH=build/test-runtime/intelligence-depth",
+                "METATRON_INTELLIGENCE_ROUTING_FEEDBACK_PATH=build/test-runtime/intelligence-routing-feedback.json",
                 "METATRON_WORKPLACE_MEETING_PATH=build/test-runtime/workplace/meetings",
                 "METATRON_WORKFORCE_CORE_STATE_PATH=build/test-runtime/workforce-core-state.json",
                 "METATRON_WORKER_CONSTITUTION_STATE_PATH=build/test-runtime/worker-constitution-state.json",
