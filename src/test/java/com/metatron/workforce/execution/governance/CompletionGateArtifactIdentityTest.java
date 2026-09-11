@@ -22,7 +22,10 @@ class CompletionGateArtifactIdentityTest {
     void partialReleaseIdentityStillFailsClosed() {
         Fixture f = new Fixture();
         GovernancePlanService.BoundPlan bound = f.bound();
-        CompletionCandidate partial = candidate(bound, SHA, "", "", "", "");
+        // Source SHA alone is provenance and intentionally does not activate release-artifact identity.
+        // Once a downstream artifact identity (tested SHA here) is asserted, the exact release chain
+        // must be complete and identical all the way through observed SHA.
+        CompletionCandidate partial = candidate(bound, SHA, SHA, "", "", "");
 
         CompletionDecision decision = f.completion.decide(partial);
 
