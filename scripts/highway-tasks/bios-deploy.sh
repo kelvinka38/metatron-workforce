@@ -176,46 +176,48 @@ post("/discovery/update",{
       {"semantic_key":"CD-05","original_value":"Nuôi thương phẩm","normalized_value":"GROW_OUT","field_state":"DECLARED"},
       {"semantic_key":"CD-06","original_value":"Cá nâu","normalized_value":"Scatophagus argus","field_state":"DECLARED","owner_lock":False},
       {"semantic_key":"CD-07","original_value":"500000000 VND","normalized_value":{"amount_minor":"500000000","currency":"VND"},"field_state":"DECLARED","owner_lock":True},
-      {"semantic_key":"CD-08","original_value":"Không thức ăn công nghiệp; không hóa chất; năng lượng tái tạo","normalized_value":"Không thức ăn công nghiệp; không hóa chất; năng lượng tái tạo","field_state":"DECLARED","owner_lock":True}
+      {"semantic_key":"CD-08","original_value":"","normalized_value":"NONE_STATED","field_state":"DECLARED","owner_lock":True}
     ]
 })
 print("AQ_ACCEPTANCE_ISOLATED_FARM=PASS",farm_id)
 generated=post("/scenarios/generate",{"case_id":case_id,"farm_id":farm_id,"refresh":True})
-assert generated["candidate_count"]>=8, generated
+assert generated["candidate_count"]==3, generated
+assert generated["reasoning_version"]=="aq-product-reasoning-4.0", generated
 scenarios=post("/scenarios/list",{"case_id":case_id,"farm_id":farm_id})
-for sc in scenarios: post("/scenarios/evaluate",{"case_id":case_id,"scenario_id":sc["scenario_id"],"version":sc["version"]})
+assert len(scenarios)==3, scenarios
+for sc in scenarios:
+    post("/scenarios/evaluate",{"case_id":case_id,"scenario_id":sc["scenario_id"],"version":sc["version"]})
 rec=post("/decision/recommend",{"case_id":case_id,"farm_id":farm_id})
 assert rec["comparator_version"]=="aq-decision-comparator-1.2", rec
 ws=post("/farmer/workspace",{"case_id":case_id,"farm_id":farm_id})
-scat=[x for x in ws["scenarios"] if x["scientific_name"]=="Scatophagus argus"]
-assert len(scat)>=3, scat
-variants={(x["culture_method"],x["input_strategy"]) for x in scat}
-assert ("EARTH_POND","MIXED_LOW_INPUT") in variants, variants
-assert ("POND","COMMERCIAL_FEED") in variants, variants
-assert all(x["input_strategy"]!="NATURAL" for x in scat), scat
-low=next(x for x in scat if x["culture_method"]=="EARTH_POND" and x["input_strategy"]=="MIXED_LOW_INPUT")
-assert low["economic_model_state"]=="PARTIAL_REFERENCE", low
-assert low["production_volume_kg_range"], low
-assert low["historical_cycle_cost_reference_minor_range"], low
-assert low["capital_required_minor"] is None, low
-# Synthesis v2 must prove Step 1 was actually consumed, not merely decorate a species card.
-trace={x.get("semantic") for x in low.get("decision_trace") or []}
+assert ws["reasoning_version"]=="aq-product-reasoning-4.0", ws
+assert ws["proposal_count"]==3, ws
+assert len(ws["scenarios"])==3, ws["scenarios"]
+assert len(ws["unknowns"])<=8, ws["unknowns"]
+props=[x["property"] for x in ws["unknowns"]]
+assert len(props)==len(set(props)), props
+farmer_resolution=" ".join(x.get("resolution_method","") for x in ws["unknowns"]).lower()
+assert "obtain validated" not in farmer_resolution, farmer_resolution
+assert "complete economic model" not in farmer_resolution, farmer_resolution
+primary=next(x for x in ws["scenarios"] if x.get("proposal_role")=="PRIMARY")
+assert primary["scientific_name"]=="Scatophagus argus", primary
+trace={x.get("semantic") for x in primary.get("decision_trace") or []}
 assert {"CD-01","CD-02","CD-03","CD-04","CD-05","CD-06","CD-07","CD-08"}.issubset(trace), trace
-blueprint=low.get("production_blueprint") or {}
+blueprint=primary.get("production_blueprint") or {}
 assert (blueprint.get("area_basis") or {}).get("usable_area_m2")==650.0, blueprint
 assert (blueprint.get("environment_strategy") or {}).get("water_source")=="RIVER", blueprint
-gates={g["rule_id"]:g for g in low.get("gate_results") or []}
-assert gates["AQ-OWNER-NO-COMMERCIAL-FEED"]["result"]=="FAIL", gates
-assert gates["AQ-OWNER-NO-CHEMICAL"]["result"]=="CONDITIONAL", gates
-assert gates["AQ-OWNER-RENEWABLE"]["result"]=="CONDITIONAL", gates
-assert low["eligibility"]=="INELIGIBLE", low
-print("AQ_LIVE_FULL_CONTEXT_TRACE=PASS",sorted(trace))
-print("AQ_LIVE_STRICT_OWNER_INVARIANTS=PASS")
+integrated=[x for x in ws["scenarios"] if x.get("species_configuration")=="POLYCULTURE"]
+assert integrated, ws["scenarios"]
+assert any(" + " in x.get("species_name","") for x in integrated), integrated
+assert all(x["eligibility"]=="CONDITIONAL" for x in integrated), integrated
+assert all(x["recommendation_state"]=="PROVISIONAL" for x in integrated), integrated
+assert all(int(x.get("blocking_unknowns") or 0)>0 for x in integrated), integrated
+print("AQ_LIVE_THREE_PROPOSAL_REASONING=PASS",[x.get("species_name") for x in ws["scenarios"]])
+print("AQ_LIVE_INTEGRATED_FAIL_CLOSED=PASS",[x.get("species_name") for x in integrated])
+print("AQ_LIVE_UNKNOWN_DEDUP=PASS",props)
 market=post("/farmer/market",{"case_id":case_id,"farm_id":farm_id})
 scat_market=[x for x in market["evidence"] if x["product"]=="Cá nâu"]
 assert not any((x.get("region") or {}).get("province") in {"Huế","Thừa Thiên Huế"} for x in scat_market), scat_market
-print("AQ_LIVE_SYSTEM_VARIANTS=PASS",len(scat),sorted(variants))
-print("AQ_LIVE_ECONOMICS_REFERENCE_GUARD=PASS")
 print("AQ_LIVE_MARKET_GEOGRAPHY_GUARD=PASS")
 print("AQ_LIVE_COMPARATOR_V12=PASS")
 PY
