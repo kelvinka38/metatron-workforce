@@ -26,7 +26,10 @@ e=d['workerResult']['evidence']
 assert d['repository']=='kelvinka38/bios'
 assert d['workerResult']['worker']=='RepositoryAuditWorker'
 assert d['workerResult']['status']=='PASS'
-for marker in ['Repository Audit Report','source=gateway-egress/github-api','authenticated=true','repository=kelvinka38/bios','treeHttpStatus=200','repositoryFilesObserved=','contentFilesRead=','contentBytesRead=','sotSignals=','gatewayEgressCrossings=','gatewayEgressProvenance=','authorization=LIVE-ACCEPTANCE-REPOSITORY-READ','credential=isolated','findings=','observedPaths=','verdict=PASS']:
+# Validate current repository-audit evidence semantics. Direct tree HTTP status was a
+# transport-detail marker and is no longer emitted; substantive retrieval proof is
+# carried by authenticated gateway egress, observed/read content, and exact identity.
+for marker in ['Repository Audit Report','source=gateway-egress/github-api','authenticated=true','repository=kelvinka38/bios','repositoryFilesObserved=','contentFilesRead=','contentBytesRead=','sotSignals=','gatewayEgressCrossings=','gatewayEgressProvenance=','authorization=LIVE-ACCEPTANCE-REPOSITORY-READ','credential=isolated','findings=','observedPaths=','verdict=PASS']:
     assert marker in e,(marker,e)
 sha=re.search(r'commitSha=([0-9a-f]{40})',e); assert sha,e
 files=int(re.search(r'contentFilesRead=(\d+)',e).group(1)); assert files>0,e
