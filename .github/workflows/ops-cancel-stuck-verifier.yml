@@ -17,5 +17,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          echo CANCEL_TARGET=34566360745
           gh api -X POST repos/${{ github.repository }}/actions/runs/34566360745/cancel
           echo STALE_VERIFIER_CANCEL_REQUESTED=PASS
