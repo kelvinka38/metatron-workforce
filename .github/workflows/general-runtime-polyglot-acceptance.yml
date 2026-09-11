@@ -14,7 +14,9 @@ on:
 
 jobs:
   unit-contract:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    # Automatic branch coverage is consolidated into Highway Conformance CI.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -32,7 +34,9 @@ jobs:
             --tests com.metatron.workforce.action.GeneralWorkspaceBuildResourceContractTest
 
   real-sandbox:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    # The real sandbox image/toolchain proof is executed by the single Highway PR gate.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - name: Build polyglot sandbox image

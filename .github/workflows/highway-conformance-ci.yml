@@ -60,8 +60,10 @@ jobs:
           chmod +x gradlew
           ./gradlew clean test bootJar --no-daemon --max-workers=1
           METATRON_SANDBOX_TOKEN=compose-validation-only docker compose -f deploy/docker-compose.yml config >/dev/null
+          bash scripts/highway-tasks/pr-consolidated-contracts.sh
           echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
           echo 'HIGHWAY_FULL_BUILD_PR_GATE=PASS'
+          echo 'HIGHWAY_CONSOLIDATED_PR_CONTRACTS=PASS'
       - name: Enforce single PR queue surface and fabric contracts
         shell: bash
         run: |

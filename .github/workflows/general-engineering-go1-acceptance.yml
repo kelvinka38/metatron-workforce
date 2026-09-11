@@ -13,7 +13,10 @@ on:
 
 jobs:
   contracts:
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    # Automatic branch coverage is consolidated into Highway Conformance CI so only one
+    # self-hosted PR queue is active. This standalone workflow remains available manually.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5

@@ -22,9 +22,10 @@ env:
 
 jobs:
   test:
-    # GitHub-hosted capacity is not reliable for this private repository. Keep this
-    # job read/test-only and run it on the registered Metatron self-hosted runner.
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    # Automatic PR coverage is consolidated into Highway Conformance CI so the repository
+    # has one self-hosted PR queue surface. Keep this standalone lane for manual diagnostics.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
