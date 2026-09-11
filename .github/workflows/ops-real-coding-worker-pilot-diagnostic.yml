@@ -1,0 +1,37 @@
+name: Ops Real Coding Worker Pilot Diagnostic
+
+on:
+  push:
+    branches:
+      - ops/real-coding-worker-pilot-diagnostic-20260911
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read Highway task receipt and filtered task log
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=hw-b380a87547804c55ba93
+          echo "DIAGNOSTIC_TASK=$TASK"
+          $CTL get "$TASK" | tee /tmp/task.json
+          $CTL why "$TASK" || true
+          LOG=$(python3 -c 'import json; print(json.load(open("/tmp/task.json")).get("log_path", ""))')
+          test -n "$LOG"
+          test -r "$LOG"
+          echo '=== FILTERED TASK LOG ==='
+          grep -Ei 'GO1_|objective|blocked|escalat|error|fail|exception|action-fabric|github-pr|proposal|test|workspace\.' "$LOG" | tail -300 || true
+          echo '=== TASK LOG TAIL ==='
+          tail -120 "$LOG"
