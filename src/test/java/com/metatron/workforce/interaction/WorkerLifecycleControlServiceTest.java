@@ -48,6 +48,31 @@ class WorkerLifecycleControlServiceTest {
     }
 
     @Test
+    void routesNaturalNewWorkforceWorkerWordingIntoDeterministicFormation() {
+        WorkforceCoreService core = new WorkforceCoreService();
+        WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
+        GatewayDirectorAppointmentCapability capability = new GatewayDirectorAppointmentCapability(core, profiles);
+        AutonomousStaffingService staffing = new AutonomousStaffingService(
+                core, List.of(new GatewayDirectorStaffingPolicy()), profiles);
+        WorkerLifecycleControlService service = new WorkerLifecycleControlService(
+                staffing, capability, core, profiles,
+                new RuntimeCapacityCoordinator(new RuntimeRegistry()));
+
+        String request = "Create a new workforce worker with the role of composer/artist";
+        assertTrue(service.supports(request),
+                "Founder worker formation must preempt generic Objective/LLM planning for natural create-worker wording");
+
+        String response = service.handle("human-primary", request).orElseThrow();
+        assertTrue(response.startsWith("🧰 **METATRON · WORKER READY**"));
+        assertTrue(response.contains("worker_id=`WORKER-COMPOSER-ARTIST`"));
+        assertTrue(response.contains("role=composer/artist"));
+        assertTrue(response.contains("runtime_state=RUNNING"));
+        assertTrue(response.contains("worker_status=ACTIVE"));
+        assertFalse(response.contains("objective_id="));
+        assertFalse(response.contains("queue_item="));
+    }
+
+    @Test
     void rejectsNonFounderFormation() {
         WorkforceCoreService core = new WorkforceCoreService();
         WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();

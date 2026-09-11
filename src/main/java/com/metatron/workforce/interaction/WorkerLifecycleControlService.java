@@ -29,10 +29,10 @@ import java.util.regex.Pattern;
 public final class WorkerLifecycleControlService {
     private static final String FOUNDER = "human-primary";
     private static final Pattern ROLE_PATTERN = Pattern.compile(
-            "(?iu)(?:\\brole\\b|vai\\s+tr[oòóỏõọôốồổỗộơớờởỡợ]+)\\s*[:=]?\\s*([^\\n.!?]{2,80})");
+            "(?iu)(?:\\brole\\b|vai\\s+tr[oòóỏõọôốồổỗộơớờởỡợ]+)(?:\\s+of)?\\s*[:=]?\\s*([^\\n.!?]{2,80})");
     private static final Pattern WORKER_ID_PATTERN = Pattern.compile("(?i)\\bWORKER-[A-Z0-9._:-]+\\b");
     private static final Pattern ENGLISH_CREATE_ROLE = Pattern.compile(
-            "(?iu)(?:create(?:\\s+for\\s+me)?\\s+(?:a\\s+)?worker|provision\\s+(?:a\\s+)?worker)\\s*[,;:-]?\\s*(?:as\\s+)?([^\\n.!?]{2,80})");
+            "(?iu)(?:create(?:\\s+for\\s+me)?\\s+(?:a\\s+)?(?:new\\s+)?(?:workforce\\s+)?worker|provision\\s+(?:a\\s+)?worker)\\s*[,;:-]?\\s*(?:as\\s+)?([^\\n.!?]{2,80})");
 
     private final AutonomousStaffingService staffing;
     private final GatewayDirectorAppointmentCapability gatewayDirector;
@@ -225,7 +225,10 @@ public final class WorkerLifecycleControlService {
 
     private static boolean isCreate(String q) {
         return containsAny(q,
-                "create worker", "create a worker", "create for me a worker", "create workforce worker",
+                "create worker", "create a worker", "create for me a worker",
+                "create new worker", "create a new worker",
+                "create workforce worker", "create a workforce worker",
+                "create new workforce worker", "create a new workforce worker",
                 "provision worker", "provision a worker", "appoint worker", "staff worker",
                 "tao worker", "tao mot worker", "tao workforce worker", "khoi tao worker");
     }
@@ -267,6 +270,7 @@ public final class WorkerLifecycleControlService {
         if (value == null) return "";
         return value.trim()
                 .replaceFirst("(?iu)^role\\s*[:=]?\\s*", "")
+                .replaceFirst("(?iu)^of\\s+", "")
                 .replaceFirst("(?iu)^as\\s+", "")
                 .replaceAll("[,;:]+$", "")
                 .trim();
