@@ -12,8 +12,11 @@ jobs:
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 20
     steps:
-      - name: Repair branch parse bug and run complete BIOS suite
+      - name: Patch candidate locally, run suite, then publish parse fix
         shell: bash
+        env:
+          BIOS_BRANCH: fix/aquaculture-product-correctness-v4
+          BIOS_SHA: 40f7f48ad7ab8ecb8253aea1d2fe0ffc41a7e515
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
@@ -24,7 +27,11 @@ jobs:
           test -n "${GITHUB_TOKEN:-}"
           STAGE=$(mktemp -d /tmp/aq-v4-candidate.XXXXXX)
           trap 'rm -rf "$STAGE"' EXIT
-          git -c http.extraHeader="Authorization: Bearer $GITHUB_TOKEN" clone --quiet --single-branch --branch fix/aquaculture-product-correctness-v4 https://github.com/kelvinka38/bios.git "$STAGE"
+          curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/kelvinka38/bios/tarball/$BIOS_SHA" \
+            | tar -xz -C "$STAGE" --strip-components=1
           cd "$STAGE"
           python3 - <<'PY'
           from pathlib import Path
@@ -32,18 +39,34 @@ jobs:
           s=p.read_text()
           bad='UNRESOLVED_UNTIL_FARM/CYCLE_EVIDENCE:'
           good='"UNRESOLVED_UNTIL_FARM/CYCLE_EVIDENCE":'
-          if bad in s:
-              p.write_text(s.replace(bad,good))
+          assert bad in s, 'expected parse bug is no longer present at candidate SHA'
+          p.write_text(s.replace(bad,good))
           PY
-          if ! git diff --quiet; then
-            git config user.name 'Metatron Selfhosted'
-            git config user.email 'metatron@localhost'
-            git add bios_runtime/domains/aquaculture/web/app.js
-            git commit -m 'fix(aquaculture): restore farmer UI JavaScript parseability'
-            git -c http.extraHeader="Authorization: Bearer $GITHUB_TOKEN" push origin HEAD:fix/aquaculture-product-correctness-v4
-          fi
-          BIOS_SHA=$(git rev-parse HEAD)
-          echo "BIOS_CANDIDATE_SHA=$BIOS_SHA"
           node --check bios_runtime/domains/aquaculture/web/app.js
           python3 -m unittest discover -s tests -v
-          echo "AQUACULTURE_V4_EXACT_SHA_TEST=PASS sha=$BIOS_SHA"
+          echo "AQUACULTURE_V4_PATCHED_SUITE=PASS base_sha=$BIOS_SHA"
+          META=$(curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/kelvinka38/bios/contents/bios_runtime/domains/aquaculture/web/app.js?ref=$BIOS_BRANCH")
+          FILE_SHA=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' <<<"$META")
+          python3 - "$FILE_SHA" "$BIOS_BRANCH" <<'PY' >/tmp/aq-v4-app-update.json
+          import base64,json,sys
+          from pathlib import Path
+          sha,branch=sys.argv[1:]
+          print(json.dumps({
+            'message':'fix(aquaculture): restore farmer UI JavaScript parseability',
+            'content':base64.b64encode(Path('bios_runtime/domains/aquaculture/web/app.js').read_bytes()).decode(),
+            'sha':sha,
+            'branch':branch,
+          }))
+          PY
+          curl -fsSL -X PUT \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/aq-v4-app-update.json \
+            "https://api.github.com/repos/kelvinka38/bios/contents/bios_runtime/domains/aquaculture/web/app.js" \
+            >/tmp/aq-v4-app-update-response.json
+          NEW_SHA=$(python3 -c 'import json; print(json.load(open("/tmp/aq-v4-app-update-response.json"))["commit"]["sha"])')
+          echo "AQUACULTURE_V4_UI_FIX_PUBLISHED=PASS sha=$NEW_SHA"
