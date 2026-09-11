@@ -1,0 +1,26 @@
+name: Ops Exact SHA PR323
+on:
+  push:
+    branches: [ops/exact-sha-pr323]
+jobs:
+  exact-sha-test:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ecfd376f78e816472af63399dd6a8eb2b8507e5d
+          fetch-depth: 1
+      - name: Assert immutable target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "ecfd376f78e816472af63399dd6a8eb2b8507e5d"
+      - name: Test legion source
+        run: |
+          set -euo pipefail
+          ./gradlew clean test bootJar --no-daemon --max-workers=1
+      - name: Confirm safety test executed
+        run: |
+          set -euo pipefail
+          test -f build/test-results/test/TEST-com.metatron.workforce.execution.governance.SotEnforcementRuntimeTest.xml
+          grep -q 'failures="0"' build/test-results/test/TEST-com.metatron.workforce.execution.governance.SotEnforcementRuntimeTest.xml
+          echo 'PR323_EXACT_SHA_TEST=PASS'
