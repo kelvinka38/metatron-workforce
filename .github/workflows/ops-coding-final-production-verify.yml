@@ -1,0 +1,79 @@
+name: Ops Coding Final Production Verify
+
+on:
+  push:
+    branches:
+      - ops/coding-reconcile-final
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Wait for exact canonical release and verify production
+        shell: bash
+        env:
+          EXPECTED_SHA: 9ca1e8569a283fece3c8317ef09c4d13e53d2ca0
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/metatron-workforce
+          test -r "$BASE/.env"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          $CTL health
+
+          deadline=$((SECONDS+1200))
+          while true; do
+            $CTL list --limit 300 > /tmp/coding-final-tasks.json
+            RESULT=$(python3 - "$EXPECTED_SHA" /tmp/coding-final-tasks.json <<'PY'
+          import json,sys
+          sha=sys.argv[1]
+          data=json.load(open(sys.argv[2]))
+          tasks=data.get('tasks', data if isinstance(data,list) else [])
+          mine=[t for t in tasks if t.get('source_sha')==sha]
+          print(json.dumps([{"task_id":t.get("task_id"),"kind":t.get("kind"),"state":t.get("state"),"attempts":t.get("attempts")} for t in mine],sort_keys=True))
+          kinds={t.get('kind'):t.get('state') for t in mine}
+          if kinds.get('workforce-build') in {'FAILED','DEAD_LETTERED','BLOCKED','CANCELLED'} or kinds.get('workforce-deploy') in {'FAILED','DEAD_LETTERED','BLOCKED','CANCELLED'}:
+              raise SystemExit(2)
+          if kinds.get('workforce-deploy')=='SUCCEEDED':
+              raise SystemExit(0)
+          raise SystemExit(3)
+          PY
+            ) && rc=0 || rc=$?
+            echo "HIGHWAY_TASKS=$RESULT"
+            if [ "$rc" -eq 0 ]; then break; fi
+            if [ "$rc" -eq 2 ]; then echo 'CANONICAL_RELEASE_FAILED'; exit 1; fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo 'CANONICAL_RELEASE_TIMEOUT'; exit 1; fi
+            sleep 3
+          done
+
+          IMAGE=$(docker inspect -f '{{.Config.Image}}' deploy-workforce-1)
+          HEALTH=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' deploy-workforce-1)
+          echo "PRODUCTION_IMAGE=$IMAGE"
+          echo "PRODUCTION_HEALTH=$HEALTH"
+          test "$IMAGE" = "metatron-workforce:$EXPECTED_SHA"
+          test "$HEALTH" = "healthy"
+          BODY=$(curl -fsS http://127.0.0.1:8080/actuator/health)
+          echo "ACTUATOR_HEALTH=$BODY"
+          echo "$BODY" | grep -q '"status":"UP"'
+
+          $CTL list --limit 300 > /tmp/coding-final-tasks.json
+          python3 - "$EXPECTED_SHA" /tmp/coding-final-tasks.json <<'PY'
+          import json,sys
+          sha=sys.argv[1]; data=json.load(open(sys.argv[2])); tasks=data.get('tasks', data if isinstance(data,list) else [])
+          mine=[t for t in tasks if t.get('source_sha')==sha]
+          print('FINAL_HIGHWAY_TASKS='+json.dumps([{"task_id":t.get("task_id"),"kind":t.get("kind"),"state":t.get("state"),"result":t.get("result")} for t in mine],sort_keys=True))
+          assert any(t.get('kind')=='workforce-build' and t.get('state')=='SUCCEEDED' for t in mine)
+          assert any(t.get('kind')=='workforce-deploy' and t.get('state')=='SUCCEEDED' for t in mine)
+          PY
+          echo "CANONICAL_SOURCE_SHA=$EXPECTED_SHA"
+          echo "CANONICAL_PRODUCTION_SHA=$EXPECTED_SHA"
+          echo 'CODING_FINAL_PRODUCTION_VERIFY=PASS'
