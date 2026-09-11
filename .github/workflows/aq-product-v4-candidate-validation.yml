@@ -1,4 +1,4 @@
-name: Aquaculture v4 BIOS Candidate Validation
+name: Aquaculture v4 Deploy Contract Update
 
 on:
   pull_request:
@@ -8,15 +8,14 @@ permissions:
   contents: read
 
 jobs:
-  validate-bios-candidate:
+  update-deploy-contract:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - name: Patch candidate locally, run suite, then publish parse fix
+      - name: Patch BIOS deploy acceptance for three-proposal product contract
         shell: bash
         env:
-          BIOS_BRANCH: fix/aquaculture-product-correctness-v4
-          BIOS_SHA: 40f7f48ad7ab8ecb8253aea1d2fe0ffc41a7e515
+          TARGET_BRANCH: ops/validate-aquaculture-product-v4
         run: |
           set -euo pipefail
           BASE=/opt/metatron/metatron-workforce
@@ -25,38 +24,76 @@ jobs:
           source "$BASE/.env"
           set +a
           test -n "${GITHUB_TOKEN:-}"
-          STAGE=$(mktemp -d /tmp/aq-v4-candidate.XXXXXX)
-          trap 'rm -rf "$STAGE"' EXIT
-          curl -fsSL \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/kelvinka38/bios/tarball/$BIOS_SHA" \
-            | tar -xz -C "$STAGE" --strip-components=1
-          cd "$STAGE"
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('bios_runtime/domains/aquaculture/web/app.js')
-          s=p.read_text()
-          bad='UNRESOLVED_UNTIL_FARM/CYCLE_EVIDENCE:'
-          good='"UNRESOLVED_UNTIL_FARM/CYCLE_EVIDENCE":'
-          assert bad in s, 'expected parse bug is no longer present at candidate SHA'
-          p.write_text(s.replace(bad,good))
-          PY
-          node --check bios_runtime/domains/aquaculture/web/app.js
-          python3 -m unittest discover -s tests -v
-          echo "AQUACULTURE_V4_PATCHED_SUITE=PASS base_sha=$BIOS_SHA"
-          META=$(curl -fsSL \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/kelvinka38/bios/contents/bios_runtime/domains/aquaculture/web/app.js?ref=$BIOS_BRANCH")
+          API="https://api.github.com/repos/kelvinka38/metatron-workforce/contents/scripts/highway-tasks/bios-deploy.sh?ref=$TARGET_BRANCH"
+          META=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' "$API")
           FILE_SHA=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' <<<"$META")
-          python3 - "$FILE_SHA" "$BIOS_BRANCH" <<'PY' >/tmp/aq-v4-app-update.json
+          python3 - <<'PY' <<<"$META" >/tmp/bios-deploy-v4.sh
+          import base64,json,sys,re
+          meta=json.load(sys.stdin)
+          text=base64.b64decode(meta['content']).decode()
+          text=text.replace(
+              '{"semantic_key":"CD-08","original_value":"Không thức ăn công nghiệp; không hóa chất; năng lượng tái tạo","normalized_value":"Không thức ăn công nghiệp; không hóa chất; năng lượng tái tạo","field_state":"DECLARED","owner_lock":True}',
+              '{"semantic_key":"CD-08","original_value":"","normalized_value":"NONE_STATED","field_state":"DECLARED","owner_lock":True}'
+          )
+          start='generated=post("/scenarios/generate",{"case_id":case_id,"farm_id":farm_id,"refresh":True})'
+          end='market=post("/farmer/market",{"case_id":case_id,"farm_id":farm_id})'
+          a=text.index(start)
+          b=text.index(end,a)
+          replacement='''generated=post("/scenarios/generate",{"case_id":case_id,"farm_id":farm_id,"refresh":True})
+assert generated["candidate_count"]==3, generated
+assert generated["reasoning_version"]=="aq-product-reasoning-4.0", generated
+scenarios=post("/scenarios/list",{"case_id":case_id,"farm_id":farm_id})
+assert len(scenarios)==3, scenarios
+for sc in scenarios:
+    post("/scenarios/evaluate",{"case_id":case_id,"scenario_id":sc["scenario_id"],"version":sc["version"]})
+rec=post("/decision/recommend",{"case_id":case_id,"farm_id":farm_id})
+assert rec["comparator_version"]=="aq-decision-comparator-1.2", rec
+ws=post("/farmer/workspace",{"case_id":case_id,"farm_id":farm_id})
+assert ws["reasoning_version"]=="aq-product-reasoning-4.0", ws
+assert ws["proposal_count"]==3, ws
+assert len(ws["scenarios"])==3, ws["scenarios"]
+assert len(ws["unknowns"])<=8, ws["unknowns"]
+props=[x["property"] for x in ws["unknowns"]]
+assert len(props)==len(set(props)), props
+farmer_resolution=" ".join(x.get("resolution_method","") for x in ws["unknowns"]).lower()
+assert "obtain validated" not in farmer_resolution, farmer_resolution
+assert "complete economic model" not in farmer_resolution, farmer_resolution
+primary=next(x for x in ws["scenarios"] if x.get("proposal_role")=="PRIMARY")
+assert primary["scientific_name"]=="Scatophagus argus", primary
+trace={x.get("semantic") for x in primary.get("decision_trace") or []}
+assert {"CD-01","CD-02","CD-03","CD-04","CD-05","CD-06","CD-07","CD-08"}.issubset(trace), trace
+blueprint=primary.get("production_blueprint") or {}
+assert (blueprint.get("area_basis") or {}).get("usable_area_m2")==650.0, blueprint
+assert (blueprint.get("environment_strategy") or {}).get("water_source")=="RIVER", blueprint
+integrated=[x for x in ws["scenarios"] if x.get("species_configuration")=="POLYCULTURE"]
+assert integrated, ws["scenarios"]
+assert any(" + " in x.get("species_name","") for x in integrated), integrated
+assert all(x["eligibility"]=="CONDITIONAL" for x in integrated), integrated
+assert all(x["recommendation_state"]=="PROVISIONAL" for x in integrated), integrated
+assert all(int(x.get("blocking_unknowns") or 0)>0 for x in integrated), integrated
+print("AQ_LIVE_THREE_PROPOSAL_REASONING=PASS",[x.get("species_name") for x in ws["scenarios"]])
+print("AQ_LIVE_INTEGRATED_FAIL_CLOSED=PASS",[x.get("species_name") for x in integrated])
+print("AQ_LIVE_UNKNOWN_DEDUP=PASS",props)
+'''
+          text=text[:a]+replacement+text[b:]
+          text=text.replace(
+              'print("AQ_LIVE_SYSTEM_VARIANTS=PASS",len(scat),sorted(variants))\nprint("AQ_LIVE_ECONOMICS_REFERENCE_GUARD=PASS")\n',
+              ''
+          )
+          print(text,end='')
+          PY
+          bash -n /tmp/bios-deploy-v4.sh
+          if cmp -s /tmp/bios-deploy-v4.sh <(python3 -c 'import base64,json,sys; print(base64.b64decode(json.load(sys.stdin)["content"]).decode(),end="")' <<<"$META"); then
+            echo 'DEPLOY_CONTRACT_ALREADY_CURRENT=PASS'
+            exit 0
+          fi
+          python3 - "$FILE_SHA" "$TARGET_BRANCH" <<'PY' >/tmp/bios-deploy-update.json
           import base64,json,sys
-          from pathlib import Path
           sha,branch=sys.argv[1:]
+          content=open('/tmp/bios-deploy-v4.sh','rb').read()
           print(json.dumps({
-            'message':'fix(aquaculture): restore farmer UI JavaScript parseability',
-            'content':base64.b64encode(Path('bios_runtime/domains/aquaculture/web/app.js').read_bytes()).decode(),
+            'message':'fix(aquaculture): align deploy acceptance with v4 decision product',
+            'content':base64.b64encode(content).decode(),
             'sha':sha,
             'branch':branch,
           }))
@@ -65,8 +102,8 @@ jobs:
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
             -H 'Content-Type: application/json' \
-            --data-binary @/tmp/aq-v4-app-update.json \
-            "https://api.github.com/repos/kelvinka38/bios/contents/bios_runtime/domains/aquaculture/web/app.js" \
-            >/tmp/aq-v4-app-update-response.json
-          NEW_SHA=$(python3 -c 'import json; print(json.load(open("/tmp/aq-v4-app-update-response.json"))["commit"]["sha"])')
-          echo "AQUACULTURE_V4_UI_FIX_PUBLISHED=PASS sha=$NEW_SHA"
+            --data-binary @/tmp/bios-deploy-update.json \
+            'https://api.github.com/repos/kelvinka38/metatron-workforce/contents/scripts/highway-tasks/bios-deploy.sh' \
+            >/tmp/bios-deploy-update-response.json
+          NEW_SHA=$(python3 -c 'import json; print(json.load(open("/tmp/bios-deploy-update-response.json"))["commit"]["sha"])')
+          echo "AQ_V4_DEPLOY_CONTRACT_PUBLISHED=PASS sha=$NEW_SHA"
