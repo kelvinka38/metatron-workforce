@@ -2,6 +2,7 @@ package com.metatron.workforce.runtime;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -26,6 +27,7 @@ import java.util.zip.ZipInputStream;
  * Materializes an immutable GitHub repository snapshot into an Objective workspace without exposing
  * the GitHub credential to the Worker sandbox. The authenticated API request resolves the exact
  * commit and obtains a short-lived codeload redirect; the archive download itself carries no token.
+ * Repository admission is bounded by {@link CanonicalRepositoryScope} at this Execution-owned boundary.
  */
 public final class RepositoryWorkspaceMaterializationService {
     private static final Pattern REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
@@ -80,7 +82,7 @@ public final class RepositoryWorkspaceMaterializationService {
     }
 
     public MaterializedRepository materialize(String workerId, String objectiveId, String repository, String ref) {
-        if (!provisioned()) throw new IllegalStateException("github-materialization-token-not-provisioned");
+        if (!provisioned()) throw repositoryControlPlaneUnavailable("credential-not-provisioned");
         String repo = normalizeRepository(repository);
         String requestedRef = normalizeRef(ref);
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(objectiveId, workerId);
@@ -96,6 +98,8 @@ public final class RepositoryWorkspaceMaterializationService {
                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             return new MaterializedRepository(repo, requestedRef, resolvedSha,
                     workspace.workspaceRef(), extraction.files(), extraction.bytes());
+        } catch (GovernanceDeniedException denied) {
+            throw denied;
         } catch (IOException | InterruptedException failure) {
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new IllegalStateException("repository workspace materialization failed", failure);
@@ -104,6 +108,9 @@ public final class RepositoryWorkspaceMaterializationService {
 
     private String resolveCommit(String repo, String ref) throws IOException, InterruptedException {
         HttpResponse<String> response = sendAuthenticated("repos/" + repo + "/commits/" + encodePathSegment(ref));
+        if (response.statusCode() == 401 || response.statusCode() == 403) {
+            throw repositoryControlPlaneUnavailable("commit-resolution-http-" + response.statusCode());
+        }
         if (response.statusCode() != 200) {
             throw new IllegalStateException("repository commit resolution HTTP " + response.statusCode());
         }
@@ -116,6 +123,9 @@ public final class RepositoryWorkspaceMaterializationService {
     private URI resolveArchiveLocation(String repo, String sha) throws IOException, InterruptedException {
         HttpRequest request = authenticatedRequest(apiBase.resolve("repos/" + repo + "/zipball/" + sha)).GET().build();
         HttpResponse<Void> response = http.send(request, HttpResponse.BodyHandlers.discarding());
+        if (response.statusCode() == 401 || response.statusCode() == 403) {
+            throw repositoryControlPlaneUnavailable("archive-resolution-http-" + response.statusCode());
+        }
         if (response.statusCode() != 302 && response.statusCode() != 301 && response.statusCode() != 307) {
             throw new IllegalStateException("repository archive redirect HTTP " + response.statusCode());
         }
@@ -135,6 +145,9 @@ public final class RepositoryWorkspaceMaterializationService {
                 .header("User-Agent", "metatron-workforce")
                 .GET().build();
         HttpResponse<java.io.InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        if (response.statusCode() == 401 || response.statusCode() == 403) {
+            throw repositoryControlPlaneUnavailable("archive-download-http-" + response.statusCode());
+        }
         if (response.statusCode() != 200) throw new IllegalStateException("repository archive download HTTP " + response.statusCode());
         try (var input = response.body(); var out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[32 * 1024];
@@ -178,11 +191,9 @@ public final class RepositoryWorkspaceMaterializationService {
                 if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                     throw new IllegalStateException("repository archive would overwrite workspace content: " + relative);
                 }
-                long written = 0;
                 try (var output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
                     int read;
                     while ((read = zip.read(buffer)) >= 0) {
-                        written += read;
                         bytes += read;
                         if (bytes > MAX_EXTRACTED_BYTES) throw new IllegalStateException("repository extraction exceeds byte budget");
                         output.write(buffer, 0, read);
@@ -230,7 +241,7 @@ public final class RepositoryWorkspaceMaterializationService {
         if (!REPOSITORY.matcher(value).matches() || value.contains("..")) {
             throw new IllegalArgumentException("invalid GitHub repository");
         }
-        return value;
+        return CanonicalRepositoryScope.requireAllowed(value);
     }
 
     private static String normalizeRef(String ref) {
@@ -243,6 +254,10 @@ public final class RepositoryWorkspaceMaterializationService {
 
     private static String encodePathSegment(String value) {
         return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private static GovernanceDeniedException repositoryControlPlaneUnavailable(String detail) {
+        return new GovernanceDeniedException("REPOSITORY_CONTROL_PLANE_UNAVAILABLE", detail);
     }
 
     private static String require(String value, String field) {

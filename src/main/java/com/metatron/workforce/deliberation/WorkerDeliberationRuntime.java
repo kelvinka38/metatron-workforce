@@ -1,13 +1,8 @@
 package com.metatron.workforce.deliberation;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.text.Normalizer;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -22,15 +17,16 @@ import java.util.Objects;
  * domain grounding and quality criteria elsewhere; they never replace this control loop.
  */
 public final class WorkerDeliberationRuntime {
-    private static final TypeReference<Map<String, WorkerDeliberationState>> MAP_TYPE = new TypeReference<>() {};
-    private final Path path;
-    private final ObjectMapper json;
+    private final WorkerDeliberationStateStore store;
     private final Map<String, WorkerDeliberationState> states = new LinkedHashMap<>();
 
+    public WorkerDeliberationRuntime(WorkerDeliberationStateStore store) {
+        this.store = Objects.requireNonNull(store, "store");
+        states.putAll(store.load());
+    }
+
     public WorkerDeliberationRuntime(Path path, ObjectMapper objectMapper) {
-        this.path = Objects.requireNonNull(path, "path").toAbsolutePath().normalize();
-        this.json = Objects.requireNonNull(objectMapper, "objectMapper").copy().findAndRegisterModules();
-        load();
+        this(new FileWorkerDeliberationStateStore(path, objectMapper));
     }
 
     public synchronized Directive prepare(String workerId, String message, String context) {
@@ -52,7 +48,7 @@ public final class WorkerDeliberationRuntime {
                 previous.clarificationCount() + (decision.move() == WorkerNextMove.CLARIFY ? 1 : 0),
                 Instant.now());
         states.put(workerId, next);
-        persist();
+        store.save(Map.copyOf(states));
         return new Directive(next, renderDirective(next));
     }
 
@@ -69,7 +65,7 @@ public final class WorkerDeliberationRuntime {
                 current.workerId(), current.objectiveSummary(), stage, current.nextMove(), current.intent(),
                 current.contextSufficiency(), current.assumptions(), current.openQuestions(), current.decisions(),
                 current.revisionCount(), current.clarificationCount(), Instant.now()));
-        persist();
+        store.save(Map.copyOf(states));
     }
 
     public synchronized WorkerDeliberationState state(String workerId) {
@@ -227,32 +223,6 @@ public final class WorkerDeliberationRuntime {
                 .replaceAll("[^a-z0-9]+", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
-    }
-
-    private synchronized void load() {
-        if (!Files.exists(path)) return;
-        try {
-            Map<String, WorkerDeliberationState> loaded = json.readValue(Files.readString(path, StandardCharsets.UTF_8), MAP_TYPE);
-            if (loaded != null) states.putAll(loaded);
-        } catch (IOException failure) {
-            throw new IllegalStateException("cannot load worker deliberation state: " + path, failure);
-        }
-    }
-
-    private synchronized void persist() {
-        try {
-            Path parent = path.getParent();
-            if (parent != null) Files.createDirectories(parent);
-            Path temp = Files.createTempFile(parent, ".worker-deliberation-", ".tmp");
-            Files.writeString(temp, json.writerWithDefaultPrettyPrinter().writeValueAsString(states), StandardCharsets.UTF_8);
-            try {
-                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } catch (IOException failure) {
-            throw new IllegalStateException("cannot persist worker deliberation state: " + path, failure);
-        }
     }
 
     public record Directive(WorkerDeliberationState state, String instructions) {}

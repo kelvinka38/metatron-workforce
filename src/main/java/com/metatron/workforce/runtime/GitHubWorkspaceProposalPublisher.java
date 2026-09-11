@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -104,7 +105,7 @@ public final class GitHubWorkspaceProposalPublisher {
                                String objectiveId,
                                String requestedTitle,
                                String requestedBody) {
-        if (!provisioned()) throw new IllegalStateException("github-proposal-token-not-provisioned");
+        if (!provisioned()) throw repositoryControlPlaneUnavailable("proposal-credential-not-provisioned");
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(objectiveId, workerId);
         Map<String, String> provenance = provenance(workspace);
         String repository = provenance.getOrDefault("repository", "");
@@ -265,6 +266,7 @@ public final class GitHubWorkspaceProposalPublisher {
         if (!repository.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) {
             throw new IllegalStateException("invalid materialized repository provenance");
         }
+        CanonicalRepositoryScope.requireAllowed(repository);
         return Map.copyOf(fields);
     }
 
@@ -325,12 +327,20 @@ public final class GitHubWorkspaceProposalPublisher {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("GitHub proposal request interrupted", interrupted);
         } catch (Exception failure) {
+            if (failure instanceof GovernanceDeniedException denied) throw denied;
             throw new IllegalStateException("GitHub proposal request failed", failure);
         }
     }
 
-    private static IllegalStateException failure(String operation, HttpResponse<String> response) {
+    private static RuntimeException failure(String operation, HttpResponse<String> response) {
+        if (response.statusCode() == 401 || response.statusCode() == 403) {
+            return repositoryControlPlaneUnavailable("proposal-http-" + response.statusCode());
+        }
         return new IllegalStateException(operation + " HTTP " + response.statusCode() + " " + abbreviate(response.body()));
+    }
+
+    private static GovernanceDeniedException repositoryControlPlaneUnavailable(String detail) {
+        return new GovernanceDeniedException("REPOSITORY_CONTROL_PLANE_UNAVAILABLE", detail);
     }
 
     private static void requireSafePath(String path) {

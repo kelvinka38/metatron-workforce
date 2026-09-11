@@ -26,15 +26,15 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 5
 fi
 
-# Production preflight: the sandbox entrypoint is fail-closed and refuses to start
-# without SANDBOX_TOKEN. Because Compose gives the shell environment precedence over
-# --env-file, distinguish an explicitly exported (possibly empty) value from an unset one.
-if [[ ${METATRON_SANDBOX_TOKEN+x} == x ]]; then
-  EFFECTIVE_SANDBOX_TOKEN="$METATRON_SANDBOX_TOKEN"
-else
-  EFFECTIVE_SANDBOX_TOKEN="$(python3 - "$ENV_FILE" <<'PY'
+# Read one value without sourcing or printing the production env file. Explicit shell
+# variables retain Compose precedence; otherwise the canonical production env file owns it.
+read_env_value() {
+  local key="$1"
+  local file="$2"
+  python3 - "$file" "$key" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
 value = ""
 for raw in path.read_text().splitlines():
     line = raw.strip()
@@ -42,7 +42,8 @@ for raw in path.read_text().splitlines():
         continue
     if line.startswith('export '):
         line = line[7:].lstrip()
-    if not line.startswith('METATRON_SANDBOX_TOKEN='):
+    prefix = key + '='
+    if not line.startswith(prefix):
         continue
     value = line.split('=', 1)[1].strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
@@ -50,13 +51,33 @@ for raw in path.read_text().splitlines():
     break
 print(value, end='')
 PY
-)"
+}
+
+# Sandbox is fail-closed. Validate before build/container mutation.
+if [[ ${METATRON_SANDBOX_TOKEN+x} == x ]]; then
+  EFFECTIVE_SANDBOX_TOKEN="$METATRON_SANDBOX_TOKEN"
+else
+  EFFECTIVE_SANDBOX_TOKEN="$(read_env_value METATRON_SANDBOX_TOKEN "$ENV_FILE")"
 fi
 if [[ -z "$EFFECTIVE_SANDBOX_TOKEN" ]]; then
   echo "production preflight failed: METATRON_SANDBOX_TOKEN is required before container recreation" >&2
   exit 7
 fi
 unset EFFECTIVE_SANDBOX_TOKEN
+
+# Repository Control Plane is an institutional Execution dependency, not Worker work.
+# A repository-capable production rollout must never become healthy while the credential
+# required by materialization/PR publication is absent. Do not print/hash the secret.
+if [[ ${GITHUB_TOKEN+x} == x ]]; then
+  EFFECTIVE_REPOSITORY_CREDENTIAL="$GITHUB_TOKEN"
+else
+  EFFECTIVE_REPOSITORY_CREDENTIAL="$(read_env_value GITHUB_TOKEN "$ENV_FILE")"
+fi
+if [[ -z "$EFFECTIVE_REPOSITORY_CREDENTIAL" ]]; then
+  echo "production preflight failed: Repository Control Plane credential is required before container recreation" >&2
+  exit 9
+fi
+unset EFFECTIVE_REPOSITORY_CREDENTIAL
 
 ./gradlew --no-daemon clean build
 

@@ -1,7 +1,14 @@
 package com.metatron.workforce.runtime;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,12 +18,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GitHubWorkspaceProposalPublisherTest {
     private static final String HEAD = "0123456789abcdef0123456789abcdef01234567";
+    @TempDir Path temp;
 
     @Test
     void acceptsMaterializedSourceWhenItIsStillAnAncestorOfCurrentMain() throws Exception {
         String source = "1111111111111111111111111111111111111111";
         String current = "2222222222222222222222222222222222222222";
-        com.fasterxml.jackson.databind.JsonNode comparison = new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
+        com.fasterxml.jackson.databind.JsonNode comparison = new ObjectMapper().readTree("""
                 {
                   "status": "ahead",
                   "ahead_by": 8,
@@ -32,7 +40,7 @@ class GitHubWorkspaceProposalPublisherTest {
     void rejectsDivergedOrUnrelatedMaterializedSource() throws Exception {
         String source = "1111111111111111111111111111111111111111";
         String current = "2222222222222222222222222222222222222222";
-        com.fasterxml.jackson.databind.JsonNode comparison = new com.fasterxml.jackson.databind.ObjectMapper().readTree("""
+        com.fasterxml.jackson.databind.JsonNode comparison = new ObjectMapper().readTree("""
                 {
                   "status": "diverged",
                   "ahead_by": 2,
@@ -72,5 +80,25 @@ class GitHubWorkspaceProposalPublisherTest {
         assertEquals(first, second);
         assertTrue(first.startsWith("metatron/objective-"));
         assertTrue(first.endsWith("-01234567"));
+    }
+
+    @Test
+    void missingProposalCredentialIsTypedRepositoryControlPlaneBlocker() {
+        ObjectMapper json = new ObjectMapper();
+        ObjectiveWorkspaceService workspaces = new ObjectiveWorkspaceService(temp.resolve("workspaces"));
+        WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
+        profiles.bind("WORKER-GENERAL-ENGINEERING",
+                WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
+                "execution.general.workspace", Instant.now());
+        WorkerExecutionSandboxService sandbox = new WorkerExecutionSandboxService(
+                HttpClient.newHttpClient(), URI.create("http://127.0.0.1:9"), "unused-test-token",
+                profiles, workspaces, json);
+        GitHubWorkspaceProposalPublisher publisher = new GitHubWorkspaceProposalPublisher(
+                HttpClient.newHttpClient(), "", workspaces, sandbox, json);
+
+        GovernanceDeniedException failure = assertThrows(GovernanceDeniedException.class, () ->
+                publisher.publish("WORKER-GENERAL-ENGINEERING", "objective-pr-missing-auth", "", ""));
+
+        assertEquals("REPOSITORY_CONTROL_PLANE_UNAVAILABLE", failure.code());
     }
 }
