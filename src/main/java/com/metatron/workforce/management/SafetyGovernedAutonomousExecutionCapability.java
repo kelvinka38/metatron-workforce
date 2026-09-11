@@ -1,5 +1,7 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +30,9 @@ public final class SafetyGovernedAutonomousExecutionCapability implements Autono
     @Override public double minimumCapabilityLevel() { return delegate.minimumCapabilityLevel(); }
     @Override public double requiredCapacity() { return delegate.requiredCapacity(); }
     @Override public boolean supportsWorker(String workerId) { return delegate.supportsWorker(workerId); }
+    @Override public boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
+        return delegate.supportsWorker(workerId, workSpec);
+    }
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {

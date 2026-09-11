@@ -15,6 +15,8 @@ public class ExecutionPlanningConfiguration {
                 intelligenceRuntime.fabric(),
                 intelligenceRuntime.configuredProviders().size(),
                 objectMapper);
-        return new GeneralActionComposingExecutionPlanProposalService(frontierPlanner);
+        ExecutionPlanProposalService founderWorkerPlanner =
+                new FounderWorkerExecutionPlanProposalService(frontierPlanner);
+        return new GeneralActionComposingExecutionPlanProposalService(founderWorkerPlanner);
     }
 }

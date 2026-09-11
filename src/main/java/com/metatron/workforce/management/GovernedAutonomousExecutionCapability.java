@@ -198,6 +198,9 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     @Override public double minimumCapabilityLevel() { return delegate.minimumCapabilityLevel(); }
     @Override public double requiredCapacity() { return delegate.requiredCapacity(); }
     @Override public boolean supportsWorker(String workerId) { return delegate.supportsWorker(workerId); }
+    @Override public boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
+        return delegate.supportsWorker(workerId, workSpec);
+    }
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
@@ -219,7 +222,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
 
         reconcileTerminalExecutionCapacity();
-        WorkforceCoreService.Worker worker = awaitEligibleWorker();
+        WorkforceCoreService.Worker worker = awaitEligibleWorker(request.workSpec());
         WorkforceCoreService.Participation participation = core.participations(worker.workerId()).stream()
                 .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
                 .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
@@ -448,14 +451,14 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
     }
 
-    private WorkforceCoreService.Worker awaitEligibleWorker() {
+    private WorkforceCoreService.Worker awaitEligibleWorker(ExecutionWorkSpec workSpec) {
         long deadline = System.nanoTime() + capacityWait.toNanos(); boolean staffingAttempted = false;
         while (true) {
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
                             capabilityRef(), minimumCapabilityLevel(), requiredCapacity(), clock.instant()).stream()
-                    .filter(w -> supportsWorker(w.workerId())).toList();
+                    .filter(w -> supportsWorker(w.workerId(), workSpec)).toList();
             if (!eligible.isEmpty()) return eligible.getFirst();
-            if (!hasQualifiedParticipant() && !staffingAttempted) {
+            if (!hasQualifiedParticipant(workSpec) && !staffingAttempted) {
                 staffingAttempted = true;
                 if (staffing == null) throw new IllegalStateException("staffing-gap:orchestrator-unavailable:" + capabilityRef());
                 AutonomousStaffingService.StaffingOutcome outcome = staffing.ensureStaffed(delegate, clock.instant());
@@ -469,10 +472,10 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
     }
 
-    private boolean hasQualifiedParticipant() {
+    private boolean hasQualifiedParticipant(ExecutionWorkSpec workSpec) {
         return core.allWorkers().stream()
                 .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
-                .filter(w -> supportsWorker(w.workerId()))
+                .filter(w -> supportsWorker(w.workerId(), workSpec))
                 .filter(w -> core.capabilities(w.workerId()).stream().anyMatch(c ->
                         c.capabilityRef().equals(capabilityRef()) && c.level() >= minimumCapabilityLevel()))
                 .anyMatch(w -> core.participations(w.workerId()).stream()
