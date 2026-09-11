@@ -281,7 +281,7 @@ public final class AutonomyCoordinationService {
             CompletionCandidate candidate = new CompletionCandidate(
                     graph.objectiveId(), node.spec().stepId(), plan.planId(), plan.version(), plan.authoritySnapshotId(),
                     verified, completedSteps, List.of(), acceptance, evidence, true,
-                    artifact(verified, "source-sha:", "github-source-sha:", "HIGHWAY_SOURCE_SHA="),
+                    artifact(verified, "source-sha:", "HIGHWAY_SOURCE_SHA="),
                     artifact(verified, "tested-sha:", "HIGHWAY_WORKFORCE_BUILD_SHA="),
                     artifact(verified, "approved-sha:"),
                     artifact(verified, "deployed-sha:", "DEPLOYED_SHA="),

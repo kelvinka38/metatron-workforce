@@ -22,9 +22,9 @@ env:
 
 jobs:
   test:
-    # PR unit/contract tests do not require production-local state, credentials, Docker,
-    # or the production network. Keep the single metatron-prod runner reserved for
-    # exact-SHA deploy and live production acceptance so ordinary CI cannot serialize them.
+    # Automatic PR coverage is consolidated into Highway Conformance CI so the repository
+    # has one self-hosted PR queue surface. Keep this standalone lane for manual diagnostics.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

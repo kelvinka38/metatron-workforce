@@ -10,6 +10,8 @@ on:
 
 jobs:
   contract:
+    # Automatic branch coverage is consolidated into Highway Conformance CI.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
