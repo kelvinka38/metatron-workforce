@@ -9,11 +9,15 @@ import com.metatron.workforce.interaction.tools.WebSearchToolAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /** Shared provider-neutral intelligence capacity boundary. */
 public final class IntelligenceFabric {
@@ -26,13 +30,15 @@ public final class IntelligenceFabric {
     private final DefaultToolFabric toolFabric;
     private final ExternalEvidenceResponseGuard externalEvidenceGuard;
     private final MultiModelDeliberationCoordinator deliberationCoordinator;
+    private final CognitiveArtifactStore artifactStore;
+    private final CognitionNeedGate cognitionNeedGate;
 
     public IntelligenceFabric(IntelligencePlanner planner,
                               IntelligenceEngine engine,
                               IntelligenceSynthesizer synthesizer,
                               IntelligenceGovernance governance) {
         this(planner, engine, synthesizer, governance,
-                new DefaultToolFabric(List.of(new WebSearchToolAdapter())), null);
+                new DefaultToolFabric(List.of(new WebSearchToolAdapter())), null, null);
     }
 
     public IntelligenceFabric(IntelligencePlanner planner,
@@ -40,7 +46,7 @@ public final class IntelligenceFabric {
                               IntelligenceSynthesizer synthesizer,
                               IntelligenceGovernance governance,
                               DefaultToolFabric toolFabric) {
-        this(planner, engine, synthesizer, governance, toolFabric, null);
+        this(planner, engine, synthesizer, governance, toolFabric, null, null);
     }
 
     public IntelligenceFabric(IntelligencePlanner planner,
@@ -49,6 +55,16 @@ public final class IntelligenceFabric {
                               IntelligenceGovernance governance,
                               DefaultToolFabric toolFabric,
                               MultiModelDeliberationCoordinator deliberationCoordinator) {
+        this(planner, engine, synthesizer, governance, toolFabric, deliberationCoordinator, null);
+    }
+
+    public IntelligenceFabric(IntelligencePlanner planner,
+                              IntelligenceEngine engine,
+                              IntelligenceSynthesizer synthesizer,
+                              IntelligenceGovernance governance,
+                              DefaultToolFabric toolFabric,
+                              MultiModelDeliberationCoordinator deliberationCoordinator,
+                              CognitiveArtifactStore artifactStore) {
         this.planner = Objects.requireNonNull(planner, "planner");
         this.engine = Objects.requireNonNull(engine, "engine");
         this.synthesizer = Objects.requireNonNull(synthesizer, "synthesizer");
@@ -56,14 +72,58 @@ public final class IntelligenceFabric {
         this.toolFabric = Objects.requireNonNull(toolFabric, "toolFabric");
         this.externalEvidenceGuard = new ExternalEvidenceResponseGuard();
         this.deliberationCoordinator = deliberationCoordinator;
+        this.artifactStore = artifactStore;
+        this.cognitionNeedGate = new CognitionNeedGate();
     }
 
     public IntelligencePlan plan(IntelligenceRequest request) {
-        return planner.plan(request);
+        return planner.plan(withInstitutionalContext(request));
     }
 
     public IntelligenceResult execute(IntelligenceRequest request) {
-        Objects.requireNonNull(request, "request");
+        IntelligenceRequest contextual = withInstitutionalContext(Objects.requireNonNull(request, "request"));
+        return executeContextual(contextual, scopedContinuationReason(contextual), defaultBudget(contextual));
+    }
+
+    /**
+     * Executes one logical cognition request with an optional reason for the first provider call.
+     * A non-null firstCallReason means an earlier frontier call already happened for this same
+     * logical request (for example semantic normalization followed by novel evidence acquisition).
+     */
+    public IntelligenceResult execute(IntelligenceRequest request,
+                                      EscalationReason firstCallReason,
+                                      ProviderBudget providerBudget) {
+        IntelligenceRequest contextual = withInstitutionalContext(Objects.requireNonNull(request, "request"));
+        return executeContextual(contextual, firstCallReason, providerBudget);
+    }
+
+    private IntelligenceResult executeContextual(IntelligenceRequest request,
+                                                 EscalationReason firstCallReason,
+                                                 ProviderBudget providerBudget) {
+        Objects.requireNonNull(providerBudget, "providerBudget");
+
+        String artifactFingerprint = reusableFingerprint(request);
+        Optional<CognitiveArtifact> reusable = reusableArtifact(request);
+        CognitionNeedGate.Decision gate = cognitionNeedGate.evaluateRuntime(new CognitionNeedGate.RuntimeInput(
+                false,
+                false,
+                reusable.isPresent(),
+                false,
+                false));
+        if (gate.disposition() == CognitionNeedGate.Disposition.NOT_REQUIRED && reusable.isPresent()) {
+            CognitiveArtifact artifact = reusable.get();
+            LOG.info("cognition_gate_not_required request_id={} reason={} artifact_id={} fingerprint={}",
+                    request.requestId(), gate.reason(), artifact.artifactId(), artifact.inputFingerprint());
+            return new IntelligenceResult(
+                    request.requestId(), artifact.result(), List.of(), artifact.evidenceRefs());
+        }
+        if (gate.disposition() == CognitionNeedGate.Disposition.BLOCKED) {
+            return new IntelligenceResult(
+                    request.requestId(),
+                    "METATRON COGNITION BLOCKED\nreason=" + gate.reason() + "\nobjective=" + request.objective(),
+                    List.of(), request.evidenceReferences());
+        }
+
         WebEnrichment enrichment = enrichWithWebEvidence(request);
         IntelligenceRequest enrichedRequest = enrichment.request();
         IntelligencePlan plan = planner.plan(enrichedRequest);
@@ -85,10 +145,21 @@ public final class IntelligenceFabric {
                     enrichedRequest.evidenceReferences());
         }
 
+        int providerAttempt = 0;
         for (LlmProvider provider : plan.providers()) {
+            EscalationReason escalationReason;
+            if (providerAttempt == 0) {
+                escalationReason = firstCallReason;
+            } else if (plan.collaborationMode() == CollaborationMode.SINGLE) {
+                escalationReason = EscalationReason.PROVIDER_FAILURE;
+            } else {
+                escalationReason = EscalationReason.EXPLICIT_HUMAN_REQUEST;
+            }
+            providerAttempt++;
             try {
                 LlmResponse response = Objects.requireNonNull(
-                        engine.execute(provider, enrichedRequest), "intelligence engine response");
+                        engine.execute(provider, enrichedRequest, escalationReason, providerBudget),
+                        "intelligence engine response");
                 if (response.provider() != provider) {
                     throw new IllegalStateException("provider attribution mismatch for " + provider);
                 }
@@ -135,7 +206,7 @@ public final class IntelligenceFabric {
                 && deliberationCoordinator != null
                 && responses.size() >= 2) {
             MultiModelDeliberationCoordinator.DeliberationOutcome outcome =
-                    deliberationCoordinator.deliberate(enrichedRequest, List.copyOf(responses));
+                    deliberationCoordinator.deliberate(enrichedRequest, List.copyOf(responses), providerBudget);
             synthesisResponses = outcome.responsesForSynthesis();
             deliberationPrelude = deliberationCoordinator.renderPrelude(outcome);
             deliberationEvidence = outcome.addedEvidenceReferences();
@@ -153,11 +224,117 @@ public final class IntelligenceFabric {
 
         Set<String> resultEvidence = new LinkedHashSet<>(enrichedRequest.evidenceReferences());
         resultEvidence.addAll(deliberationEvidence);
+        List<String> finalEvidence = List.copyOf(resultEvidence);
+
+        if (artifactStore != null && reusableRequest(request)
+                && plan.collaborationMode() == CollaborationMode.SINGLE
+                && synthesisResponses.size() == 1) {
+            LlmResponse source = synthesisResponses.getFirst();
+            CognitiveArtifact artifact = new CognitiveArtifact(
+                    "cognitive-artifact-" + UUID.randomUUID(),
+                    caseRef(enrichedRequest.context()),
+                    enrichedRequest.requiredCapability(),
+                    artifactFingerprint,
+                    source.provider(),
+                    source.model(),
+                    text,
+                    List.of(),
+                    finalEvidence,
+                    List.of(),
+                    Instant.now(),
+                    null,
+                    true);
+            artifactStore.save(artifact);
+            LOG.info("cognitive_artifact_saved request_id={} artifact_id={} fingerprint={}",
+                    request.requestId(), artifact.artifactId(), artifact.inputFingerprint());
+        }
+
         return new IntelligenceResult(
                 enrichedRequest.requestId(), text,
                 synthesisResponses.stream()
                         .map(response -> new IntelligenceResult.ProviderResult(response.provider(), response)).toList(),
-                List.copyOf(resultEvidence));
+                finalEvidence);
+    }
+
+    public Optional<CognitiveArtifact> reusableArtifact(IntelligenceRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (artifactStore == null || !reusableRequest(request)) return Optional.empty();
+        return artifactStore.findReusable(reusableFingerprint(request), Instant.now());
+    }
+
+    public static ProviderBudget defaultBudget(IntelligenceRequest request) {
+        Objects.requireNonNull(request, "request");
+        ProviderBudget budget = ProviderBudget.forDepth(depthFrom(request));
+        if (request.collaborationMode() != CollaborationMode.SINGLE) {
+            budget = budget.withExplicitMultiModelRequest(request.maxProviders());
+        }
+        return budget;
+    }
+
+    private static EscalationReason scopedContinuationReason(IntelligenceRequest request) {
+        if (CognitiveRequestScope.logicalRequestRef().isBlank()) return null;
+        if (request.collaborationMode() != CollaborationMode.SINGLE) {
+            return EscalationReason.EXPLICIT_HUMAN_REQUEST;
+        }
+        String context = request.context() == null ? "" : request.context();
+        if (context.contains("GROUNDED INFORMATION ACQUIRED BEFORE FRONTIER REASONING")
+                || context.contains("WEB RESEARCH EVIDENCE")) {
+            return EscalationReason.NOVEL_INFORMATION_ACQUIRED;
+        }
+        return EscalationReason.INSUFFICIENT_EVIDENCE;
+    }
+
+    private static IntelligenceDepth depthFrom(IntelligenceRequest request) {
+        String latency = request.latencyBudget() == null ? "" : request.latencyBudget().toLowerCase(Locale.ROOT);
+        String cost = request.costBudget() == null ? "" : request.costBudget().toLowerCase(Locale.ROOT);
+        if (latency.contains("extended") || cost.contains("deep")) return IntelligenceDepth.DEEP;
+        if (latency.contains("analysis") || cost.contains("expanded")) return IntelligenceDepth.ANALYZE;
+        return IntelligenceDepth.FAST;
+    }
+
+    private static boolean reusableRequest(IntelligenceRequest request) {
+        return request.collaborationMode() == CollaborationMode.SINGLE
+                && !request.freshExternalDataRequired();
+    }
+
+    private static String reusableFingerprint(IntelligenceRequest request) {
+        return CognitiveFingerprint.sha256(
+                request.objective(),
+                CognitiveFingerprint.contextFingerprint(request.context()),
+                request.evidenceReferences(),
+                request.requiredCapability(),
+                request.requiredOutput());
+    }
+
+    private static IntelligenceRequest withInstitutionalContext(IntelligenceRequest request) {
+        InstitutionalContextPackage packageContext = CognitiveRequestScope.institutionalContext();
+        if (packageContext == null || request.context().contains("institutional_context_fingerprint=")) {
+            return request;
+        }
+        String context = request.context()
+                + "\n\nMETATRON INSTITUTIONAL CONTEXT PACKAGE\n"
+                + "institutional_context_fingerprint=" + packageContext.fingerprint() + "\n"
+                + "authority_chain=" + packageContext.authorityChain() + "\n"
+                + "canonical_refs=" + packageContext.canonicalRefs() + "\n"
+                + "plan_refs=" + packageContext.planRefs() + "\n"
+                + "runtime_refs=" + packageContext.runtimeRefs() + "\n"
+                + "conflicts=" + packageContext.conflicts() + "\n"
+                + "context_note=References are context/provenance only; they do not grant authority or authorization.";
+        return new IntelligenceRequest(
+                request.requestId(), request.requester(), request.mode(), request.collaborationMode(),
+                request.objective(), context, request.evidenceReferences(), request.requiredCapability(),
+                request.consequence(), request.latencyBudget(), request.costBudget(), request.authorityContext(),
+                request.requiredOutput(), request.requestedProviders(), request.maxProviders(),
+                request.freshExternalDataRequired());
+    }
+
+    private static String caseRef(String context) {
+        if (context == null || context.isBlank()) return "";
+        for (String line : context.lines().toList()) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("case_id=")) return trimmed.substring("case_id=".length()).trim();
+        }
+        return "";
     }
 
     /**

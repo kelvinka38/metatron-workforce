@@ -38,8 +38,8 @@ public final class MetatronIntelligenceResponder {
     private static final String SYSTEM_CONTEXT = """
             You are Metatron Workforce's intelligence layer.
             Answer the Human directly and naturally in the Human's language.
-            The semantic objective supplied to you was normalized by a frontier model from the Human's original utterance.
-            Use supplied conversation history and Case context to preserve continuity.
+            The semantic objective supplied to you was normalized by the first Cognitive Runtime frontier pass.
+            Use supplied institutional context, conversation history and Case context to preserve continuity.
             Treat the inbound channel as transport metadata only.
             Do not claim that an action, audit, deployment, tool call, or external lookup happened unless Workforce supplied evidence of it.
             Claims, evidence, authority, authorization, execution and outcome are distinct.
@@ -250,14 +250,10 @@ public final class MetatronIntelligenceResponder {
                 normalized = IntelligenceDepthApplication.apply(
                         semanticInterpreter.interpret(text, conversationContext, channel, activeCase), depthContract);
             }
-            if (!deterministicControl
-                    && activeCase != null && normalized.caseContinuity() == CaseContinuity.NEW) {
-                // The contextual pass is allowed to decide continuity, but once it declares a NEW bounded Case,
-                // stale Case/history content must not influence the Objective itself. Re-normalize from the
-                // current Human message only. With no active Case present, the interpreter forces continuity NEW.
-                normalized = IntelligenceDepthApplication.apply(
-                        semanticInterpreter.interpret(text, "", channel, (IntelligenceCase) null), depthContract);
-            }
+
+            // One frontier call by default: when the first pass declares a NEW bounded Case, the
+            // normalized objective from that same call is authoritative semantic output for this
+            // interaction. We do not pay a second semantic call merely to replay without history.
             if (approvalDeferred && normalized.mode() == IntelligenceMode.EXECUTION) {
                 normalized = asApprovalGatedPlanning(normalized);
                 LOG.warn("approval_deferred_execution_canonicalized_to_reasoning human_id={} channel={}",
@@ -267,8 +263,8 @@ public final class MetatronIntelligenceResponder {
                     ? deterministicControlRoute
                     : "semantic-" + normalized.requestedDepth().name().toLowerCase(Locale.ROOT);
 
-            if (!normalized.materiallyAmbiguous() && normalized.canReturnFastDirectly()) {
-                route = "frontier-semantic-fast";
+            if (!normalized.materiallyAmbiguous() && normalized.canReturnPrimaryDirectly()) {
+                route = "frontier-primary-one-call";
                 return normalized.directResponse();
             }
 
