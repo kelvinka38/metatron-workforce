@@ -1,0 +1,40 @@
+name: Ops Exact SHA SoT Gate Verification
+
+on:
+  push:
+    branches: [ops/selfhosted-sot-gate-9ef06371]
+    paths:
+      - '.github/workflows/ops-selfhosted-sot-gate-9ef06371.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  exact-sha-test:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          ref: 9ef06371e455d858d0e29aefac589aa6ac277ea2
+          fetch-depth: 1
+      - name: Assert immutable target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9ef06371e455d858d0e29aefac589aa6ac277ea2"
+          echo EXACT_SHA=9ef06371e455d858d0e29aefac589aa6ac277ea2
+      - name: Test and build exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew clean test bootJar --no-daemon --max-workers=1
+      - name: Confirm governance regression test executed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build/test-results/test/TEST-com.metatron.workforce.management.LiveManagementConfigurationGovernanceWiringTest.xml
+          grep -q 'failures="0"' build/test-results/test/TEST-com.metatron.workforce.management.LiveManagementConfigurationGovernanceWiringTest.xml
+          echo LIVE_SOT_EXECUTION_GATE_REGRESSION=PASS
