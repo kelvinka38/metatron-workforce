@@ -1,0 +1,45 @@
+name: Ops GO1 fe4c3692
+on:
+  push:
+    branches: [ops/go1-fe4c3692]
+jobs:
+  go1:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fe4c3692d7e0248eb8fd6db49f65424c4f6a3f62
+          fetch-depth: 1
+      - name: Wait for exact production SHA
+        run: |
+          set -euo pipefail
+          TARGET=fe4c3692d7e0248eb8fd6db49f65424c4f6a3f62
+          for _ in $(seq 1 300); do
+            CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
+            if [ -n "$CID" ]; then
+              LIVE=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
+              HEALTH=$(docker inspect "$CID" --format '{{.State.Health.Status}}' 2>/dev/null || true)
+              if [ "$LIVE" = "$TARGET" ] && [ "$HEALTH" = healthy ]; then
+                echo "GO1_PRODUCTION_SHA=$LIVE"
+                exit 0
+              fi
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Submit real GO1 objective
+        run: |
+          set -euo pipefail
+          TARGET=fe4c3692d7e0248eb8fd6db49f65424c4f6a3f62
+          BASE=/opt/metatron/metatron-workforce
+          set -a
+          source "$BASE/.env"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit --kind general-engineering-go1 --source-sha "$TARGET" --priority 50 --dedupe-key "general-engineering-go1:$TARGET:$GITHUB_RUN_ID" --env "TARGET_SHA=$TARGET" | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_GO1_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 1500 --poll 2
+          $CTL get "$TASK"
+          echo 'REAL_GO1_RERUN=PASS'
