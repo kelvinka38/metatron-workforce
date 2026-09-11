@@ -1,6 +1,6 @@
 # Metatron Intelligence Routing Correctness Gap Closure
 
-Status: IMPLEMENTED — acceptance pending canonical merge/deploy
+Status: CLOSED — canonical acceptance, merge and production deployment verified
 Scope: Workforce Intelligence Fabric provider/model routing
 
 ## Closure objective
@@ -134,6 +134,10 @@ Acceptance classes:
 - `IntelligenceRoutingConformanceAcceptanceTest`
 - `LatencyAwareProviderRoutingTest`
 - `CostAwareProviderRoutingTest`
+
+Canonical implementation PR: `#329`.
+Canonical implementation merge SHA: `0004de0a5772537e88a82093411436872e7ce762`.
+Production verification confirmed this exact SHA before this status record was updated.
 
 ## Non-goals
 
