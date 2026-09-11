@@ -71,6 +71,21 @@ class SotEnforcementRuntimeTest {
     }
 
     @Test
+    void unknownMutatingCapabilityStillFailsClosed() {
+        Fixture f = new Fixture();
+        ExecutionWorkSpec unknown = new ExecutionWorkSpec(
+                "step-unknown", "attempt unknown governed mutation", "kelvinka38/metatron-workforce",
+                "execution.unknown.mutation", List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass"), List.of("test-report"));
+
+        GovernanceDeniedException denied = assertThrows(GovernanceDeniedException.class, () ->
+                f.plans.bindAuthorizedWork("objective-unknown", "founder", unknown,
+                        "founder", "approval:objective-unknown", Map.of()));
+
+        assertEquals("SOT_DISCOVERY_REQUIRED", denied.code());
+    }
+
+    @Test
     void completionIsInstitutionalDecisionNotWorkerClaim() {
         Fixture f = new Fixture();
         ExecutionWorkSpec work = work("step-1", "complete governed repair");
