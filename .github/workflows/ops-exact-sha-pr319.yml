@@ -1,0 +1,26 @@
+name: Ops Exact SHA PR319
+on:
+  push:
+    branches: [ops/exact-sha-pr319]
+jobs:
+  exact-sha-test:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 0af439cbe9aae2582d0bd576ec8def353f7a2a1e
+          fetch-depth: 1
+      - name: Assert immutable target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "0af439cbe9aae2582d0bd576ec8def353f7a2a1e"
+      - name: Test proposal completion identity semantics
+        run: |
+          set -euo pipefail
+          ./gradlew clean test bootJar --no-daemon --max-workers=1
+      - name: Confirm regression test executed
+        run: |
+          set -euo pipefail
+          test -f build/test-results/test/TEST-com.metatron.workforce.execution.governance.CompletionCandidateArtifactIdentityTest.xml
+          grep -q 'failures="0"' build/test-results/test/TEST-com.metatron.workforce.execution.governance.CompletionCandidateArtifactIdentityTest.xml
+          echo 'PR319_EXACT_SHA_TEST=PASS'
