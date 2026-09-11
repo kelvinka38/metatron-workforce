@@ -1,0 +1,25 @@
+name: Ops Read GO1 dd33 Log
+
+on:
+  push:
+    branches: [ops/read-go1-dd33-log]
+    paths:
+      - '.github/workflows/ops-read-go1-dd33-log.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  read-log:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Read failed Highway task receipt and log
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG=/home/github-runner/.metatron/highway/state/logs/hw-dd33b3f644f9429db9b1.log
+          test -r "$LOG"
+          echo '=== HIGHWAY GO1 INNER LOG BEGIN ==='
+          cat "$LOG"
+          echo '=== HIGHWAY GO1 INNER LOG END ==='
