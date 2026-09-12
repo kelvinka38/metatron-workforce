@@ -3,6 +3,7 @@ package com.metatron.workforce.observation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.management.RepositoryPullRequestAutonomousCapability;
+import com.metatron.workforce.runtime.RepositoryCredentialAuthority;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -43,9 +44,9 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
 
     /** Explicitly select the production constructor because a package-private test constructor also exists. */
     @Autowired
-    public GitHubRepositoryObservationVerifier(ObjectMapper json) {
+    public GitHubRepositoryObservationVerifier(ObjectMapper json, RepositoryCredentialAuthority repositoryCredentials) {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build(), json,
-                "https://api.github.com", env("GITHUB_TOKEN"));
+                "https://api.github.com", repositoryCredentials.tokenOrEmpty());
     }
 
     GitHubRepositoryObservationVerifier(HttpClient http, ObjectMapper json, String apiBase, String token) {

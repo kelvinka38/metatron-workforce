@@ -6,6 +6,7 @@ import com.metatron.workforce.action.ActionFabric;
 import com.metatron.workforce.action.ActionJournal;
 import com.metatron.workforce.action.CognitiveWorkerRuntime;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.runtime.RepositoryCredentialAuthority;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -56,9 +57,9 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
     private final String token;
 
     @Autowired
-    public RepositoryPullRequestAutonomousCapability(ObjectMapper json) {
+    public RepositoryPullRequestAutonomousCapability(ObjectMapper json, RepositoryCredentialAuthority repositoryCredentials) {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build(), json,
-                "https://api.github.com", env("GITHUB_TOKEN"));
+                "https://api.github.com", repositoryCredentials.tokenOrEmpty());
     }
 
     RepositoryPullRequestAutonomousCapability(HttpClient http, ObjectMapper json, String apiBase, String token) {

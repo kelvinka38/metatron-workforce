@@ -1,6 +1,7 @@
 package com.metatron.workforce.management;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.runtime.RepositoryCredentialAuthority;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
@@ -15,6 +16,7 @@ final class RepositoryPullRequestAutonomousCapabilitySpringWiringTest {
         try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
             Supplier<ObjectMapper> objectMapper = ObjectMapper::new;
             context.registerBean(ObjectMapper.class, objectMapper);
+            context.registerBean(RepositoryCredentialAuthority.class, () -> new RepositoryCredentialAuthority(""));
             context.register(RepositoryPullRequestAutonomousCapability.class);
             context.refresh();
 

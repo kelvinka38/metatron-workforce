@@ -173,23 +173,23 @@ public class GeneralExecutionRuntimeConfiguration {
 
     @Bean
     RepositoryWorkspaceMaterializationService repositoryWorkspaceMaterializationService(
-            @Value("${GITHUB_TOKEN:}") String githubToken,
+            RepositoryCredentialAuthority repositoryCredentials,
             ObjectiveWorkspaceService workspaces,
             ExecutionWorkspaceManager executionWorkspaces,
             ObjectMapper json) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
-        return new RepositoryWorkspaceMaterializationService(http, githubToken, workspaces, executionWorkspaces, json);
+        return new RepositoryWorkspaceMaterializationService(http, repositoryCredentials.tokenOrEmpty(), workspaces, executionWorkspaces, json);
     }
 
     @Bean
     GitHubWorkspaceProposalPublisher gitHubWorkspaceProposalPublisher(
-            @Value("${GITHUB_TOKEN:}") String githubToken,
+            RepositoryCredentialAuthority repositoryCredentials,
             ObjectiveWorkspaceService workspaces,
             WorkerExecutionSandboxService sandbox,
             ObjectMapper json) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-        return new GitHubWorkspaceProposalPublisher(http, githubToken, workspaces, sandbox, json);
+        return new GitHubWorkspaceProposalPublisher(http, repositoryCredentials.tokenOrEmpty(), workspaces, sandbox, json);
     }
 
     @Bean
