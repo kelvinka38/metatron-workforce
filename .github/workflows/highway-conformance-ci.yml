@@ -94,7 +94,25 @@ jobs:
       - name: Diagnostic execution action deploy architecture tests
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.execution.*' --tests 'com.metatron.workforce.action.*' --tests 'com.metatron.workforce.deploy.*' --tests 'com.metatron.workforce.architecture.*' --no-daemon --max-workers=1
-      - name: Diagnostic interaction package tests
+      - name: Diagnostic interaction intelligence tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction channel tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.channel.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction tools tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.tools.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction llm tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.llm.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction knowledge tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.knowledge.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction routing memory evidence tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.routing.*' --tests 'com.metatron.workforce.interaction.memory.*' --tests 'com.metatron.workforce.interaction.evidence.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction aggregate tests
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.interaction.*' --no-daemon --max-workers=1
       - name: Diagnostic workplace actor core observation work tests
