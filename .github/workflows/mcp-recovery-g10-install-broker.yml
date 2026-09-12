@@ -1,0 +1,90 @@
+name: MCP Recovery G10 Install Broker
+
+on:
+  push:
+    branches: [mcp-recovery-g10-20260913]
+    paths:
+      - '.github/workflows/mcp-recovery-g10-install-broker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  install-broker:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Regenerate and verify broker candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_CURRENT='e65b73987e34f18b77ad3096f9e09bc46ff8263d3754623375ed068bf36b568d'
+          CURRENT="$(sha256sum /usr/local/sbin/metatron-mcp-broker | awk '{print $1}')"
+          [ "$CURRENT" = "$EXPECTED_CURRENT" ] || { echo "BROKER_CAS_BASELINE_MISMATCH expected=$EXPECTED_CURRENT observed=$CURRENT"; exit 41; }
+          cp .mcp-recovery/host/metatron-mcp-broker.current .mcp-recovery/g10/metatron-mcp-broker.g10
+          python3 .mcp-recovery/g10/broker-auth-state-cas-g10-patch.py .mcp-recovery/g10/metatron-mcp-broker.g10
+          python3 -m py_compile .mcp-recovery/g10/metatron-mcp-broker.g10
+          chmod 0755 .mcp-recovery/g10/metatron-mcp-broker.g10
+          grep -q 'METATRON_MCP_AUTH_STATE_CAS_G10' .mcp-recovery/g10/metatron-mcp-broker.g10
+          grep -q 'VERSION = "3.7.0-g10"' .mcp-recovery/g10/metatron-mcp-broker.g10
+          echo "BROKER_G10_CANDIDATE_PASS sha256=$(sha256sum .mcp-recovery/g10/metatron-mcp-broker.g10 | awk '{print $1}')"
+
+      - name: Atomically install with rollback guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_CURRENT='e65b73987e34f18b77ad3096f9e09bc46ff8263d3754623375ed068bf36b568d'
+          BACKUP="metatron-mcp-broker.pre-g10-$(date -u +%Y%m%dT%H%M%SZ)"
+          export BACKUP
+          rollback() {
+            echo 'BROKER_G10_VERIFY_FAILED_ROLLING_BACK'
+            docker run --rm --entrypoint /bin/sh \
+              -v /usr/local/sbin:/host-sbin \
+              metatron-ssh-mcp-runtime:g9 -c "set -eu; test -f /host-sbin/$BACKUP; cp -p /host-sbin/$BACKUP /host-sbin/.metatron-mcp-broker.rollback; chown 0:0 /host-sbin/.metatron-mcp-broker.rollback; chmod 0755 /host-sbin/.metatron-mcp-broker.rollback; mv -f /host-sbin/.metatron-mcp-broker.rollback /host-sbin/metatron-mcp-broker"
+          }
+          trap rollback ERR
+
+          docker run --rm --entrypoint /bin/sh \
+            -e EXPECTED_CURRENT="$EXPECTED_CURRENT" -e BACKUP="$BACKUP" \
+            -v /usr/local/sbin:/host-sbin \
+            -v "$PWD/.mcp-recovery/g10:/candidate:ro" \
+            metatron-ssh-mcp-runtime:g9 -c '
+              set -eu
+              observed="$(sha256sum /host-sbin/metatron-mcp-broker | awk "{print \$1}")"
+              [ "$observed" = "$EXPECTED_CURRENT" ]
+              cp -p /host-sbin/metatron-mcp-broker "/host-sbin/$BACKUP"
+              cp /candidate/metatron-mcp-broker.g10 /host-sbin/.metatron-mcp-broker.g10.tmp
+              chown 0:0 /host-sbin/.metatron-mcp-broker.g10.tmp
+              chmod 0755 /host-sbin/.metatron-mcp-broker.g10.tmp
+              mv -f /host-sbin/.metatron-mcp-broker.g10.tmp /host-sbin/metatron-mcp-broker
+            '
+
+          probe="$(docker run --rm --entrypoint /bin/sh \
+            --add-host host.docker.internal:host-gateway \
+            -v /opt/metatron/ssh-mcp/id_ed25519:/ssh/id_ed25519:ro \
+            metatron-ssh-mcp-runtime:g9 -c "printf '%s' '{\"op\":\"server_status\",\"args\":{}}' | ssh -i /ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 metatron-mcp@host.docker.internal 2>/dev/null")"
+          python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert r["ok"] is True; b=r["broker"]; assert b["transport_user"]=="metatron-mcp" and b["broker_euid"]==0 and b["broker_version"]=="3.7.0-g10"; print("BROKER_G10_RESTRICTED_SERVER_STATUS_PASS")' "$probe"
+
+          state="$(docker run --rm --entrypoint /bin/sh \
+            --add-host host.docker.internal:host-gateway \
+            -v /opt/metatron/ssh-mcp/id_ed25519:/ssh/id_ed25519:ro \
+            metatron-ssh-mcp-runtime:g9 -c "printf '%s' '{\"op\":\"auth_state_read\",\"args\":{}}' | ssh -i /ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 metatron-mcp@host.docker.internal 2>/dev/null")"
+          python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert r["ok"] is True; m=json.loads(r["stdout"]); assert m["exists"] is True and len(m["sha256"])==64 and m["content_b64"]; print("BROKER_G10_AUTH_STATE_READ_PASS sha256="+m["sha256"])' "$state"
+
+          for c in metatron-mcp-runtime-g9 metatron-mcp-runtime-g9-standby; do
+            st="$(docker inspect "$c" --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+            [ "$st" = 'running/healthy' ] || { echo "G9_HEALTH_REGRESSION container=$c status=$st"; false; }
+          done
+          hdr="$(mktemp)"
+          code="$(curl -sS -D "$hdr" -o /dev/null -w '%{http_code}' --max-time 8 https://ssh.metatron.vn/mcp)"
+          [ "$code" = 401 ]
+          grep -qi '^www-authenticate:.*Bearer' "$hdr"
+          grep -qi 'resource_metadata=' "$hdr"
+          rm -f "$hdr"
+
+          trap - ERR
+          echo "BROKER_G10_INSTALL_PASS backup=/usr/local/sbin/$BACKUP g9_untouched=true"
