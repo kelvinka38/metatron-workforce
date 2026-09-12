@@ -56,8 +56,24 @@ public final class InstitutionalIntelligenceRuntime {
             String anthropicModel,
             ObjectMapper objectMapper,
             CognitiveArtifactStore artifactStore) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey, openAiModel, googleModel, anthropicModel,
+                objectMapper, artifactStore, null, new InMemoryInferenceConsumptionLedger());
+    }
+
+    public InstitutionalIntelligenceRuntime(
+            String openAiApiKey,
+            String googleApiKey,
+            String anthropicApiKey,
+            String openAiModel,
+            String googleModel,
+            String anthropicModel,
+            ObjectMapper objectMapper,
+            CognitiveArtifactStore artifactStore,
+            MetatronCognitionClient metatronCognitionClient,
+            InferenceConsumptionLedger inferenceLedger) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         Objects.requireNonNull(artifactStore, "artifactStore");
+        Objects.requireNonNull(inferenceLedger, "inferenceLedger");
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(2))
                 .version(HttpClient.Version.HTTP_2)
@@ -101,7 +117,10 @@ public final class InstitutionalIntelligenceRuntime {
                 new EvidenceBackedGovernance(),
                 toolFabric,
                 deliberation,
-                artifactStore);
+                artifactStore,
+                metatronCognitionClient,
+                new CognitionAdmissionPolicy(),
+                inferenceLedger);
     }
 
     public List<LlmProvider> configuredProviders() { return configuredProviders; }

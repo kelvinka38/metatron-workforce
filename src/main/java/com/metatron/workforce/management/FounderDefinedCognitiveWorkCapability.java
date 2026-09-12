@@ -138,7 +138,9 @@ public final class FounderDefinedCognitiveWorkCapability implements AutonomousEx
                 workerContext.renderedContext());
 
         WorkerIntelligenceService.Response response = intelligence.reason(new WorkerIntelligenceService.Request(
-                request.allocatedWorkerId(), capabilityRef(), instructions, context, List.copyOf(evidence)));
+                request.allocatedWorkerId(), capabilityRef(), instructions, context, List.copyOf(evidence),
+                request.allocatedWorkerId(), request.objectiveId(), request.assignmentReference(),
+                request.workSpec().stepId(), ""));
         evidence.addAll(response.evidenceReferences());
         evidence.add("worker-cognitive-request:" + response.requestReference());
 

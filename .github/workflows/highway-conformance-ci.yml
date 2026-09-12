@@ -367,14 +367,23 @@ jobs:
           assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4] and fa[5]!=fb[5] and fa[6]!=fb[6]; assert fa[2]=='highway-test-a-objective-workspaces' and fb[2]=='highway-test-b-objective-workspaces'; assert fa[3]=='highway-test-a-execution-workspaces' and fb[3]=='highway-test-b-execution-workspaces'
           print('HIGHWAY_CONFIG_ISOLATION=PASS')
           PY
-      - name: Verify grounded search and provider isolation remain explicit
+      - name: Verify retrieval-only web evidence and Worker provider isolation remain explicit
         shell: bash
         run: |
           set -euo pipefail
+          WEB=src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          POLICY=src/main/java/com/metatron/workforce/interaction/intelligence/CognitionAdmissionPolicy.java
           grep -q 'TELEGRAM_API_BASE_URL' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
           grep -q 'https://api.telegram.org' src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java
-          grep -q 'google_search' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
-          grep -q 'groundingChunks' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
-          grep -q 'looksLikeInsufficientAnswer' src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java
+          grep -q 'searchWeb' "$WEB"
+          grep -q 'searchPublicKnowledge' "$WEB"
+          grep -q 'looksLikeInsufficientAnswer' "$WEB"
+          ! grep -q 'GEMINI_API_KEY' "$WEB"
+          ! grep -q 'generativelanguage.googleapis.com' "$WEB"
+          ! grep -q 'google_search' "$WEB"
+          grep -q 'case WORKER' "$POLICY"
+          grep -q 'IntelligenceComputeOwner.METATRON_OWNED' "$POLICY"
+          grep -q 'WORKER_EXTERNAL_INFERENCE_DENIED' "$POLICY"
           echo 'HIGHWAY_PROVIDER_ISOLATION_WITH_REAL_DEFAULT=PASS'
-          echo 'POINT2_GROUNDED_SEARCH_CONTRACT=PASS'
+          echo 'POINT2_RETRIEVAL_ONLY_EVIDENCE_CONTRACT=PASS'
+          echo 'WORKER_EXTERNAL_PAID_INFERENCE_DENY_CONTRACT=PASS'
