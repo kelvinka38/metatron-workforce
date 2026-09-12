@@ -103,9 +103,21 @@ jobs:
       - name: Diagnostic intelligence fabric tests
         shell: bash
         run: ./gradlew test --tests '*IntelligenceFabric*' --tests '*CognitiveRuntimeFabricTest' --no-daemon --max-workers=1
-      - name: Diagnostic provider policy tests
+      - name: Diagnostic configured provider routing policy test
         shell: bash
-        run: ./gradlew test --tests '*Provider*' --tests '*CapacityAware*' --tests '*LatencyAware*' --tests '*RouterBacked*' --no-daemon --max-workers=1
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.ConfiguredProviderRoutingPolicyTest' --no-daemon --max-workers=1
+      - name: Diagnostic adaptive provider routing policy test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.AdaptiveProviderRoutingPolicyTest' --no-daemon --max-workers=1
+      - name: Diagnostic capacity aware routing policy test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.CapacityAwareRoutingPolicyTest' --no-daemon --max-workers=1
+      - name: Diagnostic latency aware routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.LatencyAwareProviderRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic router backed engine test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.RouterBackedIntelligenceEngineTest' --no-daemon --max-workers=1
       - name: Diagnostic intelligence routing tests
         shell: bash
         run: ./gradlew test --tests '*Routing*' --tests '*SemanticTaskRoutingContractTest' --tests '*NoLegacyGatewayKeywordRoutingTest' --no-daemon --max-workers=1
