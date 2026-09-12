@@ -43,6 +43,22 @@ These are the minimum requirements used to certify the current deployable Workfo
 
 The certification envelope includes the existing accepted 1,000-worker representation, 8,000 available labor hours, and utilization/cost evidence from the vertical slice.
 
+## Future Workforce Cognitive Sovereignty Certification — Not Yet Certified
+
+The Founder-approved future certification adds these mandatory production conditions:
+
+```text
+Worker external paid inference requests = 0
+Worker external paid inference tokens   = 0
+Worker external LLM cost                = 0
+provider credentials absent from Workforce after cutover
+Sovereign General Engineering GO1       PASS
+independent outbound network proof      PASS
+1,000+ cognition-bearing Worker scale   PASS
+```
+
+These conditions are not currently claimed as production evidence. Implementation remains blocked pending the Founder server-upgrade review.
+
 ## Non-Goals
 
 This document does not claim multi-region HA, distributed consensus, internet-scale throughput, or final cloud-provider sizing. Those require a separate workload/capacity exercise backed by production traffic evidence.
