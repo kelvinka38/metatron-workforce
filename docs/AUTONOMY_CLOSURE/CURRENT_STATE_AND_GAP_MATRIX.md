@@ -64,14 +64,23 @@ GS2_AUTONOMOUS_PROBE=UNSET
 
 There are **no remaining blockers inside the Founder-ratified Autonomy Closure acceptance scope**.
 
-Future Workforce products, new capabilities, broader mutation authorities, new providers/channels, changed runtime topology, or materially changed semantics may introduce new engineering/evidence work. Such future work is not evidence that this closure remained unfinished, and this `ACCEPTED_L10` verdict must not be generalized beyond its accepted scope.
+This statement is historical/scope-specific. It MUST NOT be used as a current
+whole-system gap registry.
+
+For current post-closure runtime reality and known product/runtime gaps, read:
+
+`../CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`
+
+Current post-closure gaps do not retroactively invalidate `ACCEPTED_L10`, and
+`ACCEPTED_L10` does not automatically close current post-closure gaps.
 
 ## Current maturity
 
 ```text
 WORKFORCE AUTONOMY CLOSURE = TECHNICALLY COMPLETE / ACCEPTED_L10
-P0–P10 = CLOSED
-NEXT = POST-CLOSURE PRODUCT / OPERATIONS EVOLUTION UNDER CANONICAL SOT
+P0–P10 = CLOSED FOR THAT PROGRAM
+CURRENT WHOLE-SYSTEM COMPLETION = NOT IMPLIED
+CURRENT RUNTIME/GAPS = SEE docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md
 ```
 
 There is no canonical P11 in this implementation program.
