@@ -11,6 +11,13 @@ Earlier revisions correctly prevented bounded evidence from being generalized in
 
 This matrix does not claim that every possible future Workforce capability is finished. It records that the canonical Autonomy Closure program itself is technically complete and production accepted.
 
+This matrix is a **historical closure-conformance matrix**, not the current whole-system gap registry. Current runtime truth, changed post-closure behavior, and known open gaps are tracked in `docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`.
+
+```text
+SCOPE COMPLETE != SYSTEM COMPLETE
+HISTORICAL ACCEPTANCE != CURRENT WHOLE-SYSTEM ACCEPTANCE
+```
+
 | Capability | Accepted implementation/evidence | Current verdict |
 |---|---|---|
 | Participant -> Worker -> Participation | durable Core identity and participation lifecycle | Accepted substrate |
@@ -57,7 +64,10 @@ The previous completion rule prohibited a general completion claim until all cri
 
 Future changes must still report the evidence level actually achieved. A new feature, authority expansion or runtime/provider change does not inherit production acceptance merely because the closure baseline is accepted.
 
+No current whole-system completion claim may be derived from this matrix. Such a claim requires the current Whole-System Gap Registry and exact-current-production acceptance defined by `docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`.
+
 ```text
-AUTONOMY CLOSURE = CLOSED / ACCEPTED_L10
+GENERAL L10 AUTONOMY = ACCEPTED FOR HISTORICAL CLOSURE SCOPE
+CURRENT WHOLE-SYSTEM COMPLETE = NOT CLAIMED HERE
 NEXT = POST-CLOSURE PRODUCT & OPERATIONS EVOLUTION UNDER WORKFORCE SOT
 ```
