@@ -53,8 +53,9 @@ public final class WorkerExecutionSandboxService {
                 if(!workspace.workspaceRef().equals(result.workspaceRef()))throw new IllegalStateException("sandbox workspace reference attribution mismatch");
             }
             return result;
-        }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("sandbox execution interrupted",interrupted);}catch(Exception failure){if(failure instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("sandbox execution failed",failure);}
+        }catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException("sandbox execution interrupted",interrupted);}catch(Exception failure){if(failure instanceof RuntimeException runtime)throw runtime;throw new IllegalStateException("sandbox execution failed:"+boundedFailureDetail(failure),failure);}
     }
+    static String boundedFailureDetail(Throwable failure){if(failure==null)return "UnknownFailure";String type=failure.getClass().getSimpleName();String message=failure.getMessage()==null?"":failure.getMessage().replace('\r',' ').replace('\n',' ').trim();String detail=message.isBlank()?type:type+":"+message;return detail.length()<=240?detail:detail.substring(0,240);}
     private static void requireAllowedExecutable(WorkerRuntimeProfileBindingService.ToolProfile profile,String executable){require(executable,"executable");if(!profile.allowedExecutables().contains(executable))throw new SecurityException("runtime profile denies executable: "+executable);}
     private static String require(String value,String field){if(value==null||value.isBlank())throw new IllegalArgumentException(field+" required");return value.trim();}
 }
