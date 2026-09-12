@@ -1,0 +1,44 @@
+name: MCP Recovery G10 Acceptance Phase 1
+
+on:
+  push:
+    branches: [mcp-recovery-g10-20260913]
+    paths:
+      - '.github/workflows/mcp-recovery-g10-acceptance-phase1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance-phase1:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Prepare temporary test artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROD=.mcp-recovery/g10/metatron-mcp-broker.g10
+          TEST=.mcp-recovery/g10/metatron-mcp-broker.g10-test
+          cp .mcp-recovery/host/metatron-mcp-broker.current "$PROD"
+          python3 .mcp-recovery/g10/broker-auth-state-cas-g10-patch.py "$PROD"
+          python3 -m py_compile "$PROD"
+          [ "$(sha256sum "$PROD" | awk '{print $1}')" = 'c5a79966d6096a050d0799e594c78f501007071a62f5dc0138e2fe8f45a1558e' ]
+          cp "$PROD" "$TEST"
+          python3 .mcp-recovery/g10/broker-auth-state-test-namespace-patch.py "$TEST"
+          python3 -m py_compile "$TEST"
+          chmod 0755 "$PROD" "$TEST"
+          printf '%s\n' \
+            'FROM metatron-ssh-mcp-runtime:g10' \
+            'RUN sed -i "s/hostBrokerRequest('"'"'auth_state_read'"'"', {})/hostBrokerRequest('"'"'auth_state_read_test'"'"', {})/" /app/auth-proxy.mjs \' \
+            ' && sed -i "s/hostBrokerRequest('"'"'auth_state_compare_and_swap'"'"', {/hostBrokerRequest('"'"'auth_state_compare_and_swap_test'"'"', {/" /app/auth-proxy.mjs \' \
+            ' && grep -Fq "auth_state_read_test" /app/auth-proxy.mjs \' \
+            ' && grep -Fq "auth_state_compare_and_swap_test" /app/auth-proxy.mjs \' \
+            ' && node --check /app/auth-proxy.mjs' > .mcp-recovery/g10/Dockerfile.acceptance
+          docker build --pull=false -f .mcp-recovery/g10/Dockerfile.acceptance -t metatron-ssh-mcp-runtime:g10-acceptance .mcp-recovery/g10
+      - name: Execute phase 1
+        shell: bash
+        run: bash .mcp-recovery/g10/acceptance-phase1.sh
