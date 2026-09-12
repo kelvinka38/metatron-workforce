@@ -21,13 +21,33 @@ Accepted production baseline:
 - final artifact: `9784967732`
 - artifact SHA-256: `1aa44620296eb9bc159ecca81b9c2473370b1b69712d8ef1d601c0c39c69e369`
 
+## CURRENT RUNTIME REALITY — MANDATORY CLAIM BOUNDARY
+
+Before any statement that Workforce, autonomy, Worker runtime, management, ingress,
+execution or the whole system is `complete`, read:
+
+`docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`
+
+`ACCEPTED_L10` is scope- and evidence-bound historical acceptance. It MUST NOT be
+generalized into a current whole-system completion claim.
+
+Every completion claim MUST name scope, current runtime identity, evidence level and
+known open gaps/exclusions.
+
+`SYSTEM COMPLETE` requires a current Whole-System Gap Registry with zero critical open
+gaps and exact-current-production acceptance.
+
 Before work on ingress, management, staffing, scheduling, runtime, Workplace, Intelligence handoff, BIOS handoff, Observation or completion claims, read `docs/AUTONOMY_CLOSURE/README.md`, `docs/AUTONOMY_CLOSURE/FINAL_ACCEPTED_L10_EVIDENCE.md`, and every upstream canonical contract they list.
 
 Do **not** reset the Autonomy Closure program to `PARTIAL`, P0, P1 or another historical gate merely because later product work exists. P0–P10 are closed for this accepted scope. There is no canonical P11 in this program. Reopening requires contradictory production evidence, a materially changed scope that requires new acceptance, or an applicable new canonical decision.
 
 Non-negotiable accepted target:
 
-> Once Workforce durably accepts an Objective and assigns its accountable Manager Worker, Objective lifetime no longer depends on ChatGPT, Telegram, another channel, a model session, a process, or a runtime remaining alive.
+> Once Workforce durably accepts an Objective into governed management/ownership, Objective lifetime no longer depends on ChatGPT, Telegram, another channel, a model session, a process, or a runtime remaining alive.
+
+Do not infer from this historical closure sentence that every current generic Objective
+already has a separately proven accountable Manager Worker actor. Current management
+topology must be reported from current runtime evidence.
 
 Every relevant future PR must still identify the canonical clauses, domain owners, durability/idempotency/fencing behavior, failure/reconciliation behavior, evidence level and any production gate required by the changed scope.
 
