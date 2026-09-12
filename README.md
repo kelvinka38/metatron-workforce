@@ -112,3 +112,5 @@ MERGE CONCURRENCY != DEPLOY CONCURRENCY
 ```
 
 Do not downgrade the accepted Autonomy Closure back to `PARTIAL` without contradictory production evidence or a new canonical decision. Future material changes must earn evidence appropriate to their changed scope.
+
+Do not upgrade an implemented backend capability into a claim of current product usability without proving the intended surface can invoke and complete that path.
