@@ -58,12 +58,38 @@ jobs:
           set -euo pipefail
           python3 scripts/sot_enforcement/inventory.py
           echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
-      - name: Enforce full Gradle build gate
+      - name: Compile Gradle production and test sources
         shell: bash
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew clean test bootJar --no-daemon --max-workers=1
+          ./gradlew clean compileJava compileTestJava --no-daemon --max-workers=1
+      - name: EE test ExecutionWorkspaceIsolationRegressionTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionWorkspaceIsolationRegressionTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionResourceManagerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionResourceManagerTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionResourceSchedulerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionResourceSchedulerTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionWorkspaceManagerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionWorkspaceManagerTest' --no-daemon --max-workers=1
+      - name: EE test HighwayResourceBridgeServiceTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.HighwayResourceBridgeServiceTest' --no-daemon --max-workers=1
+      - name: EE test RepositoryIntegrationControllerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.RepositoryIntegrationControllerTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionIsolationRecoveryTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionIsolationRecoveryTest' --no-daemon --max-workers=1
+      - name: Enforce full Gradle build gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew test bootJar --no-daemon --max-workers=1
           echo 'HIGHWAY_FULL_BUILD_PR_GATE=PASS'
       - name: Validate production compose topology
         shell: bash
