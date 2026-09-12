@@ -4,6 +4,7 @@ import com.metatron.workforce.interaction.memory.PersistentWorkerConversationMem
 import com.metatron.workforce.workplace.MeetingWorkerDirectory;
 import com.metatron.workforce.workplace.WorkerConversationGateway;
 import com.metatron.workforce.workplace.WorkplaceControlRoomService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -32,8 +33,25 @@ public final class DirectWorkerConversationService {
     private final WorkplaceControlRoomService controlRoom;
     private final MeetingWorkerDirectory directory;
     private final WorkerConversationGateway workerConversation;
+    private final WorkerInstructionAdmissionService instructionAdmission;
 
+    @Autowired
     public DirectWorkerConversationService(
+            DirectWorkerConversationBindingStore bindings,
+            PersistentWorkerConversationMemoryStore memory,
+            WorkplaceControlRoomService controlRoom,
+            MeetingWorkerDirectory directory,
+            WorkerConversationGateway workerConversation,
+            WorkerInstructionAdmissionService instructionAdmission) {
+        this.bindings = Objects.requireNonNull(bindings, "bindings");
+        this.memory = Objects.requireNonNull(memory, "memory");
+        this.controlRoom = Objects.requireNonNull(controlRoom, "controlRoom");
+        this.directory = Objects.requireNonNull(directory, "directory");
+        this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+        this.instructionAdmission = Objects.requireNonNull(instructionAdmission, "instructionAdmission");
+    }
+
+    DirectWorkerConversationService(
             DirectWorkerConversationBindingStore bindings,
             PersistentWorkerConversationMemoryStore memory,
             WorkplaceControlRoomService controlRoom,
@@ -44,6 +62,7 @@ public final class DirectWorkerConversationService {
         this.controlRoom = Objects.requireNonNull(controlRoom, "controlRoom");
         this.directory = Objects.requireNonNull(directory, "directory");
         this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+        this.instructionAdmission = null;
     }
 
     public Optional<HandledReply> handle(MetatronInteraction interaction) {
@@ -97,6 +116,26 @@ public final class DirectWorkerConversationService {
         if (activeBinding.isEmpty()) return Optional.empty();
 
         try {
+            if (instructionAdmission != null) {
+                WorkplaceControlRoomService.WorkerDetail detail =
+                        controlRoom.prepareConversationWorker(activeBinding.get());
+                Optional<WorkerInstructionAdmissionService.Admission> admission = instructionAdmission.evaluate(
+                        interaction, detail.workerId(), workerOperationalContext(detail));
+                if (admission.isPresent()) {
+                    WorkerInstructionAdmissionService.Admission result = admission.get();
+                    memory.append(
+                            interaction.human().actorId(),
+                            detail.workerId(),
+                            interaction.channelProvider(),
+                            interaction.text(),
+                            result.text(),
+                            result.requestReference(),
+                            detail.runtimeId(),
+                            result.evidenceReferences());
+                    return Optional.of(new HandledReply(
+                            result.text(), result.requestReference(), detail.workerId()));
+                }
+            }
             ConversationReply reply = converse(
                     interaction.human().actorId(),
                     activeBinding.get(),
