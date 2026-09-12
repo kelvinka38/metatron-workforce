@@ -1,0 +1,109 @@
+name: MCP Recovery G10 Compose Host
+
+on:
+  push:
+    branches: [mcp-recovery-g10-20260913]
+    paths:
+      - '.github/workflows/mcp-recovery-g10-compose-host.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Verify production baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(docker image inspect metatron-ssh-mcp-runtime:g9 --format '{{.Id}}')" = 'sha256:fac0c0e65275872f8d4ed54cc97545487b53348ef4fff975252d858148c5aab3' ]
+          [ "$(sha256sum /opt/metatron/ssh-mcp/build/Dockerfile.normal-oauth | awk '{print $1}')" = '4447a06f876cf3a8516e843a6948a86227d014216ffefba22c33ee6418a1a8f1' ]
+          [ "$(sha256sum /usr/local/sbin/metatron-mcp-broker | awk '{print $1}')" = 'c5a79966d6096a050d0799e594c78f501007071a62f5dc0138e2fe8f45a1558e' ]
+          for c in metatron-mcp-runtime-g9 metatron-mcp-runtime-g9-standby; do
+            [ "$(docker inspect "$c" --format '{{.State.Status}}/{{.State.Health.Status}}')" = 'running/healthy' ]
+          done
+          docker image inspect metatron-ssh-mcp-runtime:g10 >/dev/null
+          echo 'G10_COMPOSE_BASELINE_PASS'
+
+      - name: Persist clean G10 build artifacts atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH="$PWD/.mcp-recovery/g10/auth-oauth-resilience-g10-patch.mjs"
+          PATCH_SHA="$(sha256sum "$PATCH" | awk '{print $1}')"
+          TMP="$RUNNER_TEMP/g10-compose"
+          rm -rf "$TMP"; mkdir -p "$TMP"
+          cp "$PATCH" "$TMP/auth-oauth-resilience-g10-patch.mjs"
+          cat > "$TMP/Dockerfile.g10" <<'EOF'
+          FROM metatron-ssh-mcp-runtime:g9
+          COPY auth-oauth-resilience-g10-patch.mjs /tmp/auth-oauth-resilience-g10-patch.mjs
+          RUN node /tmp/auth-oauth-resilience-g10-patch.mjs /app/auth-proxy.mjs \
+           && node --check /app/auth-proxy.mjs \
+           && grep -Fq 'METATRON_MCP_OAUTH_RESILIENCE_G10' /app/auth-proxy.mjs \
+           && grep -Fq "grant_types_supported: ['authorization_code', 'refresh_token']" /app/auth-proxy.mjs \
+           && grep -Fq 'auth_state_compare_and_swap' /app/auth-proxy.mjs \
+           && AUTH_PROXY_SELF_TEST=1 node /app/auth-proxy.mjs \
+           && rm -f /tmp/auth-oauth-resilience-g10-patch.mjs
+          EOF
+          cat > "$TMP/prebuild-runtime-g10-oauth-resilience-final.sh" <<'EOF'
+          #!/bin/sh
+          set -eu
+          BUILD=/opt/metatron/ssh-mcp/build
+          cd "$BUILD"
+          docker image inspect metatron-ssh-mcp-runtime:g9 >/dev/null 2>&1
+          docker build --pull=false -f Dockerfile.g10 -t metatron-ssh-mcp-runtime:g10 .
+          docker run --rm --entrypoint node -e AUTH_PROXY_SELF_TEST=1 metatron-ssh-mcp-runtime:g10 /app/auth-proxy.mjs | grep -q AUTH_PROXY_ACCEPTANCE_PASS
+          echo "PREBUILD_RUNTIME_G10_OAUTH_RESILIENCE_FINAL_PASS image=$(docker image inspect metatron-ssh-mcp-runtime:g10 --format '{{.Id}}')"
+          EOF
+          chmod 0755 "$TMP/prebuild-runtime-g10-oauth-resilience-final.sh"
+
+          docker run --rm --entrypoint /bin/sh \
+            -e PATCH_SHA="$PATCH_SHA" \
+            -v /opt/metatron/ssh-mcp:/host \
+            -v "$TMP:/candidate:ro" \
+            metatron-ssh-mcp-runtime:g9 -c '
+              set -eu
+              mkdir -p /host/backups
+              ts="$(date -u +%Y%m%dT%H%M%SZ)"
+              if [ -f /host/build/auth-oauth-resilience-v3_7-post-patch.mjs ]; then
+                cp -p /host/build/auth-oauth-resilience-v3_7-post-patch.mjs "/host/backups/auth-oauth-resilience-v3_7-post-patch.untrusted.$ts.mjs"
+                rm -f /host/build/auth-oauth-resilience-v3_7-post-patch.mjs
+              fi
+              for f in auth-oauth-resilience-g10-patch.mjs Dockerfile.g10 prebuild-runtime-g10-oauth-resilience-final.sh; do
+                cp "/candidate/$f" "/host/build/.$f.tmp"
+                chown 0:0 "/host/build/.$f.tmp"
+                case "$f" in *.sh) chmod 0755 "/host/build/.$f.tmp";; *) chmod 0644 "/host/build/.$f.tmp";; esac
+                mv -f "/host/build/.$f.tmp" "/host/build/$f"
+              done
+              observed="$(sha256sum /host/build/auth-oauth-resilience-g10-patch.mjs | awk "{print \$1}")"
+              [ "$observed" = "$PATCH_SHA" ]
+            '
+          echo "G10_HOST_COMPOSITION_WRITE_PASS patch_sha=$PATCH_SHA"
+
+      - name: Verify accepted G10 image equals persisted composition
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP="$RUNNER_TEMP/g10-verify"
+          rm -rf "$TMP"; mkdir -p "$TMP"
+          docker cp metatron-mcp-runtime-g9:/app/auth-proxy.mjs "$TMP/materialized.mjs"
+          node /opt/metatron/ssh-mcp/build/auth-oauth-resilience-g10-patch.mjs "$TMP/materialized.mjs"
+          docker run --rm --entrypoint /bin/cat metatron-ssh-mcp-runtime:g10 /app/auth-proxy.mjs > "$TMP/image.mjs"
+          cmp -s "$TMP/materialized.mjs" "$TMP/image.mjs"
+          node --check "$TMP/materialized.mjs"
+          docker run --rm --entrypoint node -e AUTH_PROXY_SELF_TEST=1 metatron-ssh-mcp-runtime:g10 /app/auth-proxy.mjs | tee "$TMP/selftest.log"
+          grep -q 'AUTH_OAUTH_RESILIENCE_G10_ACCEPTANCE_PASS' "$TMP/selftest.log"
+          grep -q 'AUTH_PROXY_ACCEPTANCE_PASS' "$TMP/selftest.log"
+          test -x /opt/metatron/ssh-mcp/build/prebuild-runtime-g10-oauth-resilience-final.sh
+          grep -Fq 'FROM metatron-ssh-mcp-runtime:g9' /opt/metatron/ssh-mcp/build/Dockerfile.g10
+          ! test -e /opt/metatron/ssh-mcp/build/auth-oauth-resilience-v3_7-post-patch.mjs
+          for c in metatron-mcp-runtime-g9 metatron-mcp-runtime-g9-standby; do
+            [ "$(docker inspect "$c" --format '{{.State.Status}}/{{.State.Health.Status}}')" = 'running/healthy' ]
+          done
+          echo "G10_PRODUCTION_COMPOSED_PASS image=$(docker image inspect metatron-ssh-mcp-runtime:g10 --format '{{.Id}}')"
