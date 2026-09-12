@@ -25,6 +25,7 @@ jobs:
       - name: Inspect MCP host without mutating production
         shell: bash
         run: |
+          set +e
           set -u
           BASE=/opt/metatron/ssh-mcp
           BUILD="$BASE/build"
@@ -107,6 +108,7 @@ jobs:
             | while IFS= read -r -d '' f; do sudo -n cp -p "$f" "$HOSTOUT/$(basename "$f")" 2>/dev/null || true; done
           sudo -n chown -R "$(id -u):$(id -g)" "$OUT" 2>/dev/null || true
           echo 'INSPECTION_CAPTURE_COMPLETE'
+          exit 0
 
       - name: Commit sanitized inspection snapshot to recovery branch
         shell: bash
