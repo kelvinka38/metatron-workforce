@@ -42,6 +42,25 @@ Upstream canonical SoT/policy always wins. If a downstream rule conflicts with s
 10. `../INTELLIGENCE_ROUTING_CORRECTNESS_GAP_CLOSURE.md` — routing correctness evidence
 11. `../INTELLIGENCE_EVALUATION_ROUTING_FEEDBACK_GAP_CLOSURE.md` — observed-outcome routing feedback evidence
 
+12. `12_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_FINAL_PROPOSAL.md` — Founder-approved Worker cognition ownership authority
+13. `13_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_DETAILED_ARCHITECTURE.md`
+14. `14_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_CONTRACT_STATE_EVENT_DESIGN.md`
+15. `15_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_DETAILED_IMPLEMENTATION_PLAN.md`
+16. `16_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_EXECUTION_PLAN.md`
+17. `17_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_ACCEPTANCE_MATRIX.md`
+18. `18_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_HISTORICAL_RECONCILIATION.md`
+19. `19_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_SERVER_UPGRADE_GATE.md`
+
+For Worker cognition, provider-consumption, inference infrastructure, Worker-reachable retrieval, or cognitive-scale work, documents `12` through `19` are mandatory current authority after the Cognitive Runtime baseline. The downstream chain is `12 → 13 → 14 → 15 → 16 → 17`; document `18` preserves historical closure truth and document `19` is the blocking pre-implementation gate.
+
+Hard invariant:
+
+```text
+WORKER_ORIGINATED_PAID_EXTERNAL_INFERENCE = 0
+```
+
+**Implementation is intentionally NOT authorized yet.** Founder server-upgrade review must release document `19` before any code/runtime implementation begins.
+
 `01_FINAL_ARCHITECTURE_PROPOSAL.md` and `02_DETAILED_ARCHITECTURE.md` are historical/compatibility architecture only. Any old downstream rule that makes a frontier semantic call mandatory before every deterministic/retrieval path, treats depth as provider count, or permits duplicate production provider-control loops is superseded by the Founder-approved Cognitive Runtime baseline above.
 
 Historical P13/P14 receipts retain the state and evidence known when they were written. Their historical status banners MUST NOT be interpreted as the current overall Intelligence Fabric status when later accepted/production evidence exists. `11_INTELLIGENCE_FABRIC_UPGRADE_CLOSURE.md` is the current downstream reconciliation record and supersedes stale historical "deploy pending" language for present-state interpretation without rewriting history.
