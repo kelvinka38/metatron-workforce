@@ -16,3 +16,9 @@ Invariants:
 - compatibility deploy tooling is an adapter, not a second release plane;
 - local branch/HEAD/worktree state cannot select the production revision;
 - immutable artifact/source identity remains exact-SHA bound.
+
+## Deployment success boundary and storage hygiene
+
+`workforce-deploy` owns only the production mutation plus structural verification needed to prove the exact immutable revision is healthy locally: exact image/SHA identity, Workforce health, isolated sandbox health, and credential isolation. Internet egress, public Gateway, Telegram, and broader product acceptance belong to Highway `on_success` acceptance tasks. A transient external check MUST NOT relabel an already-successful production mutation as a failed deployment.
+
+Before building replacement images, the deploy task performs bounded Docker image hygiene. It preserves every image referenced by a container, preserves the explicit `metatron-workforce:rollback` tag, preserves three recent additional images per Workforce repository, removes at most forty older tags per deployment, and prunes only dangling images. Volumes are never pruned by this path. This keeps immutable release semantics while preventing historical deployment images from exhausting the host filesystem.
