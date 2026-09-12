@@ -31,11 +31,22 @@ The accepted product contract is:
 
 This acceptance closes the Founder-ratified Autonomy Closure program. It does not assert that every future Workforce product or capability is complete.
 
-This is a scope-specific historical acceptance claim, not a statement that the current
-whole Workforce product is complete. For current runtime truth, known gaps, and the
-mandatory completion-claim rule, read:
+This is a scope-specific historical acceptance claim, not a statement that the current whole Workforce product, every product surface, or every post-closure capability is complete.
+
+Current production audit evidence confirms all of the following simultaneously:
+
+- natural-language `Work` can be admitted into a durable Workforce Objective;
+- ordinary `Chat` intentionally does not automatically create durable Work;
+- canonical Worker identity/runtime and Human↔Worker conversation are real;
+- the audited Direct Worker conversation path does not yet close Human instruction → durable Work → execution → result;
+- the Direct Coding backend exists, but the current ChatGPT connector does not expose the canonical `repository_*` surface;
+- semantic cognition was operationally degraded during the 2026-09-12 audit because configured providers were not all usable.
+
+For the canonical distinction between implementation, runtime composition, exposure, operational availability, product usability and acceptance, read:
 
 `docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`
+
+No entrypoint, AI agent, Worker or report may infer product usability merely from backend implementation.
 
 ## Current post-closure execution-governance program
 
