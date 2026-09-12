@@ -14,6 +14,9 @@ final class ProductionDeployScriptContractTest {
         assertTrue(script.contains("--dependency \"$BUILD_ID\""));
         assertTrue(script.contains("LOCAL_DEPLOY_DELEGATED_TO_HIGHWAY=PASS"));
         assertTrue(script.contains("PROD_WORKFORCE_SINGLE_MUTATION_AUTHORITY=PASS"));
+        assertTrue(script.contains("HIGHWAY_RELEASE_IDEMPOTENT_ALREADY_CURRENT=PASS"));
+        assertTrue(script.indexOf("HIGHWAY_RELEASE_IDEMPOTENT_ALREADY_CURRENT=PASS") < script.indexOf("submit --kind workforce-build"));
+        assertTrue(script.contains("CORRELATION_ID=\"compat-release-$SHA-$INVOCATION_ID\""));
         assertFalse(script.contains("docker compose"));
         assertFalse(script.contains("--force-recreate workforce-sandbox workforce"));
         assertFalse(script.contains("./gradlew --no-daemon clean build"));
