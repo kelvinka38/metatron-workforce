@@ -40,13 +40,6 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private static final String BING_ENDPOINT = "https://www.bing.com/search?format=rss&q=";
     private static final String WIKIPEDIA_ENDPOINT = "https://en.wikipedia.org/w/api.php?action=query&list=search&srnamespace=0&srlimit=5&srprop=snippet%7Ctimestamp&format=json&utf8=1&srsearch=";
     private static final String WIKIPEDIA_ARTICLE = "https://en.wikipedia.org/?curid=";
-    private static final String GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
-    private static final List<String> GROUNDED_MODELS = List.of(
-            "gemini-3.7-flash",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-flash");
     private static final String COINGECKO_BTC = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,vnd&include_last_updated_at=true";
     private static final String COINBASE_BTC = "https://api.coinbase.com/v2/prices/BTC-USD/spot";
     private static final String KRAKEN_BTC = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
@@ -93,39 +86,32 @@ public final class WebSearchToolAdapter implements ToolAdapter {
     private final String endpoint;
     private final String publicKnowledgeEndpoint;
     private final String publicKnowledgeArticleEndpoint;
-    private final boolean groundedSearchEnabled;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public WebSearchToolAdapter() {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NORMAL).build(),
-                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE, true);
+                Duration.ofSeconds(8), BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout) {
-        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE, true);
+        this(client, timeout, BING_ENDPOINT, WIKIPEDIA_ENDPOINT, WIKIPEDIA_ARTICLE);
     }
 
     public WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint) {
-        this(client, timeout, endpoint, "", WIKIPEDIA_ARTICLE, false);
+        this(client, timeout, endpoint, "", WIKIPEDIA_ARTICLE);
     }
 
     WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint) {
-        this(client, timeout, endpoint, publicKnowledgeEndpoint, WIKIPEDIA_ARTICLE, false);
+        this(client, timeout, endpoint, publicKnowledgeEndpoint, WIKIPEDIA_ARTICLE);
     }
 
     WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint,
                          String publicKnowledgeArticleEndpoint) {
-        this(client, timeout, endpoint, publicKnowledgeEndpoint, publicKnowledgeArticleEndpoint, false);
-    }
-
-    private WebSearchToolAdapter(HttpClient client, Duration timeout, String endpoint, String publicKnowledgeEndpoint,
-                                 String publicKnowledgeArticleEndpoint, boolean groundedSearchEnabled) {
         this.client = Objects.requireNonNull(client, "client");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         this.publicKnowledgeEndpoint = publicKnowledgeEndpoint == null ? "" : publicKnowledgeEndpoint.trim();
         this.publicKnowledgeArticleEndpoint = publicKnowledgeArticleEndpoint == null ? "" : publicKnowledgeArticleEndpoint.trim();
-        this.groundedSearchEnabled = groundedSearchEnabled;
         if (endpoint.isBlank()) throw new IllegalArgumentException("endpoint must not be blank");
     }
 
@@ -155,9 +141,6 @@ public final class WebSearchToolAdapter implements ToolAdapter {
             if (weather.success()) return weather;
         }
 
-        ToolResult grounded = searchGrounded(request, query);
-        if (grounded.success()) return grounded;
-
         ToolResult web = searchWeb(request, query);
         if (web.success()) return web;
 
@@ -166,123 +149,17 @@ public final class WebSearchToolAdapter implements ToolAdapter {
 
         String compactQuery = siteRestriction(query).isBlank() ? compactSearchQuery(query) : "";
         if (!compactQuery.isBlank() && !compactQuery.equalsIgnoreCase(query)) {
-            ToolResult compactGrounded = searchGrounded(request, compactQuery);
-            if (compactGrounded.success()) return compactGrounded;
             ToolResult compactWeb = searchWeb(request, compactQuery);
             if (compactWeb.success()) return compactWeb;
             ToolResult compactPublicKnowledge = searchPublicKnowledge(request, compactQuery);
             if (compactPublicKnowledge.success()) return compactPublicKnowledge;
-            return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output()
-                    + ";web=" + web.output()
+            return ToolResult.failure(request, "fresh_search_exhausted:web=" + web.output()
                     + ";public_knowledge=" + publicKnowledge.output()
-                    + ";compact_grounded=" + compactGrounded.output()
                     + ";compact_web=" + compactWeb.output()
                     + ";compact_public_knowledge=" + compactPublicKnowledge.output());
         }
-        return ToolResult.failure(request, "fresh_search_exhausted:grounded=" + grounded.output()
-                + ";web=" + web.output() + ";public_knowledge=" + publicKnowledge.output());
-    }
-
-    private ToolResult searchGrounded(ToolRequest request, String query) {
-        if (!groundedSearchEnabled) return ToolResult.failure(request, "grounded_search_disabled_for_custom_endpoint");
-        String apiKey = System.getenv("GEMINI_API_KEY");
-        if (apiKey == null || apiKey.isBlank()) return ToolResult.failure(request, "grounded_search_credential_unavailable");
-        String configured = System.getenv("GEMINI_GROUNDED_SEARCH_MODEL");
-        Set<String> models = new LinkedHashSet<>();
-        if (configured != null && !configured.isBlank()) models.add(configured.trim());
-        models.addAll(GROUNDED_MODELS);
-
-        List<String> failures = new ArrayList<>();
-        try {
-            String prompt = "Answer this information requirement using current external reality. Search the web. "
-                    + "Return a direct factual answer useful to the Human. Explicitly name the subject and answer type from the requirement so the result remains self-contained. "
-                    + "When the requirement asks for a current measurement, rate, condition, status, person, version, or other observable value, include the concrete current value or condition and its units/context. "
-                    + "Use only facts supported by the search grounding. If the search results are off-topic, stale, or insufficient to answer the requirement directly, output exactly INSUFFICIENT_EVIDENCE. "
-                    + "Requirement: " + query;
-            String body = mapper.writeValueAsString(Map.of(
-                    "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", prompt)))),
-                    "tools", List.of(Map.of("google_search", Map.of()))
-            ));
-            for (String model : models) {
-                HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(GEMINI_ENDPOINT.formatted(
-                                URLEncoder.encode(model, StandardCharsets.UTF_8))))
-                        .timeout(Duration.ofSeconds(Math.max(20, timeout.toSeconds())))
-                        .header("Content-Type", "application/json")
-                        .header("x-goog-api-key", apiKey)
-                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-                        .build();
-                HttpResponse<String> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                if (!ok(response)) {
-                    failures.add(model + ":http_" + response.statusCode());
-                    continue;
-                }
-                JsonNode root = mapper.readTree(response.body());
-                JsonNode candidate = root.path("candidates").path(0);
-                JsonNode groundingMetadata = candidate.path("groundingMetadata");
-                String answer = candidateText(candidate);
-                List<String> refs = groundingUrls(groundingMetadata);
-                if (answer.isBlank()) {
-                    failures.add(model + ":empty_answer");
-                    continue;
-                }
-                if (refs.isEmpty()) {
-                    failures.add(model + ":no_grounding_urls");
-                    continue;
-                }
-                if (looksLikeInsufficientAnswer(answer)) {
-                    failures.add(model + ":insufficient_answer");
-                    continue;
-                }
-                List<VerifiedSource> verified = verifiedSources(query, refs);
-                if (verified.isEmpty()) {
-                    failures.add(model + ":source_body_relevance_rejected");
-                    continue;
-                }
-                List<String> verifiedRefs = verified.stream().map(VerifiedSource::url).toList();
-                StringBuilder output = new StringBuilder("GROUNDED WEB ANSWER\nquery=").append(query)
-                        .append("\nanswer=").append(answer)
-                        .append("\nsearch_queries=").append(groundingQueryText(groundingMetadata))
-                        .append("\nsource_urls=").append(verifiedRefs)
-                        .append("\nretrieved_at=").append(Instant.now())
-                        .append("\nprovider=google-search-grounding\nmodel=").append(model);
-                for (VerifiedSource source : verified) {
-                    output.append("\nsource_excerpt=").append(source.excerpt());
-                }
-                return new ToolResult(request.requestId(), request.capability(), request.target(), request.operation(),
-                        true, output.toString(), verifiedRefs);
-            }
-            return ToolResult.failure(request, "grounded_search_no_sufficient_grounded_answer:" + failures);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return ToolResult.failure(request, "grounded_search_interrupted");
-        } catch (Exception e) {
-            return ToolResult.failure(request, "grounded_search_failed:" + e.getClass().getSimpleName());
-        }
-    }
-
-    private static String candidateText(JsonNode candidate) {
-        JsonNode parts = candidate.path("content").path("parts");
-        if (!parts.isArray()) return "";
-        StringBuilder text = new StringBuilder();
-        for (JsonNode part : parts) {
-            String value = part.path("text").asText("").trim();
-            if (value.isBlank()) continue;
-            if (!text.isEmpty()) text.append('\n');
-            text.append(value);
-        }
-        return text.toString().trim();
-    }
-
-    private static List<String> groundingUrls(JsonNode groundingMetadata) {
-        LinkedHashSet<String> refs = new LinkedHashSet<>();
-        JsonNode chunks = groundingMetadata.path("groundingChunks");
-        if (chunks.isArray()) {
-            for (JsonNode chunk : chunks) {
-                String uri = chunk.path("web").path("uri").asText("").trim();
-                if (uri.startsWith("https://") || uri.startsWith("http://")) refs.add(uri);
-            }
-        }
-        return List.copyOf(refs);
+        return ToolResult.failure(request, "fresh_search_exhausted:web=" + web.output()
+                + ";public_knowledge=" + publicKnowledge.output());
     }
 
     static String groundingQueryText(JsonNode groundingMetadata) {
