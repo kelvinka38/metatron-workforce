@@ -31,11 +31,22 @@ The accepted product contract is:
 
 This acceptance closes the Founder-ratified Autonomy Closure program. It does not assert that every future Workforce product or capability is complete.
 
-This is a scope-specific historical acceptance claim, not a statement that the current
-whole Workforce product is complete. For current runtime truth, known gaps, and the
-mandatory completion-claim rule, read:
+This is a scope-specific historical acceptance claim, not a statement that the current whole Workforce product, every product surface, or every post-closure capability is complete.
+
+Current production audit evidence confirms all of the following simultaneously:
+
+- natural-language `Work` can be admitted into a durable Workforce Objective;
+- ordinary `Chat` intentionally does not automatically create durable Work;
+- canonical Worker identity/runtime and Human↔Worker conversation are real;
+- the audited Direct Worker conversation path does not yet close Human instruction → durable Work → execution → result;
+- the Direct Coding backend exists, but the current ChatGPT connector does not expose the canonical `repository_*` surface;
+- semantic cognition was operationally degraded during the 2026-09-12 audit because configured providers were not all usable.
+
+For the canonical distinction between implementation, runtime composition, exposure, operational availability, product usability and acceptance, read:
 
 `docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`
+
+No entrypoint, AI agent, Worker or report may infer product usability merely from backend implementation.
 
 ## Current post-closure execution-governance program
 
@@ -68,15 +79,38 @@ Humans and AI agents SHALL read `AGENTS.md`, then:
 CHANNEL != ORCHESTRATOR
 GATEWAY ADMISSION != WORKFORCE ACCEPTANCE
 INTELLIGENCE != MANAGEMENT
-WORKER != MODEL != RUNTIME != EXECUTION UNIT
-ASSIGNMENT != AUTHORIZATION != EXECUTION
+
+WORKER != MODEL
+WORKER != RUNTIME
+WORKER != EXECUTION ATTEMPT
+
+CHAT != WORK
+CONVERSATION != EXECUTION
+
+INTENT != AUTHORIZATION
+ASSIGNMENT != AUTHORIZATION
+AUTHORIZATION != EXECUTION
 EXECUTION SUCCESS != OBJECTIVE SUCCESS
+
 MODEL/WORKER PROPOSAL != EXECUTION AUTHORITY
 APPROVED PLAN != OPTIONAL GUIDANCE
+
+IMPLEMENTED != EXPOSED
+EXPOSED != OPERATIONALLY AVAILABLE
+OPERATIONALLY AVAILABLE != PRODUCT-USABLE
+PRODUCT-USABLE != END-TO-END ACCEPTED
+
 ACCEPTED_L10 != EVERY FUTURE WORKFORCE FEATURE COMPLETE
 SCOPE COMPLETE != SYSTEM COMPLETE
 HISTORICAL ACCEPTANCE != CURRENT WHOLE-SYSTEM ACCEPTANCE
-WORKER COUNT != EXECUTION CONCURRENCY
+
+WORKER COUNT != ACTOR TURN CONCURRENCY
+ACTOR TURN CONCURRENCY != EXECUTION CONCURRENCY
+EXECUTION CONCURRENCY != BUILD CONCURRENCY
+BUILD CONCURRENCY != MERGE CONCURRENCY
+MERGE CONCURRENCY != DEPLOY CONCURRENCY
 ```
 
 Do not downgrade the accepted Autonomy Closure back to `PARTIAL` without contradictory production evidence or a new canonical decision. Future material changes must earn evidence appropriate to their changed scope.
+
+Do not upgrade an implemented backend capability into a claim of current product usability without proving the intended surface can invoke and complete that path.
