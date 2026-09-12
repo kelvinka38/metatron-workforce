@@ -52,17 +52,30 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Enforce full build and SoT execution gate contracts before topology audit
+      - name: Audit SoT mutation and execution workspace ownership
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/sot_enforcement/inventory.py
+          echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
+      - name: Enforce full Gradle build gate
+        shell: bash
+        run: |
+          set -euo pipefail
           chmod +x gradlew
           ./gradlew clean test bootJar --no-daemon --max-workers=1
-          METATRON_SANDBOX_TOKEN=compose-validation-only docker compose -f deploy/docker-compose.yml config >/dev/null
-          bash scripts/highway-tasks/pr-consolidated-contracts.sh
-          echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
           echo 'HIGHWAY_FULL_BUILD_PR_GATE=PASS'
+      - name: Validate production compose topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          METATRON_SANDBOX_TOKEN=compose-validation-only docker compose -f deploy/docker-compose.yml config >/dev/null
+          echo 'HIGHWAY_COMPOSE_TOPOLOGY_PR_GATE=PASS'
+      - name: Enforce consolidated PR contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/highway-tasks/pr-consolidated-contracts.sh
           echo 'HIGHWAY_CONSOLIDATED_PR_CONTRACTS=PASS'
       - name: Enforce single PR queue surface and fabric contracts
         shell: bash
@@ -197,6 +210,8 @@ jobs:
           d=json.load(open(sys.argv[1])); w=d['services']['workforce']; p=w['ports'][0]
           assert str(p['published'])=='8080' and str(p['target'])=='8080' and p['host_ip']=='127.0.0.1',p
           assert d['volumes']['workforce-state']['name']=='metatron-workforce-state'
+          assert d['volumes']['workforce-objective-workspaces']['name']=='metatron-workforce-objective-workspaces'
+          assert d['volumes']['workforce-execution-workspaces']['name']=='metatron-workforce-execution-workspaces'
           assert d['networks']['workforce']['name']=='metatron-workforce'
           assert d['networks']['gateway']['name']=='metatron-gateway-online'
           assert w['environment']['TELEGRAM_API_BASE_URL']=='https://api.telegram.org'
@@ -206,16 +221,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          METATRON_HOST_PORT=18111 METATRON_STATE_VOLUME_NAME=highway-test-a-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/a.json
-          METATRON_HOST_PORT=18222 METATRON_STATE_VOLUME_NAME=highway-test-b-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/b.json
+          METATRON_HOST_PORT=18111 METATRON_STATE_VOLUME_NAME=highway-test-a-state METATRON_WORKSPACE_VOLUME_NAME=highway-test-a-objective-workspaces METATRON_EXECUTION_WORKSPACE_VOLUME_NAME=highway-test-a-execution-workspaces METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/a.json
+          METATRON_HOST_PORT=18222 METATRON_STATE_VOLUME_NAME=highway-test-b-state METATRON_WORKSPACE_VOLUME_NAME=highway-test-b-objective-workspaces METATRON_EXECUTION_WORKSPACE_VOLUME_NAME=highway-test-b-execution-workspaces METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/b.json
           python3 - /tmp/a.json /tmp/b.json <<'PY'
           import json,sys
           a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
           def f(d):
             w=d['services']['workforce']; p=w['ports'][0]
-            return (str(p['published']),d['volumes']['workforce-state']['name'],d['networks']['workforce']['name'],w['environment']['TELEGRAM_API_BASE_URL'],tuple(w['networks']['gateway'].get('aliases',[])))
+            return (str(p['published']),d['volumes']['workforce-state']['name'],d['volumes']['workforce-objective-workspaces']['name'],d['volumes']['workforce-execution-workspaces']['name'],d['networks']['workforce']['name'],w['environment']['TELEGRAM_API_BASE_URL'],tuple(w['networks']['gateway'].get('aliases',[])))
           fa,fb=f(a),f(b); assert fa!=fb
-          assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4]
+          assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4] and fa[5]!=fb[5] and fa[6]!=fb[6]; assert fa[2]=='highway-test-a-objective-workspaces' and fb[2]=='highway-test-b-objective-workspaces'; assert fa[3]=='highway-test-a-execution-workspaces' and fb[3]=='highway-test-b-execution-workspaces'
           print('HIGHWAY_CONFIG_ISOLATION=PASS')
           PY
       - name: Verify grounded search and provider isolation remain explicit
