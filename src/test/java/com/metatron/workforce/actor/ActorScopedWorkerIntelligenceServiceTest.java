@@ -18,9 +18,11 @@ class ActorScopedWorkerIntelligenceServiceTest {
             WorkerIntelligenceService scoped = new ActorScopedWorkerIntelligenceService(delegate, actors);
 
             WorkerIntelligenceService.Response composer = scoped.reason(new WorkerIntelligenceService.Request(
-                    "WORKER-COMPOSER", "worker.cognition", "compose", "objective_id=OBJ-C\nassignment_reference=ASG-C\nstep_id=S1", List.of()));
+                    "WORKER-COMPOSER", "worker.cognition", "compose", "context", List.of(),
+                    "WORKER-COMPOSER", "OBJ-C", "ASG-C", "S1", "ATT-C"));
             WorkerIntelligenceService.Response analyst = scoped.reason(new WorkerIntelligenceService.Request(
-                    "WORKER-ANALYST", "worker.cognition", "analyze", "objective_id=OBJ-A\nassignment_reference=ASG-A\nstep_id=S2", List.of()));
+                    "WORKER-ANALYST", "worker.cognition", "analyze", "context", List.of(),
+                    "WORKER-ANALYST", "OBJ-A", "ASG-A", "S2", "ATT-A"));
 
             assertEquals("answer for WORKER-COMPOSER", composer.text());
             assertEquals("answer for WORKER-ANALYST", analyst.text());

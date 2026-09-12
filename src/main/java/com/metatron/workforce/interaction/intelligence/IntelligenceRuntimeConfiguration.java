@@ -23,6 +23,11 @@ public class IntelligenceRuntimeConfiguration {
     }
 
     @Bean
+    InferenceConsumptionLedger inferenceConsumptionLedger() {
+        return new InMemoryInferenceConsumptionLedger();
+    }
+
+    @Bean
     InstitutionalIntelligenceRuntime institutionalIntelligenceRuntime(
             @Value("${OPENAI_API_KEY:}") String openAiApiKey,
             @Value("${GEMINI_API_KEY:}") String googleApiKey,
@@ -30,11 +35,18 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${OPENAI_MODEL:}") String openAiModel,
             @Value("${GEMINI_MODEL:}") String googleModel,
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
+            @Value("${METATRON_COGNITION_URL:}") String cognitionUrl,
+            @Value("${METATRON_COGNITION_AUTH:}") String cognitionAuth,
             ObjectMapper objectMapper,
-            CognitiveArtifactStore artifactStore) {
+            CognitiveArtifactStore artifactStore,
+            InferenceConsumptionLedger inferenceLedger) {
+        MetatronCognitionClient cognitionClient = cognitionUrl == null || cognitionUrl.isBlank()
+                ? null
+                : new HttpMetatronCognitionClient(cognitionUrl, cognitionAuth, objectMapper);
         return new InstitutionalIntelligenceRuntime(
                 openAiApiKey, googleApiKey, anthropicApiKey,
-                openAiModel, googleModel, anthropicModel, objectMapper, artifactStore);
+                openAiModel, googleModel, anthropicModel, objectMapper, artifactStore,
+                cognitionClient, inferenceLedger);
     }
 
     @Bean

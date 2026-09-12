@@ -125,7 +125,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 Inputs must be concrete strings. For list arguments use a JSON array encoded as a string in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
                 """;
-        CognitiveProviderResult providerResult = completeObject(system, contextPrompt(context));
+        CognitiveProviderResult providerResult = completeObject(context, system, contextPrompt(context));
         Map<String, Object> parsed = providerResult.parsed();
         String actionRef = text(parsed.get("actionRef"), "actionRef");
         String rationale = text(parsed.get("rationale"), "rationale");
@@ -837,7 +837,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "summary", observation.summary(),
                 "outputs", observation.outputs(),
                 "evidence", observation.evidenceReferences()));
-        CognitiveProviderResult providerResult = completeObject(system, user);
+        CognitiveProviderResult providerResult = completeObject(context, system, user);
         Map<String, Object> parsed = providerResult.parsed();
         String decision = text(parsed.get("decision"), "decision").toUpperCase(java.util.Locale.ROOT);
         String summary = text(parsed.get("summary"), "summary");
@@ -994,14 +994,22 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return List.copyOf(evidence);
     }
 
-    private CognitiveProviderResult completeObject(String system, String user) {
+    private CognitiveProviderResult completeObject(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            String system,
+            String user) {
         WorkerIntelligenceService.Response response = intelligence.reason(
                 new WorkerIntelligenceService.Request(
-                        "worker-cognitive-runtime",
+                        context.workerId(),
                         "worker.cognition",
                         system,
                         user,
-                        List.copyOf(evidence)));
+                        List.copyOf(evidence),
+                        context.workerId(),
+                        context.objectiveId(),
+                        context.assignmentReference(),
+                        context.workSpec().stepId(),
+                        ""));
         Map<String, Object> parsed;
         try {
             parsed = parseObject(response.text());

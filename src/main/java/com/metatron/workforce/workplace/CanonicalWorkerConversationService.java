@@ -253,7 +253,12 @@ public final class CanonicalWorkerConversationService implements WorkerConversat
                 "worker.live.conversation",
                 instructions,
                 context,
-                List.copyOf(evidence)));
+                List.copyOf(evidence),
+                workerId,
+                "",
+                "",
+                "",
+                ""));
 
         List<String> replyEvidence = new ArrayList<>(response.evidenceReferences());
         grounding.evidenceReferences().stream()

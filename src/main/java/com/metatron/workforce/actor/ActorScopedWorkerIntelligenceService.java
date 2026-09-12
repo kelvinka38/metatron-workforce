@@ -23,14 +23,13 @@ public final class ActorScopedWorkerIntelligenceService implements WorkerIntelli
     @Override
     public Response reason(Request request) {
         Objects.requireNonNull(request, "request");
-        String context = request.context();
         return actors.runTurn(
-                request.requester(),
+                request.workerId(),
                 WorkerActorMessage.Type.SYSTEM,
                 "workforce:intelligence",
-                extract(OBJECTIVE, context),
-                extract(ASSIGNMENT, context),
-                extract(STEP, context),
+                request.objectiveId(),
+                request.assignmentId(),
+                request.stepId(),
                 request.capability(),
                 summarize(request.instructions()),
                 () -> delegate.reason(request));

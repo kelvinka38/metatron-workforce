@@ -16,18 +16,39 @@ public interface WorkerIntelligenceService {
             String capability,
             String instructions,
             String context,
-            List<String> evidenceReferences) {
+            List<String> evidenceReferences,
+            String workerId,
+            String objectiveId,
+            String assignmentId,
+            String stepId,
+            String executionAttemptId) {
+        public Request(String requester,
+                       String capability,
+                       String instructions,
+                       String context,
+                       List<String> evidenceReferences) {
+            this(requester, capability, instructions, context, evidenceReferences,
+                    requester, "", "", "", "");
+        }
+
         public Request {
             Objects.requireNonNull(requester, "requester");
             Objects.requireNonNull(capability, "capability");
             Objects.requireNonNull(instructions, "instructions");
             Objects.requireNonNull(context, "context");
             Objects.requireNonNull(evidenceReferences, "evidenceReferences");
+            workerId = clean(workerId);
+            objectiveId = clean(objectiveId);
+            assignmentId = clean(assignmentId);
+            stepId = clean(stepId);
+            executionAttemptId = clean(executionAttemptId);
             evidenceReferences = List.copyOf(evidenceReferences);
-            if (requester.isBlank() || capability.isBlank() || instructions.isBlank()) {
+            if (requester.isBlank() || capability.isBlank() || instructions.isBlank() || workerId.isBlank()) {
                 throw new IllegalArgumentException("worker intelligence request fields must not be blank");
             }
         }
+
+        private static String clean(String value) { return value == null ? "" : value.trim(); }
     }
 
     record Response(String requestReference, String text, List<String> evidenceReferences) {
@@ -80,7 +101,10 @@ public interface WorkerIntelligenceService {
                         "strict structured cognitive result",
                         List.of(),
                         providerBudget,
-                        false);
+                        false,
+                        IntelligenceOriginContext.worker(
+                                request.workerId(), request.objectiveId(), request.assignmentId(), request.stepId(),
+                                request.executionAttemptId(), request.capability(), requestId));
                 try {
                     result = fabric.execute(intelligenceRequest);
                     break;
