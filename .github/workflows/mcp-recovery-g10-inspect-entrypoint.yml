@@ -1,0 +1,21 @@
+name: MCP Recovery G10 Inspect Entrypoint
+
+on:
+  push:
+    branches: [mcp-recovery-g10-20260913]
+    paths:
+      - '.github/workflows/mcp-recovery-g10-inspect-entrypoint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect non-secret entrypoint source
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh metatron-ssh-mcp-runtime:g10 -c "grep -nE 'METATRON_PROXY_ASSERTION|id_ed25519|auth-proxy|supergateway|exec|node' /app/mcp-entrypoint.sh"
