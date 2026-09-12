@@ -22,6 +22,23 @@ public interface ExecutionObjectiveHandoff {
             String channel,
             NormalizedRequest request);
 
+    /**
+     * Targeted admission for a Human instruction already bound to one canonical Worker.
+     * Implementations must preserve the same durable Objective/Work/Execution path; this is not
+     * permission to create a parallel Worker-specific execution stack.
+     */
+    default HandoffReceipt submitToWorker(
+            String ownerWorkerId,
+            String humanId,
+            String organizationContextId,
+            String caseId,
+            String conversationId,
+            String externalMessageReference,
+            String channel,
+            NormalizedRequest request) {
+        return HandoffReceipt.blocked("TARGETED_WORKER_HANDOFF_UNAVAILABLE");
+    }
+
     static ExecutionObjectiveHandoff unavailable() {
         return (humanId, organizationContextId, caseId, conversationId, externalMessageReference, channel, request) ->
                 HandoffReceipt.blocked("EXECUTION_OBJECTIVE_HANDOFF_UNAVAILABLE");

@@ -7,6 +7,7 @@ import com.metatron.workforce.phase3.AuthorizationContext;
 import com.metatron.workforce.phase3.AuthorizationPolicy;
 import com.metatron.workforce.phase3.WorkQueueItem;
 import com.metatron.workforce.phase3.WorkQueueService;
+import com.metatron.workforce.workplace.MeetingWorkerDirectory;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,11 +19,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * General Human execution-intent ingress into Workforce autonomous management.
  *
- * The ingress atomically accepts and persists a Head-owned Objective, acknowledges it, and detaches.
+ * The ingress atomically accepts and persists an Objective owned by the canonical admitted Worker,
+ * acknowledges it, and detaches. Generic Human Work remains Head-owned; selected-Worker instructions
+ * are revalidated against the canonical active Worker directory before targeted ownership is accepted.
  * Planning, staffing checks and execution are owned by the persistent management runner. The accepted
  * Objective is also bound to the existing canonical Workplace Conversation reference; Workforce does
  * not create or redefine Conversation/Meeting/Decision objects here.
@@ -35,6 +39,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
     private final List<String> capabilityCatalog;
     private final AutonomousManagementRunner runner;
     private final WorkplaceContinuityService workplaceContinuity;
+    private final Function<String, String> targetWorkerResolver;
     private final Clock clock;
 
     @Autowired
@@ -43,8 +48,11 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
             List<AutonomousExecutionCapability> executionCapabilities,
             AutonomousManagementRunner runner,
             WorkplaceContinuityService workplaceContinuity,
+            MeetingWorkerDirectory workerDirectory,
             @Value("${workforce.management.head-worker-id:${METATRON_HEAD_WORKER_ID:metatron-workforce}}") String headWorkerId) {
-        this(management, executionCapabilities, runner, workplaceContinuity, headWorkerId, Clock.systemUTC());
+        this(management, executionCapabilities, runner, workplaceContinuity,
+                workerId -> workerDirectory.resolveActiveById(workerId).workerId(),
+                headWorkerId, Clock.systemUTC());
     }
 
     HumanObjectiveIngressService(ManagementAutonomyService management, String headWorkerId, Clock clock) {
@@ -58,14 +66,14 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                 new AutonomousManagementRunner(management,
                         (caseId, request, available) -> request.executionWorkPlan(),
                         executionCapabilities, clock),
-                null, headWorkerId, clock);
+                null, Function.identity(), headWorkerId, clock);
     }
 
     HumanObjectiveIngressService(ManagementAutonomyService management,
                                  List<AutonomousExecutionCapability> executionCapabilities,
                                  AutonomousManagementRunner runner,
                                  String headWorkerId, Clock clock) {
-        this(management, executionCapabilities, runner, null, headWorkerId, clock);
+        this(management, executionCapabilities, runner, null, Function.identity(), headWorkerId, clock);
     }
 
     HumanObjectiveIngressService(ManagementAutonomyService management,
@@ -73,9 +81,20 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                                  AutonomousManagementRunner runner,
                                  WorkplaceContinuityService workplaceContinuity,
                                  String headWorkerId, Clock clock) {
+        this(management, executionCapabilities, runner, workplaceContinuity,
+                Function.identity(), headWorkerId, clock);
+    }
+
+    HumanObjectiveIngressService(ManagementAutonomyService management,
+                                 List<AutonomousExecutionCapability> executionCapabilities,
+                                 AutonomousManagementRunner runner,
+                                 WorkplaceContinuityService workplaceContinuity,
+                                 Function<String, String> targetWorkerResolver,
+                                 String headWorkerId, Clock clock) {
         this.management = Objects.requireNonNull(management, "management");
         this.runner = Objects.requireNonNull(runner, "runner");
         this.workplaceContinuity = workplaceContinuity;
+        this.targetWorkerResolver = Objects.requireNonNull(targetWorkerResolver, "targetWorkerResolver");
         this.headWorkerId = requireText(headWorkerId, "headWorkerId");
         this.clock = Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(executionCapabilities, "executionCapabilities");
@@ -90,7 +109,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
         AuthorizationPolicy requestAdmission = (source, recipient, organizationContextId) -> {
             boolean allowed = source.type() == ActorRef.ActorType.HUMAN
                     && recipient.type() == ActorRef.ActorType.WORKER
-                    && this.headWorkerId.equals(recipient.actorId())
+                    && recipient.actorId() != null && !recipient.actorId().isBlank()
                     && organizationContextId != null && !organizationContextId.isBlank();
             String reference = "workplace-request-admission:" + source.actorId() + ":" + recipient.actorId();
             return allowed ? AuthorizationContext.allowed(reference) : AuthorizationContext.denied(reference);
@@ -112,6 +131,37 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
             String externalMessageReference,
             String channel,
             NormalizedRequest request) {
+        return submitOwned(headWorkerId, humanId, organizationContextId, caseId, conversationId,
+                externalMessageReference, channel, request);
+    }
+
+    @Override
+    public synchronized HandoffReceipt submitToWorker(
+            String ownerWorkerId,
+            String humanId,
+            String organizationContextId,
+            String caseId,
+            String conversationId,
+            String externalMessageReference,
+            String channel,
+            NormalizedRequest request) {
+        String canonicalOwnerWorkerId = requireText(
+                targetWorkerResolver.apply(requireText(ownerWorkerId, "ownerWorkerId")),
+                "canonicalOwnerWorkerId");
+        return submitOwned(canonicalOwnerWorkerId, humanId, organizationContextId,
+                caseId, conversationId, externalMessageReference, channel, request);
+    }
+
+    private HandoffReceipt submitOwned(
+            String ownerWorkerId,
+            String humanId,
+            String organizationContextId,
+            String caseId,
+            String conversationId,
+            String externalMessageReference,
+            String channel,
+            NormalizedRequest request) {
+        final String admittedOwnerWorkerId = requireText(ownerWorkerId, "ownerWorkerId");
         final String admittedHumanId = requireText(humanId, "humanId");
         final String admittedOrganizationContextId = requireText(organizationContextId, "organizationContextId");
         final String admittedCaseId = requireText(caseId, "caseId");
@@ -121,15 +171,18 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
         Objects.requireNonNull(request, "request");
 
         String objectiveId = objectiveId(admittedCaseId, admittedExternalMessageReference);
-        String requestAdmissionReference = "workplace-request-admission:" + admittedHumanId + ":" + headWorkerId;
+        String requestAdmissionReference = "workplace-request-admission:" + admittedHumanId + ":" + admittedOwnerWorkerId;
         Instant now = clock.instant();
         ManagementObjective objective;
         try {
             objective = management.get(objectiveId);
+            if (!objective.ownerWorkerId().equals(admittedOwnerWorkerId)) {
+                throw new SecurityException("objective owner mismatch on replay: " + objectiveId);
+            }
         } catch (IllegalArgumentException unknown) {
             objective = management.acceptHumanObjective(
                     objectiveId,
-                    headWorkerId,
+                    admittedOwnerWorkerId,
                     admittedOrganizationContextId,
                     renderObjective(request, admittedCaseId, admittedConversationId,
                             admittedChannel, admittedExternalMessageReference),
@@ -149,7 +202,8 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                     admittedChannel, admittedExternalMessageReference, requestAdmissionReference, now);
         }
 
-        WorkQueueItem queue = ensureQueue(objectiveId, admittedHumanId, admittedOrganizationContextId);
+        WorkQueueItem queue = ensureQueue(objectiveId, admittedOwnerWorkerId,
+                admittedHumanId, admittedOrganizationContextId);
 
         if (objective.status() == ManagementObjective.Status.COMPLETED
                 || objective.status() == ManagementObjective.Status.DELIVERED) {
@@ -168,17 +222,18 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                 objective.status().name(), "ACCEPTED", "OBJECTIVE_ACCEPTED_FOR_AUTONOMOUS_MANAGEMENT");
     }
 
-    private WorkQueueItem ensureQueue(String objectiveId, String humanId, String organizationContextId) {
+    private WorkQueueItem ensureQueue(String objectiveId, String ownerWorkerId,
+                                      String humanId, String organizationContextId) {
         ActorRef human = new ActorRef(humanId, ActorRef.ActorType.HUMAN);
-        ActorRef head = new ActorRef(headWorkerId, ActorRef.ActorType.WORKER);
+        ActorRef owner = new ActorRef(ownerWorkerId, ActorRef.ActorType.WORKER);
         return workQueue.items().stream()
                 .filter(item -> item.referencedObjectId().equals(objectiveId)
                         && item.sourceActor().equals(human)
-                        && item.recipient().equals(head))
+                        && item.recipient().equals(owner))
                 .findFirst()
                 .orElseGet(() -> {
                     WorkQueueItem created = workQueue.create(
-                            head, organizationContextId, human,
+                            owner, organizationContextId, human,
                             WorkQueueItem.ItemType.REQUEST, objectiveId, WorkQueueItem.Priority.HIGH, null);
                     WorkQueueItem delivered = workQueue.deliver(created.queueItemId());
                     return workQueue.acknowledge(delivered.queueItemId());
