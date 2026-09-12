@@ -22,3 +22,7 @@ Invariants:
 `workforce-deploy` owns only the production mutation plus structural verification needed to prove the exact immutable revision is healthy locally: exact image/SHA identity, Workforce health, isolated sandbox health, and credential isolation. Internet egress, public Gateway, Telegram, and broader product acceptance belong to Highway `on_success` acceptance tasks. A transient external check MUST NOT relabel an already-successful production mutation as a failed deployment.
 
 Before building replacement images, the deploy task performs bounded Docker image hygiene. It preserves every image referenced by a container, preserves the explicit `metatron-workforce:rollback` tag, preserves three recent additional images per Workforce repository, removes at most forty older tags per deployment, and prunes only dangling images. Volumes are never pruned by this path. This keeps immutable release semantics while preventing historical deployment images from exhausting the host filesystem.
+
+## Idempotent compatibility deployment
+
+The compatibility exact-SHA entrypoint is desired-state idempotent. It always verifies or publishes the immutable release snapshot first. If production already runs the exact requested SHA and image, it returns success immediately without creating redundant Highway tasks. If convergence is required, each invocation uses a unique correlation id and submits build/deploy through Highway; `prod:workforce WRITE` remains the sole production mutation serialization authority.

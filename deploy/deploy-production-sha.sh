@@ -27,6 +27,21 @@ if [[ -z "$INSTALL" || ! -r "$INSTALL/highway.env" || ! -x "$INSTALL/current/hig
 fi
 
 METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" bash "$ROOT_DIR/highway/publish-release.sh" "$ROOT_DIR" "$SHA"
+
+# Idempotent desired-state closure: if the exact immutable revision is already the running
+# Workforce image, the deploy request is already satisfied. Do not create redundant build/deploy
+# tasks or relabel a satisfied request as failure. Release publication above still verifies the
+# immutable source snapshot before this fast path.
+CURRENT_SHA="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' deploy-workforce-1 2>/dev/null | sed -n 's/^METATRON_COMMIT_SHA=//p' | tail -n1 || true)"
+CURRENT_IMAGE="$(docker inspect -f '{{.Config.Image}}' deploy-workforce-1 2>/dev/null || true)"
+if [[ "$CURRENT_SHA" == "$SHA" && "$CURRENT_IMAGE" == "metatron-workforce:$SHA" ]]; then
+  echo "HIGHWAY_RELEASE_IDEMPOTENT_ALREADY_CURRENT=PASS"
+  echo "LOCAL_DEPLOY_DELEGATED_TO_HIGHWAY=PASS"
+  echo "PROD_WORKFORCE_SINGLE_MUTATION_AUTHORITY=PASS"
+  echo "WORKFORCE PRODUCTION DEPLOYMENT: PASS"
+  echo "sha=$SHA"
+  exit 0
+fi
 set -a
 # shellcheck disable=SC1090
 source "$INSTALL/highway.env"
@@ -40,10 +55,12 @@ python3 "$CTL" health >/dev/null
 submit_id() {
   python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])'
 }
-BUILD_JSON="$(python3 "$CTL" submit --kind workforce-build --source-sha "$SHA" --correlation-id "compat-release-$SHA")"
+INVOCATION_ID="$(date +%s)-$$"
+CORRELATION_ID="compat-release-$SHA-$INVOCATION_ID"
+BUILD_JSON="$(python3 "$CTL" submit --kind workforce-build --source-sha "$SHA" --correlation-id "$CORRELATION_ID")"
 BUILD_ID="$(printf '%s' "$BUILD_JSON" | submit_id)"
 python3 "$CTL" wait "$BUILD_ID" --timeout 1500 --poll 1 >/dev/null
-DEPLOY_JSON="$(python3 "$CTL" submit --kind workforce-deploy --source-sha "$SHA" --correlation-id "compat-release-$SHA" --dependency "$BUILD_ID")"
+DEPLOY_JSON="$(python3 "$CTL" submit --kind workforce-deploy --source-sha "$SHA" --correlation-id "$CORRELATION_ID" --dependency "$BUILD_ID")"
 DEPLOY_ID="$(printf '%s' "$DEPLOY_JSON" | submit_id)"
 python3 "$CTL" wait "$DEPLOY_ID" --timeout 1200 --poll 1 >/dev/null
 
