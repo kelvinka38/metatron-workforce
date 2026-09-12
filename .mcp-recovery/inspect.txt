@@ -1,0 +1,43 @@
+=== IDENTITY ===
+2026-09-12T18:11:04Z
+ubuntu-4gb-sin-2
+Linux ubuntu-4gb-sin-2 5.15.0-187-generic #197-Ubuntu SMP Fri Jul 17 19:17:01 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+uid=1000(github-runner) gid=1000(github-runner) groups=1000(github-runner),999(docker)
+SUDO_NONINTERACTIVE=FAIL
+=== MCP CONTAINERS ===
+=== BUILD FILE INVENTORY ===
+sudo: a password is required
+=== RELEVANT HASHES ===
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+=== AUTH STATE / OAUTH SYMBOLS ===
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+sudo: a password is required
+=== DOCKER PATCH CHAIN ===
+sudo: a password is required
+sudo: a password is required
+=== RELEASE/BROKER FILES ===
+sudo: a password is required
+=== CONTROL AUTHORITY FILE PRESENCE ===
+sudo: a password is required
+/opt/metatron/ssh-mcp/build/.runtime-auth-security.enc MISSING_OR_INACCESSIBLE
+sudo: a password is required
+/var/lib/metatron-auth/security.json MISSING_OR_INACCESSIBLE
