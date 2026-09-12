@@ -114,6 +114,27 @@ rollback() {
 }
 trap rollback ERR
 
+echo '=== BOUNDED HOST STORAGE GC ==='
+bounded_storage_gc() {
+  local removed=0 kept=0 ref repo
+  local used_images
+  used_images="$(docker ps -a --format '{{.Image}}')"
+  for repo in metatron-workforce metatron-workforce-sandbox; do
+    kept=0
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
+      [ "$ref" != "metatron-workforce:rollback" ] || continue
+      if printf '%s\n' "$used_images" | grep -Fxq "$ref"; then continue; fi
+      if [ "$kept" -lt 3 ]; then kept=$((kept+1)); continue; fi
+      [ "$removed" -lt 40 ] || break 2
+      if docker image rm "$ref" >/dev/null 2>&1; then removed=$((removed+1)); fi
+    done < <(docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}')
+  done
+  docker image prune -f >/dev/null 2>&1 || true
+  echo "HOST_STORAGE_GC=PASS removed_tags=$removed disk_used=$(df -P / | awk 'NR==2{print $5}')"
+}
+bounded_storage_gc
+
 echo '=== BUILD EXACT TESTED WORKFORCE + SANDBOX IMAGES ==='
 METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" \
   docker compose -p "$PROJECT" -f "$COMPOSE" build workforce workforce-sandbox
@@ -161,27 +182,10 @@ for forbidden in GITHUB_TOKEN OPENAI_API_KEY GEMINI_API_KEY ANTHROPIC_API_KEY TE
 done
 docker exec "$CID" sh -c 'wget -qO- --timeout=5 http://workforce-sandbox:8090/health' | grep -q '"status":"UP"'
 
-echo '=== PUBLIC GATEWAY ==='
-curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 15 https://gate.metatron.vn/telegram/health | grep -q '"status":"UP"'
-
 echo '=== LOCAL HEALTH ==='
 curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"'
 
-echo '=== INTERNET EGRESS ==='
-docker exec "$CID" sh -c 'wget -qO- --timeout=10 https://api.github.com/zen >/dev/null'
-
-echo '=== TELEGRAM WEBHOOK ==='
-test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
-TEST_UPDATE=$(date +%s%N | cut -c1-15)
-BODY=$(python3 - "$TEST_UPDATE" "${TELEGRAM_ALLOWED_USER_ID:-0}" <<'PY'
-import json,sys
-update=int(sys.argv[1]); uid=int(sys.argv[2])
-print(json.dumps({"update_id":update,"message":{"message_id":update%2000000000,"from":{"id":uid,"is_bot":False,"first_name":"DeployProbe"},"chat":{"id":uid,"type":"private"},"date":0,"text":"/mode"}}))
-PY
-)
-HTTP=$(curl -sS -o /tmp/metatron-deploy-webhook.json -w '%{http_code}' --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 20 -X POST https://gate.metatron.vn/telegram/webhook -H "X-Telegram-Bot-Api-Secret-Token: $TELEGRAM_WEBHOOK_SECRET" -H 'Content-Type: application/json' --data-binary "$BODY")
-test "$HTTP" = 200
-
+echo '=== EXTERNAL ACCEPTANCE DEFERRED TO HIGHWAY FANOUT ==='
 echo '=== PERFORMANCE SLO ==='
 ELAPSED=$(( $(date +%s) - DEPLOY_STARTED_AT ))
 test "$ELAPSED" -lt 900
