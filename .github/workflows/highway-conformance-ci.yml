@@ -121,9 +121,24 @@ jobs:
       - name: Diagnostic intelligence routing conformance test
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingConformanceAcceptanceTest' --no-daemon --max-workers=1
-      - name: Diagnostic intelligence routing feedback test
+      - name: Feedback test authoritative observation
         shell: bash
-        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest' --no-daemon --max-workers=1
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.authoritativeObservationClosesLoopBackIntoAutoRouting' --no-daemon --max-workers=1
+      - name: Feedback test failed observation
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.failedObservedOutcomeLowersQualityWithoutInventingProviderFailure' --no-daemon --max-workers=1
+      - name: Feedback test ambiguous multimodel
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.ambiguousMultiModelOutcomeDoesNotTeachWrongProvider' --no-daemon --max-workers=1
+      - name: Feedback test human assessment
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.explicitHumanAssessmentFeedsSameDurableQualityLoop' --no-daemon --max-workers=1
+      - name: Feedback test restart durability
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.learnedQualitySurvivesProcessRestart' --no-daemon --max-workers=1
+      - name: Feedback test untyped observation
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.untypedObservationCannotMutateRoutingQuality' --no-daemon --max-workers=1
       - name: Diagnostic semantic task routing contract test
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.SemanticTaskRoutingContractTest' --no-daemon --max-workers=1
