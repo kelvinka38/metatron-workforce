@@ -1,6 +1,7 @@
 package com.metatron.workforce.workers.audit;
 
 import com.metatron.workforce.gateway.GatewayEgressClient;
+import com.metatron.workforce.runtime.RepositoryCredentialAuthority;
 import com.metatron.workforce.workers.Worker;
 import com.metatron.workforce.workers.WorkerContext;
 import com.metatron.workforce.workers.WorkerResult;
@@ -36,7 +37,7 @@ public final class RepositoryAuditWorker implements Worker {
 
     /** Production constructor: authorization is preserved from the admitted execution request. */
     public RepositoryAuditWorker(String authorizationReference) {
-        String token = env("GITHUB_TOKEN");
+        String token = RepositoryCredentialAuthority.resolveProcessToken();
         this.egress = new GatewayEgressClient(
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
                 "https://api.github.com", token, authorizationReference);
