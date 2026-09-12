@@ -100,9 +100,18 @@ jobs:
       - name: Diagnostic intelligence frontier tests
         shell: bash
         run: ./gradlew test --tests '*FrontierSemantic*' --no-daemon --max-workers=1
-      - name: Diagnostic intelligence fabric routing provider tests
+      - name: Diagnostic intelligence fabric tests
         shell: bash
-        run: ./gradlew test --tests '*IntelligenceFabric*' --tests '*Routing*' --tests '*Provider*' --tests '*CapacityAware*' --tests '*LatencyAware*' --tests '*FreshInformation*' --tests '*NoLegacy*' --tests '*RouterBacked*' --no-daemon --max-workers=1
+        run: ./gradlew test --tests '*IntelligenceFabric*' --tests '*CognitiveRuntimeFabricTest' --no-daemon --max-workers=1
+      - name: Diagnostic provider policy tests
+        shell: bash
+        run: ./gradlew test --tests '*Provider*' --tests '*CapacityAware*' --tests '*LatencyAware*' --tests '*RouterBacked*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence routing tests
+        shell: bash
+        run: ./gradlew test --tests '*Routing*' --tests '*SemanticTaskRoutingContractTest' --tests '*NoLegacyGatewayKeywordRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic fresh information routing tests
+        shell: bash
+        run: ./gradlew test --tests '*FreshInformation*' --no-daemon --max-workers=1
       - name: Diagnostic intelligence cognitive depth case tests
         shell: bash
         run: ./gradlew test --tests '*CognitiveRuntime*' --tests '*IntelligenceDepth*' --tests '*IntelligenceCase*' --tests '*CurrentExternalCase*' --tests '*DeepInstitutional*' --no-daemon --max-workers=1
