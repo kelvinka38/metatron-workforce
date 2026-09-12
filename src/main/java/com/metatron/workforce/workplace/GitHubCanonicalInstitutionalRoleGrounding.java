@@ -2,6 +2,7 @@ package com.metatron.workforce.workplace;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.runtime.RepositoryCredentialAuthority;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -71,10 +72,10 @@ public final class GitHubCanonicalInstitutionalRoleGrounding implements Institut
     @Autowired
     public GitHubCanonicalInstitutionalRoleGrounding(
             ObjectMapper json,
-            @Value("${GITHUB_TOKEN:}") String token,
+            RepositoryCredentialAuthority repositoryCredentials,
             @Value("${METATRON_INSTITUTION_REPOSITORY:kelvinka38/metatron-institution}") String repository,
             @Value("${METATRON_INSTITUTION_REF:main}") String ref) {
-        this(json, HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build(), token, repository, ref);
+        this(json, HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build(), repositoryCredentials.tokenOrEmpty(), repository, ref);
     }
 
     GitHubCanonicalInstitutionalRoleGrounding(
