@@ -187,6 +187,24 @@ topology must be reported from current runtime evidence.
 
 Every relevant future PR must still identify the canonical clauses, domain owners, durability/idempotency/fencing behavior, failure/reconciliation behavior, evidence level and any production gate required by the changed scope.
 
+## FOUNDER-APPROVED WORKFORCE COGNITIVE SUBSTRATE SOVEREIGNTY — MANDATORY CURRENT PROGRAM
+
+Founder approved Workforce Cognitive Substrate Sovereignty on 2026-09-12.
+
+Before any Worker cognition, provider routing, inference substrate, Worker-reachable retrieval/search, cognition capacity, or related scale/economic change, read Intelligence documents `12` through `19` in order.
+
+Non-negotiable rule:
+
+```text
+WORKER_ORIGINATED_PAID_EXTERNAL_INFERENCE = 0
+```
+
+`EXTERNAL INFORMATION != EXTERNAL COGNITION`. Worker-reachable retrieval may acquire attributable external evidence but must not hide paid frontier-model inference. Do not create a second Intelligence Fabric or one-model-per-Worker architecture.
+
+**Implementation hold is active.** Do not implement, deploy, change provider credentials, or stand up the Cognition Node for this program until the Founder completes the server-upgrade review and explicitly releases `docs/ARCHITECTURE/INTELLIGENCE/19_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_SERVER_UPGRADE_GATE.md`.
+
+Repository mutation still obeys the canonical isolated ExecutionWorkspace / governed PR lane. Never bypass that guard to publish this program.
+
 ## FOUNDER-APPROVED SOT ENFORCEMENT PROGRAM — CURRENT EXECUTION GOVERNANCE
 
 Founder approved the SoT Enforcement Detailed Gap Closure on 2026-09-10. This is a post-Autonomy-Closure governance implementation program; it does not reopen the accepted Autonomy Closure.
