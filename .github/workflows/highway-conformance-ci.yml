@@ -94,6 +94,15 @@ jobs:
       - name: Diagnostic execution action deploy architecture tests
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.execution.*' --tests 'com.metatron.workforce.action.*' --tests 'com.metatron.workforce.deploy.*' --tests 'com.metatron.workforce.architecture.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction package tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.*' --no-daemon --max-workers=1
+      - name: Diagnostic workplace actor core observation work tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.workplace.*' --tests 'com.metatron.workforce.actor.*' --tests 'com.metatron.workforce.core.*' --tests 'com.metatron.workforce.observation.*' --tests 'com.metatron.workforce.work.*' --no-daemon --max-workers=1
+      - name: Diagnostic phase and peripheral tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.phase3.*' --tests 'com.metatron.workforce.phase4.*' --tests 'com.metatron.workforce.phase5.*' --tests 'com.metatron.workforce.phase6.*' --tests 'com.metatron.workforce.phase7.*' --tests 'com.metatron.workforce.phase8.*' --tests 'com.metatron.workforce.phase9.*' --tests 'com.metatron.workforce.phase10.*' --tests 'com.metatron.workforce.phase11.*' --tests 'com.metatron.workforce.phase12.*' --tests 'com.metatron.workforce.operating.*' --tests 'com.metatron.workforce.gateway.*' --tests 'com.metatron.workforce.evidence.*' --tests 'com.metatron.workforce.adapter.telegram.*' --tests 'com.metatron.workforce.workers.audit.*' --tests 'com.metatron.workforce.deliberation.*' --tests 'com.metatron.workforce.bios.*' --tests 'com.metatron.workforce.WorkforceCompletionAcceptanceTest' --tests 'com.metatron.workforce.MetatronWorkforceApplicationStartupTest' --tests 'com.metatron.workforce.WorkforceOperationalDurabilityAcceptanceTest' --no-daemon --max-workers=1
       - name: Enforce full Gradle build gate
         shell: bash
         run: |
