@@ -43,3 +43,9 @@ Technical Persistence + Evidence
 ## Scaling Boundary
 
 The current architecture is certified only for the verified acceptance envelope. Distributed persistence, multi-node orchestration, and a remote runtime fleet remain replaceable infrastructure choices and require measured workload/capacity evidence before being promoted to a production-scale topology.
+
+## Founder-approved Worker Cognitive Sovereignty Target — Not Yet Implemented
+
+Target Worker cognition is `Workforce / Intelligence Fabric → private Metatron Cognition Node → Metatron-owned inference compute`. External frontier credentials move outside Workforce to a controlled Frontier transport boundary; after cutover Workforce itself must not possess OpenAI, Gemini or Anthropic API keys for Worker cognition.
+
+This topology is architecture-approved but not implemented or production-certified. The mandatory server-upgrade gate in Intelligence document `19` must be released before implementation begins.
