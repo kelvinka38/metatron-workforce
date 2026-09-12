@@ -85,6 +85,15 @@ jobs:
       - name: EE test ExecutionIsolationRecoveryTest
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionIsolationRecoveryTest' --no-daemon --max-workers=1
+      - name: Diagnostic runtime package tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.*' --no-daemon --max-workers=1
+      - name: Diagnostic management package tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.management.*' --no-daemon --max-workers=1
+      - name: Diagnostic execution action deploy architecture tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.execution.*' --tests 'com.metatron.workforce.action.*' --tests 'com.metatron.workforce.deploy.*' --tests 'com.metatron.workforce.architecture.*' --no-daemon --max-workers=1
       - name: Enforce full Gradle build gate
         shell: bash
         run: |
