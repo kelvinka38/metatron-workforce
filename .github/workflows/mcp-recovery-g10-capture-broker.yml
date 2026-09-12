@@ -1,0 +1,42 @@
+name: MCP Recovery G10 Capture Broker
+
+on:
+  push:
+    branches: [mcp-recovery-g10-20260913]
+    paths:
+      - '.github/workflows/mcp-recovery-g10-capture-broker.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Capture non-secret broker implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$GITHUB_WORKSPACE/.mcp-recovery/host"
+          mkdir -p "$OUT"
+          test -r /usr/local/sbin/metatron-mcp-broker
+          cp /usr/local/sbin/metatron-mcp-broker "$OUT/metatron-mcp-broker.current"
+          for f in /opt/metatron/ssh-mcp/build/broker-auth-aware-v3_6-patch.py /opt/metatron/ssh-mcp/build/install-broker-auth-aware-v3_6.sh; do
+            [ -r "$f" ] && cp "$f" "$OUT/$(basename "$f")"
+          done
+          {
+            echo "BROKER_SHA256=$(sha256sum /usr/local/sbin/metatron-mcp-broker | awk '{print $1}')"
+            echo "BROKER_SIZE=$(stat -c %s /usr/local/sbin/metatron-mcp-broker)"
+          } > "$GITHUB_WORKSPACE/.mcp-recovery/broker.txt"
+      - name: Commit capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'metatron-recovery-bot'
+          git config user.email 'metatron-recovery-bot@users.noreply.github.com'
+          git add .mcp-recovery
+          git diff --cached --quiet && exit 0
+          git commit -m 'chore(recovery): capture current MCP broker implementation'
+          git push origin HEAD:mcp-recovery-g10-20260913
