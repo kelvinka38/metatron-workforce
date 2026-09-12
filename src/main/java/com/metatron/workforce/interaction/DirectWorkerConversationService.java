@@ -1,9 +1,11 @@
 package com.metatron.workforce.interaction;
 
 import com.metatron.workforce.interaction.memory.PersistentWorkerConversationMemoryStore;
+import com.metatron.workforce.phase3.ActorRef;
 import com.metatron.workforce.workplace.MeetingWorkerDirectory;
 import com.metatron.workforce.workplace.WorkerConversationGateway;
 import com.metatron.workforce.workplace.WorkplaceControlRoomService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
@@ -32,8 +34,25 @@ public final class DirectWorkerConversationService {
     private final WorkplaceControlRoomService controlRoom;
     private final MeetingWorkerDirectory directory;
     private final WorkerConversationGateway workerConversation;
+    private final WorkerInstructionAdmissionService instructionAdmission;
 
+    @Autowired
     public DirectWorkerConversationService(
+            DirectWorkerConversationBindingStore bindings,
+            PersistentWorkerConversationMemoryStore memory,
+            WorkplaceControlRoomService controlRoom,
+            MeetingWorkerDirectory directory,
+            WorkerConversationGateway workerConversation,
+            WorkerInstructionAdmissionService instructionAdmission) {
+        this.bindings = Objects.requireNonNull(bindings, "bindings");
+        this.memory = Objects.requireNonNull(memory, "memory");
+        this.controlRoom = Objects.requireNonNull(controlRoom, "controlRoom");
+        this.directory = Objects.requireNonNull(directory, "directory");
+        this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+        this.instructionAdmission = Objects.requireNonNull(instructionAdmission, "instructionAdmission");
+    }
+
+    DirectWorkerConversationService(
             DirectWorkerConversationBindingStore bindings,
             PersistentWorkerConversationMemoryStore memory,
             WorkplaceControlRoomService controlRoom,
@@ -44,6 +63,7 @@ public final class DirectWorkerConversationService {
         this.controlRoom = Objects.requireNonNull(controlRoom, "controlRoom");
         this.directory = Objects.requireNonNull(directory, "directory");
         this.workerConversation = Objects.requireNonNull(workerConversation, "workerConversation");
+        this.instructionAdmission = null;
     }
 
     public Optional<HandledReply> handle(MetatronInteraction interaction) {
@@ -97,9 +117,17 @@ public final class DirectWorkerConversationService {
         if (activeBinding.isEmpty()) return Optional.empty();
 
         try {
-            ConversationReply reply = converse(
+            WorkplaceControlRoomService.WorkerDetail detail =
+                    controlRoom.prepareConversationWorker(activeBinding.get());
+            Optional<ConversationReply> admitted = admitInstruction(interaction, detail);
+            if (admitted.isPresent()) {
+                ConversationReply reply = admitted.get();
+                return Optional.of(new HandledReply(
+                        reply.turn().worker(), reply.turn().requestReference(), reply.workerId()));
+            }
+            ConversationReply reply = conversePrepared(
                     interaction.human().actorId(),
-                    activeBinding.get(),
+                    detail,
                     interaction.text(),
                     interaction.channelProvider());
             return Optional.of(new HandledReply(
@@ -120,6 +148,53 @@ public final class DirectWorkerConversationService {
         if (message == null || message.isBlank()) throw new IllegalArgumentException("message required");
         WorkplaceControlRoomService.WorkerDetail detail =
                 controlRoom.prepareConversationWorker(requestedWorkerId);
+        return conversePrepared(humanId, detail, message, channel);
+    }
+
+    /**
+     * Product-neutral selected-Worker entry used by Workplace and future direct Worker surfaces.
+     * It first applies the same semantic Work-admission boundary used by channel bindings; ordinary
+     * conversation falls through to Worker cognition without creating durable Work.
+     */
+    public ConversationReply converseOrAdmit(
+            String humanId,
+            String requestedWorkerId,
+            String message,
+            String channel,
+            String externalMessageReference) {
+        if (message == null || message.isBlank()) throw new IllegalArgumentException("message required");
+        WorkplaceControlRoomService.WorkerDetail detail =
+                controlRoom.prepareConversationWorker(requestedWorkerId);
+        String workerId = detail.workerId();
+        String organizationContextId = detail.participations().stream()
+                .filter(participation -> participation.status()
+                        == com.metatron.workforce.core.WorkforceCoreService.ParticipationStatus.ACTIVE)
+                .map(com.metatron.workforce.core.WorkforceCoreService.Participation::organizationRef)
+                .filter(value -> value != null && !value.isBlank())
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("worker_has_no_active_organization:" + workerId));
+        String conversationId = "conversation:" + requireToken(channel, "channel") + ":"
+                + requireToken(humanId, "humanId") + ":" + workerId;
+        String messageRef = requireToken(externalMessageReference, "externalMessageReference");
+        MetatronInteraction interaction = new MetatronInteraction(
+                new ActorRef(humanId, ActorRef.ActorType.HUMAN),
+                new ActorRef(workerId, ActorRef.ActorType.WORKER),
+                organizationContextId,
+                conversationId,
+                channel,
+                channel + ":human:" + humanId,
+                channel + ":worker:" + workerId,
+                messageRef,
+                message.trim());
+        return admitInstruction(interaction, detail)
+                .orElseGet(() -> conversePrepared(humanId, detail, message, channel));
+    }
+
+    private ConversationReply conversePrepared(
+            String humanId,
+            WorkplaceControlRoomService.WorkerDetail detail,
+            String message,
+            String channel) {
         String workerId = detail.workerId();
 
         String memoryContext = memory.contextFor(
@@ -154,6 +229,31 @@ public final class DirectWorkerConversationService {
                 reply.runtimeId(),
                 reply.evidenceReferences());
         return new ConversationReply(workerId, detail, turn);
+    }
+
+    private Optional<ConversationReply> admitInstruction(
+            MetatronInteraction interaction,
+            WorkplaceControlRoomService.WorkerDetail detail) {
+        if (instructionAdmission == null) return Optional.empty();
+        String memoryContext = memory.contextFor(
+                interaction.human().actorId(), detail.workerId(), interaction.text(),
+                MAX_RECENT_TURNS, MAX_RELEVANT_TURNS, MAX_MEMORY_CHARS);
+        String admissionContext = workerOperationalContext(detail)
+                + (memoryContext.isBlank() ? "" : "\n\nDURABLE WORKER MEMORY\n" + memoryContext);
+        Optional<WorkerInstructionAdmissionService.Admission> admission = instructionAdmission.evaluate(
+                interaction, detail.workerId(), admissionContext);
+        if (admission.isEmpty()) return Optional.empty();
+        WorkerInstructionAdmissionService.Admission result = admission.get();
+        PersistentWorkerConversationMemoryStore.Turn turn = memory.append(
+                interaction.human().actorId(),
+                detail.workerId(),
+                interaction.channelProvider(),
+                interaction.text(),
+                result.text(),
+                result.requestReference(),
+                detail.runtimeId(),
+                result.evidenceReferences());
+        return Optional.of(new ConversationReply(detail.workerId(), detail, turn));
     }
 
     public List<PersistentWorkerConversationMemoryStore.Turn> history(String humanId, String requestedWorkerId) {
@@ -292,6 +392,15 @@ public final class DirectWorkerConversationService {
                         .append(" | consequence=").append(action.consequence())
                         .append(" | ").append(action.summary()).append('\n'));
         return out.toString();
+    }
+
+    private static String requireToken(String value, String field) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " required");
+        String normalized = value.trim();
+        if (normalized.indexOf('\n') >= 0 || normalized.indexOf('\r') >= 0) {
+            throw new IllegalArgumentException("invalid " + field);
+        }
+        return normalized;
     }
 
     static String fold(String value) {

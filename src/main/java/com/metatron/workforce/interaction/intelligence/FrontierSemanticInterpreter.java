@@ -1,5 +1,7 @@
 package com.metatron.workforce.interaction.intelligence;
 
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.llm.FrontierCallBudget;
@@ -185,7 +187,7 @@ public final class FrontierSemanticInterpreter {
 
     private NormalizedRequest parse(LlmResponse response, boolean activeCasePresent, String humanText) {
         try {
-            JsonNode root = mapper.readTree(unwrapJson(response.text()));
+            JsonNode root = parseSemanticJson(response.text());
             String objective = requiredText(root, "objective");
             String target = optionalText(root, "target");
             List<String> constraints = textArray(root, "constraints");
@@ -239,6 +241,27 @@ public final class FrontierSemanticInterpreter {
             throw failure;
         } catch (Exception failure) {
             throw new IllegalStateException("invalid semantic normalization from " + response.provider(), failure);
+        }
+    }
+
+    /**
+     * Frontier providers occasionally serialize otherwise valid semantic JSON with a raw control
+     * character inside a quoted string. Parse strictly first. Only that narrow JSON-formatting
+     * defect is retried with Jackson's control-character tolerance; required fields, enums,
+     * ambiguity, execution authorization and all downstream semantic guards remain unchanged.
+     */
+    private JsonNode parseSemanticJson(String responseText) throws Exception {
+        String jsonText = unwrapJson(responseText);
+        try {
+            return mapper.readTree(jsonText);
+        } catch (JsonParseException strictFailure) {
+            String message = strictFailure.getOriginalMessage() == null ? "" : strictFailure.getOriginalMessage();
+            if (!message.contains("CTRL-CHAR") && !message.toLowerCase(Locale.ROOT).contains("control character")) {
+                throw strictFailure;
+            }
+            ObjectMapper tolerant = mapper.copy()
+                    .enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature());
+            return tolerant.readTree(jsonText);
         }
     }
 
