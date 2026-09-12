@@ -29,48 +29,24 @@ jobs:
           python3 "$PATCH" "$OUT"
           python3 -m py_compile "$OUT"
           chmod +x "$OUT"
-
           T="$(mktemp -d)"
           trap 'rm -rf "$T"' EXIT
           export METATRON_MCP_AUTH_STATE_PATH="$T/state.enc"
           export METATRON_MCP_AUTH_STATE_LOCK="$T/state.lock"
-
           call_broker() { printf '%s' "$1" | "$OUT"; }
           read0="$(call_broker '{"op":"auth_state_read","args":{}}')"
-          python3 - "$read0" <<'PY'
-import json,sys
-r=json.loads(sys.argv[1]); p=json.loads(r['stdout'])
-assert r['ok'] is True and p['exists'] is False and p['sha256']==''
-PY
-
+          python3 -c 'import json,sys; r=json.loads(sys.argv[1]); p=json.loads(r["stdout"]); assert r["ok"] is True and p["exists"] is False and p["sha256"]==""' "$read0"
           one="$(printf one | base64 -w0)"
           write1="$(call_broker "{\"op\":\"auth_state_compare_and_swap\",\"args\":{\"expected_sha256\":\"\",\"content_b64\":\"$one\"}}")"
-          v1="$(python3 - "$write1" <<'PY'
-import json,sys
-r=json.loads(sys.argv[1]); assert r['ok'] is True
-print(json.loads(r['stdout'])['sha256'])
-PY
-)"
-
+          v1="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert r["ok"] is True; print(json.loads(r["stdout"])["sha256"])' "$write1")"
           a="$(printf two-a | base64 -w0)"
           b="$(printf two-b | base64 -w0)"
           set +e
-          (call_broker "{\"op\":\"auth_state_compare_and_swap\",\"args\":{\"expected_sha256\":\"$v1\",\"content_b64\":\"$a\"}}" >"$T/a.json"; echo $? >"$T/a.rc") &
-          pa=$!
-          (call_broker "{\"op\":\"auth_state_compare_and_swap\",\"args\":{\"expected_sha256\":\"$v1\",\"content_b64\":\"$b\"}}" >"$T/b.json"; echo $? >"$T/b.rc") &
-          pb=$!
+          (call_broker "{\"op\":\"auth_state_compare_and_swap\",\"args\":{\"expected_sha256\":\"$v1\",\"content_b64\":\"$a\"}}" >"$T/a.json"; echo $? >"$T/a.rc") & pa=$!
+          (call_broker "{\"op\":\"auth_state_compare_and_swap\",\"args\":{\"expected_sha256\":\"$v1\",\"content_b64\":\"$b\"}}" >"$T/b.json"; echo $? >"$T/b.rc") & pb=$!
           wait "$pa"; wait "$pb"
           set -e
-          python3 - "$T/a.json" "$T/b.json" <<'PY'
-import json,sys
-rs=[]
-for p in sys.argv[1:]:
-  r=json.load(open(p)); rs.append(r)
-assert sum(1 for r in rs if r['ok']) == 1, rs
-losers=[r for r in rs if not r['ok']]
-assert len(losers)==1 and losers[0]['exitCode']==75 and json.loads(losers[0]['stdout'])['status']=='conflict', rs
-print('BROKER_AUTH_STATE_CAS_CONCURRENCY_PASS')
-PY
+          python3 -c 'import json,sys; rs=[json.load(open(p)) for p in sys.argv[1:]]; assert sum(1 for r in rs if r["ok"])==1,rs; losers=[r for r in rs if not r["ok"]]; assert len(losers)==1 and losers[0]["exitCode"]==75 and json.loads(losers[0]["stdout"])["status"]=="conflict",rs; print("BROKER_AUTH_STATE_CAS_CONCURRENCY_PASS")' "$T/a.json" "$T/b.json"
           rm -rf "$T"
           trap - EXIT
 
@@ -78,19 +54,19 @@ PY
         shell: bash
         run: |
           set -euo pipefail
-          cat > .mcp-recovery/g10/Dockerfile.g10 <<'EOF'
-          FROM metatron-ssh-mcp-runtime:g9
-          COPY auth-oauth-resilience-g10-patch.mjs /tmp/auth-oauth-resilience-g10-patch.mjs
-          RUN node /tmp/auth-oauth-resilience-g10-patch.mjs /app/auth-proxy.mjs \
-           && node --check /app/auth-proxy.mjs \
-           && grep -Fq 'METATRON_MCP_OAUTH_RESILIENCE_G10' /app/auth-proxy.mjs \
-           && grep -Fq "grant_types_supported: ['authorization_code', 'refresh_token']" /app/auth-proxy.mjs \
-           && grep -Fq 'auth_state_compare_and_swap' /app/auth-proxy.mjs \
-           && grep -Fq 'AUTH_CONTROL_STATE_HOST_CAS_SAVE_PASS' /app/auth-proxy.mjs \
-           && AUTH_PROXY_SELF_TEST=1 node /app/auth-proxy.mjs \
-           && rm -f /tmp/auth-oauth-resilience-g10-patch.mjs
-          EOF
-          docker build --pull=false -f .mcp-recovery/g10/Dockerfile.g10 -t metatron-ssh-mcp-runtime:g10 .mcp-recovery/g10 | tee .mcp-recovery/g10/build.log
+          D=.mcp-recovery/g10/Dockerfile.g10
+          printf '%s\n' \
+            'FROM metatron-ssh-mcp-runtime:g9' \
+            'COPY auth-oauth-resilience-g10-patch.mjs /tmp/auth-oauth-resilience-g10-patch.mjs' \
+            'RUN node /tmp/auth-oauth-resilience-g10-patch.mjs /app/auth-proxy.mjs \' \
+            ' && node --check /app/auth-proxy.mjs \' \
+            " && grep -Fq 'METATRON_MCP_OAUTH_RESILIENCE_G10' /app/auth-proxy.mjs \\" \
+            " && grep -Fq \"grant_types_supported: ['authorization_code', 'refresh_token']\" /app/auth-proxy.mjs \\" \
+            " && grep -Fq 'auth_state_compare_and_swap' /app/auth-proxy.mjs \\" \
+            " && grep -Fq 'AUTH_CONTROL_STATE_HOST_CAS_SAVE_PASS' /app/auth-proxy.mjs \\" \
+            ' && AUTH_PROXY_SELF_TEST=1 node /app/auth-proxy.mjs \' \
+            ' && rm -f /tmp/auth-oauth-resilience-g10-patch.mjs' > "$D"
+          docker build --pull=false -f "$D" -t metatron-ssh-mcp-runtime:g10 .mcp-recovery/g10 | tee .mcp-recovery/g10/build.log
           id="$(docker image inspect metatron-ssh-mcp-runtime:g10 --format '{{.Id}}')"
           base="$(docker image inspect metatron-ssh-mcp-runtime:g9 --format '{{.Id}}')"
           test -n "$id" && test "$id" != "$base"
