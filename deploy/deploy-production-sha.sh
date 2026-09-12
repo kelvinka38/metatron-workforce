@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Compatibility exact-SHA deployment lane. Canonical production release remains Highway.
-# This script is intentionally independent of the caller's current branch/HEAD/worktree state:
-# it reads one immutable commit from the canonical mirror and builds in a private deployment tree.
+# Compatibility entrypoint only. Production mutation authority belongs exclusively to Highway.
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SHA="${1:-}"
 if [[ ! "$SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
@@ -17,101 +15,46 @@ if [[ "$RESOLVED" != "$SHA" ]]; then
   exit 3
 fi
 
-ENV_FILE="${METATRON_ENV_FILE:-$ROOT_DIR/deploy/.env}"
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "missing production env file: $ENV_FILE" >&2
-  exit 5
+INSTALL="${METATRON_HIGHWAY_INSTALL_DIR:-}"
+if [[ -z "$INSTALL" ]]; then
+  for candidate in /opt/metatron/highway "$HOME/.metatron/highway" /home/*/.metatron/highway; do
+    if [[ -r "$candidate/highway.env" && -x "$candidate/current/highwayctl.py" ]]; then INSTALL="$candidate"; break; fi
+  done
+fi
+if [[ -z "$INSTALL" || ! -r "$INSTALL/highway.env" || ! -x "$INSTALL/current/highwayctl.py" ]]; then
+  echo "canonical Highway installation not found" >&2
+  exit 4
 fi
 
-read_env_value() {
-  local key="$1" file="$2"
-  python3 - "$file" "$key" <<'PY'
-import pathlib, sys
-path = pathlib.Path(sys.argv[1]); key = sys.argv[2]; value = ""
-for raw in path.read_text().splitlines():
-    line = raw.strip()
-    if not line or line.startswith('#'): continue
-    if line.startswith('export '): line = line[7:].lstrip()
-    prefix = key + '='
-    if not line.startswith(prefix): continue
-    value = line.split('=', 1)[1].strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}: value = value[1:-1]
-    break
-print(value, end='')
-PY
+METATRON_HIGHWAY_INSTALL_DIR="$INSTALL" bash "$ROOT_DIR/highway/publish-release.sh" "$ROOT_DIR" "$SHA"
+set -a
+# shellcheck disable=SC1090
+source "$INSTALL/highway.env"
+set +a
+export METATRON_HIGHWAY_INSTALL_DIR="$INSTALL"
+export METATRON_HIGHWAY_STATE_DIR="${METATRON_HIGHWAY_STATE_DIR:-$INSTALL/state}"
+export METATRON_HIGHWAY_URL="${METATRON_HIGHWAY_URL:-http://127.0.0.1:${METATRON_HIGHWAY_PORT:-18090}}"
+CTL="$INSTALL/current/highwayctl.py"
+python3 "$CTL" health >/dev/null
+
+submit_id() {
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])'
 }
-
-if [[ ${METATRON_SANDBOX_TOKEN+x} == x ]]; then EFFECTIVE_SANDBOX_TOKEN="$METATRON_SANDBOX_TOKEN"; else EFFECTIVE_SANDBOX_TOKEN="$(read_env_value METATRON_SANDBOX_TOKEN "$ENV_FILE")"; fi
-if [[ -z "$EFFECTIVE_SANDBOX_TOKEN" ]]; then
-  echo "production preflight failed: METATRON_SANDBOX_TOKEN is required before container recreation" >&2
-  exit 7
-fi
-unset EFFECTIVE_SANDBOX_TOKEN
-
-if [[ ${GITHUB_TOKEN+x} == x ]]; then EFFECTIVE_REPOSITORY_CREDENTIAL="$GITHUB_TOKEN"; else EFFECTIVE_REPOSITORY_CREDENTIAL="$(read_env_value GITHUB_TOKEN "$ENV_FILE")"; fi
-if [[ -z "$EFFECTIVE_REPOSITORY_CREDENTIAL" ]]; then
-  echo "production preflight failed: Repository Control Plane credential is required before container recreation" >&2
-  exit 9
-fi
-unset EFFECTIVE_REPOSITORY_CREDENTIAL
-
-DEPLOY_ROOT="${METATRON_LOCAL_DEPLOY_ROOT:-/tmp/metatron-workforce-deployments}"
-mkdir -p "$DEPLOY_ROOT"
-WORKSPACE="$(mktemp -d "$DEPLOY_ROOT/${SHA}.XXXXXX")"
-cleanup() { rm -rf "$WORKSPACE"; }
-trap cleanup EXIT
-
-git -C "$ROOT_DIR" archive --format=tar "$SHA" | tar -xf - -C "$WORKSPACE"
-printf '%s\n' "$SHA" > "$WORKSPACE/.metatron-deployment-source-sha"
-test "$(cat "$WORKSPACE/.metatron-deployment-source-sha")" = "$SHA"
-echo "LOCAL_DEPLOY_IMMUTABLE_SOURCE=PASS sha=$SHA"
-
-(
-  cd "$WORKSPACE"
-  ./gradlew --no-daemon clean build
-)
-
-export METATRON_IMAGE_TAG="$SHA"
-export METATRON_COMMIT_SHA="$SHA"
-export METATRON_VERSION="${METATRON_VERSION:-0.1.0}"
-COMPOSE=(docker compose --env-file "$ENV_FILE" -p deploy -f "$WORKSPACE/deploy/docker-compose.yml")
-"${COMPOSE[@]}" config >/dev/null
-"${COMPOSE[@]}" build workforce workforce-sandbox
-"${COMPOSE[@]}" up -d --no-build --force-recreate workforce-sandbox workforce
-
-for _ in $(seq 1 90); do
-  if curl -fsS http://127.0.0.1:8080/actuator/health >/tmp/metatron-workforce-health.json 2>/dev/null; then
-    if python3 - <<'PY'
-import json
-with open('/tmp/metatron-workforce-health.json') as f: data=json.load(f)
-raise SystemExit(0 if data.get('status') == 'UP' else 1)
-PY
-    then break; fi
-  fi
-  sleep 2
-done
-
-curl -fsS http://127.0.0.1:8080/actuator/health >/tmp/metatron-workforce-health.json
-python3 - <<'PY'
-import json
-with open('/tmp/metatron-workforce-health.json') as f: data=json.load(f)
-assert data.get('status') == 'UP', data
-PY
+BUILD_JSON="$(python3 "$CTL" submit --kind workforce-build --source-sha "$SHA" --correlation-id "compat-release-$SHA")"
+BUILD_ID="$(printf '%s' "$BUILD_JSON" | submit_id)"
+python3 "$CTL" wait "$BUILD_ID" --timeout 1500 --poll 1 >/dev/null
+DEPLOY_JSON="$(python3 "$CTL" submit --kind workforce-deploy --source-sha "$SHA" --correlation-id "compat-release-$SHA" --dependency "$BUILD_ID")"
+DEPLOY_ID="$(printf '%s' "$DEPLOY_JSON" | submit_id)"
+python3 "$CTL" wait "$DEPLOY_ID" --timeout 1200 --poll 1 >/dev/null
 
 RUNNING_SHA="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' deploy-workforce-1 | sed -n 's/^METATRON_COMMIT_SHA=//p' | tail -n1)"
 RUNNING_IMAGE="$(docker inspect -f '{{.Config.Image}}' deploy-workforce-1)"
 if [[ "$RUNNING_SHA" != "$SHA" || "$RUNNING_IMAGE" != "metatron-workforce:$SHA" ]]; then
-  echo "running Workforce identity mismatch: expected=$SHA/$SHA actual=$RUNNING_SHA/$RUNNING_IMAGE" >&2
+  echo "Highway deployment identity mismatch: expected=$SHA actual=$RUNNING_SHA/$RUNNING_IMAGE" >&2
   exit 6
 fi
 
-SANDBOX_HEALTH="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' deploy-workforce-sandbox-1 2>/dev/null || true)"
-SANDBOX_IMAGE="$(docker inspect -f '{{.Config.Image}}' deploy-workforce-sandbox-1 2>/dev/null || true)"
-if [[ "$SANDBOX_HEALTH" != "healthy" || "$SANDBOX_IMAGE" != "metatron-workforce-sandbox:$SHA" ]]; then
-  echo "sandbox exact-SHA verification failed: health=$SANDBOX_HEALTH image=$SANDBOX_IMAGE" >&2
-  exit 8
-fi
-
-echo "LOCAL_DEPLOY_SHARED_HEAD_INDEPENDENCE=PASS"
+echo "LOCAL_DEPLOY_DELEGATED_TO_HIGHWAY=PASS"
+echo "PROD_WORKFORCE_SINGLE_MUTATION_AUTHORITY=PASS"
 echo "WORKFORCE PRODUCTION DEPLOYMENT: PASS"
 echo "sha=$SHA"
