@@ -7,6 +7,14 @@ Before modifying Intelligence-related code or documentation, read and follow in 
 - `/docs/ARCHITECTURE/INTELLIGENCE/01_FINAL_ARCHITECTURE_PROPOSAL.md`
 - `/docs/ARCHITECTURE/INTELLIGENCE/02_DETAILED_ARCHITECTURE.md`
 - `/docs/ARCHITECTURE/INTELLIGENCE/03_TRACEABILITY_MATRIX.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/12_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_FINAL_PROPOSAL.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/13_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_DETAILED_ARCHITECTURE.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/14_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_CONTRACT_STATE_EVENT_DESIGN.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/15_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_DETAILED_IMPLEMENTATION_PLAN.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/16_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_EXECUTION_PLAN.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/17_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_ACCEPTANCE_MATRIX.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/18_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_HISTORICAL_RECONCILIATION.md`
+- `/docs/ARCHITECTURE/INTELLIGENCE/19_WORKFORCE_COGNITIVE_SUBSTRATE_SOVEREIGNTY_SERVER_UPGRADE_GATE.md`
 
 Upstream canonical SOT/policy always wins.
 
@@ -25,5 +33,9 @@ Key rules:
 - Multi-model reasoning is escalation, not default.
 - No execution bypasses Assignment/Authorization/Gateway/Execution boundaries.
 - Unverified model output does not automatically become institutional Knowledge.
+- Worker-originated paid external inference must equal exactly zero after the Sovereignty closure.
+- External information is not external cognition; Worker retrieval must not hide paid frontier-model reasoning.
+- Worker identity remains independent of model identity; do not create a second Intelligence Fabric or one-model-per-Worker coupling.
+- No Cognitive Substrate Sovereignty implementation is authorized until the server-upgrade hold in Intelligence document 19 is explicitly released.
 
 For extensions not explicitly named by SOT: if they remain within canonical boundaries and create meaningful value, implement the best compliant version rather than weakening the feature merely because it is not a canonical primitive.
