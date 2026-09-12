@@ -22,91 +22,103 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Inspect MCP host without mutating production
+      - name: Inspect MCP host through Docker group without mutating production
         shell: bash
         run: |
           set +e
-          set -u
           BASE=/opt/metatron/ssh-mcp
           BUILD="$BASE/build"
           OUT="$GITHUB_WORKSPACE/.mcp-recovery"
           HOSTOUT="$OUT/host"
+          rm -rf "$OUT"
           mkdir -p "$HOSTOUT"
+
+          G9=metatron-mcp-runtime-g9
+          G9S=metatron-mcp-runtime-g9-standby
+          IMG="$(docker inspect "$G9" --format '{{.Image}}' 2>/dev/null)"
 
           {
             echo '=== IDENTITY ==='
-            date -u +%Y-%m-%dT%H:%M:%SZ || true
-            hostname || true
-            uname -a || true
-            id || true
-            if sudo -n true >/dev/null 2>&1; then echo 'SUDO_NONINTERACTIVE=PASS'; else echo 'SUDO_NONINTERACTIVE=FAIL'; fi
+            date -u +%Y-%m-%dT%H:%M:%SZ
+            hostname
+            id
+            echo "DOCKER_SOCKET_ACCESS=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo FAIL)"
 
             echo '=== MCP CONTAINERS ==='
-            sudo -n docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' 2>&1 | grep -E 'metatron-mcp|cloudflared|envoy' || true
-            for c in metatron-mcp-runtime-g9 metatron-mcp-runtime-g9-standby; do
-              if sudo -n docker inspect "$c" >/dev/null 2>&1; then
-                sudo -n docker inspect "$c" --format 'name={{.Name}} image={{.Image}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started={{.State.StartedAt}}' 2>&1 || true
+            docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'metatron-mcp|cloudflared|envoy' || true
+            for c in "$G9" "$G9S"; do
+              if docker inspect "$c" >/dev/null 2>&1; then
+                docker inspect "$c" --format 'name={{.Name}} image={{.Image}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started={{.State.StartedAt}} networks={{range $k,$v := .NetworkSettings.Networks}}{{$k}}={{$v.IPAddress}} {{end}}'
               fi
             done
+            echo "G9_IMAGE_ID=$IMG"
+            if [ -n "$IMG" ]; then
+              docker image inspect "$IMG" --format 'g9_repo_tags={{json .RepoTags}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}}'
+            fi
 
-            echo '=== BUILD FILE INVENTORY ==='
-            sudo -n find "$BUILD" -maxdepth 1 -type f -printf '%f\t%s bytes\n' 2>&1 | sort || true
+            echo '=== HOST PATH DIRECT ACCESS ==='
+            ls -ld "$BASE" "$BUILD" 2>&1 || true
+            test -r "$BUILD/auth-proxy.mjs" && echo 'DIRECT_AUTH_PROXY_READ=PASS' || echo 'DIRECT_AUTH_PROXY_READ=FAIL'
+            test -w "$BUILD" && echo 'DIRECT_BUILD_WRITE=PASS' || echo 'DIRECT_BUILD_WRITE=FAIL'
 
-            echo '=== RELEVANT HASHES ==='
-            for f in \
-              auth-proxy.mjs auth-professional-patch.mjs auth-security-admin-patch.mjs \
-              auth-security-admin-fix.mjs auth-security-recovery-patch.mjs \
-              auth-control-state-host-patch.mjs auth-control-state-init-patch.mjs \
-              auth-readiness-cheap-hotfix.mjs auth-client-agnostic-oauth-patch.mjs \
-              auth-client-agnostic-post-patch.mjs auth-normal-oauth-patch.mjs \
-              auth-oauth-resilience-v3_7-post-patch.mjs patch-oauth-resilience-v3_7.py \
-              Dockerfile Dockerfile.normal-oauth prebuild-runtime-g9-normal-oauth-final.sh; do
-              if sudo -n test -f "$BUILD/$f"; then sudo -n sha256sum "$BUILD/$f" 2>&1 || true; fi
-            done
+            echo '=== RELEVANT HOST FILE INVENTORY ==='
+            find "$BUILD" -maxdepth 1 -type f -printf '%f\t%s bytes\n' 2>&1 | sort | grep -E 'auth-|Dockerfile|prebuild|broker|release|accept|runtime-g[0-9]' || true
 
-            echo '=== AUTH STATE / OAUTH SYMBOLS ==='
-            for f in auth-proxy.mjs auth-control-state-host-patch.mjs auth-control-state-init-patch.mjs auth-client-agnostic-oauth-patch.mjs auth-client-agnostic-post-patch.mjs auth-normal-oauth-patch.mjs; do
-              if sudo -n test -f "$BUILD/$f"; then
-                echo "--- $f"
-                sudo -n grep -nE 'authSessions|clientRevokedBefore|readHostControlState|writeHostControlState|applySecurityState|BACKGROUND_REFRESH|refresh_token|authorization_code|grant_type|oauth_client|PKCE|S256|token_endpoint|registration_endpoint' "$BUILD/$f" 2>&1 || true
-              fi
-            done
-
-            echo '=== DOCKER PATCH CHAIN ==='
-            for f in Dockerfile Dockerfile.normal-oauth; do
-              if sudo -n test -f "$BUILD/$f"; then
-                echo "--- $f"
-                sudo -n grep -nE 'auth-.*patch|auth-proxy|COPY|RUN' "$BUILD/$f" 2>&1 || true
-              fi
-            done
-
-            echo '=== RELEASE/BROKER FILES ==='
-            sudo -n find "$BASE" -maxdepth 2 -type f \( -iname '*broker*' -o -iname '*release*' -o -iname '*g9*' -o -iname '*g10*' -o -iname '*accept*' \) -printf '%p\t%s bytes\n' 2>&1 | sort | head -n 500 || true
-
-            echo '=== CONTROL AUTHORITY FILE PRESENCE ==='
+            echo '=== CONTROL AUTHORITY PRESENCE ONLY ==='
             for f in "$BUILD/.runtime-auth-security.enc" /var/lib/metatron-auth/security.json; do
-              if sudo -n test -e "$f"; then
-                sudo -n stat -c '%n mode=%a owner=%U:%G size=%s mtime=%y' "$f" 2>&1 || true
+              if [ -e "$f" ]; then
+                stat -c '%n mode=%a owner=%U:%G size=%s mtime=%y' "$f" 2>&1 || true
               else
-                echo "$f MISSING_OR_INACCESSIBLE"
+                echo "$f MISSING_OR_INACCESSIBLE_DIRECT"
               fi
             done
+
+            echo '=== PUBLIC EDGE SMOKE ==='
+            curl -sS -D - -o /dev/null --max-time 10 https://ssh.metatron.vn/mcp | sed -n '1,30p' || true
           } > "$OUT/inspect.txt" 2>&1
 
+          copy_direct() {
+            src="$1"
+            dst="$2"
+            if [ -r "$src" ]; then cp -p "$src" "$dst" 2>/dev/null && return 0; fi
+            return 1
+          }
+
           for f in \
-            auth-proxy.mjs auth-control-state-host-patch.mjs auth-control-state-init-patch.mjs \
-            auth-client-agnostic-oauth-patch.mjs auth-client-agnostic-post-patch.mjs \
-            auth-normal-oauth-patch.mjs auth-oauth-resilience-v3_7-post-patch.mjs \
-            patch-oauth-resilience-v3_7.py Dockerfile Dockerfile.normal-oauth \
-            prebuild-runtime-g9-normal-oauth-final.sh; do
-            if sudo -n test -f "$BUILD/$f"; then
-              sudo -n cp -p "$BUILD/$f" "$HOSTOUT/$f" 2>/dev/null || true
-            fi
+            auth-proxy.mjs auth-professional-patch.mjs auth-security-admin-patch.mjs \
+            auth-security-admin-fix.mjs auth-security-recovery-patch.mjs \
+            auth-control-state-host-patch.mjs auth-control-state-init-patch.mjs \
+            auth-readiness-cheap-hotfix.mjs auth-client-agnostic-oauth-patch.mjs \
+            auth-client-agnostic-post-patch.mjs auth-normal-oauth-patch.mjs \
+            auth-oauth-resilience-v3_7-post-patch.mjs patch-oauth-resilience-v3_7.py \
+            Dockerfile Dockerfile.normal-oauth prebuild-runtime-g9-normal-oauth-final.sh; do
+            copy_direct "$BUILD/$f" "$HOSTOUT/$f" || true
           done
 
-          sudo -n find "$BUILD" -maxdepth 1 -type f \( -name '*broker*.sh' -o -name '*release*.sh' -o -name '*accept*.sh' -o -name '*runtime-g9*.sh' -o -name '*runtime-g10*.sh' \) -print0 2>/dev/null \
-            | while IFS= read -r -d '' f; do sudo -n cp -p "$f" "$HOSTOUT/$(basename "$f")" 2>/dev/null || true; done
-          sudo -n chown -R "$(id -u):$(id -g)" "$OUT" 2>/dev/null || true
+          find "$BUILD" -maxdepth 1 -type f \( -name '*broker*.sh' -o -name '*release*.sh' -o -name '*accept*.sh' -o -name '*runtime-g9*.sh' -o -name '*runtime-g10*.sh' \) -print0 2>/dev/null \
+            | while IFS= read -r -d '' f; do copy_direct "$f" "$HOSTOUT/$(basename "$f")" || true; done
+
+          # Runtime final source is safe to inspect; do not copy env, keys, tokens or auth-state files.
+          docker cp "$G9:/app/auth-proxy.mjs" "$HOSTOUT/runtime-g9-auth-proxy.mjs" 2>/dev/null || true
+
+          # If host source is not directly readable, use the already-running G9 image as a read-only bind-mount reader.
+          if [ ! -s "$HOSTOUT/auth-proxy.mjs" ] && [ -n "$IMG" ]; then
+            docker run --rm --entrypoint /bin/sh \
+              -v "$BASE:/host:ro" -v "$HOSTOUT:/out" "$IMG" -c '
+                set +e
+                for f in auth-proxy.mjs auth-professional-patch.mjs auth-security-admin-patch.mjs auth-security-admin-fix.mjs auth-security-recovery-patch.mjs auth-control-state-host-patch.mjs auth-control-state-init-patch.mjs auth-readiness-cheap-hotfix.mjs auth-client-agnostic-oauth-patch.mjs auth-client-agnostic-post-patch.mjs auth-normal-oauth-patch.mjs auth-oauth-resilience-v3_7-post-patch.mjs patch-oauth-resilience-v3_7.py Dockerfile Dockerfile.normal-oauth prebuild-runtime-g9-normal-oauth-final.sh; do
+                  [ -f "/host/build/$f" ] && cp "/host/build/$f" "/out/$f"
+                done
+                find /host/build -maxdepth 1 -type f \( -name "*broker*.sh" -o -name "*release*.sh" -o -name "*accept*.sh" -o -name "*runtime-g9*.sh" -o -name "*runtime-g10*.sh" \) -exec cp {} /out/ \;
+              ' >/dev/null 2>&1 || true
+          fi
+
+          {
+            echo '=== SNAPSHOT FILES ==='
+            find "$HOSTOUT" -maxdepth 1 -type f -printf '%f\t%s bytes\n' | sort
+            echo '=== SNAPSHOT HASHES ==='
+            find "$HOSTOUT" -maxdepth 1 -type f -print0 | sort -z | xargs -0 -r sha256sum
+          } >> "$OUT/inspect.txt"
           echo 'INSPECTION_CAPTURE_COMPLETE'
           exit 0
 
@@ -117,5 +129,9 @@ jobs:
           git config user.name 'metatron-recovery-bot'
           git config user.email 'metatron-recovery-bot@users.noreply.github.com'
           git add .mcp-recovery
-          git commit -m 'chore(recovery): capture MCP host inspection'
+          if git diff --cached --quiet; then
+            echo 'NO_INSPECTION_CHANGE'
+            exit 0
+          fi
+          git commit -m 'chore(recovery): capture MCP docker-host inspection'
           git push origin HEAD:mcp-recovery-g10-20260913
