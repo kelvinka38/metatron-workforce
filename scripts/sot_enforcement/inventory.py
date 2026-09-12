@@ -58,6 +58,7 @@ SYSTEM_STATE_NAMES = {
 LOCAL_WORKSPACE_NAMES = {
     "GeneralWorkspaceActionCatalog.java",
     "ObjectiveWorkspaceService.java",
+    "ExecutionWorkspaceManager.java",
     "RepositoryWorkspaceMaterializationService.java",
     "AutonomyRecoveryProbeCapability.java",
     "CrossRepositoryAuditAnalysisCapability.java",
@@ -97,7 +98,14 @@ def classify_file_effect(path: Path, symbol: str) -> dict:
     if name in SYSTEM_STATE_NAMES or name.startswith("File") and name.endswith("Store.java"):
         return row("SYSTEM_STATE", path, symbol, "institutional durable state/evidence store", False)
     if name in LOCAL_WORKSPACE_NAMES:
-        owner = "ExecutionGate->ActionFabric" if name == "GeneralWorkspaceActionCatalog.java" else "isolated Objective/runtime workspace"
+        if name == "GeneralWorkspaceActionCatalog.java":
+            owner = "ExecutionGate->ActionFabric"
+        elif name == "ExecutionWorkspaceManager.java":
+            owner = "ExecutionAttempt->isolated Execution workspace"
+        elif name == "ObjectiveWorkspaceService.java":
+            owner = "ExecutionWorkspaceManager compatibility facade"
+        else:
+            owner = "isolated Objective/runtime workspace"
         return row("LOCAL_WORKSPACE", path, symbol, owner, name == "GeneralWorkspaceActionCatalog.java")
     return row("UNKNOWN_HIGH_RISK_FILESYSTEM_EFFECT", path, symbol, "UNDECLARED", True, False)
 
