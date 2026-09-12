@@ -1,0 +1,134 @@
+name: MCP Recovery G10 Inspect
+
+on:
+  push:
+    branches: [mcp-recovery-g10-20260913]
+    paths:
+      - '.github/workflows/mcp-recovery-g10-inspect.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mcp-recovery-g10-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Inspect MCP host without mutating production
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/metatron/ssh-mcp
+          BUILD="$BASE/build"
+          OUT="$GITHUB_WORKSPACE/.mcp-recovery"
+          HOSTOUT="$OUT/host"
+          mkdir -p "$HOSTOUT"
+
+          {
+            echo '=== IDENTITY ==='
+            date -u +%Y-%m-%dT%H:%M:%SZ
+            hostname
+            uname -a
+            id
+
+            echo '=== MCP CONTAINERS ==='
+            docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'metatron-mcp|cloudflared|envoy' || true
+            for c in metatron-mcp-runtime-g9 metatron-mcp-runtime-g9-standby; do
+              if docker inspect "$c" >/dev/null 2>&1; then
+                docker inspect "$c" --format 'name={{.Name}} image={{.Image}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started={{.State.StartedAt}}'
+              fi
+            done
+
+            echo '=== BUILD FILE INVENTORY ==='
+            find "$BUILD" -maxdepth 1 -type f -printf '%f\t%s bytes\n' | sort
+
+            echo '=== RELEVANT HASHES ==='
+            for f in \
+              auth-proxy.mjs \
+              auth-professional-patch.mjs \
+              auth-security-admin-patch.mjs \
+              auth-security-admin-fix.mjs \
+              auth-security-recovery-patch.mjs \
+              auth-control-state-host-patch.mjs \
+              auth-control-state-init-patch.mjs \
+              auth-readiness-cheap-hotfix.mjs \
+              auth-client-agnostic-oauth-patch.mjs \
+              auth-client-agnostic-post-patch.mjs \
+              auth-normal-oauth-patch.mjs \
+              auth-oauth-resilience-v3_7-post-patch.mjs \
+              patch-oauth-resilience-v3_7.py \
+              Dockerfile \
+              Dockerfile.normal-oauth \
+              prebuild-runtime-g9-normal-oauth-final.sh; do
+              if [ -f "$BUILD/$f" ]; then
+                sha256sum "$BUILD/$f"
+              fi
+            done
+
+            echo '=== AUTH STATE / OAUTH SYMBOLS ==='
+            for f in auth-proxy.mjs auth-control-state-host-patch.mjs auth-control-state-init-patch.mjs auth-client-agnostic-oauth-patch.mjs auth-client-agnostic-post-patch.mjs auth-normal-oauth-patch.mjs; do
+              if [ -f "$BUILD/$f" ]; then
+                echo "--- $f"
+                grep -nE 'authSessions|clientRevokedBefore|readHostControlState|writeHostControlState|applySecurityState|BACKGROUND_REFRESH|refresh_token|authorization_code|grant_type|oauth_client|PKCE|S256|token_endpoint|registration_endpoint' "$BUILD/$f" || true
+              fi
+            done
+
+            echo '=== DOCKER PATCH CHAIN ==='
+            for f in Dockerfile Dockerfile.normal-oauth; do
+              if [ -f "$BUILD/$f" ]; then
+                echo "--- $f"
+                grep -nE 'auth-.*patch|auth-proxy|COPY|RUN' "$BUILD/$f" || true
+              fi
+            done
+
+            echo '=== RELEASE/BROKER FILES ==='
+            find "$BASE" -maxdepth 2 -type f \( -iname '*broker*' -o -iname '*release*' -o -iname '*g9*' -o -iname '*g10*' -o -iname '*accept*' \) -printf '%p\t%s bytes\n' | sort | head -n 500
+
+            echo '=== CONTROL AUTHORITY FILE PRESENCE ==='
+            for f in "$BUILD/.runtime-auth-security.enc" /var/lib/metatron-auth/security.json; do
+              if [ -e "$f" ]; then
+                stat -c '%n mode=%a owner=%U:%G size=%s mtime=%y' "$f"
+              else
+                echo "$f MISSING"
+              fi
+            done
+          } > "$OUT/inspect.txt" 2>&1
+
+          for f in \
+            auth-proxy.mjs \
+            auth-control-state-host-patch.mjs \
+            auth-control-state-init-patch.mjs \
+            auth-client-agnostic-oauth-patch.mjs \
+            auth-client-agnostic-post-patch.mjs \
+            auth-normal-oauth-patch.mjs \
+            auth-oauth-resilience-v3_7-post-patch.mjs \
+            patch-oauth-resilience-v3_7.py \
+            Dockerfile \
+            Dockerfile.normal-oauth \
+            prebuild-runtime-g9-normal-oauth-final.sh; do
+            if [ -f "$BUILD/$f" ]; then
+              cp -p "$BUILD/$f" "$HOSTOUT/$f"
+            fi
+          done
+
+          # Snapshot only non-secret release/control scripts needed to understand safe G10 composition.
+          find "$BUILD" -maxdepth 1 -type f \( -name '*broker*.sh' -o -name '*release*.sh' -o -name '*accept*.sh' -o -name '*runtime-g9*.sh' -o -name '*runtime-g10*.sh' \) -print0 \
+            | while IFS= read -r -d '' f; do cp -p "$f" "$HOSTOUT/$(basename "$f")"; done
+
+      - name: Commit sanitized inspection snapshot to recovery branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'metatron-recovery-bot'
+          git config user.email 'metatron-recovery-bot@users.noreply.github.com'
+          git add .mcp-recovery
+          git commit -m 'chore(recovery): capture MCP host inspection'
+          git push origin HEAD:mcp-recovery-g10-20260913
