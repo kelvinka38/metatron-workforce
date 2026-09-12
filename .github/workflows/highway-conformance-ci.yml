@@ -118,9 +118,30 @@ jobs:
       - name: Diagnostic router backed engine test
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.RouterBackedIntelligenceEngineTest' --no-daemon --max-workers=1
-      - name: Diagnostic intelligence routing tests
+      - name: Diagnostic intelligence routing conformance test
         shell: bash
-        run: ./gradlew test --tests '*Routing*' --tests '*SemanticTaskRoutingContractTest' --tests '*NoLegacyGatewayKeywordRoutingTest' --no-daemon --max-workers=1
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingConformanceAcceptanceTest' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence routing feedback test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest' --no-daemon --max-workers=1
+      - name: Diagnostic semantic task routing contract test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.SemanticTaskRoutingContractTest' --no-daemon --max-workers=1
+      - name: Diagnostic approval deferred routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.ApprovalDeferredExecutionRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic no legacy keyword routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.NoLegacyGatewayKeywordRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic cost aware provider routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.llm.CostAwareProviderRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic intent routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.routing.IntentRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic institutional chat routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.MetatronInstitutionalStateChatServiceRoutingTest' --no-daemon --max-workers=1
       - name: Diagnostic fresh information routing tests
         shell: bash
         run: ./gradlew test --tests '*FreshInformation*' --no-daemon --max-workers=1
