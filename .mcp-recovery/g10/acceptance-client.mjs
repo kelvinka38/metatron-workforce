@@ -30,7 +30,9 @@ async function bootstrap() {
   const code = mintSigned({kind:'auth_code',sub:'founder',client_id:clientId,client_name:'Metatron G10 Acceptance Client',redirect_uri:redirectUri,code_challenge:challenge,scope:'mcp:tools offline_access',aud:RESOURCE_URL,iss:PUBLIC_ORIGIN,iat:now,exp:now+300,jti:randomBytes(12).toString('base64url')});
   const token = await request('/oauth/token', {method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'authorization_code',code,client_id:clientId,redirect_uri:redirectUri,code_verifier:verifier}).toString()});
   if (token.r.status !== 200 || !token.body?.access_token || !token.body?.refresh_token) throw new Error('token_exchange_failed');
-  process.stdout.write(JSON.stringify({clientId,redirectUri,accessToken:token.body.access_token,refreshToken:token.body.refresh_token}));
+  const csrf = randomBytes(18).toString('base64url');
+  const adminCookie = mintSigned({kind:'founder_admin',sub:'founder',csrf,iat:now,exp:now+900,jti:randomBytes(12).toString('base64url')});
+  process.stdout.write(JSON.stringify({clientId,redirectUri,accessToken:token.body.access_token,refreshToken:token.body.refresh_token,adminCookie,csrf}));
 }
 async function mcp() {
   const token = process.argv[3];
@@ -45,6 +47,12 @@ async function refresh() {
   const refreshToken=process.argv[3], clientId=process.argv[4], redirectUri=process.argv[5];
   const {r,body}=await request('/oauth/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({grant_type:'refresh_token',refresh_token:refreshToken,client_id:clientId,redirect_uri:redirectUri}).toString()});
   process.stdout.write(JSON.stringify({status:r.status,body}));
+}
+async function revoke() {
+  const adminCookie=process.argv[3], csrf=process.argv[4], clientId=process.argv[5];
+  const r=await fetch(BASE+'/founder/security/revoke-client',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','cookie':'metatron_founder_admin='+encodeURIComponent(adminCookie)},body:new URLSearchParams({csrf,client:clientId}).toString()});
+  await r.arrayBuffer();
+  process.stdout.write(JSON.stringify({status:r.status}));
 }
 async function metadata() {
   const a=await request('/.well-known/oauth-authorization-server');
@@ -61,6 +69,7 @@ const mode=process.argv[2];
 if(mode==='bootstrap') await bootstrap();
 else if(mode==='mcp') await mcp();
 else if(mode==='refresh') await refresh();
+else if(mode==='revoke') await revoke();
 else if(mode==='metadata') await metadata();
 else if(mode==='unauth') await unauth();
 else throw new Error('unknown_mode');
