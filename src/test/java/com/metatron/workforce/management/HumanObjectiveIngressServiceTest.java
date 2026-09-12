@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HumanObjectiveIngressServiceTest {
@@ -106,6 +107,47 @@ class HumanObjectiveIngressServiceTest {
         assertEquals(1, management.allObjectives().size());
         assertEquals(List.of("assignment-1"), management.get(first.objectiveId()).assignmentRefs());
         assertTrue(management.get(first.objectiveId()).evidenceRefs().contains("evidence:test-pass"));
+    }
+
+    @Test
+    void targetedWorkerOwnsDurableObjectiveAndReplayCannotChangeOwner() {
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AtomicInteger executions = new AtomicInteger();
+        AutonomousExecutionCapability capability = successfulCapability(executions);
+        Clock clock = Clock.systemUTC();
+        AutonomousManagementRunner runner = runner(management, List.of(capability), clock);
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(capability), runner, null,
+                workerId -> {
+                    if (workerId.equals("worker-special") || workerId.equals("worker-head")) return workerId;
+                    throw new IllegalStateException("worker_not_active:" + workerId);
+                },
+                "worker-head", clock);
+
+        ExecutionObjectiveHandoff.HandoffReceipt first = ingress.submitToWorker(
+                "worker-special",
+                "human-primary", "org-metatron", "case-worker-owned", "conversation-worker",
+                "telegram:update:worker-1", "telegram", auditRequest());
+
+        assertTrue(first.accepted());
+        assertEquals("worker-special", first.ownerWorkerId());
+        assertEquals("worker-special", management.get(first.objectiveId()).ownerWorkerId());
+        assertTrue(management.history(first.objectiveId()).getFirst().detail()
+                .contains("request_admission=workplace-request-admission:human-primary:worker-special"));
+
+        runner.runOnce();
+        assertEquals(ManagementObjective.Status.COMPLETED, management.get(first.objectiveId()).status());
+        assertEquals(1, executions.get());
+
+        SecurityException replay = assertThrows(SecurityException.class, () -> ingress.submitToWorker(
+                "worker-head",
+                "human-primary", "org-metatron", "case-worker-owned", "conversation-worker",
+                "telegram:update:worker-1", "telegram", auditRequest()));
+        assertTrue(replay.getMessage().contains("objective owner mismatch on replay"));
+        assertThrows(IllegalStateException.class, () -> ingress.submitToWorker(
+                "worker-not-canonical",
+                "human-primary", "org-metatron", "case-worker-owned-2", "conversation-worker",
+                "telegram:update:worker-2", "telegram", auditRequest()));
     }
 
     @Test

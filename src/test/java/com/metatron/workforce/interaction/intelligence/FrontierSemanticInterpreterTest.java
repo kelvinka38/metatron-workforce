@@ -180,6 +180,47 @@ final class FrontierSemanticInterpreterTest {
         assertEquals(DeterministicCapability.CURRENT_TIME, normalized.deterministicCapability());
     }
 
+    @Test
+    void semanticNormalizationRecoversRawControlCharacterInsideProviderString() {
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                String malformedButRecoverable = """
+                        {
+                          "objective":"answer naturally",
+                          "target":"",
+                          "constraints":[],
+                          "requested_depth":"FAST",
+                          "requested_output":"direct natural-language answer",
+                          "explicit_assumptions":[],
+                          "explicit_prohibitions":[],
+                          "temporal_context":"",
+                          "unresolved_semantic_ambiguity":"",
+                          "mode":"DISCUSSION",
+                          "collaboration_mode":"SINGLE",
+                          "analytical_protocols":[],
+                          "deterministic_capability":"NONE",
+                          "deterministic_computations":[],
+                          "fresh_external_data_required":false,
+                          "explicitly_requested_provider":null,
+                          "direct_response":"Dòng một
+                        Dòng hai"
+                        }
+                        """;
+                return new LlmResponse(LlmProvider.GOOGLE, "semantic-test", malformedButRecoverable, "semantic-ref");
+            }
+        };
+        FrontierSemanticInterpreter interpreter = new FrontierSemanticInterpreter(
+                new LlmProviderRouter(List.of(google)), provider -> "semantic-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+
+        NormalizedRequest normalized = interpreter.interpret("trả lời tao", "", "telegram");
+
+        assertEquals("answer naturally", normalized.objective());
+        assertEquals("Dòng một\nDòng hai", normalized.directResponse());
+        assertTrue(normalized.canReturnPrimaryDirectly());
+    }
+
     private static LlmResponse semanticResponse(LlmProvider provider, String objective, String target,
                                                 String depth, String mode, String directResponse,
                                                 String ambiguity) {

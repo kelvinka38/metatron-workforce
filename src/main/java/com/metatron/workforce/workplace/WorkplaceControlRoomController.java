@@ -132,8 +132,12 @@ public final class WorkplaceControlRoomController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message required");
         }
         try {
-            return directWorkerConversation.converse(
-                    "human-primary", workerId, command.message().trim(), "workplace").turn();
+            return directWorkerConversation.converseOrAdmit(
+                    "human-primary",
+                    workerId,
+                    command.message().trim(),
+                    "workplace",
+                    "workplace:worker-chat:" + java.util.UUID.randomUUID()).turn();
         } catch (IllegalStateException failure) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, failure.getMessage(), failure);
         }
