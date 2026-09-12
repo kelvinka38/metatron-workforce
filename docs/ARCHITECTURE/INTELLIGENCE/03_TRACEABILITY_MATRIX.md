@@ -57,6 +57,21 @@ This matrix records how the approved Intelligence architecture relates to existi
 | Subscription controls resources, not truth discipline | DERIVE | Epistemic/authority invariants | Entitlement controls | No semantic weakening |
 | Keyword heuristics cannot become primary semantic architecture | DERIVE | Frontier semantic capability + approved architecture | Runtime direction | Transitional heuristics only |
 
+## Workforce Cognitive Substrate Sovereignty — 2026-09-12
+
+Founder subsequently approved a stronger Worker cognition ownership requirement. This extends the shared Intelligence architecture without invalidating prior provider-neutral identity/routing closures.
+
+| Approved requirement | Classification | Existing boundary | Effect |
+|---|---|---|---|
+| Worker paid external inference = 0 | EXTEND | Worker/provider identity separation + Founder Sovereignty scope | Worker cognition compute ownership strengthened |
+| Worker origin first-class typed provenance | EXTEND | existing request/actor provenance | no new authority |
+| METATRON_OWNED vs EXTERNAL_PAID | EXTEND | provider-neutral Intelligence Fabric | compute ownership only |
+| Workforce provider keys absent after cutover | DERIVE | credential/security boundary | physical secret separation |
+| Worker web retrieval without paid provider cognition | DERIVE | Tool/evidence acquisition | separates information from cognition |
+| cognition capacity queues instead of paid fallback | EXTEND | actor/runtime capacity | no new Objective lifecycle |
+| 1,000+ cognitive Worker proof | EXTEND | existing representation tests insufficient | new acceptance evidence |
+| server-upgrade review before implementation | Founder execution constraint | execution governance | blocking gate |
+
 ## Canonical Boundaries Preserved
 
 ### Workforce
