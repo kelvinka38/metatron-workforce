@@ -52,17 +52,164 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Enforce full build and SoT execution gate contracts before topology audit
+      - name: Audit SoT mutation and execution workspace ownership
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/sot_enforcement/inventory.py
-          chmod +x gradlew
-          ./gradlew clean test bootJar --no-daemon --max-workers=1
-          METATRON_SANDBOX_TOKEN=compose-validation-only docker compose -f deploy/docker-compose.yml config >/dev/null
-          bash scripts/highway-tasks/pr-consolidated-contracts.sh
           echo 'SOT_ENFORCEMENT_PR_GATE=PASS'
+      - name: Compile Gradle production and test sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew clean compileJava compileTestJava --no-daemon --max-workers=1
+      - name: EE test ExecutionWorkspaceIsolationRegressionTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionWorkspaceIsolationRegressionTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionResourceManagerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionResourceManagerTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionResourceSchedulerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionResourceSchedulerTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionWorkspaceManagerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionWorkspaceManagerTest' --no-daemon --max-workers=1
+      - name: EE test HighwayResourceBridgeServiceTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.HighwayResourceBridgeServiceTest' --no-daemon --max-workers=1
+      - name: EE test RepositoryIntegrationControllerTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.RepositoryIntegrationControllerTest' --no-daemon --max-workers=1
+      - name: EE test ExecutionIsolationRecoveryTest
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionIsolationRecoveryTest' --no-daemon --max-workers=1
+      - name: Diagnostic runtime package tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.runtime.*' --no-daemon --max-workers=1
+      - name: Diagnostic management package tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.management.*' --no-daemon --max-workers=1
+      - name: Diagnostic execution action deploy architecture tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.execution.*' --tests 'com.metatron.workforce.action.*' --tests 'com.metatron.workforce.deploy.*' --tests 'com.metatron.workforce.architecture.*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence planning tests
+        shell: bash
+        run: ./gradlew test --tests '*ExecutionWorkPlanner*' --tests '*ExecutionPlanProposalService*' --tests '*FounderWorkerExecutionPlanningAcceptanceTest' --tests '*IntelligenceExecutionAdmissionServiceTest' --tests '*ApprovalDeferredExecutionRoutingTest' --tests '*FrontierSemanticExecutionWorkPlanTest' --tests '*IntelligencePlannerTest' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence frontier tests
+        shell: bash
+        run: ./gradlew test --tests '*FrontierSemantic*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence fabric tests
+        shell: bash
+        run: ./gradlew test --tests '*IntelligenceFabric*' --tests '*CognitiveRuntimeFabricTest' --no-daemon --max-workers=1
+      - name: Diagnostic configured provider routing policy test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.ConfiguredProviderRoutingPolicyTest' --no-daemon --max-workers=1
+      - name: Diagnostic adaptive provider routing policy test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.AdaptiveProviderRoutingPolicyTest' --no-daemon --max-workers=1
+      - name: Diagnostic capacity aware routing policy test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.CapacityAwareRoutingPolicyTest' --no-daemon --max-workers=1
+      - name: Diagnostic latency aware routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.LatencyAwareProviderRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic router backed engine test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.RouterBackedIntelligenceEngineTest' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence routing conformance test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingConformanceAcceptanceTest' --no-daemon --max-workers=1
+      - name: Feedback test authoritative observation
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.authoritativeObservationClosesLoopBackIntoAutoRouting' --no-daemon --max-workers=1
+      - name: Feedback test failed observation
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.failedObservedOutcomeLowersQualityWithoutInventingProviderFailure' --no-daemon --max-workers=1
+      - name: Feedback test ambiguous multimodel
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.ambiguousMultiModelOutcomeDoesNotTeachWrongProvider' --no-daemon --max-workers=1
+      - name: Feedback test human assessment
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.explicitHumanAssessmentFeedsSameDurableQualityLoop' --no-daemon --max-workers=1
+      - name: Feedback test restart durability
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.learnedQualitySurvivesProcessRestart' --no-daemon --max-workers=1
+      - name: Feedback test untyped observation
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.IntelligenceRoutingFeedbackLoopAcceptanceTest.untypedObservationCannotMutateRoutingQuality' --no-daemon --max-workers=1
+      - name: Diagnostic semantic task routing contract test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.SemanticTaskRoutingContractTest' --no-daemon --max-workers=1
+      - name: Diagnostic approval deferred routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.ApprovalDeferredExecutionRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic no legacy keyword routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.NoLegacyGatewayKeywordRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic cost aware provider routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.llm.CostAwareProviderRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic intent routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.routing.IntentRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic institutional chat routing test
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.MetatronInstitutionalStateChatServiceRoutingTest' --no-daemon --max-workers=1
+      - name: Diagnostic fresh information routing tests
+        shell: bash
+        run: ./gradlew test --tests '*FreshInformation*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence cognitive depth case tests
+        shell: bash
+        run: ./gradlew test --tests '*CognitiveRuntime*' --tests '*IntelligenceDepth*' --tests '*IntelligenceCase*' --tests '*CurrentExternalCase*' --tests '*DeepInstitutional*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence evidence knowledge institutional tests
+        shell: bash
+        run: ./gradlew test --tests '*Evidence*' --tests '*Knowledge*' --tests '*Bios*' --tests '*Institutional*' --tests '*WorkplaceIntelligence*' --tests '*IntelligenceOutcome*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction intelligence aggregate tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction channel tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.channel.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction tools tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.tools.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction llm tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.llm.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction knowledge tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.knowledge.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction routing memory evidence tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.routing.*' --tests 'com.metatron.workforce.interaction.memory.*' --tests 'com.metatron.workforce.interaction.evidence.*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction aggregate tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.interaction.*' --no-daemon --max-workers=1
+      - name: Diagnostic workplace actor core observation work tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.workplace.*' --tests 'com.metatron.workforce.actor.*' --tests 'com.metatron.workforce.core.*' --tests 'com.metatron.workforce.observation.*' --tests 'com.metatron.workforce.work.*' --no-daemon --max-workers=1
+      - name: Diagnostic phase and peripheral tests
+        shell: bash
+        run: ./gradlew test --tests 'com.metatron.workforce.phase3.*' --tests 'com.metatron.workforce.phase4.*' --tests 'com.metatron.workforce.phase5.*' --tests 'com.metatron.workforce.phase6.*' --tests 'com.metatron.workforce.phase7.*' --tests 'com.metatron.workforce.phase8.*' --tests 'com.metatron.workforce.phase9.*' --tests 'com.metatron.workforce.phase10.*' --tests 'com.metatron.workforce.phase11.*' --tests 'com.metatron.workforce.phase12.*' --tests 'com.metatron.workforce.operating.*' --tests 'com.metatron.workforce.gateway.*' --tests 'com.metatron.workforce.evidence.*' --tests 'com.metatron.workforce.adapter.telegram.*' --tests 'com.metatron.workforce.workers.audit.*' --tests 'com.metatron.workforce.deliberation.*' --tests 'com.metatron.workforce.bios.*' --tests 'com.metatron.workforce.WorkforceCompletionAcceptanceTest' --tests 'com.metatron.workforce.MetatronWorkforceApplicationStartupTest' --tests 'com.metatron.workforce.WorkforceOperationalDurabilityAcceptanceTest' --no-daemon --max-workers=1
+      - name: Enforce full Gradle build gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew test bootJar --no-daemon --max-workers=1
           echo 'HIGHWAY_FULL_BUILD_PR_GATE=PASS'
+      - name: Validate production compose topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          METATRON_SANDBOX_TOKEN=compose-validation-only docker compose -f deploy/docker-compose.yml config >/dev/null
+          echo 'HIGHWAY_COMPOSE_TOPOLOGY_PR_GATE=PASS'
+      - name: Enforce consolidated PR contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/highway-tasks/pr-consolidated-contracts.sh
           echo 'HIGHWAY_CONSOLIDATED_PR_CONTRACTS=PASS'
       - name: Enforce single PR queue surface and fabric contracts
         shell: bash
@@ -197,6 +344,8 @@ jobs:
           d=json.load(open(sys.argv[1])); w=d['services']['workforce']; p=w['ports'][0]
           assert str(p['published'])=='8080' and str(p['target'])=='8080' and p['host_ip']=='127.0.0.1',p
           assert d['volumes']['workforce-state']['name']=='metatron-workforce-state'
+          assert d['volumes']['workforce-objective-workspaces']['name']=='metatron-workforce-objective-workspaces'
+          assert d['volumes']['workforce-execution-workspaces']['name']=='metatron-workforce-execution-workspaces'
           assert d['networks']['workforce']['name']=='metatron-workforce'
           assert d['networks']['gateway']['name']=='metatron-gateway-online'
           assert w['environment']['TELEGRAM_API_BASE_URL']=='https://api.telegram.org'
@@ -206,16 +355,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          METATRON_HOST_PORT=18111 METATRON_STATE_VOLUME_NAME=highway-test-a-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/a.json
-          METATRON_HOST_PORT=18222 METATRON_STATE_VOLUME_NAME=highway-test-b-state METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/b.json
+          METATRON_HOST_PORT=18111 METATRON_STATE_VOLUME_NAME=highway-test-a-state METATRON_WORKSPACE_VOLUME_NAME=highway-test-a-objective-workspaces METATRON_EXECUTION_WORKSPACE_VOLUME_NAME=highway-test-a-execution-workspaces METATRON_WORKFORCE_NETWORK_NAME=highway-test-a-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-a TELEGRAM_API_BASE_URL=http://host.docker.internal:19111 docker compose -p highway-test-a -f deploy/docker-compose.yml config --format json > /tmp/a.json
+          METATRON_HOST_PORT=18222 METATRON_STATE_VOLUME_NAME=highway-test-b-state METATRON_WORKSPACE_VOLUME_NAME=highway-test-b-objective-workspaces METATRON_EXECUTION_WORKSPACE_VOLUME_NAME=highway-test-b-execution-workspaces METATRON_WORKFORCE_NETWORK_NAME=highway-test-b-network METATRON_WORKFORCE_GATEWAY_ALIAS=workforce-highway-test-b TELEGRAM_API_BASE_URL=http://host.docker.internal:19222 docker compose -p highway-test-b -f deploy/docker-compose.yml config --format json > /tmp/b.json
           python3 - /tmp/a.json /tmp/b.json <<'PY'
           import json,sys
           a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2]))
           def f(d):
             w=d['services']['workforce']; p=w['ports'][0]
-            return (str(p['published']),d['volumes']['workforce-state']['name'],d['networks']['workforce']['name'],w['environment']['TELEGRAM_API_BASE_URL'],tuple(w['networks']['gateway'].get('aliases',[])))
+            return (str(p['published']),d['volumes']['workforce-state']['name'],d['volumes']['workforce-objective-workspaces']['name'],d['volumes']['workforce-execution-workspaces']['name'],d['networks']['workforce']['name'],w['environment']['TELEGRAM_API_BASE_URL'],tuple(w['networks']['gateway'].get('aliases',[])))
           fa,fb=f(a),f(b); assert fa!=fb
-          assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4]
+          assert fa[0]=='18111' and fb[0]=='18222'; assert fa[1]!=fb[1] and fa[2]!=fb[2] and fa[3]!=fb[3] and fa[4]!=fb[4] and fa[5]!=fb[5] and fa[6]!=fb[6]; assert fa[2]=='highway-test-a-objective-workspaces' and fb[2]=='highway-test-b-objective-workspaces'; assert fa[3]=='highway-test-a-execution-workspaces' and fb[3]=='highway-test-b-execution-workspaces'
           print('HIGHWAY_CONFIG_ISOLATION=PASS')
           PY
       - name: Verify grounded search and provider isolation remain explicit

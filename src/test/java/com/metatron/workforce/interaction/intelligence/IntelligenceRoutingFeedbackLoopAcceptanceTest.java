@@ -37,13 +37,14 @@ final class IntelligenceRoutingFeedbackLoopAcceptanceTest {
                 "conversation:feedback-loop", "human-primary", normalized());
         recordSuccess(traces, LlmProvider.OPENAI, "openai-analysis", intelligenceCase.caseId(),
                 "logical:feedback-loop", "intelligence-reasoning:coding");
+        Instant observedAt = afterLatestTrace(traces, intelligenceCase.caseId());
 
         IntelligenceCaseLifecycleService lifecycle = new IntelligenceCaseLifecycleService(
                 cases, Clock.fixed(now, ZoneOffset.UTC), feedback);
         lifecycle.recordObservedOutcome(
                 intelligenceCase.caseId(), observationBoundary(passReport(intelligenceCase.caseId())),
                 "execution-1", "observation-1", "outcome-1",
-                "observation-evidence:1", "expected=accepted actual=accepted", now);
+                "observation-evidence:1", "expected=accepted actual=accepted", observedAt);
 
         var learned = quality.snapshot(LlmProvider.OPENAI, "coding");
         assertTrue(learned.known());
@@ -63,11 +64,12 @@ final class IntelligenceRoutingFeedbackLoopAcceptanceTest {
         ProviderCallTraceRegistry traces = new ProviderCallTraceRegistry();
         recordSuccess(traces, LlmProvider.OPENAI, "openai-analysis", "case-fail",
                 "logical:fail", "intelligence-reasoning:coding");
+        Instant observedAt = afterLatestTrace(traces, "case-fail");
         IntelligenceRoutingFeedbackService feedback = new IntelligenceRoutingFeedbackService(
                 quality, traces, new InMemoryIntelligenceRoutingFeedbackStore());
 
         var result = feedback.recordObservedOutcome(
-                "case-fail", observationBoundary(failReport("case-fail")), now);
+                "case-fail", observationBoundary(failReport("case-fail")), observedAt);
 
         assertTrue(result.applied());
         assertTrue(quality.snapshot(LlmProvider.OPENAI, "coding").score() < 0.5d);
@@ -82,11 +84,12 @@ final class IntelligenceRoutingFeedbackLoopAcceptanceTest {
         ProviderCallTraceRegistry traces = new ProviderCallTraceRegistry();
         recordSuccess(traces, LlmProvider.OPENAI, "openai", "case-multi", "logical:multi", "analysis");
         recordSuccess(traces, LlmProvider.ANTHROPIC, "claude", "case-multi", "logical:multi", "analysis");
+        Instant observedAt = afterLatestTrace(traces, "case-multi");
         IntelligenceRoutingFeedbackService feedback = new IntelligenceRoutingFeedbackService(
                 quality, traces, new InMemoryIntelligenceRoutingFeedbackStore());
 
         var result = feedback.recordObservedOutcome(
-                "case-multi", observationBoundary(passReport("case-multi")), now);
+                "case-multi", observationBoundary(passReport("case-multi")), observedAt);
 
         assertFalse(result.applied());
         assertEquals("multi-provider-attribution-ambiguous", result.reason());
@@ -147,6 +150,14 @@ final class IntelligenceRoutingFeedbackLoopAcceptanceTest {
                 new BoundaryProvenance("test", "evidence:untyped", now));
         assertFalse(feedback.recordObservedOutcome("case-untyped", untyped, now).applied());
         assertFalse(quality.snapshot(LlmProvider.OPENAI, "analysis").known());
+    }
+
+    private Instant afterLatestTrace(ProviderCallTraceRegistry traces, String caseId) {
+        return traces.forCaseRef(caseId).stream()
+                .map(ProviderCallTraceRegistry.ProviderCallTrace::completedAt)
+                .max(Instant::compareTo)
+                .orElseThrow()
+                .plusMillis(1);
     }
 
     private void recordSuccess(ProviderCallTraceRegistry traces, LlmProvider provider, String model,

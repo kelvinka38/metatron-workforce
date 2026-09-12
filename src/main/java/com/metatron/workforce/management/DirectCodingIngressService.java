@@ -3,6 +3,7 @@ package com.metatron.workforce.management;
 import com.metatron.workforce.action.ActionFabric;
 import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
 import com.metatron.workforce.execution.ExecutionAttempt;
+import com.metatron.workforce.execution.ExecutionAttemptContext;
 import com.metatron.workforce.execution.ExecutionAttemptService;
 import com.metatron.workforce.execution.governance.ExecutionGate;
 import com.metatron.workforce.execution.governance.ExecutionIntent;
@@ -10,6 +11,7 @@ import com.metatron.workforce.execution.governance.ExecutionPermit;
 import com.metatron.workforce.execution.governance.GovernanceAttemptBindingService;
 import com.metatron.workforce.execution.governance.GovernancePlanService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.runtime.CanonicalRepositoryScope;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import org.springframework.stereotype.Component;
@@ -29,7 +31,11 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** Authenticated direct MCP adapter onto the canonical Workforce coding substrate. */
+/**
+ * Authenticated direct MCP adapter onto the canonical Workforce coding substrate.
+ * One direct objective owns one durable ExecutionAttempt session/workspace; individual tool calls
+ * are actions inside that attempt, not independent Objective+Worker mutable workspaces.
+ */
 @Component
 public final class DirectCodingIngressService {
     private static final Pattern REPOSITORY = Pattern.compile("^kelvinka38/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
@@ -42,7 +48,8 @@ public final class DirectCodingIngressService {
             "workspace.dependencies.install", "workspace.process.run", "workspace.shell.run",
             "workspace.git.status", "workspace.git.diff", "workspace.git.run",
             "workspace.build.run", "workspace.test.run", "workspace.github.pr.publish");
-    private static final Duration LEASE = Duration.ofMinutes(5);
+    private static final Duration SESSION_LEASE = Duration.ofHours(24);
+    private static final String SESSION_STEP = "direct-coding-session";
 
     private final GeneralWorkspaceActionCatalog catalog;
     private final WorkerRuntimeProfileBindingService profiles;
@@ -59,179 +66,73 @@ public final class DirectCodingIngressService {
                                       GovernanceAttemptBindingService governanceAttempts,
                                       ExecutionAttemptService attempts,
                                       ExecutionGate gate) {
-        this.catalog = Objects.requireNonNull(catalog);
-        this.profiles = Objects.requireNonNull(profiles);
-        this.workspaces = Objects.requireNonNull(workspaces);
-        this.governancePlans = Objects.requireNonNull(governancePlans);
-        this.governanceAttempts = Objects.requireNonNull(governanceAttempts);
-        this.attempts = Objects.requireNonNull(attempts);
-        this.gate = Objects.requireNonNull(gate);
+        this.catalog=Objects.requireNonNull(catalog);this.profiles=Objects.requireNonNull(profiles);this.workspaces=Objects.requireNonNull(workspaces);
+        this.governancePlans=Objects.requireNonNull(governancePlans);this.governanceAttempts=Objects.requireNonNull(governanceAttempts);this.attempts=Objects.requireNonNull(attempts);this.gate=Objects.requireNonNull(gate);
     }
 
     public Result execute(String client, Command command) {
-        String c = validateClient(client);
-        Objects.requireNonNull(command, "command");
-        String objective = validateObjective(c, command.objectiveId());
-        String repository = validateRepository(command.repository());
-        String action = validateAction(command.actionRef());
-        String idempotency = require(command.idempotencyKey(), "idempotencyKey", 512);
-        Map<String, String> inputs = command.inputs() == null ? Map.of() : Map.copyOf(command.inputs());
+        String c=validateClient(client);Objects.requireNonNull(command,"command");String objective=validateObjective(c,command.objectiveId());String repository=validateRepository(command.repository());String action=validateAction(command.actionRef());String idempotency=require(command.idempotencyKey(),"idempotencyKey",512);Map<String,String> inputs=command.inputs()==null?Map.of():Map.copyOf(command.inputs());
+        profiles.bind(GeneralWorkspaceAutonomousCapability.WORKER_ID,WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,GeneralWorkspaceAutonomousCapability.CAPABILITY,Instant.now());
 
-        profiles.bind(GeneralWorkspaceAutonomousCapability.WORKER_ID,
-                WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
-                GeneralWorkspaceAutonomousCapability.CAPABILITY, Instant.now());
-        ObjectiveWorkspaceService.ObjectiveWorkspace workspace =
-                workspaces.provision(objective, GeneralWorkspaceAutonomousCapability.WORKER_ID);
-        requireRepositoryContinuity(workspace, repository, action, inputs);
-
-        ActionFabric fabric = new ActionFabric(catalog.actions(
-                GeneralWorkspaceAutonomousCapability.WORKER_ID,
-                GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,
-                objective), gate);
-        ActionFabric.Consequence consequence = fabric.consequenceOf(action);
-        String step = "direct-coding:" + digest(idempotency + "|" + action).substring(0, 24);
-        String assignment = "assignment:direct-mcp:" + c + ":" + objective;
-        ActionFabric.ActionRequest request = new ActionFabric.ActionRequest(
-                action, GeneralWorkspaceAutonomousCapability.WORKER_ID, assignment,
-                GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,
-                objective, step, idempotency,
-                consequence == ActionFabric.Consequence.MUTATING, inputs);
-
-        ActionFabric.ActionObservation observation;
-        String permitRef = "";
-        String planRef = "";
-        if (consequence == ActionFabric.Consequence.READ_ONLY) {
-            observation = fabric.execute(request);
-        } else {
-            Mutation mutation = authorizeMutation(c, repository, action, objective, step, assignment, idempotency, inputs);
-            permitRef = mutation.permit().permitId();
-            planRef = mutation.bound().plan().planId() + "@" + mutation.bound().plan().version();
-            try {
-                observation = fabric.execute(request, mutation.permit());
-                if (observation.success()) {
-                    attempts.succeed(mutation.attempt().attemptId(), mutation.attempt().fencingToken(), Instant.now());
-                } else {
-                    attempts.fail(mutation.attempt().attemptId(), mutation.attempt().fencingToken(),
-                            "direct-coding-action-failed:" + action, Instant.now());
-                }
-            } catch (RuntimeException failure) {
-                try {
-                    attempts.fail(mutation.attempt().attemptId(), mutation.attempt().fencingToken(),
-                            "direct-coding-exception:" + failure.getClass().getSimpleName(), Instant.now());
-                } catch (RuntimeException ignored) { }
-                throw failure;
-            }
-        }
-        return new Result(observation.success(), objective, repository, action, observation.summary(),
-                observation.outputs(), observation.evidenceReferences(), permitRef, planRef, observation.observedAt());
-    }
-
-    private Mutation authorizeMutation(String client, String repository, String action, String objective,
-                                       String step, String assignment, String idempotency,
-                                       Map<String, String> inputs) {
-        ExecutionWorkSpec work = new ExecutionWorkSpec(
-                step,
-                "Execute governed direct coding action " + action + " for " + repository,
-                repository,
-                GeneralWorkspaceAutonomousCapability.CAPABILITY,
-                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("requested repository coding action completes inside the isolated Objective workspace"),
-                List.of("action-observation:" + action));
-        GovernancePlanService.BoundPlan bound = governancePlans.bindAuthorizedWork(
-                objective, GeneralWorkspaceAutonomousCapability.WORKER_ID, work,
-                "FOUNDER", GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE, Map.of());
-        Instant now = Instant.now();
-        ExecutionAttempt attempt = attempts.begin(
-                "dispatch:direct-mcp:" + digest(idempotency).substring(0, 24), objective, step,
-                GeneralWorkspaceAutonomousCapability.WORKER_ID, assignment,
-                GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,
-                "runtime:direct-mcp:" + client, 1, LEASE, now);
-        governanceAttempts.bind(attempt, bound);
-        ExecutionPermit permit = gate.authorize(new ExecutionIntent(
-                objective, attempt.attemptId(), attempt.fencingToken(),
-                GeneralWorkspaceAutonomousCapability.WORKER_ID, assignment,
-                GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,
-                bound.plan().planId(), bound.plan().version(), step, action,
-                ActionFabric.Consequence.MUTATING, repository,
-                bound.snapshot().snapshotId(), bound.derivation().receiptId(), inputs, now));
-        return new Mutation(bound, attempt, permit);
-    }
-
-    private void requireRepositoryContinuity(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
-                                             String repository, String action, Map<String, String> inputs) {
-        if ("workspace.repository.materialize".equals(action)) {
-            if (!repository.equals(validateRepository(inputs.get("repository")))) {
-                throw new SecurityException("direct_repository_mismatch");
-            }
-            return;
-        }
-        Path provenance = workspaces.resolve(workspace, ".metatron-repository");
-        if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(provenance)) {
-            throw new IllegalStateException("direct_repository_session_not_open");
-        }
-        Map<String, String> fields = new LinkedHashMap<>();
-        for (String line : workspaces.read(workspace, ".metatron-repository").lines().toList()) {
-            int split = line.indexOf('=');
-            if (split > 0) fields.put(line.substring(0, split).trim(), line.substring(split + 1).trim());
-        }
-        if (!repository.equals(fields.get("repository"))) throw new SecurityException("direct_repository_session_mismatch");
-    }
-
-    static String validateClient(String value) {
-        String v = require(value, "client", 32).toLowerCase(Locale.ROOT);
-        if (!CLIENTS.contains(v)) throw new SecurityException("direct_client_not_allowed");
-        return v;
-    }
-
-    static String validateRepository(String value) {
-        String v = require(value, "repository", 160);
-        if (!REPOSITORY.matcher(v).matches()) throw new SecurityException("direct_repository_not_allowed");
-        return v;
-    }
-
-    static String validateObjective(String client, String value) {
-        String v = require(value, "objectiveId", 128);
-        if (!OBJECTIVE.matcher(v).matches() || !v.startsWith("direct-mcp:" + client + ":")) {
-            throw new SecurityException("direct_objective_not_allowed");
-        }
-        return v;
-    }
-
-    static String validateAction(String value) {
-        String v = require(value, "actionRef", 160);
-        if (!ACTIONS.contains(v)) throw new SecurityException("direct_action_not_allowed");
-        return v;
-    }
-
-    private static String require(String value, String field, int max) {
-        if (value == null) throw new IllegalArgumentException(field + " required");
-        String v = value.trim();
-        if (v.isEmpty() || v.length() > max || v.indexOf('\0') >= 0 || v.indexOf('\r') >= 0 || v.indexOf('\n') >= 0) {
-            throw new IllegalArgumentException("invalid " + field);
-        }
-        return v;
-    }
-
-    private static String digest(String value) {
+        DirectSession session=ensureSession(c,objective,repository);
+        ExecutionAttemptContext.bind(session.attempt());
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(impossible);
+            ObjectiveWorkspaceService.ObjectiveWorkspace workspace=workspaces.provisionForAttempt(session.attempt().attemptId(),session.attempt().fencingToken(),objective,GeneralWorkspaceAutonomousCapability.WORKER_ID);
+            requireRepositoryContinuity(workspace,repository,action,inputs);
+            ActionFabric fabric=new ActionFabric(catalog.actions(GeneralWorkspaceAutonomousCapability.WORKER_ID,GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,objective),gate);
+            ActionFabric.Consequence consequence=fabric.consequenceOf(action);
+            String assignment=session.attempt().assignmentRef();
+            ActionFabric.ActionRequest request=new ActionFabric.ActionRequest(action,GeneralWorkspaceAutonomousCapability.WORKER_ID,assignment,GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,objective,SESSION_STEP,idempotency,consequence==ActionFabric.Consequence.MUTATING,inputs);
+            ActionFabric.ActionObservation observation;
+            String permitRef="";
+            if(consequence==ActionFabric.Consequence.READ_ONLY){observation=fabric.execute(request);} else {
+                ExecutionPermit permit=authorizeMutation(repository,action,session,inputs);permitRef=permit.permitId();observation=fabric.execute(request,permit);
+            }
+            attempts.checkpoint(session.attempt().attemptId(),session.attempt().fencingToken(),"direct-action:"+digest(idempotency+"|"+action).substring(0,24),Instant.now());
+            return new Result(observation.success(),objective,repository,action,observation.summary(),observation.outputs(),observation.evidenceReferences(),permitRef,session.bound().plan().planId()+"@"+session.bound().plan().version(),observation.observedAt());
+        } finally {
+            ExecutionAttemptContext.clearIf(session.attempt().attemptId());
         }
     }
 
-    public record Command(String objectiveId, String repository, String actionRef,
-                          String idempotencyKey, Map<String, String> inputs) { }
-
-    public record Result(boolean ok, String objectiveId, String repository, String actionRef,
-                         String summary, Map<String, String> outputs, List<String> evidenceReferences,
-                         String executionPermit, String governancePlan, Instant observedAt) {
-        public Result {
-            outputs = outputs == null ? Map.of() : Map.copyOf(outputs);
-            evidenceReferences = evidenceReferences == null ? List.of() : List.copyOf(evidenceReferences);
+    private DirectSession ensureSession(String client,String objective,String repository){
+        Instant now=Instant.now();attempts.reconcileExpired(now);
+        ExecutionAttempt active=attempts.all().stream().filter(a->a.objectiveId().equals(objective)&&a.stepId().equals(SESSION_STEP)&&!a.terminal()).max(java.util.Comparator.comparingLong(ExecutionAttempt::fencingToken)).orElse(null);
+        GovernancePlanService.BoundPlan bound=sessionPlan(objective,repository);
+        if(active!=null){
+            attempts.requireCurrent(active.attemptId(),active.fencingToken(),now);attempts.heartbeat(active.attemptId(),active.fencingToken(),SESSION_LEASE,now);governanceAttempts.bind(active,bound);return new DirectSession(active,bound);
         }
+        int attemptNumber=attempts.all().stream().filter(a->a.objectiveId().equals(objective)&&a.stepId().equals(SESSION_STEP)).mapToInt(ExecutionAttempt::attemptNumber).max().orElse(0)+1;
+        String assignment="assignment:direct-mcp:"+client+":"+objective;
+        ExecutionAttempt created=attempts.begin("dispatch:direct-mcp-session:"+digest(objective).substring(0,24),objective,SESSION_STEP,GeneralWorkspaceAutonomousCapability.WORKER_ID,assignment,GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,"runtime:direct-mcp:"+client,attemptNumber,SESSION_LEASE,now);
+        governanceAttempts.bind(created,bound);return new DirectSession(created,bound);
     }
 
-    private record Mutation(GovernancePlanService.BoundPlan bound, ExecutionAttempt attempt, ExecutionPermit permit) { }
+    private GovernancePlanService.BoundPlan sessionPlan(String objective,String repository){
+        ExecutionWorkSpec work=new ExecutionWorkSpec(SESSION_STEP,"Execute governed isolated direct coding session for "+repository,repository,GeneralWorkspaceAutonomousCapability.CAPABILITY,List.of(),ExecutionWorkSpec.Consequence.MUTATING,List.of("all repository mutations remain inside the attempt-owned execution workspace until governed publication"),List.of("action-observation:direct-coding-session"));
+        return governancePlans.bindAuthorizedWork(objective,GeneralWorkspaceAutonomousCapability.WORKER_ID,work,"FOUNDER",GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,Map.of());
+    }
+
+    private ExecutionPermit authorizeMutation(String repository,String action,DirectSession session,Map<String,String> inputs){
+        Instant now=Instant.now();ExecutionAttempt attempt=attempts.requireCurrent(session.attempt().attemptId(),session.attempt().fencingToken(),now);
+        return gate.authorize(new ExecutionIntent(attempt.objectiveId(),attempt.attemptId(),attempt.fencingToken(),GeneralWorkspaceAutonomousCapability.WORKER_ID,attempt.assignmentRef(),GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE,session.bound().plan().planId(),session.bound().plan().version(),SESSION_STEP,action,ActionFabric.Consequence.MUTATING,repository,session.bound().snapshot().snapshotId(),session.bound().derivation().receiptId(),inputs,now));
+    }
+
+    private void requireRepositoryContinuity(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,String repository,String action,Map<String,String> inputs){
+        if("workspace.repository.materialize".equals(action)){if(!repository.equals(validateRepository(inputs.get("repository"))))throw new SecurityException("direct_repository_mismatch");return;}
+        Path provenance=workspaces.resolve(workspace,".metatron-repository");if(!Files.isRegularFile(provenance,LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(provenance))throw new IllegalStateException("direct_repository_session_not_open");
+        Map<String,String> fields=new LinkedHashMap<>();for(String line:workspaces.read(workspace,".metatron-repository").lines().toList()){int split=line.indexOf('=');if(split>0)fields.put(line.substring(0,split).trim(),line.substring(split+1).trim());}
+        if(!repository.equals(fields.get("repository")))throw new SecurityException("direct_repository_session_mismatch");
+    }
+
+    static String validateClient(String value){String v=require(value,"client",32).toLowerCase(Locale.ROOT);if(!CLIENTS.contains(v))throw new SecurityException("direct_client_not_allowed");return v;}
+    static String validateRepository(String value){String v=require(value,"repository",160);if(!REPOSITORY.matcher(v).matches())throw new SecurityException("direct_repository_not_allowed");try{return CanonicalRepositoryScope.requireAllowed(v);}catch(SecurityException denied){throw new SecurityException("direct_repository_not_allowed",denied);}}
+    static String validateObjective(String client,String value){String v=require(value,"objectiveId",128);if(!OBJECTIVE.matcher(v).matches()||!v.startsWith("direct-mcp:"+client+":"))throw new SecurityException("direct_objective_not_allowed");return v;}
+    static String validateAction(String value){String v=require(value,"actionRef",160);if(!ACTIONS.contains(v))throw new SecurityException("direct_action_not_allowed");return v;}
+    private static String require(String value,String field,int max){if(value==null)throw new IllegalArgumentException(field+" required");String v=value.trim();if(v.isEmpty()||v.length()>max||v.indexOf('\0')>=0||v.indexOf('\r')>=0||v.indexOf('\n')>=0)throw new IllegalArgumentException("invalid "+field);return v;}
+    private static String digest(String value){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}}
+
+    public record Command(String objectiveId,String repository,String actionRef,String idempotencyKey,Map<String,String> inputs){}
+    public record Result(boolean ok,String objectiveId,String repository,String actionRef,String summary,Map<String,String> outputs,List<String> evidenceReferences,String executionPermit,String governancePlan,Instant observedAt){public Result{outputs=outputs==null?Map.of():Map.copyOf(outputs);evidenceReferences=evidenceReferences==null?List.of():List.copyOf(evidenceReferences);}}
+    private record DirectSession(ExecutionAttempt attempt,GovernancePlanService.BoundPlan bound){}
 }

@@ -13,16 +13,17 @@ import com.metatron.workforce.execution.governance.GovernancePlanService;
 import com.metatron.workforce.execution.governance.GovernanceStateStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.observation.FileObservationStateStore;
-import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
-import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.observation.ObservationClosureService;
 import com.metatron.workforce.observation.ObservationStateStore;
 import com.metatron.workforce.observation.ObservationVerifier;
+import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
+import com.metatron.workforce.operating.WorkerConstitutionService;
 import com.metatron.workforce.runtime.FileRuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
+import com.metatron.workforce.runtime.execution.ExecutionResourceScheduler;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
@@ -73,17 +74,12 @@ public class LiveManagementConfiguration {
     @Bean
     AutonomySafetyService autonomySafetyService(AutonomySafetyStateStore store) {
         Clock clock = Clock.systemUTC();
-        double maxCostUnits = positiveDouble("METATRON_AUTONOMY_MAX_COST_UNITS",
-                AutonomySafetyService.DEFAULT_MAX_COST_UNITS);
-        int maxAttempts = positiveInt("METATRON_AUTONOMY_MAX_DISPATCH_ATTEMPTS",
-                AutonomySafetyService.DEFAULT_MAX_DISPATCH_ATTEMPTS);
-        long maxDurationSeconds = positiveLong("METATRON_AUTONOMY_MAX_DURATION_SECONDS",
-                AutonomySafetyService.DEFAULT_MAX_DURATION.toSeconds());
+        double maxCostUnits = positiveDouble("METATRON_AUTONOMY_MAX_COST_UNITS", AutonomySafetyService.DEFAULT_MAX_COST_UNITS);
+        int maxAttempts = positiveInt("METATRON_AUTONOMY_MAX_DISPATCH_ATTEMPTS", AutonomySafetyService.DEFAULT_MAX_DISPATCH_ATTEMPTS);
+        long maxDurationSeconds = positiveLong("METATRON_AUTONOMY_MAX_DURATION_SECONDS", AutonomySafetyService.DEFAULT_MAX_DURATION.toSeconds());
         AutonomySafetyState.RiskLevel maxRisk = AutonomySafetyState.RiskLevel.valueOf(
-                System.getenv().getOrDefault("METATRON_AUTONOMY_MAX_RISK",
-                        AutonomySafetyService.DEFAULT_MAX_RISK.name()).trim().toUpperCase(Locale.ROOT));
-        return new AutonomySafetyService(store, clock, maxCostUnits, maxAttempts,
-                Duration.ofSeconds(maxDurationSeconds), maxRisk);
+                System.getenv().getOrDefault("METATRON_AUTONOMY_MAX_RISK", AutonomySafetyService.DEFAULT_MAX_RISK.name()).trim().toUpperCase(Locale.ROOT));
+        return new AutonomySafetyService(store, clock, maxCostUnits, maxAttempts, Duration.ofSeconds(maxDurationSeconds), maxRisk);
     }
 
     @Bean
@@ -97,9 +93,7 @@ public class LiveManagementConfiguration {
                                                          AutonomySafetyService safety,
                                                          AutonomySchedulingStateStore store) {
         int parallelism = positiveInt("METATRON_AUTONOMY_MAX_PARALLELISM", 4);
-        if (parallelism > 4) {
-            throw new IllegalStateException("METATRON_AUTONOMY_MAX_PARALLELISM must be between 1 and 4 for this runner");
-        }
+        if (parallelism > 4) throw new IllegalStateException("METATRON_AUTONOMY_MAX_PARALLELISM must be between 1 and 4 for this runner");
         return new AutonomySchedulingService(core, safety, store, parallelism);
     }
 
@@ -110,8 +104,7 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    ObservationClosureService observationClosureService(ObservationStateStore store,
-                                                         List<ObservationVerifier> verifiers) {
+    ObservationClosureService observationClosureService(ObservationStateStore store, List<ObservationVerifier> verifiers) {
         return new ObservationClosureService(store, verifiers);
     }
 
@@ -176,10 +169,8 @@ public class LiveManagementConfiguration {
                     .findFirst()
                     .orElseThrow(() -> new IllegalStateException(
                             "canonical Gateway Director active participation missing after staffing reconciliation"));
-            constitutionRuntime.materialize(
-                    GatewayDirectorAppointmentCapability.WORKER_ID,
-                    canonicalParticipation.participationId(),
-                    now);
+            constitutionRuntime.materialize(GatewayDirectorAppointmentCapability.WORKER_ID,
+                    canonicalParticipation.participationId(), now);
 
             core.allWorkers().stream()
                     .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
@@ -191,15 +182,12 @@ public class LiveManagementConfiguration {
                         for (WorkforceCoreService.Participation p : core.participations(legacy.workerId())) {
                             if (p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE
                                     && GatewayDirectorAppointmentCapability.ROLE_REF.equals(p.roleRef())) {
-                                try {
-                                    core.setParticipationStatus(p.participationId(),
-                                            WorkforceCoreService.ParticipationStatus.ENDED);
-                                } catch (RuntimeException ignored) { }
+                                try { core.setParticipationStatus(p.participationId(), WorkforceCoreService.ParticipationStatus.ENDED); }
+                                catch (RuntimeException ignored) { }
                             }
                         }
-                        try {
-                            core.setWorkerStatus(legacy.workerId(), WorkforceCoreService.WorkerStatus.RETIRED);
-                        } catch (RuntimeException ignored) { }
+                        try { core.setWorkerStatus(legacy.workerId(), WorkforceCoreService.WorkerStatus.RETIRED); }
+                        catch (RuntimeException ignored) { }
                     });
         };
     }
@@ -213,8 +201,7 @@ public class LiveManagementConfiguration {
             WorkforceCoreService core,
             ExecutionAttemptService attempts,
             WorkplaceContinuityService workplace) {
-        return new AutonomyEvidencePackageService(management, coordination, safety, observation,
-                core, attempts, workplace);
+        return new AutonomyEvidencePackageService(management, coordination, safety, observation, core, attempts, workplace);
     }
 
     @Bean(destroyMethod = "close")
@@ -226,6 +213,7 @@ public class LiveManagementConfiguration {
             ObservationClosureService observationClosure,
             AutonomySafetyService safety,
             AutonomySchedulingService scheduling,
+            ExecutionResourceScheduler resourceScheduling,
             WorkforceCoreService core,
             AutonomousStaffingService staffing,
             ExecutionAdmissionService admission,
@@ -236,6 +224,8 @@ public class LiveManagementConfiguration {
             ExecutionGate executionGate) {
         Clock clock = Clock.systemUTC();
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
+                .map(capability -> (AutonomousExecutionCapability) new ResourceScheduledAutonomousExecutionCapability(
+                        capability, resourceScheduling, clock))
                 .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
                         capability, core, admission, clock, staffing, attempts, runtimeCapacity,
                         governancePlans, governanceAttempts, executionGate))
@@ -254,13 +244,11 @@ public class LiveManagementConfiguration {
         if (!Double.isFinite(value) || value <= 0) throw new IllegalStateException(name + " must be finite and positive");
         return value;
     }
-
     private static int positiveInt(String name, int fallback) {
         int value = Integer.parseInt(System.getenv().getOrDefault(name, Integer.toString(fallback)));
         if (value < 1) throw new IllegalStateException(name + " must be positive");
         return value;
     }
-
     private static long positiveLong(String name, long fallback) {
         long value = Long.parseLong(System.getenv().getOrDefault(name, Long.toString(fallback)));
         if (value < 1) throw new IllegalStateException(name + " must be positive");
