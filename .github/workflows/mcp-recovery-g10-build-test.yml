@@ -7,7 +7,7 @@ on:
       - '.github/workflows/mcp-recovery-g10-build-test.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-test:
@@ -70,19 +70,8 @@ jobs:
           id="$(docker image inspect metatron-ssh-mcp-runtime:g10 --format '{{.Id}}')"
           base="$(docker image inspect metatron-ssh-mcp-runtime:g9 --format '{{.Id}}')"
           test -n "$id" && test "$id" != "$base"
-          docker run --rm -e AUTH_PROXY_SELF_TEST=1 metatron-ssh-mcp-runtime:g10 | tee .mcp-recovery/g10/selftest.log
+          docker run --rm --entrypoint node -e AUTH_PROXY_SELF_TEST=1 metatron-ssh-mcp-runtime:g10 /app/auth-proxy.mjs | tee .mcp-recovery/g10/selftest.log
           grep -q 'AUTH_OAUTH_RESILIENCE_G10_ACCEPTANCE_PASS' .mcp-recovery/g10/selftest.log
           grep -q 'AUTH_PROXY_ACCEPTANCE_PASS' .mcp-recovery/g10/selftest.log
-          printf 'G10_IMAGE_ID=%s\nG9_IMAGE_ID=%s\nBROKER_CANDIDATE_SHA256=%s\n' "$id" "$base" "$(sha256sum .mcp-recovery/g10/metatron-mcp-broker.g10 | awk '{print $1}')" > .mcp-recovery/g10/build-report.txt
+          printf 'G10_IMAGE_ID=%s\nG9_IMAGE_ID=%s\nBROKER_CANDIDATE_SHA256=%s\n' "$id" "$base" "$(sha256sum .mcp-recovery/g10/metatron-mcp-broker.g10 | awk '{print $1}')"
           echo 'G10_BUILD_SELFTEST_PASS'
-
-      - name: Commit candidate evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'metatron-recovery-bot'
-          git config user.email 'metatron-recovery-bot@users.noreply.github.com'
-          git add .mcp-recovery/g10
-          git diff --cached --quiet && exit 0
-          git commit -m 'test(recovery): record G10 build and CAS evidence'
-          git push origin HEAD:mcp-recovery-g10-20260913
