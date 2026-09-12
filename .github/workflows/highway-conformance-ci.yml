@@ -94,7 +94,22 @@ jobs:
       - name: Diagnostic execution action deploy architecture tests
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.execution.*' --tests 'com.metatron.workforce.action.*' --tests 'com.metatron.workforce.deploy.*' --tests 'com.metatron.workforce.architecture.*' --no-daemon --max-workers=1
-      - name: Diagnostic interaction intelligence tests
+      - name: Diagnostic intelligence planning tests
+        shell: bash
+        run: ./gradlew test --tests '*ExecutionWorkPlanner*' --tests '*ExecutionPlanProposalService*' --tests '*FounderWorkerExecutionPlanningAcceptanceTest' --tests '*IntelligenceExecutionAdmissionServiceTest' --tests '*ApprovalDeferredExecutionRoutingTest' --tests '*FrontierSemanticExecutionWorkPlanTest' --tests '*IntelligencePlannerTest' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence frontier tests
+        shell: bash
+        run: ./gradlew test --tests '*FrontierSemantic*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence fabric routing provider tests
+        shell: bash
+        run: ./gradlew test --tests '*IntelligenceFabric*' --tests '*Routing*' --tests '*Provider*' --tests '*CapacityAware*' --tests '*LatencyAware*' --tests '*FreshInformation*' --tests '*NoLegacy*' --tests '*RouterBacked*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence cognitive depth case tests
+        shell: bash
+        run: ./gradlew test --tests '*CognitiveRuntime*' --tests '*IntelligenceDepth*' --tests '*IntelligenceCase*' --tests '*CurrentExternalCase*' --tests '*DeepInstitutional*' --no-daemon --max-workers=1
+      - name: Diagnostic intelligence evidence knowledge institutional tests
+        shell: bash
+        run: ./gradlew test --tests '*Evidence*' --tests '*Knowledge*' --tests '*Bios*' --tests '*Institutional*' --tests '*WorkplaceIntelligence*' --tests '*IntelligenceOutcome*' --no-daemon --max-workers=1
+      - name: Diagnostic interaction intelligence aggregate tests
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.interaction.intelligence.*' --no-daemon --max-workers=1
       - name: Diagnostic interaction channel tests
