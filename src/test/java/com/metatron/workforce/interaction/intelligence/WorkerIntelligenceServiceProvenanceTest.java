@@ -2,6 +2,7 @@ package com.metatron.workforce.interaction.intelligence;
 
 import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.interaction.llm.LlmResponse;
+import com.metatron.workforce.interaction.tools.DefaultToolFabric;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -14,88 +15,75 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkerIntelligenceServiceProvenanceTest {
     @Test
-    void firstCognitiveCycleCarriesGovernedInputProvenanceBeforeAnyActionEvidenceExists() {
-        IntelligenceFabric fabric = new IntelligenceFabric(
-                new IntelligencePlanner(request -> List.of(LlmProvider.GOOGLE)),
-                (provider, request) -> new LlmResponse(
-                        provider, "test-model",
-                        "{\"actionRef\":\"workspace.file.search\",\"inputs\":{\"query\":\"slugify\"},\"rationale\":\"inspect\"}",
-                        "provider-request-1"),
-                new EvidencePreservingIntelligenceSynthesizer(),
-                new EvidenceBackedGovernance());
+    void firstCognitiveCycleCarriesGovernedInputAndMetatronOwnedInferenceProvenance() {
+        AtomicInteger externalCalls = new AtomicInteger();
+        MetatronCognitionClient cognition = request -> new MetatronCognitionClient.Response(
+                "{\"actionRef\":\"workspace.file.search\",\"inputs\":{\"query\":\"slugify\"},\"rationale\":\"inspect\"}",
+                "metatron-node-test", "open-weight-test", 10, 5, "internal-request-1");
+        IntelligenceFabric fabric = fabric(cognition, externalCalls);
 
         WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(fabric, 1);
         WorkerIntelligenceService.Response response = service.reason(
                 new WorkerIntelligenceService.Request(
-                        "worker-cognitive-runtime",
+                        "WORKER-GENERAL-ENGINEERING",
                         "worker.cognition",
                         "select one governed action",
-                        "{\"objectiveId\":\"objective-1\",\"availableActions\":[\"workspace.file.search\"]}",
-                        List.of()));
+                        "context",
+                        List.of(),
+                        "WORKER-GENERAL-ENGINEERING", "objective-1", "assignment-1", "step-1", "attempt-1"));
 
-        assertEquals("provider-request-1",
-                response.evidenceReferences().stream()
-                        .filter(v -> v.startsWith("worker-intelligence-provider:"))
-                        .findFirst().map(v -> "provider-request-1").orElse(""));
+        assertEquals(0, externalCalls.get());
         assertTrue(response.evidenceReferences().stream()
                 .anyMatch(v -> v.startsWith("worker-cognition-input:worker-cognition-")));
         assertTrue(response.evidenceReferences().stream()
                 .anyMatch(v -> v.startsWith("worker-intelligence-request:worker-cognition-")));
+        assertTrue(response.evidenceReferences().contains("metatron-cognition-endpoint:metatron-node-test"));
+        assertTrue(response.evidenceReferences().contains("metatron-cognition-model:open-weight-test"));
+        assertTrue(response.evidenceReferences().contains("metatron-cognition-request:internal-request-1"));
     }
 
     @Test
-    void autonomousWorkerCognitionRetriesOneTransientProviderCapacityWindowThenSucceeds() {
+    void autonomousWorkerCognitionRetriesOneTransientInternalCapacityWindowThenSucceeds() {
         AtomicInteger calls = new AtomicInteger();
-        IntelligenceFabric fabric = new IntelligenceFabric(
-                new IntelligencePlanner(request -> List.of(LlmProvider.GOOGLE)),
-                (provider, request) -> {
-                    if (calls.incrementAndGet() == 1) {
-                        throw new IllegalStateException("google_request_failed:429:quota temporarily exhausted");
-                    }
-                    return new LlmResponse(
-                            provider, "test-model",
-                            "{\"actionRef\":\"workspace.file.search\",\"inputs\":{\"query\":\"slugify\"},\"rationale\":\"inspect\"}",
-                            "provider-request-recovered");
-                },
-                new EvidencePreservingIntelligenceSynthesizer(),
-                new EvidenceBackedGovernance());
+        AtomicInteger externalCalls = new AtomicInteger();
+        MetatronCognitionClient cognition = request -> {
+            if (calls.incrementAndGet() == 1) {
+                throw new IllegalStateException("metatron_cognition_429:capacity_exhausted");
+            }
+            return new MetatronCognitionClient.Response(
+                    "{\"actionRef\":\"workspace.file.search\",\"inputs\":{\"query\":\"slugify\"},\"rationale\":\"inspect\"}",
+                    "metatron-node-test", "open-weight-test", 10, 5, "internal-request-recovered");
+        };
+        IntelligenceFabric fabric = fabric(cognition, externalCalls);
 
         List<Long> sleeps = new ArrayList<>();
-        WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(
-                fabric, 1, sleeps::add);
+        WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(fabric, 1, sleeps::add);
 
         WorkerIntelligenceService.Response response = service.reason(
                 new WorkerIntelligenceService.Request(
-                        "worker-cognitive-runtime",
-                        "worker.cognition",
-                        "select one governed action",
-                        "{\"objectiveId\":\"objective-1\"}",
-                        List.of()));
+                        "WORKER-GENERAL-ENGINEERING", "worker.cognition", "select one governed action", "context",
+                        List.of(), "WORKER-GENERAL-ENGINEERING", "objective-1", "assignment-1", "step-1", "attempt-1"));
 
         assertEquals(2, calls.get());
+        assertEquals(0, externalCalls.get());
         assertEquals(List.of(60_000L), sleeps);
         assertTrue(response.evidenceReferences().stream()
-                .anyMatch(v -> v.contains("worker-intelligence-capacity-retry:")
-                        && v.contains("delay_ms=60000")));
-        assertTrue(response.evidenceReferences().stream()
-                .anyMatch(v -> v.contains("provider-request-recovered")));
+                .anyMatch(v -> v.contains("worker-intelligence-capacity-retry:") && v.contains("delay_ms=60000")));
+        assertTrue(response.evidenceReferences().contains("metatron-cognition-request:internal-request-recovered"));
     }
 
     @Test
-    void liveMeetingConversationDoesNotWaitOrRetryOnProviderCapacityFailure() {
+    void liveWorkerConversationDoesNotWaitOrRetryOnInternalCapacityFailure() {
         AtomicInteger calls = new AtomicInteger();
-        IntelligenceFabric fabric = new IntelligenceFabric(
-                new IntelligencePlanner(request -> List.of(LlmProvider.GOOGLE)),
-                (provider, request) -> {
-                    calls.incrementAndGet();
-                    throw new IllegalStateException("google_request_failed:429:quota temporarily exhausted");
-                },
-                new EvidencePreservingIntelligenceSynthesizer(),
-                new EvidenceBackedGovernance());
+        AtomicInteger externalCalls = new AtomicInteger();
+        MetatronCognitionClient cognition = request -> {
+            calls.incrementAndGet();
+            throw new IllegalStateException("metatron_cognition_429:capacity_exhausted");
+        };
+        IntelligenceFabric fabric = fabric(cognition, externalCalls);
 
         List<Long> sleeps = new ArrayList<>();
-        WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(
-                fabric, 1, sleeps::add);
+        WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(fabric, 1, sleeps::add);
 
         IllegalStateException failure = assertThrows(IllegalStateException.class, () ->
                 service.reason(new WorkerIntelligenceService.Request(
@@ -103,10 +91,29 @@ class WorkerIntelligenceServiceProvenanceTest {
                         "worker.live.conversation",
                         "answer naturally",
                         "meeting context",
-                        List.of("institutional-source:test"))));
+                        List.of("institutional-source:test"),
+                        "WORKER-GATEWAY-DIRECTOR", "", "", "", "")));
 
         assertEquals(1, calls.get());
+        assertEquals(0, externalCalls.get());
         assertTrue(sleeps.isEmpty());
-        assertTrue(failure.getMessage().contains("429"));
+        assertTrue(failure.getMessage().contains("capacity_exhausted"));
+    }
+
+    private static IntelligenceFabric fabric(MetatronCognitionClient cognition, AtomicInteger externalCalls) {
+        return new IntelligenceFabric(
+                new IntelligencePlanner(request -> List.of(LlmProvider.GOOGLE)),
+                (provider, request) -> {
+                    externalCalls.incrementAndGet();
+                    return new LlmResponse(provider, "external-model", "forbidden", "external-request");
+                },
+                new EvidencePreservingIntelligenceSynthesizer(),
+                new EvidenceBackedGovernance(),
+                new DefaultToolFabric(List.of()),
+                null,
+                null,
+                cognition,
+                new CognitionAdmissionPolicy(),
+                new InMemoryInferenceConsumptionLedger());
     }
 }

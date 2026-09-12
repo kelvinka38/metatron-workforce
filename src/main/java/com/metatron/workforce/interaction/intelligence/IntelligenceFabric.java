@@ -32,6 +32,9 @@ public final class IntelligenceFabric {
     private final MultiModelDeliberationCoordinator deliberationCoordinator;
     private final CognitiveArtifactStore artifactStore;
     private final CognitionNeedGate cognitionNeedGate;
+    private final MetatronCognitionClient metatronCognitionClient;
+    private final CognitionAdmissionPolicy cognitionAdmissionPolicy;
+    private final InferenceConsumptionLedger inferenceLedger;
 
     public IntelligenceFabric(IntelligencePlanner planner,
                               IntelligenceEngine engine,
@@ -65,6 +68,20 @@ public final class IntelligenceFabric {
                               DefaultToolFabric toolFabric,
                               MultiModelDeliberationCoordinator deliberationCoordinator,
                               CognitiveArtifactStore artifactStore) {
+        this(planner, engine, synthesizer, governance, toolFabric, deliberationCoordinator, artifactStore,
+                null, new CognitionAdmissionPolicy(), new InMemoryInferenceConsumptionLedger());
+    }
+
+    public IntelligenceFabric(IntelligencePlanner planner,
+                              IntelligenceEngine engine,
+                              IntelligenceSynthesizer synthesizer,
+                              IntelligenceGovernance governance,
+                              DefaultToolFabric toolFabric,
+                              MultiModelDeliberationCoordinator deliberationCoordinator,
+                              CognitiveArtifactStore artifactStore,
+                              MetatronCognitionClient metatronCognitionClient,
+                              CognitionAdmissionPolicy cognitionAdmissionPolicy,
+                              InferenceConsumptionLedger inferenceLedger) {
         this.planner = Objects.requireNonNull(planner, "planner");
         this.engine = Objects.requireNonNull(engine, "engine");
         this.synthesizer = Objects.requireNonNull(synthesizer, "synthesizer");
@@ -74,6 +91,9 @@ public final class IntelligenceFabric {
         this.deliberationCoordinator = deliberationCoordinator;
         this.artifactStore = artifactStore;
         this.cognitionNeedGate = new CognitionNeedGate();
+        this.metatronCognitionClient = metatronCognitionClient;
+        this.cognitionAdmissionPolicy = Objects.requireNonNull(cognitionAdmissionPolicy, "cognitionAdmissionPolicy");
+        this.inferenceLedger = Objects.requireNonNull(inferenceLedger, "inferenceLedger");
     }
 
     public IntelligencePlan plan(IntelligenceRequest request) {
@@ -124,6 +144,10 @@ public final class IntelligenceFabric {
                     List.of(), request.evidenceReferences());
         }
 
+        if (request.originContext().originType() == IntelligenceOriginType.WORKER) {
+            return executeMetatronOwned(request);
+        }
+
         WebEnrichment enrichment = enrichWithWebEvidence(request);
         IntelligenceRequest enrichedRequest = enrichment.request();
         IntelligencePlan plan = planner.plan(enrichedRequest);
@@ -157,6 +181,8 @@ public final class IntelligenceFabric {
             }
             providerAttempt++;
             try {
+                cognitionAdmissionPolicy.requireAllowed(
+                        enrichedRequest.originContext(), IntelligenceComputeOwner.EXTERNAL_PAID);
                 LlmResponse response = Objects.requireNonNull(
                         engine.execute(provider, enrichedRequest, escalationReason, providerBudget),
                         "intelligence engine response");
@@ -164,6 +190,11 @@ public final class IntelligenceFabric {
                     throw new IllegalStateException("provider attribution mismatch for " + provider);
                 }
                 if (hasInitialExternalEvidence) externalEvidenceGuard.validate(response.text());
+                inferenceLedger.record(InferenceConsumptionRecord.from(
+                        enrichedRequest.originContext(), IntelligenceComputeOwner.EXTERNAL_PAID,
+                        "external:" + provider.name(), response.model(),
+                        Math.max(0L, response.usage().inputTokens()), Math.max(0L, response.usage().outputTokens()),
+                        0L, "SUCCESS", response.providerRequestReference()));
                 responses.add(response);
                 if (plan.collaborationMode() == CollaborationMode.SINGLE) break;
             } catch (RuntimeException failure) {
@@ -256,6 +287,62 @@ public final class IntelligenceFabric {
                 finalEvidence);
     }
 
+    private IntelligenceResult executeMetatronOwned(IntelligenceRequest request) {
+        cognitionAdmissionPolicy.requireAllowed(request.originContext(), IntelligenceComputeOwner.METATRON_OWNED);
+        if (metatronCognitionClient == null) {
+            throw new IllegalStateException("METATRON_OWNED_COGNITION_UNAVAILABLE");
+        }
+
+        WebEnrichment enrichment = enrichWithWebEvidence(request);
+        IntelligenceRequest enrichedRequest = enrichment.request();
+        boolean hasExternalEvidence = enrichment.webEvidence() != null && enrichment.webEvidence().success();
+        if (request.freshExternalDataRequired() && !hasExternalEvidence) {
+            String reason = enrichment.webEvidence() == null
+                    ? "external_evidence_not_attempted"
+                    : enrichment.webEvidence().output();
+            return new IntelligenceResult(
+                    request.requestId(),
+                    "METATRON CURRENT INFORMATION BLOCKED\nreason=CURRENT_EXTERNAL_EVIDENCE_UNAVAILABLE\nobjective="
+                            + request.objective() + "\ndetail=" + reason,
+                    List.of(), enrichedRequest.evidenceReferences());
+        }
+
+        long started = System.nanoTime();
+        try {
+            MetatronCognitionClient.Response response = metatronCognitionClient.reason(
+                    new MetatronCognitionClient.Request(
+                            enrichedRequest.requestId(), enrichedRequest.requiredCapability(),
+                            enrichedRequest.objective(), enrichedRequest.context(),
+                            enrichedRequest.evidenceReferences(), enrichedRequest.originContext(),
+                            enrichedRequest.requiredOutput()));
+            long latencyMillis = Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+            inferenceLedger.record(InferenceConsumptionRecord.from(
+                    enrichedRequest.originContext(), IntelligenceComputeOwner.METATRON_OWNED,
+                    response.endpointId(), response.modelIdentity(), response.inputTokens(), response.outputTokens(),
+                    latencyMillis, "SUCCESS", response.requestReference()));
+            if (hasExternalEvidence) externalEvidenceGuard.validate(response.text());
+            List<String> internalEvidence = new ArrayList<>(enrichedRequest.evidenceReferences());
+            internalEvidence.add("metatron-cognition-endpoint:" + response.endpointId());
+            if (!response.modelIdentity().isBlank()) {
+                internalEvidence.add("metatron-cognition-model:" + response.modelIdentity());
+            }
+            if (!response.requestReference().isBlank()) {
+                internalEvidence.add("metatron-cognition-request:" + response.requestReference());
+            }
+            return new IntelligenceResult(
+                    enrichedRequest.requestId(), response.text(), List.of(), List.copyOf(internalEvidence));
+        } catch (RuntimeException failure) {
+            long latencyMillis = Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+            inferenceLedger.record(InferenceConsumptionRecord.from(
+                    enrichedRequest.originContext(), IntelligenceComputeOwner.METATRON_OWNED,
+                    "metatron-cognition-node", "", 0L, 0L, latencyMillis,
+                    "FAILED:" + failure.getClass().getSimpleName(), ""));
+            throw failure;
+        }
+    }
+
+    public InferenceConsumptionLedger inferenceLedger() { return inferenceLedger; }
+
     public Optional<CognitiveArtifact> reusableArtifact(IntelligenceRequest request) {
         Objects.requireNonNull(request, "request");
         if (artifactStore == null || !reusableRequest(request)) return Optional.empty();
@@ -325,7 +412,7 @@ public final class IntelligenceFabric {
                 request.objective(), context, request.evidenceReferences(), request.requiredCapability(),
                 request.consequence(), request.latencyBudget(), request.costBudget(), request.authorityContext(),
                 request.requiredOutput(), request.requestedProviders(), request.maxProviders(),
-                request.freshExternalDataRequired());
+                request.freshExternalDataRequired(), request.originContext());
     }
 
     private static String caseRef(String context) {
@@ -374,7 +461,8 @@ public final class IntelligenceFabric {
                 request.requestId(), request.requester(), request.mode(), request.collaborationMode(),
                 request.objective(), context, evidence, request.requiredCapability(), request.consequence(),
                 request.latencyBudget(), request.costBudget(), request.authorityContext(), request.requiredOutput(),
-                request.requestedProviders(), request.maxProviders(), request.freshExternalDataRequired());
+                request.requestedProviders(), request.maxProviders(), request.freshExternalDataRequired(),
+                request.originContext());
         return new WebEnrichment(enriched, result);
     }
 

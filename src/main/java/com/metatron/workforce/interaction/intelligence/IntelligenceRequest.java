@@ -22,7 +22,8 @@ public record IntelligenceRequest(
         String requiredOutput,
         List<LlmProvider> requestedProviders,
         int maxProviders,
-        boolean freshExternalDataRequired) {
+        boolean freshExternalDataRequired,
+        IntelligenceOriginContext originContext) {
 
     /** Backward-compatible constructor for callers that do not require external freshness. */
     public IntelligenceRequest(
@@ -43,7 +44,32 @@ public record IntelligenceRequest(
             int maxProviders) {
         this(requestId, requester, mode, collaborationMode, objective, context, evidenceReferences,
                 requiredCapability, consequence, latencyBudget, costBudget, authorityContext, requiredOutput,
-                requestedProviders, maxProviders, false);
+                requestedProviders, maxProviders, false,
+                IntelligenceOriginContext.human(requester, requestId, requiredCapability));
+    }
+
+    /** Backward-compatible constructor for callers predating typed Intelligence origin. */
+    public IntelligenceRequest(
+            String requestId,
+            String requester,
+            IntelligenceMode mode,
+            CollaborationMode collaborationMode,
+            String objective,
+            String context,
+            List<String> evidenceReferences,
+            String requiredCapability,
+            String consequence,
+            String latencyBudget,
+            String costBudget,
+            String authorityContext,
+            String requiredOutput,
+            List<LlmProvider> requestedProviders,
+            int maxProviders,
+            boolean freshExternalDataRequired) {
+        this(requestId, requester, mode, collaborationMode, objective, context, evidenceReferences,
+                requiredCapability, consequence, latencyBudget, costBudget, authorityContext, requiredOutput,
+                requestedProviders, maxProviders, freshExternalDataRequired,
+                IntelligenceOriginContext.human(requester, requestId, requiredCapability));
     }
 
     public IntelligenceRequest {
@@ -61,11 +87,15 @@ public record IntelligenceRequest(
         Objects.requireNonNull(authorityContext, "authorityContext");
         Objects.requireNonNull(requiredOutput, "requiredOutput");
         Objects.requireNonNull(requestedProviders, "requestedProviders");
+        Objects.requireNonNull(originContext, "originContext");
         evidenceReferences = List.copyOf(evidenceReferences);
         requestedProviders = List.copyOf(requestedProviders);
 
         if (requestId.isBlank() || requester.isBlank() || objective.isBlank()) {
             throw new IllegalArgumentException("requestId, requester and objective must not be blank");
+        }
+        if (!requestId.equals(originContext.requestId())) {
+            throw new IllegalArgumentException("originContext.requestId must match requestId");
         }
         if (requiredCapability.isBlank() || requiredOutput.isBlank()) {
             throw new IllegalArgumentException("requiredCapability and requiredOutput must not be blank");

@@ -143,7 +143,7 @@ class WebSearchToolAdapterTest {
 
         assertTrue(!result.success());
         assertTrue(result.output().contains("web_search_no_relevant_results"), result.output());
-        assertTrue(result.output().contains("grounded_search_disabled_for_custom_endpoint"), result.output());
+        assertTrue(!result.output().contains("grounded_search"), result.output());
         assertTrue(result.evidenceReferences().isEmpty(), result.toString());
     }
 
