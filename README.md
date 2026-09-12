@@ -31,6 +31,12 @@ The accepted product contract is:
 
 This acceptance closes the Founder-ratified Autonomy Closure program. It does not assert that every future Workforce product or capability is complete.
 
+This is a scope-specific historical acceptance claim, not a statement that the current
+whole Workforce product is complete. For current runtime truth, known gaps, and the
+mandatory completion-claim rule, read:
+
+`docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`
+
 ## Current post-closure execution-governance program
 
 Founder approved a new SoT Enforcement closure on 2026-09-10. It does not reopen the accepted Autonomy Closure. It requires consequential implementation/execution to bind current canonical authority and the approved plan, so no model, Worker, channel or connector may silently reinterpret approved architecture during execution.
@@ -47,13 +53,14 @@ Until runtime enforcement is production-ratified, these documents plus `AGENTS.m
 
 Humans and AI agents SHALL read `AGENTS.md`, then:
 
-1. current applicable SoT Enforcement documents above for consequential execution/governance work;
-2. `docs/AUTONOMY_CLOSURE/README.md`;
-3. `docs/AUTONOMY_CLOSURE/FINAL_ACCEPTED_L10_EVIDENCE.md`;
-4. `docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md`;
-5. `docs/AUTONOMY_CLOSURE/IMPLEMENTATION_MASTER_PLAN.md`;
-6. `docs/AUTONOMY_CLOSURE/TRACEABILITY_AND_EVIDENCE_PLAN.md`;
-7. the upstream canonical contracts linked by those documents.
+1. `docs/CURRENT_RUNTIME_REALITY_AND_COMPLETION_POLICY.md`;
+2. current applicable SoT Enforcement documents above for consequential execution/governance work;
+3. `docs/AUTONOMY_CLOSURE/README.md`;
+4. `docs/AUTONOMY_CLOSURE/FINAL_ACCEPTED_L10_EVIDENCE.md`;
+5. `docs/AUTONOMY_CLOSURE/CURRENT_STATE_AND_GAP_MATRIX.md`;
+6. `docs/AUTONOMY_CLOSURE/IMPLEMENTATION_MASTER_PLAN.md`;
+7. `docs/AUTONOMY_CLOSURE/TRACEABILITY_AND_EVIDENCE_PLAN.md`;
+8. the upstream canonical contracts linked by those documents.
 
 ## Non-negotiable interpretation
 
@@ -67,6 +74,9 @@ EXECUTION SUCCESS != OBJECTIVE SUCCESS
 MODEL/WORKER PROPOSAL != EXECUTION AUTHORITY
 APPROVED PLAN != OPTIONAL GUIDANCE
 ACCEPTED_L10 != EVERY FUTURE WORKFORCE FEATURE COMPLETE
+SCOPE COMPLETE != SYSTEM COMPLETE
+HISTORICAL ACCEPTANCE != CURRENT WHOLE-SYSTEM ACCEPTANCE
+WORKER COUNT != EXECUTION CONCURRENCY
 ```
 
 Do not downgrade the accepted Autonomy Closure back to `PARTIAL` without contradictory production evidence or a new canonical decision. Future material changes must earn evidence appropriate to their changed scope.
