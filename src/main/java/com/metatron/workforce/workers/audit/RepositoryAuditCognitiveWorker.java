@@ -5,6 +5,7 @@ import com.metatron.workforce.action.ActionJournal;
 import com.metatron.workforce.action.CognitiveWorkerRuntime;
 import com.metatron.workforce.gateway.GatewayEgressClient;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.runtime.RepositoryCredentialAuthority;
 import com.metatron.workforce.workers.WorkerResult;
 
 import java.net.URLEncoder;
@@ -49,7 +50,7 @@ final class RepositoryAuditCognitiveWorker {
 
     RepositoryAuditCognitiveWorker(String authorizationReference) {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
-                "https://api.github.com", env("GITHUB_TOKEN"), authorizationReference,
+                "https://api.github.com", RepositoryCredentialAuthority.resolveProcessToken(), authorizationReference,
                 ActionJournal.runtimeEvidenceJournal());
     }
 
