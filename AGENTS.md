@@ -37,6 +37,142 @@ known open gaps/exclusions.
 `SYSTEM COMPLETE` requires a current Whole-System Gap Registry with zero critical open
 gaps and exact-current-production acceptance.
 
+### Mandatory capability-state discipline
+
+Every Human, Worker, AI coding agent, reviewer and automation operating in this repository MUST distinguish:
+
+```text
+IMPLEMENTED
+PRODUCTION-COMPOSED
+EXPOSED
+OPERATIONALLY AVAILABLE
+PRODUCT-USABLE
+END-TO-END ACCEPTED
+```
+
+These states are not interchangeable.
+
+```text
+IMPLEMENTED != EXPOSED
+EXPOSED != OPERATIONALLY AVAILABLE
+OPERATIONALLY AVAILABLE != PRODUCT-USABLE
+PRODUCT-USABLE != END-TO-END ACCEPTED
+```
+
+A backend class, capability, route or test does not by itself prove that an intended Human/AI surface can use the capability.
+
+A configured credential does not by itself prove that an external provider is operationally available.
+
+A successful conversation does not by itself prove that durable execution occurred.
+
+### Current audited Human/Work boundary
+
+As of the 2026-09-12 production audit:
+
+```text
+Chat
+→ semantic conversation/intelligence
+→ no automatic semantic durable-Work handoff by default
+
+Work
+→ semantic interpretation
+→ EXECUTION request may be admitted
+→ HumanObjectiveIngressService
+→ durable ManagementObjective
+→ WorkQueue
+→ AutonomousManagementRunner
+```
+
+Therefore no agent may state that natural-language Human → durable Work is absent.
+
+Likewise, no agent may state that Chat automatically executes natural-language requests.
+
+Both statements are wrong.
+
+### Current audited Worker boundary
+
+Canonical Human↔Worker conversation uses real canonical Worker identity, participation, runtime profile, constitution, capabilities, runtime and durable Worker memory.
+
+Do not describe current canonical Workers as merely model personas.
+
+However, the audited Direct Worker conversation path is not yet evidence that:
+
+```text
+Human tells selected Worker to perform work
+→ durable Work is created
+→ Worker/Workforce executes
+→ evidence-backed result returns
+```
+
+Until that path is implemented and accepted, distinguish:
+
+```text
+WORKER CONVERSATION = REAL
+WORKER CONVERSATION → DURABLE EXECUTION = NOT YET CLOSED
+```
+
+Do not solve this by creating a parallel Worker, Objective, Assignment or Execution model.
+
+### Current audited Direct Coding boundary
+
+The Direct Coding backend and private Workforce ingress exist.
+
+The current ChatGPT-exposed Metatron tool surface did not expose the canonical `repository_*` actions during the 2026-09-12 audit.
+
+Therefore:
+
+```text
+DIRECT CODING BACKEND = IMPLEMENTED
+
+CURRENT CHATGPT repository_* PRODUCT SURFACE
+= NOT CURRENTLY EXPOSED / NOT PROVEN USABLE
+```
+
+Do not create a second coding execution stack to solve this.
+
+Fix surface exposure/integration while preserving the canonical:
+
+```text
+AI client
+→ Direct Coding ingress
+→ ExecutionAttempt
+→ isolated ExecutionWorkspace
+→ governed repository actions
+→ verification
+→ PR/integration/release
+```
+
+### Operational degradation rule
+
+Operational provider failures MUST be distinguished from architecture absence.
+
+During the 2026-09-12 audit, production transport remained healthy while semantic cognition became degraded because the configured provider set could not reliably serve a request.
+
+Therefore:
+
+```text
+TRANSPORT HEALTH != COGNITION HEALTH
+API KEY PRESENT != PROVIDER AVAILABLE
+PROVIDER FAILURE != WORKFORCE SUBSTRATE ABSENT
+```
+
+Provider/model failure must fail explicitly, retry only within governed budgets, and must never authorize bypassing semantic, authority or execution boundaries.
+
+### Required audit language
+
+Before saying a capability “works”, “does not work”, “is complete”, or “is missing”, determine and report separately:
+
+```text
+1. Is it implemented?
+2. Is it production-composed?
+3. Is it exposed to the intended surface?
+4. Are live dependencies currently operational?
+5. Is it product-usable end-to-end?
+6. What exact acceptance/evidence level exists?
+```
+
+Never infer one answer from another.
+
 Before work on ingress, management, staffing, scheduling, runtime, Workplace, Intelligence handoff, BIOS handoff, Observation or completion claims, read `docs/AUTONOMY_CLOSURE/README.md`, `docs/AUTONOMY_CLOSURE/FINAL_ACCEPTED_L10_EVIDENCE.md`, and every upstream canonical contract they list.
 
 Do **not** reset the Autonomy Closure program to `PARTIAL`, P0, P1 or another historical gate merely because later product work exists. P0–P10 are closed for this accepted scope. There is no canonical P11 in this program. Reopening requires contradictory production evidence, a materially changed scope that requires new acceptance, or an applicable new canonical decision.
