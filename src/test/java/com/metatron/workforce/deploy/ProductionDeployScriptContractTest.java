@@ -11,7 +11,7 @@ final class ProductionDeployScriptContractTest {
         String script = Files.readString(Path.of("deploy/deploy-production-sha.sh"));
         assertTrue(script.contains("submit --kind workforce-build"));
         assertTrue(script.contains("submit --kind workforce-deploy"));
-        assertTrue(script.contains("--dependency "$BUILD_ID""));
+        assertTrue(script.contains("--dependency \"$BUILD_ID\""));
         assertTrue(script.contains("LOCAL_DEPLOY_DELEGATED_TO_HIGHWAY=PASS"));
         assertTrue(script.contains("PROD_WORKFORCE_SINGLE_MUTATION_AUTHORITY=PASS"));
         assertFalse(script.contains("docker compose"));
@@ -22,8 +22,8 @@ final class ProductionDeployScriptContractTest {
     @Test
     void immutableHighwayReleasePublicationDoesNotDependOnMutableCheckoutHead() throws Exception {
         String script = Files.readString(Path.of("highway/publish-release.sh"));
-        assertTrue(script.contains("rev-parse "${SHA}^{commit}""));
-        assertTrue(script.contains("git -C "$CHECKOUT" archive "$SHA""));
+        assertTrue(script.contains("rev-parse \"${SHA}^{commit}\""));
+        assertTrue(script.contains("git -C \"$CHECKOUT\" archive \"$SHA\""));
         assertTrue(script.contains("HIGHWAY_RELEASE_SHARED_HEAD_INDEPENDENCE=PASS"));
         assertFalse(script.contains("rev-parse HEAD"));
     }
