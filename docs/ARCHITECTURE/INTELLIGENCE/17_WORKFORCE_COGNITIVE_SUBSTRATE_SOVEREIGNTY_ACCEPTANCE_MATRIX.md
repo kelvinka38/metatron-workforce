@@ -1,7 +1,7 @@
 # WORKFORCE COGNITIVE SUBSTRATE SOVEREIGNTY — ACCEPTANCE MATRIX
 
 **Status:** FOUNDER-APPROVED ACCEPTANCE CONTRACT  
-**Implementation evidence:** NONE YET — PROGRAM NOT IMPLEMENTED
+**Implementation evidence:** COLLECTION IN PROGRESS — NO PRODUCTION CLOSURE CLAIM
 
 | ID | Requirement | Critical |
 |---|---|---:|
@@ -39,4 +39,4 @@
 
 Every critical row must PASS. Aggregate benchmark quality never overrides zero-tolerance sovereignty, authority, evidence or false-effect gates.
 
-As of 2026-09-12 all CSS implementation evidence is intentionally uncollected because the Founder-ordered server-upgrade hold is active.
+The Founder released the server-upgrade hold on 2026-09-12. Implementation evidence may now be collected, but no row is considered PASS merely because code exists; each row requires its specified test/runtime/production evidence, and production closure remains prohibited until every critical row passes.

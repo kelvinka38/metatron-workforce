@@ -1,8 +1,8 @@
 # WORKFORCE COGNITIVE SUBSTRATE SOVEREIGNTY — DETAILED IMPLEMENTATION PLAN
 
-**Status:** FOUNDER-APPROVED PLAN — IMPLEMENTATION HOLD ACTIVE
+**Status:** FOUNDER-APPROVED PLAN — IMPLEMENTATION AUTHORIZED
 
-No code implementation begins until the Founder completes the server-upgrade review and explicitly releases the hold.
+The server-upgrade pre-implementation gate was explicitly released by the Founder on 2026-09-12. Implementation must continue in the approved sequence; production Cognition Node sizing and production cutover remain separately gated.
 
 ## Sequence
 
@@ -29,6 +29,6 @@ No code implementation begins until the Founder completes the server-upgrade rev
 - **P21 Independent production proof:** exact SHA, health, credentials, ledger and outbound-network evidence.
 - **P22 Closure:** only after every critical acceptance row passes.
 
-## Explicit hold
+## Server-gate release
 
-Until the Founder releases the server gate: no Java/source implementation for this program, no Cognition Node deployment, no provider-routing change, no provider-credential migration/removal, no production cutover, and no production GPU commitment.
+The Founder released the pre-implementation hold on 2026-09-12 after control-plane review. This authorizes source implementation and qualification work. It does **not** authorize premature production cutover, external-paid fallback for Worker origin, or production GPU commitment without qualification evidence.
