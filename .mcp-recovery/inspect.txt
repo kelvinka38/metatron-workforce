@@ -1,43 +1,266 @@
 === IDENTITY ===
-2026-09-12T18:11:04Z
+2026-09-12T18:12:40Z
 ubuntu-4gb-sin-2
-Linux ubuntu-4gb-sin-2 5.15.0-187-generic #197-Ubuntu SMP Fri Jul 17 19:17:01 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
 uid=1000(github-runner) gid=1000(github-runner) groups=1000(github-runner),999(docker)
-SUDO_NONINTERACTIVE=FAIL
+DOCKER_SOCKET_ACCESS=29.7.2
 === MCP CONTAINERS ===
-=== BUILD FILE INVENTORY ===
-sudo: a password is required
-=== RELEVANT HASHES ===
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-=== AUTH STATE / OAUTH SYMBOLS ===
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-sudo: a password is required
-=== DOCKER PATCH CHAIN ===
-sudo: a password is required
-sudo: a password is required
-=== RELEASE/BROKER FILES ===
-sudo: a password is required
-=== CONTROL AUTHORITY FILE PRESENCE ===
-sudo: a password is required
-/opt/metatron/ssh-mcp/build/.runtime-auth-security.enc MISSING_OR_INACCESSIBLE
-sudo: a password is required
-/var/lib/metatron-auth/security.json MISSING_OR_INACCESSIBLE
+metatron-mcp-rescue-tunnel	cloudflare/cloudflared:2026.8.1	Up 22 minutes
+metatron-mcp-runtime-g9-standby	metatron-ssh-mcp-runtime:g9	Up 2 hours (healthy)
+metatron-mcp-runtime-g9	metatron-ssh-mcp-runtime:g9	Up 2 hours (healthy)
+metatron-mcp-router-b	metatron-mcp-router:v2.3	Up 10 hours (healthy)
+metatron-mcp-router-a	metatron-mcp-router:v2.3	Up 10 hours (healthy)
+metatron-cloudflared-ha	cloudflare/cloudflared:2026.8.1	Up 6 hours
+source-envoy-1	envoyproxy/envoy:v1.36-latest	Up 35 hours
+source-cloudflared-1	cloudflare/cloudflared:2026.8.1	Up 2 hours
+name=/metatron-mcp-runtime-g9 image=sha256:fac0c0e65275872f8d4ed54cc97545487b53348ef4fff975252d858148c5aab3 status=running health=healthy started=2026-09-12T16:35:56.552205459Z networks=metatron-gateway-online=172.19.0.9 
+name=/metatron-mcp-runtime-g9-standby image=sha256:fac0c0e65275872f8d4ed54cc97545487b53348ef4fff975252d858148c5aab3 status=running health=healthy started=2026-09-12T16:36:31.964469247Z networks=metatron-gateway-online=172.19.0.8 
+G9_IMAGE_ID=sha256:fac0c0e65275872f8d4ed54cc97545487b53348ef4fff975252d858148c5aab3
+g9_repo_tags=["metatron-ssh-mcp-runtime:g9"] entrypoint=["/app/mcp-entrypoint.sh"] cmd=null
+=== HOST PATH DIRECT ACCESS ===
+drwxr-xr-x  5 root root  4096 Sep 12 17:50 /opt/metatron/ssh-mcp
+drwxrwxr-x+ 5 root root 12288 Sep 12 17:34 /opt/metatron/ssh-mcp/build
+DIRECT_AUTH_PROXY_READ=PASS
+DIRECT_BUILD_WRITE=FAIL
+=== RELEVANT HOST FILE INVENTORY ===
+auth-claude-confidential-oauth-patch.mjs	9383 bytes
+auth-client-agnostic-oauth-patch.mjs	25374 bytes
+auth-client-agnostic-post-patch.mjs	7314 bytes
+auth-control-state-host-patch.mjs	12151 bytes
+auth-control-state-init-patch.mjs	3666 bytes
+auth-normal-oauth-patch.mjs	9674 bytes
+auth-oauth-resilience-v3_7-post-patch.mjs	18499 bytes
+auth-professional-patch.mjs	12226 bytes
+auth-proxy.mjs	19284 bytes
+auth-readiness-cheap-hotfix.mjs	3254 bytes
+auth-replica-selftest-patch.mjs	2895 bytes
+auth-required-boundary-patch.mjs	1661 bytes
+auth-security-admin-fix.mjs	2972 bytes
+auth-security-admin-patch.mjs	22637 bytes
+auth-security-recovery-patch.mjs	3379 bytes
+bounded_git_acceptance_test.py	8048 bytes
+bounded_git_github_acceptance_test.py	3878 bytes
+broker-auth-aware-v3_6-patch.py	4134 bytes
+broker_diagnostic.py	239 bytes
+broker.gz.b64	9300 bytes
+broker-maintenance-v3_5-patch.py	7889 bytes
+broker-resilience-v2_1-patch.py	2547 bytes
+broker-resilience-v2_2-patch.py	2896 bytes
+broker-resilience-v2_3-patch.py	2903 bytes
+broker-resilience-v2_4-patch.py	2726 bytes
+broker-resilience-v2_5-patch.py	3252 bytes
+broker-resilience-v2_6-patch.py	3210 bytes
+broker-resilience-v2_7-patch.py	3588 bytes
+broker-resilience-v2_7-probe-safety-patch.py	2739 bytes
+broker-resilience-v2_8-patch.py	3585 bytes
+broker-resilience-v2_8-release-patch.py	7631 bytes
+broker-resilience-v2_9-patch.py	3639 bytes
+broker-resilience-v2_9-release-patch.py	6222 bytes
+broker-resilience-v2-patch.py	4514 bytes
+broker-resilience-v3_0-patch.py	3703 bytes
+broker-resilience-v3_0-release-patch.py	5343 bytes
+broker-resilience-v3_1-patch.py	3663 bytes
+broker-resilience-v3_1-release-patch.py	3486 bytes
+broker-resilience-v3_2-patch.py	3774 bytes
+broker-resilience-v3_2-release-patch.py	5187 bytes
+broker-resilience-v3_3-patch.py	3573 bytes
+broker-resilience-v3_3-release-patch.py	2914 bytes
+broker-resilience-v3_4-patch.py	3442 bytes
+broker-resilience-v3_4-release-patch.py	7195 bytes
+broker-resilient-release-v2_1.sh	7257 bytes
+broker-resilient-release-v2_2.sh	8437 bytes
+broker-resilient-release-v2_3.sh	13803 bytes
+broker-resilient-release-v2_4.sh	11820 bytes
+broker-resilient-release-v2_5.sh	12687 bytes
+broker-resilient-release-v2_6.sh	15101 bytes
+broker-resilient-release-v2_7.sh	15358 bytes
+broker-resilient-release-v2_8.sh	17790 bytes
+broker-resilient-release-v2_9.sh	18194 bytes
+broker-resilient-release-v2.sh	9717 bytes
+broker-resilient-release-v3_0.sh	19436 bytes
+broker-resilient-release-v3_1.sh	21045 bytes
+broker-resilient-release-v3_2.sh	22812 bytes
+broker-resilient-release-v3_3.sh	22360 bytes
+broker-resilient-release-v3_4.sh	23090 bytes
+broker_upgrade_diag.py	541 bytes
+Dockerfile	13744 bytes
+Dockerfile.auth-convergence	1247 bytes
+Dockerfile.auth-required-boundary	720 bytes
+Dockerfile.claude-confidential-oauth	1463 bytes
+Dockerfile.client-agnostic-oauth	1701 bytes
+Dockerfile.normal-oauth	937 bytes
+dockerfile-normal-oauth-canonical-patch.py	3472 bytes
+Dockerfile.readiness-hotfix	519 bytes
+Dockerfile.router	480 bytes
+fix-client-agnostic-ui-acceptance-v4.py	1178 bytes
+install-broker-auth-aware-v3_6.sh	3531 bytes
+install-broker-resilience-v2_1.sh	4377 bytes
+install-broker-resilience-v2_2.sh	5534 bytes
+install-broker-resilience-v2_3.log	428 bytes
+install-broker-resilience-v2_3.pid	6 bytes
+install-broker-resilience-v2_3.sh	7600 bytes
+install-broker-resilience-v2_4.sh	3365 bytes
+install-broker-resilience-v2_5.log	2406 bytes
+install-broker-resilience-v2_5.pid	7 bytes
+install-broker-resilience-v2_5.sh	7766 bytes
+install-broker-resilience-v2_6.sh	4177 bytes
+install-broker-resilience-v2_7.sh	4820 bytes
+install-broker-resilience-v2_8.sh	8218 bytes
+install-broker-resilience-v2_9.sh	5460 bytes
+install-broker-resilience-v2.sh	4564 bytes
+install-broker-resilience-v3_0.sh	5438 bytes
+install-broker-resilience-v3_1.sh	5433 bytes
+install-broker-resilience-v3_2.sh	7150 bytes
+install-broker-resilience-v3_3.sh	3877 bytes
+install-broker-resilience-v3_4.sh	3930 bytes
+live_mcp_acceptance.py	2186 bytes
+prebuild-client-agnostic-diagnostics-patch.py	3154 bytes
+prebuild-runtime-g4.sh	3045 bytes
+prebuild-runtime-g5.sh	3487 bytes
+prebuild-runtime-g6.sh	3311 bytes
+prebuild-runtime-g8-claude-confidential-oauth.sh	5225 bytes
+prebuild-runtime-g9-auth-required.sh	3524 bytes
+prebuild-runtime-g9-client-agnostic.sh	11741 bytes
+prebuild-runtime-g9-normal-oauth-final.sh	6278 bytes
+prebuild-runtime-g9-normal-oauth.sh	7033 bytes
+prepare-runtime-g9-client-agnostic.sh	2837 bytes
+professional-auth-ui-notes.txt	390 bytes
+README.g4-auth-closure.txt	1719 bytes
+recover-stuck-broker-resilience-v2_6.sh	5598 bytes
+registry_acceptance_test.mjs	7373 bytes
+release-auth-aware-acceptance-patch.py	7839 bytes
+release-heredoc-stdin-fix.py	885 bytes
+request-guard-acceptance.mjs	3878 bytes
+run-broker-resilience-v2_3-detached.sh	2302 bytes
+run-broker-resilience-v2_5-detached.sh	829 bytes
+.runtime-auth-security.enc	334 bytes
+server-client-agnostic-auth-guard-patch.mjs	1603 bytes
+verify-runtime-g9-normal-oauth-final.sh	4677 bytes
+=== CONTROL AUTHORITY PRESENCE ONLY ===
+/opt/metatron/ssh-mcp/build/.runtime-auth-security.enc mode=600 owner=root:root size=334 mtime=2026-09-12 10:43:37.282387135 +0000
+/var/lib/metatron-auth/security.json MISSING_OR_INACCESSIBLE_DIRECT
+=== PUBLIC EDGE SMOKE ===
+HTTP/2 401 
+date: Sat, 12 Sep 2026 18:12:40 GMT
+content-type: application/json
+content-length: 76
+cache-control: no-store
+www-authenticate: Bearer resource_metadata="https://ssh.metatron.vn/.well-known/oauth-protected-resource", scope="mcp:tools"
+cf-cache-status: DYNAMIC
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=SfDgf%2F11trWv9HZ6jeKgeNlWnnoD28Xs%2FUcu5%2BOJ3I0C42Z1VuukuB2qredwOen%2BFAElJY96TpxDgM3AVV4em7%2BB2%2Flmgzm%2BkYKHvUWrtxm0nydFRK1d0%2FR9guYBuSEC4KnFKuqanGDPKLhaFCY%3D"}]}
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+server: cloudflare
+cf-ray: a3a0e1b86b19135a-SIN
+alt-svc: h3=":443"; ma=86400
+
+=== SNAPSHOT FILES ===
+auth-client-agnostic-oauth-patch.mjs	25374 bytes
+auth-client-agnostic-post-patch.mjs	7314 bytes
+auth-control-state-host-patch.mjs	12151 bytes
+auth-control-state-init-patch.mjs	3666 bytes
+auth-normal-oauth-patch.mjs	9674 bytes
+auth-oauth-resilience-v3_7-post-patch.mjs	18499 bytes
+auth-professional-patch.mjs	12226 bytes
+auth-proxy.mjs	19284 bytes
+auth-readiness-cheap-hotfix.mjs	3254 bytes
+auth-security-admin-fix.mjs	2972 bytes
+auth-security-admin-patch.mjs	22637 bytes
+auth-security-recovery-patch.mjs	3379 bytes
+broker-resilient-release-v2_1.sh	7257 bytes
+broker-resilient-release-v2_2.sh	8437 bytes
+broker-resilient-release-v2_3.sh	13803 bytes
+broker-resilient-release-v2_4.sh	11820 bytes
+broker-resilient-release-v2_5.sh	12687 bytes
+broker-resilient-release-v2_6.sh	15101 bytes
+broker-resilient-release-v2_7.sh	15358 bytes
+broker-resilient-release-v2_8.sh	17790 bytes
+broker-resilient-release-v2_9.sh	18194 bytes
+broker-resilient-release-v2.sh	9717 bytes
+broker-resilient-release-v3_0.sh	19436 bytes
+broker-resilient-release-v3_1.sh	21045 bytes
+broker-resilient-release-v3_2.sh	22812 bytes
+broker-resilient-release-v3_3.sh	22360 bytes
+broker-resilient-release-v3_4.sh	23090 bytes
+Dockerfile	13744 bytes
+Dockerfile.normal-oauth	937 bytes
+install-broker-auth-aware-v3_6.sh	3531 bytes
+install-broker-resilience-v2_1.sh	4377 bytes
+install-broker-resilience-v2_2.sh	5534 bytes
+install-broker-resilience-v2_3.sh	7600 bytes
+install-broker-resilience-v2_4.sh	3365 bytes
+install-broker-resilience-v2_5.sh	7766 bytes
+install-broker-resilience-v2_6.sh	4177 bytes
+install-broker-resilience-v2_7.sh	4820 bytes
+install-broker-resilience-v2_8.sh	8218 bytes
+install-broker-resilience-v2_9.sh	5460 bytes
+install-broker-resilience-v2.sh	4564 bytes
+install-broker-resilience-v3_0.sh	5438 bytes
+install-broker-resilience-v3_1.sh	5433 bytes
+install-broker-resilience-v3_2.sh	7150 bytes
+install-broker-resilience-v3_3.sh	3877 bytes
+install-broker-resilience-v3_4.sh	3930 bytes
+prebuild-runtime-g9-auth-required.sh	3524 bytes
+prebuild-runtime-g9-client-agnostic.sh	11741 bytes
+prebuild-runtime-g9-normal-oauth-final.sh	6278 bytes
+prebuild-runtime-g9-normal-oauth.sh	7033 bytes
+prepare-runtime-g9-client-agnostic.sh	2837 bytes
+recover-stuck-broker-resilience-v2_6.sh	5598 bytes
+run-broker-resilience-v2_3-detached.sh	2302 bytes
+run-broker-resilience-v2_5-detached.sh	829 bytes
+runtime-g9-auth-proxy.mjs	57697 bytes
+verify-runtime-g9-normal-oauth-final.sh	4677 bytes
+=== SNAPSHOT HASHES ===
+f9501ea10f7dedf8b4ea9d6f939b00a51350807d8326cc4209aa3aed40923e4d  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-client-agnostic-oauth-patch.mjs
+63bdaeeefbe3f96f766b902603fbc6b0738683ce36525046828e4ff62a26dea7  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-client-agnostic-post-patch.mjs
+7708557949d7092282bb708641ded54008f62f6245e57f1c8be59986f600ba5a  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-control-state-host-patch.mjs
+b0c633fd15d6c4a491dea469913b168e25ddd5458f218dd8d78fe134977e1c85  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-control-state-init-patch.mjs
+5bfbda45641b94b010d0c746e4a675a817eb2ff5d6625f5e921850b766509331  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-normal-oauth-patch.mjs
+8b593101c2512da7d9ed914704cca294bba9cf9419ac49c0d1dca75bbb0a8480  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-oauth-resilience-v3_7-post-patch.mjs
+a5fb6c19b81a21b7c4a77c396c29b7da104e8616c36aca09ce1f69478b7931b5  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-professional-patch.mjs
+5492f710546981b8380bd379769eaccec05dec5ba126e4a571ade5b231382e5c  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-proxy.mjs
+cd1fc6826f93729f75606562dc6f606b22612949057e139e6dcf37600481d89e  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-readiness-cheap-hotfix.mjs
+1cf2987a96d88891383c35189790d09a6c93b24c7daafb0aec37f0ab9a079154  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-security-admin-fix.mjs
+d94e8978da5af10e52a769375d392560b61fff45ec3dc51e4755928db6e243c3  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-security-admin-patch.mjs
+eab0ee97f4f9a0780e52a5ae9376837ee0e1a52bb6f80f690e37b1faa4507127  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/auth-security-recovery-patch.mjs
+d6b0d2bc7c5fd6edfa320f59206f1e0b3bce32f807aad3c57226e389e2d86802  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_1.sh
+e96a1b8dd874fd8d8a36827bdc837b385aed94fb9e068f63f053742863c9354b  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_2.sh
+2c0fac9fca913e99961ef9d356c1e2d3ec51e4318330a8274b0ebbffcadd465f  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_3.sh
+5aae13f85c118df2ea8821c63867dd0b37de10736dff4ca0821be57f266a97df  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_4.sh
+b706eda9c83cf252264c762b48016309b3889488a2aad205ae65d14a4680be6d  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_5.sh
+916da586a74d41b87934b292a0dba78ba90fac1ecb0a707d66696969967acabe  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_6.sh
+dc73cf217a1bdbb6e2702b67aa4398fbb3c3150dca8b4838f614aeacf88b3a58  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_7.sh
+00f82b83723ead76b404efaf2ed137ac91d406a564fb8580dd354aef00907cef  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_8.sh
+121d774e7a4dc35d75605e6a0efb92bf117fe5a06ed22b0e73561da89c7e8aeb  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2_9.sh
+d572754f7956b8baf29299c5be487fa381b255075213129c25da02e8625c5547  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v2.sh
+8a5ec60377578cdf455623d5c6bc602b186923e55c64ac71a199c27d8ebf41ea  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v3_0.sh
+14d02e226bc5c495275b649086e9072a5930f4953349050dce476cd9b60fe688  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v3_1.sh
+74c68589c240101997e1d4246187f8242375abbc6b4e267d49eff1b7b90a006d  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v3_2.sh
+93a2f2a4762dedcebd3ae2eeea4476303c9a42d6fd00a9b8291ca4c35266a658  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v3_3.sh
+1175c00fd95b6043dea03e962792d1290ddb00d97c98c3fee7003b0af5f1bb5d  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/broker-resilient-release-v3_4.sh
+ee9d13705baf06fe8bd42a70483e83fac62bb139c11e127cf35605f0003ed4f9  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/Dockerfile
+4447a06f876cf3a8516e843a6948a86227d014216ffefba22c33ee6418a1a8f1  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/Dockerfile.normal-oauth
+e43f50b6dcf180016eb97996cbec36cf7f83db7eee4145fb9756e06075a37e3d  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-auth-aware-v3_6.sh
+cfa1d95efe6777f1fae4e92d1e9a2aba9ec0618f52c396a4f10a0a01ad4bc8a2  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_1.sh
+8dddfd124aa342e72e55b0c5269b6c9e5a623a81152c9b55e72083bd9fc10250  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_2.sh
+f9735339b7b6b8e6da60b7b2c759886e0e9f9f9848b6220c61ea6310930307da  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_3.sh
+c348e69a1c0c6ec3197209ec7a22ae3a9fcbf3f1826507a81af4820785ffc56c  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_4.sh
+439ccf764d0dcddbc9b15f91736f80ac3a89453dc99519674277a58e442918e2  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_5.sh
+35aae7c496fc280313f010633c9a46b23266963b3ec6c66c042edd44eba365f2  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_6.sh
+a9047d47c2c688be2494b78abee7e572020f8174161cc5b43122c4b243f29a0f  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_7.sh
+8f0c4b703c490e355416f2a1d17e877ec128186dd7440671dbc42bfae3faafb2  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_8.sh
+abe182ff9791315ffb7b34070b8e5f2567cae7142f73d152178f79ff3d80d928  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2_9.sh
+310955374376bea3a86baca7a52399f2e633b692f228fcce0ed44690b98cdcb9  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v2.sh
+4b29964daf32999e0e4194cbed232777dc22b5db457a5f299f90f2f3edeefab0  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v3_0.sh
+b3ce4dbad3481b7abda061919443493fe3f6035337511ece927839192de9783e  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v3_1.sh
+975614b4dbea147ce36dc7bd570e806ecb5484fbca3c6b39c3964b928ef00d00  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v3_2.sh
+5446d286e50b09f976c120f3e0757714f0ea5591fce47bbe4adb2d896d40905e  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v3_3.sh
+b27c057bdea21542bb0505bad539b534197ca761eb58b59c22232fd0c4cf584c  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/install-broker-resilience-v3_4.sh
+42ae31ec3ced2e5ed8236ccb5be3d46b2022f2e68eea49efa55bd932cc7846ea  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/prebuild-runtime-g9-auth-required.sh
+c393f481b13ed8919ce45d5b10f85345549b77edc6af16aae8cf4a4494d91d87  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/prebuild-runtime-g9-client-agnostic.sh
+a6656fec8ea35d676b8b347e3048c7f32f20ac1d508fa4e922542c2af09882bd  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/prebuild-runtime-g9-normal-oauth-final.sh
+9053f3b348d87aad033788f07ddb2069ce5b0d2578255ecb5d8d74eb0a8ae6bc  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/prebuild-runtime-g9-normal-oauth.sh
+887966221a6dddc856cfd4718469d12db76807c98aa3e15cf74af398039d2bcb  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/prepare-runtime-g9-client-agnostic.sh
+5c18718556247c572ee952bc5e5094a0178c0fd7368a4ff95777d593b20eb0a1  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/recover-stuck-broker-resilience-v2_6.sh
+8342bda894ebff94db41f6b938d3892cedc74854b0a310e81e3a96caa4d9f917  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/run-broker-resilience-v2_3-detached.sh
+419a2a193c237d5b44fd480d03d114892eb2a62ffaf7f77cbe12623579b5563c  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/run-broker-resilience-v2_5-detached.sh
+8ec097dad38d6b2b145c895d142e945039215adcdac22e8ce0e0ede3bb258bae  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/runtime-g9-auth-proxy.mjs
+7d6d1de6f1945ba970badf7039d0ce260506db8b48eddb37b2d67d1559a64302  /opt/actions-runner/_work/metatron-workforce/metatron-workforce/.mcp-recovery/host/verify-runtime-g9-normal-oauth-final.sh

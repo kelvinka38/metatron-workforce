@@ -1,0 +1,15 @@
+FROM metatron-ssh-mcp-runtime:g8
+COPY auth-normal-oauth-patch.mjs /tmp/auth-normal-oauth-patch.mjs
+RUN node /tmp/auth-normal-oauth-patch.mjs /app/auth-proxy.mjs \
+ && node --check /app/auth-proxy.mjs \
+ && grep -Fq 'METATRON_CLAUDE_NORMAL_OAUTH_V1' /app/auth-proxy.mjs \
+ && grep -Fq 'registration_endpoint:' /app/auth-proxy.mjs \
+ && grep -Fq "token_endpoint_auth_methods_supported: ['none']" /app/auth-proxy.mjs \
+ && grep -Fq "token_endpoint_auth_method: 'none'" /app/auth-proxy.mjs \
+ && grep -Fq 'if (!identity.client) return unauthorizedForOAuth(res);' /app/auth-proxy.mjs \
+ && ! grep -Fq 'id="founder-secret"' /app/auth-proxy.mjs \
+ && ! grep -Fq 'client_secret_basic' /app/auth-proxy.mjs \
+ && grep -Fq 'METATRON_MCP_CHEAP_READINESS_V2' /app/auth-proxy.mjs \
+ && grep -Fq 'METATRON_MCP_CONTROL_STATE_INIT_V2' /app/auth-proxy.mjs \
+ && AUTH_PROXY_SELF_TEST=1 node /app/auth-proxy.mjs \
+ && rm -f /tmp/auth-normal-oauth-patch.mjs
