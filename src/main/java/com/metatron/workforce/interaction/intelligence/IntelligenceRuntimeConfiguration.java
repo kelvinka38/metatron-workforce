@@ -48,6 +48,7 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${OPENAI_MODEL:}") String openAiModel,
             @Value("${GEMINI_MODEL:}") String googleModel,
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
+            @Value("${METATRON_COGNITION_ENABLED:false}") boolean cognitionEnabled,
             @Value("${METATRON_COGNITION_URL:}") String cognitionUrl,
             @Value("${METATRON_COGNITION_AUTH:}") String cognitionAuth,
             @Value("${METATRON_COGNITION_MAX_CONCURRENT:4}") int cognitionMaxConcurrent,
@@ -58,7 +59,7 @@ public class IntelligenceRuntimeConfiguration {
             InferenceConsumptionLedger inferenceLedger,
             CognitionCapacityEventStore cognitionCapacityEvents) {
         MetatronCognitionClient cognitionClient = null;
-        if (cognitionUrl != null && !cognitionUrl.isBlank()) {
+        if (cognitionConfigured(cognitionEnabled, cognitionUrl)) {
             MetatronCognitionClient transport = new HttpMetatronCognitionClient(cognitionUrl, cognitionAuth, objectMapper);
             cognitionClient = new CognitionCapacityCoordinator(
                     transport,
@@ -94,6 +95,10 @@ public class IntelligenceRuntimeConfiguration {
                 runtime.fabric(), runtime.configuredProviders().size());
         WorkerIntelligenceService deliberating = new DeliberatingWorkerIntelligenceService(providerBacked, deliberationRuntime);
         return new ActorScopedWorkerIntelligenceService(deliberating, actorRuntime);
+    }
+
+    static boolean cognitionConfigured(boolean enabled, String url) {
+        return enabled && url != null && !url.isBlank();
     }
 
     @Bean

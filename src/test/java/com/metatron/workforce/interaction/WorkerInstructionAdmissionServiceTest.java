@@ -60,6 +60,40 @@ class WorkerInstructionAdmissionServiceTest {
     }
 
     @Test
+    void executeNowAuthorizationCannotBeDowngradedToConversationOnly() {
+        FrontierSemanticInterpreter semantic = semanticInterpreter("REASONING", "ANSWER", "NOW", "prove Metatron production works safely");
+        AtomicReference<String> owner = new AtomicReference<>();
+        ExecutionObjectiveHandoff handoff = new ExecutionObjectiveHandoff() {
+            @Override
+            public HandoffReceipt submit(String humanId, String organizationContextId, String caseId,
+                                         String conversationId, String externalMessageReference,
+                                         String channel, NormalizedRequest request) {
+                throw new AssertionError("generic handoff must not be used for selected Worker instruction");
+            }
+
+            @Override
+            public HandoffReceipt submitToWorker(String ownerWorkerId, String humanId,
+                                                  String organizationContextId, String caseId,
+                                                  String conversationId, String externalMessageReference,
+                                                  String channel, NormalizedRequest request) {
+                owner.set(ownerWorkerId);
+                assertEquals(com.metatron.workforce.interaction.intelligence.IntelligenceMode.EXECUTION, request.mode());
+                return new HandoffReceipt(true, "objective:worker:now", ownerWorkerId,
+                        "queue:worker:now", "ACCEPTED", "ACCEPTED",
+                        "OBJECTIVE_ACCEPTED_FOR_AUTONOMOUS_MANAGEMENT");
+            }
+        };
+        WorkerInstructionAdmissionService service = new WorkerInstructionAdmissionService(semantic, handoff);
+
+        var result = service.evaluate(interaction("Prove Metatron production works safely now."),
+                "WORKER-GENERAL-ENGINEERING", "worker_status=ACTIVE");
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().admitted());
+        assertEquals("WORKER-GENERAL-ENGINEERING", owner.get());
+    }
+
+    @Test
     void ordinaryWorkerConversationDoesNotBecomeDurableWork() {
         FrontierSemanticInterpreter semantic = semanticInterpreter("DISCUSSION", "ANSWER", "NONE", "answer the Human");
         AtomicInteger targetedCalls = new AtomicInteger();

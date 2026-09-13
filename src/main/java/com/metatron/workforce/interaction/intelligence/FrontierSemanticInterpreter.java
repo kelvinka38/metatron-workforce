@@ -207,6 +207,11 @@ public final class FrontierSemanticInterpreter {
             }
             if (executionAuthorization == ExecutionAuthorization.AFTER_HUMAN_APPROVAL) {
                 outcome = InteractionOutcome.ANSWER;
+            } else if (executionAuthorization == ExecutionAuthorization.NOW
+                    && outcome == InteractionOutcome.ANSWER) {
+                // Immediate execution authority is a durable-work boundary. A provider may
+                // mislabel it as conversational ANSWER, but Human intent must still become Work.
+                outcome = InteractionOutcome.DURABLE_WORK;
             } else if (outcome == InteractionOutcome.DURABLE_WORK
                     && executionAuthorization != ExecutionAuthorization.NOW) {
                 outcome = InteractionOutcome.ANSWER;
