@@ -747,9 +747,16 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 || semantic.contains("commit work product locally");
         boolean verify = semantic.contains("verify") || semantic.contains("verification")
                 || semantic.contains("independent observation") || requestedOutput.contains("verification");
-        boolean remoteMutationForbidden = prohibitions.stream().anyMatch(value -> value.contains("push"))
-                && prohibitions.stream().anyMatch(value -> value.contains("pull request"))
-                && prohibitions.stream().anyMatch(value -> value.contains("remote") && value.contains("state"));
+        String prohibitionSemantic = String.join(" ", prohibitions);
+        boolean pushForbidden = prohibitionSemantic.contains("push");
+        boolean pullRequestForbidden = prohibitionSemantic.contains("pull request")
+                || prohibitionSemantic.contains("publish a pr")
+                || prohibitionSemantic.contains("publish pr")
+                || prohibitionSemantic.contains("open a pr");
+        boolean remoteStateForbidden = prohibitionSemantic.contains("remote") && prohibitionSemantic.contains("state");
+        boolean mergeAndDeployForbidden = prohibitionSemantic.contains("merge") && prohibitionSemantic.contains("deploy");
+        boolean remoteMutationForbidden = pushForbidden && pullRequestForbidden
+                && (remoteStateForbidden || mergeAndDeployForbidden);
 
         if (!materialize || !writeOneFile || !exactShaProof || !test || !stage
                 || !localCommit || !verify || !remoteMutationForbidden) return List.of();
