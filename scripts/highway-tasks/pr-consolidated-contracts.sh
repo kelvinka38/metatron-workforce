@@ -20,8 +20,10 @@ python3 -m py_compile \
   scripts/autonomy/p10_collect.py \
   scripts/autonomy/p10_general_runtime_guard.py \
   scripts/autonomy/p10_ratify.py \
-  scripts/sot_enforcement/inventory.py
+  scripts/sot_enforcement/inventory.py \
+  scripts/cognition/qualification_runner.py
 
+python3 scripts/cognition/qualification_runner.py self-test
 python3 scripts/autonomy/p10_action_journal.py --self-test
 python3 scripts/autonomy/p10_collect.py --self-test
 python3 scripts/autonomy/p10_general_runtime_guard.py --self-test
