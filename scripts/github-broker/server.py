@@ -25,6 +25,11 @@ POST_PATTERNS = [
 ]
 
 def allowed(method: str, path: str) -> bool:
+    decoded = urllib.parse.unquote(path)
+    if "\x00" in decoded or "\\" in decoded or "//" in decoded:
+        return False
+    if decoded == ".." or decoded.startswith("../") or decoded.endswith("/..") or "/../" in decoded:
+        return False
     patterns = GET_PATTERNS if method == "GET" else POST_PATTERNS if method == "POST" else []
     return any(p.fullmatch(path) for p in patterns)
 
