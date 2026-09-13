@@ -48,6 +48,8 @@ for required in (
     "metatron.mcp.release=g19-host-commander",
     "MCP_G19_FILE_REMOVE_ACCEPTANCE=PASS",
     "commander_file_remove",
+    "PY_REMOVE",
+    "inner.get('verified') is True and inner.get('removed') is True",
     '[ "$NOW" -eq 19 ] && break',
     "MCP_G19_RUNTIME_IDENTITY=PASS",
     "MCP_G19_COMPLETE",
