@@ -1,0 +1,23 @@
+name: Cognition Node Sovereignty CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cognition-node/**'
+      - 'src/main/java/com/metatron/workforce/interaction/intelligence/**'
+      - 'src/test/java/com/metatron/workforce/interaction/intelligence/**'
+      - '.github/workflows/cognition-node-sovereignty-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sovereignty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify Cognition Node sovereignty contract
+        run: python3 cognition-node/ci_verify.py
