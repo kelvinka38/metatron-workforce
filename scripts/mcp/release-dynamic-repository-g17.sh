@@ -21,6 +21,7 @@ current_generation(){ router_state | python3 -c 'import json,sys; print(json.loa
 current_active(){ router_state | python3 -c 'import json,sys; print(json.load(sys.stdin)["active"])'; }
 
 GEN="$(current_generation)"
+ALREADY_ACTIVE=0
 if [ "$GEN" -gt 17 ]; then
   echo "MCP_G17_REFUSE_NEWER_GENERATION generation=$GEN" >&2
   exit 3
@@ -28,10 +29,12 @@ fi
 if [ "$GEN" -eq 17 ]; then
   ACTIVE="$(current_active)"
   docker exec "$ACTIVE" grep -q 'METATRON_DYNAMIC_REPOSITORY_SCOPE_G17' /app/server.mjs
-  echo "MCP_G17_ALREADY_ACTIVE active=$ACTIVE"
-  exit 0
+  ALREADY_ACTIVE=1
+  echo "MCP_G17_ALREADY_ACTIVE active=$ACTIVE; continuing acceptance"
+elif [ "$GEN" -ne 16 ]; then
+  echo "MCP_G17_UNEXPECTED_BASE_GENERATION generation=$GEN" >&2
+  exit 3
 fi
-[ "$GEN" -eq 16 ] || { echo "MCP_G17_UNEXPECTED_BASE_GENERATION generation=$GEN" >&2; exit 3; }
 
 echo '=== WAIT FOR WORKFORCE EXACT SHA ==='
 for _ in $(seq 1 600); do
@@ -43,15 +46,16 @@ RUNNING_SHA="$(docker inspect deploy-workforce-1 --format '{{range .Config.Env}}
 [ "$RUNNING_SHA" = "$EXPECTED_WORKFORCE_SHA" ] || { echo "MCP_G17_WORKFORCE_SHA_NOT_READY expected=$EXPECTED_WORKFORCE_SHA actual=$RUNNING_SHA" >&2; exit 4; }
 echo "MCP_G17_WORKFORCE_SHA_READY=$RUNNING_SHA"
 
-echo '=== BUILD IMMUTABLE G17 CANDIDATE FROM G16 ==='
-docker image inspect "$BASE_IMAGE" >/dev/null
-CID="$(docker create "$BASE_IMAGE")"
-docker cp "$CID:/app/server.mjs" "$TMP/server.mjs"
-docker rm -f "$CID" >/dev/null
-CID=''
-node "$PATCH" "$TMP/server.mjs"
-node --check "$TMP/server.mjs"
-cat > "$TMP/Dockerfile" <<'DOCKER'
+if [ "$ALREADY_ACTIVE" -eq 0 ]; then
+  echo '=== BUILD IMMUTABLE G17 CANDIDATE FROM G16 ==='
+  docker image inspect "$BASE_IMAGE" >/dev/null
+  CID="$(docker create "$BASE_IMAGE")"
+  docker cp "$CID:/app/server.mjs" "$TMP/server.mjs"
+  docker rm -f "$CID" >/dev/null
+  CID=''
+  node "$PATCH" "$TMP/server.mjs"
+  node --check "$TMP/server.mjs"
+  cat > "$TMP/Dockerfile" <<'DOCKER'
 FROM metatron-ssh-mcp-runtime:g16
 COPY server.mjs /app/server.mjs
 RUN node --check /app/server.mjs \
@@ -61,32 +65,34 @@ RUN node --check /app/server.mjs \
  && ! grep -q 'CANONICAL_REPOSITORIES' /app/server.mjs \
  && ! grep -q 'repository_outside_canonical_scope' /app/server.mjs
 DOCKER
-docker build --pull=false -t "$TARGET_IMAGE" "$TMP"
-docker image inspect "$TARGET_IMAGE" >/dev/null
-CID="$(docker create "$TARGET_IMAGE")"
-docker cp "$CID:/app/server.mjs" "$TMP/verify-server.mjs"
-docker rm -f "$CID" >/dev/null
-CID=''
-grep -q 'METATRON_DYNAMIC_REPOSITORY_SCOPE_G17' "$TMP/verify-server.mjs"
-! grep -q 'CANONICAL_REPOSITORIES' "$TMP/verify-server.mjs"
-echo 'MCP_G17_IMAGE_ACCEPTANCE=PASS'
+  docker build --pull=false -t "$TARGET_IMAGE" "$TMP"
+  docker image inspect "$TARGET_IMAGE" >/dev/null
+  CID="$(docker create "$TARGET_IMAGE")"
+  docker cp "$CID:/app/server.mjs" "$TMP/verify-server.mjs"
+  docker rm -f "$CID" >/dev/null
+  CID=''
+  grep -q 'METATRON_DYNAMIC_REPOSITORY_SCOPE_G17' "$TMP/verify-server.mjs"
+  ! grep -q 'CANONICAL_REPOSITORIES' "$TMP/verify-server.mjs"
+  echo 'MCP_G17_IMAGE_ACCEPTANCE=PASS'
 
-echo '=== FENCED MCP RELEASE THROUGH CANONICAL BROKER ==='
-[ -x "$BROKER" ] || { echo 'MCP_G17_BROKER_MISSING' >&2; exit 5; }
-if [ "$(id -u)" -eq 0 ]; then
-  printf '%s' '{"op":"ssh_mcp_self_upgrade","args":{}}' | env SUDO_USER=metatron-mcp "$BROKER"
-elif sudo -n true >/dev/null 2>&1; then
-  printf '%s' '{"op":"ssh_mcp_self_upgrade","args":{}}' | sudo -n env SUDO_USER=metatron-mcp "$BROKER"
-else
-  echo 'MCP_G17_ROOT_BROKER_AUTHORITY_UNAVAILABLE' >&2
-  exit 6
+  echo '=== FENCED MCP RELEASE THROUGH CANONICAL BROKER ==='
+  [ -x "$BROKER" ] || { echo 'MCP_G17_BROKER_MISSING' >&2; exit 5; }
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '%s' '{"op":"ssh_mcp_self_upgrade","args":{}}' | env SUDO_USER=metatron-mcp "$BROKER"
+  elif sudo -n true >/dev/null 2>&1; then
+    printf '%s' '{"op":"ssh_mcp_self_upgrade","args":{}}' | sudo -n env SUDO_USER=metatron-mcp "$BROKER"
+  else
+    echo 'MCP_G17_ROOT_BROKER_AUTHORITY_UNAVAILABLE' >&2
+    exit 6
+  fi
+
+  for _ in $(seq 1 240); do
+    GEN="$(current_generation 2>/dev/null || echo 0)"
+    [ "$GEN" -eq 17 ] && break
+    sleep 2
+  done
 fi
 
-for _ in $(seq 1 240); do
-  GEN="$(current_generation 2>/dev/null || echo 0)"
-  [ "$GEN" -eq 17 ] && break
-  sleep 2
-done
 [ "$(current_generation)" -eq 17 ] || { echo 'MCP_G17_PROMOTION_TIMEOUT' >&2; exit 7; }
 ACTIVE="$(current_active)"
 STANDBY="$(router_state | python3 -c 'import json,sys; print(json.load(sys.stdin)["standby"])')"
