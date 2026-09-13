@@ -32,6 +32,10 @@ tasks.named('test') {
     // Keep the forked test JVM bounded so verification cannot starve the running institutional runtime.
     maxHeapSize = '192m'
     maxParallelForks = 1
+    // Long full-suite runs construct many JDK HttpClient instances whose selector threads live for
+    // the life of the test JVM. Recycle the single worker at a bounded interval so verification
+    // stays inside the production host PID/thread envelope without weakening any test.
+    forkEvery = 25
     jvmArgs '-XX:MaxMetaspaceSize=128m'
 }
 

@@ -15,6 +15,10 @@ import java.util.Objects;
 
 /** HTTP client for the private Metatron-owned Cognition Node contract. */
 public final class HttpMetatronCognitionClient implements MetatronCognitionClient {
+    private static final HttpClient SHARED_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
+
     private final URI endpoint;
     private final String authToken;
     private final HttpClient client;
@@ -22,9 +26,7 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
     private final Duration timeout;
 
     public HttpMetatronCognitionClient(String baseUrl, String authToken, ObjectMapper mapper) {
-        this(baseUrl, authToken, mapper,
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
-                Duration.ofSeconds(120));
+        this(baseUrl, authToken, mapper, SHARED_CLIENT, Duration.ofSeconds(120));
     }
 
     HttpMetatronCognitionClient(String baseUrl, String authToken, ObjectMapper mapper, HttpClient client, Duration timeout) {
