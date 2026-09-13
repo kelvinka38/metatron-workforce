@@ -74,6 +74,7 @@ public final class GitHubWorkspaceProposalPublisher {
     private final WorkerExecutionSandboxService sandbox;
     private final ObjectMapper json;
     private final URI apiBase;
+    private final boolean brokerMode;
 
     public GitHubWorkspaceProposalPublisher(HttpClient http,
                                             String token,
@@ -95,10 +96,11 @@ public final class GitHubWorkspaceProposalPublisher {
         this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
         this.json = Objects.requireNonNull(json, "json");
         this.apiBase = Objects.requireNonNull(apiBase, "apiBase");
+        this.brokerMode = "github-repository-broker".equalsIgnoreCase(apiBase.getHost());
     }
 
     public boolean provisioned() {
-        return !token.isBlank();
+        return brokerMode || !token.isBlank();
     }
 
     public Publication publish(String workerId,
@@ -316,9 +318,9 @@ public final class GitHubWorkspaceProposalPublisher {
             HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofSeconds(30))
                     .header("Accept", "application/vnd.github+json")
-                    .header("Authorization", "Bearer " + token)
                     .header("X-GitHub-Api-Version", "2022-11-28")
                     .header("User-Agent", "metatron-workforce-general-proposal");
+            if (!brokerMode) request.header("Authorization", "Bearer " + token);
             if (body == null) request.method(method, HttpRequest.BodyPublishers.noBody());
             else request.header("Content-Type", "application/json")
                     .method(method, HttpRequest.BodyPublishers.ofString(body));

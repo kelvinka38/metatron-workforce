@@ -51,6 +51,7 @@ public final class RepositoryWorkspaceMaterializationService {
     private final ExecutionWorkspaceManager executionWorkspaces;
     private final ObjectMapper json;
     private final URI apiBase;
+    private final boolean brokerMode;
 
     public RepositoryWorkspaceMaterializationService(HttpClient http,String githubToken,ObjectiveWorkspaceService workspaces,ObjectMapper json){
         this(http,githubToken,workspaces,null,json,URI.create("https://api.github.com/"));
@@ -62,10 +63,10 @@ public final class RepositoryWorkspaceMaterializationService {
         this(http,githubToken,workspaces,null,json,apiBase);
     }
     RepositoryWorkspaceMaterializationService(HttpClient http,String githubToken,ObjectiveWorkspaceService workspaces,ExecutionWorkspaceManager executionWorkspaces,ObjectMapper json,URI apiBase){
-        this.http=Objects.requireNonNull(http,"http");this.githubToken=githubToken==null?"":githubToken.trim();this.workspaces=Objects.requireNonNull(workspaces,"workspaces");this.executionWorkspaces=executionWorkspaces;this.json=Objects.requireNonNull(json,"json");this.apiBase=Objects.requireNonNull(apiBase,"apiBase");
+        this.http=Objects.requireNonNull(http,"http");this.githubToken=githubToken==null?"":githubToken.trim();this.workspaces=Objects.requireNonNull(workspaces,"workspaces");this.executionWorkspaces=executionWorkspaces;this.json=Objects.requireNonNull(json,"json");this.apiBase=Objects.requireNonNull(apiBase,"apiBase");this.brokerMode="github-repository-broker".equalsIgnoreCase(apiBase.getHost());
     }
 
-    public boolean provisioned(){return !githubToken.isBlank();}
+    public boolean provisioned(){return brokerMode || !githubToken.isBlank();}
 
     public MaterializedRepository materialize(String workerId,String objectiveId,String repository,String ref){
         return materialize(workerId,objectiveId,repository,ref,PRIMARY_COMPONENT);
@@ -79,7 +80,7 @@ public final class RepositoryWorkspaceMaterializationService {
         try{
             String resolvedSha=resolveCommit(repo,requestedRef);
             registerAttemptComponent(repo,requestedRef,componentId);
-            URI archive=resolveArchiveLocation(repo,resolvedSha);byte[] zip=downloadArchive(archive);Extraction extraction=extract(zip,workspace);
+            byte[] zip=downloadRepositoryArchive(repo,resolvedSha);Extraction extraction=extract(zip,workspace);
             Path provenance=workspaces.resolve(workspace,".metatron-repository");
             Files.writeString(provenance,"repository="+repo+"\nrequestedRef="+requestedRef+"\ncommitSha="+resolvedSha+"\ncomponentId="+componentId+"\n",StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
             return new MaterializedRepository(repo,requestedRef,resolvedSha,workspace.workspaceRef(),extraction.files(),extraction.bytes());
@@ -104,6 +105,16 @@ public final class RepositoryWorkspaceMaterializationService {
         if(response.statusCode()!=200)throw new IllegalStateException("repository commit resolution HTTP "+response.statusCode());
         JsonNode root=json.readTree(response.body());String sha=root.path("sha").asText("").trim().toLowerCase();if(!sha.matches("[0-9a-f]{40}"))throw new IllegalStateException("GitHub commit response missing immutable SHA");return sha;
     }
+    private byte[] downloadRepositoryArchive(String repo,String sha)throws IOException,InterruptedException{
+        if(brokerMode){
+            HttpRequest request=authenticatedRequest(apiBase.resolve("repos/"+repo+"/zipball/"+sha)).GET().build();
+            HttpResponse<java.io.InputStream> response=http.send(request,HttpResponse.BodyHandlers.ofInputStream());
+            if(response.statusCode()==401||response.statusCode()==403)throw repositoryControlPlaneUnavailable("broker-archive-http-"+response.statusCode());
+            if(response.statusCode()!=200)throw new IllegalStateException("repository broker archive HTTP "+response.statusCode());
+            return boundedArchive(response);
+        }
+        return downloadArchive(resolveArchiveLocation(repo,sha));
+    }
     private URI resolveArchiveLocation(String repo,String sha)throws IOException,InterruptedException{
         HttpRequest request=authenticatedRequest(apiBase.resolve("repos/"+repo+"/zipball/"+sha)).GET().build();HttpResponse<Void> response=http.send(request,HttpResponse.BodyHandlers.discarding());
         if(response.statusCode()==401||response.statusCode()==403)throw repositoryControlPlaneUnavailable("archive-resolution-http-"+response.statusCode());
@@ -114,6 +125,9 @@ public final class RepositoryWorkspaceMaterializationService {
     private byte[] downloadArchive(URI archive)throws IOException,InterruptedException{
         HttpRequest request=HttpRequest.newBuilder(archive).timeout(Duration.ofSeconds(60)).header("Accept","application/zip").header("User-Agent","metatron-workforce").GET().build();HttpResponse<java.io.InputStream> response=http.send(request,HttpResponse.BodyHandlers.ofInputStream());
         if(response.statusCode()==401||response.statusCode()==403)throw repositoryControlPlaneUnavailable("archive-download-http-"+response.statusCode());if(response.statusCode()!=200)throw new IllegalStateException("repository archive download HTTP "+response.statusCode());
+        return boundedArchive(response);
+    }
+    private byte[] boundedArchive(HttpResponse<java.io.InputStream> response)throws IOException{
         try(var input=response.body();var out=new ByteArrayOutputStream()){byte[] buffer=new byte[32*1024];long total=0;int read;while((read=input.read(buffer))>=0){total+=read;if(total>MAX_ARCHIVE_BYTES)throw new IllegalStateException("repository archive exceeds byte budget");out.write(buffer,0,read);}return out.toByteArray();}
     }
     private Extraction extract(byte[] archive,ObjectiveWorkspaceService.ObjectiveWorkspace workspace)throws IOException{
@@ -123,7 +137,7 @@ public final class RepositoryWorkspaceMaterializationService {
     }
     private void ensureWorkspaceAvailable(ObjectiveWorkspaceService.ObjectiveWorkspace workspace){List<String> existing=workspaces.list(workspace,"").stream().filter(path->!path.equals(".metatron-workspace")).toList();if(!existing.isEmpty())throw new IllegalStateException("objective workspace already contains materialized/work product content");}
     private HttpResponse<String> sendAuthenticated(String relative)throws IOException,InterruptedException{return http.send(authenticatedRequest(apiBase.resolve(relative)).GET().build(),HttpResponse.BodyHandlers.ofString());}
-    private HttpRequest.Builder authenticatedRequest(URI uri){return HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(20)).header("Accept","application/vnd.github+json").header("Authorization","Bearer "+githubToken).header("X-GitHub-Api-Version","2022-11-28").header("User-Agent","metatron-workforce");}
+    private HttpRequest.Builder authenticatedRequest(URI uri){HttpRequest.Builder request=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(20)).header("Accept","application/vnd.github+json").header("X-GitHub-Api-Version","2022-11-28").header("User-Agent","metatron-workforce");if(!brokerMode)request.header("Authorization","Bearer "+githubToken);return request;}
     private static String normalizeRepository(String repository){String value=require(repository,"repository").trim();if(!REPOSITORY.matcher(value).matches()||value.contains(".."))throw new IllegalArgumentException("invalid GitHub repository");return CanonicalRepositoryScope.requireAllowed(value);}
     private static String normalizeRef(String ref){String value=ref==null||ref.isBlank()?"main":ref.trim();if(!REF.matcher(value).matches()||value.contains("..")||value.startsWith("/")||value.endsWith("/"))throw new IllegalArgumentException("invalid GitHub repository ref");return value;}
     private static String encodePathSegment(String value){return java.net.URLEncoder.encode(value,java.nio.charset.StandardCharsets.UTF_8).replace("+","%20");}

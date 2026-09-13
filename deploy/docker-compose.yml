@@ -32,6 +32,43 @@ services:
     volumes:
       - workforce-execution-workspaces:/executions
 
+  github-repository-broker:
+    image: python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217
+    user: "0:0"
+    command: ["python3", "/app/server.py"]
+    restart: unless-stopped
+    mem_limit: 128m
+    mem_reservation: 32m
+    cpus: 0.25
+    pids_limit: 64
+    expose:
+      - "8091"
+    environment:
+      PORT: "8091"
+      GH_CONFIG_DIR: "/root/.config/gh"
+    volumes:
+      - ../scripts/github-broker/server.py:/app/server.py:ro
+      - /usr/bin/gh:/usr/bin/gh:ro
+      - /root/.config/gh/hosts.yml:/root/.config/gh/hosts.yml:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2))['status']=='UP'"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      github-control:
+        aliases:
+          - github-repository-broker
+      github-egress:
+
   workforce-sandbox:
     depends_on:
       workforce-execution-workspace-init:
@@ -83,6 +120,8 @@ services:
       workforce-execution-workspace-init:
         condition: service_completed_successfully
       workforce-sandbox:
+        condition: service_healthy
+      github-repository-broker:
         condition: service_healthy
     build:
       context: ..
@@ -147,6 +186,7 @@ services:
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      METATRON_GITHUB_API_BASE_URL: "${METATRON_GITHUB_API_BASE_URL:-http://github-repository-broker:8091/}"
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
       CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
       HETZNER_API_TOKEN: "${HETZNER_API_TOKEN:-}"
@@ -169,6 +209,7 @@ services:
       - ALL
     networks:
       workforce:
+      github-control:
       gateway:
         aliases:
           - ${METATRON_WORKFORCE_GATEWAY_ALIAS:-workforce-production}
@@ -184,6 +225,9 @@ volumes:
 networks:
   workforce:
     name: ${METATRON_WORKFORCE_NETWORK_NAME:-metatron-workforce}
+  github-control:
+    internal: true
+  github-egress:
   gateway:
     external: true
     name: ${METATRON_GATEWAY_NETWORK_NAME:-metatron-gateway-online}
