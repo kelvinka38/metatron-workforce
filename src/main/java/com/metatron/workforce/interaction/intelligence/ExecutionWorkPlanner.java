@@ -630,13 +630,21 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 || semantic.contains("real host")
                 || semantic.contains("metatron host")
                 || semantic.contains("commander session");
+        boolean productionControlIntent = (semantic.contains("metatron production")
+                || semantic.contains("production host") || semantic.contains("production server"))
+                && (semantic.contains("prove") || semantic.contains("verify") || semantic.contains("demonstrate")
+                || semantic.contains("chung minh"))
+                && (semantic.contains("operate") || semantic.contains("operation") || semantic.contains("control")
+                || semantic.contains("working") || semantic.contains("works") || semantic.contains("hoat dong"));
         boolean hostEffect = semantic.contains("uptime") || semantic.contains("docker")
                 || semantic.contains("container") || semantic.contains("/tmp/metatron-commander/")
                 || semantic.contains("runtime identity") || semantic.contains("generation")
                 || semantic.contains("host file") || semantic.contains("host process")
-                || semantic.contains("host storage") || semantic.contains("host network");
-        if (!commanderIntent || !hostEffect) return List.of();
-        boolean mutating = semantic.contains("create") || semantic.contains("write")
+                || semantic.contains("host storage") || semantic.contains("host network")
+                || productionControlIntent;
+        if (!(commanderIntent || productionControlIntent) || !hostEffect) return List.of();
+        boolean mutating = productionControlIntent
+                || semantic.contains("create") || semantic.contains("write")
                 || semantic.contains("patch") || semantic.contains("remove")
                 || semantic.contains("delete") || semantic.contains("restart")
                 || semantic.contains("cleanup") || semantic.contains("terminate")
