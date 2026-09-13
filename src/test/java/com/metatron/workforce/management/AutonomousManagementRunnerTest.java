@@ -17,6 +17,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -66,6 +68,77 @@ class AutonomousManagementRunnerTest {
                         && message.payload().contains("evidence:restart-pass")));
         assertTrue(replacementProcess.history(receipt.objectiveId()).stream()
                 .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPORT_READY));
+    }
+
+    @Test
+    void plannerCannotPersistWorkOutsideRealCapabilityDomain() {
+        Clock clock = Clock.systemUTC();
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AtomicInteger effects = new AtomicInteger();
+        AutonomousExecutionCapability capability = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.audit.read"; }
+            @Override public boolean supportsWork(ExecutionWorkSpec workSpec) { return false; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                effects.incrementAndGet();
+                return new CapabilityResult(true, "worker", "assignment", "work", List.of(), "unexpected");
+            }
+        };
+        AutonomousManagementRunner runner = runner(management, capability, clock, "runner-domain");
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(capability), runner, "worker-head", clock);
+        var receipt = ingress.submit("human-primary", "org-metatron", "case-domain",
+                "conversation-domain", "telegram:update:domain", "telegram", request());
+
+        runner.runOnce();
+
+        assertEquals(0, effects.get());
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertTrue(management.findAutonomousWork(receipt.objectiveId()).orElseThrow().blocker()
+                .contains("capability-domain-mismatch"));
+    }
+
+    @Test
+    void longObjectiveDoesNotStarveAnotherRunnableObjective() throws Exception {
+        Clock clock = Clock.systemUTC();
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        CountDownLatch slowStarted = new CountDownLatch(1);
+        CountDownLatch releaseSlow = new CountDownLatch(1);
+        CountDownLatch fastCompleted = new CountDownLatch(1);
+        AutonomousExecutionCapability capability = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.audit.read"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                if (request.objectiveId().contains("slow")) {
+                    slowStarted.countDown();
+                    try {
+                        if (!releaseSlow.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("slow release timeout");
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(interrupted);
+                    }
+                } else {
+                    fastCompleted.countDown();
+                }
+                return new CapabilityResult(true, "worker-auditor", "assignment:" + request.objectiveId(),
+                        "work:" + request.objectiveId(), List.of("evidence:" + request.objectiveId()), "PASS");
+            }
+        };
+        AutonomousManagementRunner runner = runner(management, capability, clock, "runner-concurrent");
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(capability), runner, "worker-head", clock);
+        ingress.submit("human-primary", "org-metatron", "case-slow", "conversation-slow",
+                "telegram:update:slow", "telegram", request());
+        ingress.submit("human-primary", "org-metatron", "case-fast", "conversation-fast",
+                "telegram:update:fast", "telegram", request());
+
+        try {
+            runner.start();
+            assertTrue(slowStarted.await(2, TimeUnit.SECONDS));
+            assertTrue(fastCompleted.await(2, TimeUnit.SECONDS),
+                    "a long Objective must not starve another runnable Objective");
+        } finally {
+            releaseSlow.countDown();
+            runner.close();
+        }
     }
 
     @Test
