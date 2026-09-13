@@ -96,7 +96,7 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                 "general-file-write",
                 "Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md with a short proof containing exact source SHA "
                         + SHA + ". Exact UTF-8 content: source_sha=" + SHA,
-                "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                "kelvinka38/metatron-workforce",
                 "execution.general.workspace",
                 List.of("general-snapshot"),
                 ExecutionWorkSpec.Consequence.MUTATING,
@@ -135,6 +135,23 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
 
         assertEquals("workspace.test.run", thought.actionRef());
         assertEquals(Map.of(), thought.inputs());
+    }
+
+    @Test
+    void failedReadOnlyTestIsNotDeterministicallyRepeated() {
+        ExecutionWorkSpec work = exactSnapshotAndTestWork();
+        CognitiveWorkerRuntime.Cycle failed = new CognitiveWorkerRuntime.Cycle(
+                1,
+                new CognitiveWorkerRuntime.Thought("workspace.test.run", Map.of(), "verify"),
+                ActionFabric.ActionObservation.failure("workspace.test.run", "test failed", List.of("test-failure")),
+                CognitiveWorkerRuntime.Reflection.continueWith("inspect failure"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.test.run", "workspace.file.search", "workspace.file.read"),
+                List.of(failed), Map.of("workspaceMaterialized", "true"));
+
+        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(context),
+                "a failed dedicated READ_ONLY test must return control to cognition instead of blind-repeating");
     }
 
     @Test
@@ -664,8 +681,8 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     private static ExecutionWorkSpec stageAndCommitWork() {
         return new ExecutionWorkSpec(
                 "stage_and_commit",
-                "Stage and commit the proof file locally",
-                "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                "Stage only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md and commit the proof file locally",
+                "kelvinka38/metatron-workforce",
                 "execution.general.workspace",
                 List.of("run_tests"),
                 ExecutionWorkSpec.Consequence.MUTATING,
