@@ -60,6 +60,47 @@ class WorkerInstructionAdmissionServiceTest {
     }
 
     @Test
+    void executeNowAuthorizationCanonicalizesContradictoryAnswerIntoSelectedWorkerWork() {
+        FrontierSemanticInterpreter semantic = semanticInterpreter(
+                "REASONING", "ANSWER", "NOW", "perform the governed Gateway production audit now");
+        AtomicReference<String> owner = new AtomicReference<>();
+        AtomicReference<NormalizedRequest> admittedRequest = new AtomicReference<>();
+        ExecutionObjectiveHandoff handoff = new ExecutionObjectiveHandoff() {
+            @Override
+            public HandoffReceipt submit(String humanId, String organizationContextId, String caseId,
+                                         String conversationId, String externalMessageReference,
+                                         String channel, NormalizedRequest request) {
+                throw new AssertionError("generic Head handoff must not be used for a selected Worker instruction");
+            }
+
+            @Override
+            public HandoffReceipt submitToWorker(String ownerWorkerId, String humanId,
+                                                  String organizationContextId, String caseId,
+                                                  String conversationId, String externalMessageReference,
+                                                  String channel, NormalizedRequest request) {
+                owner.set(ownerWorkerId);
+                admittedRequest.set(request);
+                return new HandoffReceipt(true, "objective:worker:audit", ownerWorkerId,
+                        "queue:worker:audit", "ACCEPTED", "ACCEPTED",
+                        "OBJECTIVE_ACCEPTED_FOR_AUTONOMOUS_MANAGEMENT");
+            }
+        };
+        WorkerInstructionAdmissionService service = new WorkerInstructionAdmissionService(semantic, handoff);
+
+        var result = service.evaluate(interaction(
+                        "As Head of Gateway, perform one governed read-only audit of the current Gateway production health/state now. "
+                                + "Execute it through your actual production capability and report only evidence-backed results."),
+                "WORKER-GATEWAY-DIRECTOR", "worker_status=ACTIVE");
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().admitted());
+        assertEquals("WORKER-GATEWAY-DIRECTOR", owner.get());
+        assertEquals(com.metatron.workforce.interaction.intelligence.IntelligenceMode.EXECUTION,
+                admittedRequest.get().mode());
+        assertEquals("objective:worker:audit", result.get().objectiveId());
+    }
+
+    @Test
     void ordinaryWorkerConversationDoesNotBecomeDurableWork() {
         FrontierSemanticInterpreter semantic = semanticInterpreter("DISCUSSION", "ANSWER", "NONE", "answer the Human");
         AtomicInteger targetedCalls = new AtomicInteger();

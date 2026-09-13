@@ -207,6 +207,12 @@ public final class FrontierSemanticInterpreter {
             }
             if (executionAuthorization == ExecutionAuthorization.AFTER_HUMAN_APPROVAL) {
                 outcome = InteractionOutcome.ANSWER;
+            } else if (executionAuthorization == ExecutionAuthorization.NOW
+                    && outcome == InteractionOutcome.ANSWER) {
+                // Semantic self-consistency guard: NOW means this message delegates execution now.
+                // A provider response that simultaneously says ANSWER is contradictory; preserve
+                // the explicit execution authorization as the stronger canonical routing signal.
+                outcome = InteractionOutcome.DURABLE_WORK;
             } else if (outcome == InteractionOutcome.DURABLE_WORK
                     && executionAuthorization != ExecutionAuthorization.NOW) {
                 outcome = InteractionOutcome.ANSWER;
