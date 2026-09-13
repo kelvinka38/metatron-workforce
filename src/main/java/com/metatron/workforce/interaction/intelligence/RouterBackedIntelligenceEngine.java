@@ -51,6 +51,7 @@ public final class RouterBackedIntelligenceEngine implements IntelligenceEngine 
         String model = Objects.requireNonNull(modelRoutingPolicy.select(provider, request), "selected model");
         if (model.isBlank()) throw new IllegalArgumentException("selected model must not be blank");
 
+        IntelligenceOriginContext origin = request.originContext();
         return router.complete(new LlmRequest(
                 provider,
                 model,
@@ -60,7 +61,14 @@ public final class RouterBackedIntelligenceEngine implements IntelligenceEngine 
                 caseRef(request.context()),
                 purpose(request.requiredCapability()),
                 escalationReason == null ? "" : escalationReason.name(),
-                providerBudget.toFrontierCallBudget()));
+                providerBudget.toFrontierCallBudget(),
+                origin.originType().name(),
+                origin.actorId(),
+                origin.workerId(),
+                origin.objectiveId(),
+                origin.assignmentId(),
+                origin.stepId(),
+                origin.executionAttemptId()));
     }
 
     private static ProviderBudget defaultBudget(IntelligenceRequest request) {

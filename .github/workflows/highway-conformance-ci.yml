@@ -10,6 +10,8 @@ on:
       - 'src/main/java/com/metatron/workforce/interaction/channel/TelegramBotGateway.java'
       - 'src/main/java/com/metatron/workforce/interaction/tools/WebSearchToolAdapter.java'
       - 'src/main/java/com/metatron/workforce/interaction/intelligence/**'
+      - 'src/main/java/com/metatron/workforce/interaction/llm/**'
+      - 'frontier-broker/**'
       - 'src/main/java/com/metatron/workforce/execution/**'
       - 'src/main/java/com/metatron/workforce/action/**'
       - 'src/main/java/com/metatron/workforce/management/**'
@@ -387,3 +389,22 @@ jobs:
           echo 'HIGHWAY_PROVIDER_ISOLATION_WITH_REAL_DEFAULT=PASS'
           echo 'POINT2_RETRIEVAL_ONLY_EVIDENCE_CONTRACT=PASS'
           echo 'WORKER_EXTERNAL_PAID_INFERENCE_DENY_CONTRACT=PASS'
+      - name: Verify Frontier Broker sovereign external-transport boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest frontier-broker/test_server.py -v
+          python3 -m py_compile frontier-broker/server.py frontier-broker/test_server.py
+          B=frontier-broker/server.py
+          C=frontier-broker/docker-compose.yml
+          grep -q 'worker_external_inference_denied' "$B"
+          grep -q 'allowedOrigins.*HUMAN' "$B"
+          grep -q 'provider_billing_exhausted' "$B"
+          grep -q 'provider_rate_limited' "$B"
+          grep -q 'provider_auth_failure' "$B"
+          grep -q 'OPENAI_API_KEY' "$C"
+          grep -q 'GEMINI_API_KEY' "$C"
+          grep -q 'ANTHROPIC_API_KEY' "$C"
+          echo 'FRONTIER_BROKER_WORKER_DENY=PASS'
+          echo 'FRONTIER_BROKER_TYPED_FAILURES=PASS'
+          echo 'FRONTIER_BROKER_SECRET_OWNERSHIP=PASS'

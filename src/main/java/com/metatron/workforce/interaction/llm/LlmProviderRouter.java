@@ -92,7 +92,9 @@ public final class LlmProviderRouter {
         }
         return new LlmRequest(
                 request.provider(), request.model(), systemContext, request.userInput(),
-                logicalRef, request.caseRef(), request.purpose(), request.reasonCode(), budget);
+                logicalRef, request.caseRef(), request.purpose(), request.reasonCode(), budget,
+                request.originType(), request.actorId(), request.workerId(), request.objectiveId(),
+                request.assignmentId(), request.stepId(), request.executionAttemptId());
     }
 
     public ProviderTelemetryRegistry telemetry() {
