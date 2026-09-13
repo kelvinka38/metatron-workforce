@@ -53,6 +53,9 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${METATRON_COGNITION_MAX_CONCURRENT:4}") int cognitionMaxConcurrent,
             @Value("${METATRON_COGNITION_MAX_QUEUED:1024}") int cognitionMaxQueued,
             @Value("${METATRON_COGNITION_QUEUE_WAIT_MS:60000}") long cognitionQueueWaitMillis,
+            @Value("${METATRON_FRONTIER_BROKER_URL:}") String frontierBrokerUrl,
+            @Value("${METATRON_FRONTIER_BROKER_AUTH:}") String frontierBrokerAuth,
+            @Value("${METATRON_FRONTIER_PROVIDERS:}") String frontierBrokerProviders,
             ObjectMapper objectMapper,
             CognitiveArtifactStore artifactStore,
             InferenceConsumptionLedger inferenceLedger,
@@ -70,7 +73,8 @@ public class IntelligenceRuntimeConfiguration {
         return new InstitutionalIntelligenceRuntime(
                 openAiApiKey, googleApiKey, anthropicApiKey,
                 openAiModel, googleModel, anthropicModel, objectMapper, artifactStore,
-                cognitionClient, inferenceLedger);
+                cognitionClient, inferenceLedger,
+                frontierBrokerUrl, frontierBrokerAuth, frontierBrokerProviders);
     }
 
     @Bean

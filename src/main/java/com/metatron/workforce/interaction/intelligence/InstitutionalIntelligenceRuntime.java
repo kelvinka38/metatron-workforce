@@ -3,6 +3,7 @@ package com.metatron.workforce.interaction.intelligence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.llm.AnthropicLlmProviderClient;
 import com.metatron.workforce.interaction.llm.GoogleLlmProviderClient;
+import com.metatron.workforce.interaction.llm.FrontierBrokerLlmProviderClient;
 import com.metatron.workforce.interaction.llm.LlmProvider;
 import com.metatron.workforce.interaction.llm.LlmProviderClient;
 import com.metatron.workforce.interaction.llm.LlmProviderRouter;
@@ -71,6 +72,24 @@ public final class InstitutionalIntelligenceRuntime {
             CognitiveArtifactStore artifactStore,
             MetatronCognitionClient metatronCognitionClient,
             InferenceConsumptionLedger inferenceLedger) {
+        this(openAiApiKey, googleApiKey, anthropicApiKey, openAiModel, googleModel, anthropicModel,
+                objectMapper, artifactStore, metatronCognitionClient, inferenceLedger, "", "", "");
+    }
+
+    public InstitutionalIntelligenceRuntime(
+            String openAiApiKey,
+            String googleApiKey,
+            String anthropicApiKey,
+            String openAiModel,
+            String googleModel,
+            String anthropicModel,
+            ObjectMapper objectMapper,
+            CognitiveArtifactStore artifactStore,
+            MetatronCognitionClient metatronCognitionClient,
+            InferenceConsumptionLedger inferenceLedger,
+            String frontierBrokerUrl,
+            String frontierBrokerAuth,
+            String frontierBrokerProviders) {
         Objects.requireNonNull(objectMapper, "objectMapper");
         Objects.requireNonNull(artifactStore, "artifactStore");
         Objects.requireNonNull(inferenceLedger, "inferenceLedger");
@@ -80,17 +99,27 @@ public final class InstitutionalIntelligenceRuntime {
                 .build();
         List<LlmProviderClient> clients = new ArrayList<>();
         List<LlmProvider> providers = new ArrayList<>();
-        if (present(openAiApiKey)) {
-            clients.add(new OpenAiLlmProviderClient(openAiApiKey, httpClient, objectMapper));
-            providers.add(LlmProvider.OPENAI);
-        }
-        if (present(googleApiKey)) {
-            clients.add(new GoogleLlmProviderClient(googleApiKey, httpClient, objectMapper));
-            providers.add(LlmProvider.GOOGLE);
-        }
-        if (present(anthropicApiKey)) {
-            clients.add(new AnthropicLlmProviderClient(anthropicApiKey, httpClient, objectMapper));
-            providers.add(LlmProvider.ANTHROPIC);
+        if (present(frontierBrokerUrl)) {
+            if (!present(frontierBrokerAuth)) throw new IllegalArgumentException("frontier broker auth required");
+            for (LlmProvider provider : parseProviders(frontierBrokerProviders)) {
+                clients.add(new FrontierBrokerLlmProviderClient(
+                        provider, frontierBrokerUrl, frontierBrokerAuth, httpClient, objectMapper));
+                providers.add(provider);
+            }
+            if (providers.isEmpty()) throw new IllegalArgumentException("frontier broker providers required");
+        } else {
+            if (present(openAiApiKey)) {
+                clients.add(new OpenAiLlmProviderClient(openAiApiKey, httpClient, objectMapper));
+                providers.add(LlmProvider.OPENAI);
+            }
+            if (present(googleApiKey)) {
+                clients.add(new GoogleLlmProviderClient(googleApiKey, httpClient, objectMapper));
+                providers.add(LlmProvider.GOOGLE);
+            }
+            if (present(anthropicApiKey)) {
+                clients.add(new AnthropicLlmProviderClient(anthropicApiKey, httpClient, objectMapper));
+                providers.add(LlmProvider.ANTHROPIC);
+            }
         }
         this.configuredProviders = List.copyOf(providers);
 
@@ -133,6 +162,18 @@ public final class InstitutionalIntelligenceRuntime {
 
     private static boolean present(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static List<LlmProvider> parseProviders(String configured) {
+        if (!present(configured)) return List.of();
+        List<LlmProvider> providers = new ArrayList<>();
+        for (String raw : configured.split(",")) {
+            String value = raw == null ? "" : raw.trim();
+            if (value.isBlank()) continue;
+            LlmProvider provider = LlmProvider.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+            if (!providers.contains(provider)) providers.add(provider);
+        }
+        return List.copyOf(providers);
     }
 
     private static String model(String configured, String fallback) {
