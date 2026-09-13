@@ -123,6 +123,9 @@ def classify(path: Path, text: str) -> list[dict]:
     if PROCESS_EFFECT.search(text):
         if path.name in {"WorkerExecutionSandboxService.java", "WorkerRuntime.java"}:
             rows.append(row("LOCAL_PROCESS_EFFECT", path, "ProcessBuilder(", "isolated Worker sandbox/runtime", False))
+        elif path.name == "HostCommanderAutonomousCapability.java":
+            rows.append(row("GOVERNED_HOST_COMMANDER_TRANSPORT", path, "ProcessBuilder(",
+                            "GovernedAutonomousExecutionCapability->ExecutionGate->Host Commander privileged broker", True))
         else:
             rows.append(row("UNKNOWN_HIGH_RISK_PROCESS_EFFECT", path, "ProcessBuilder(", "UNDECLARED", True, False))
 
