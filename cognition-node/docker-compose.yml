@@ -1,0 +1,32 @@
+services:
+  cognition-node:
+    build:
+      context: ..
+      dockerfile: cognition-node/Dockerfile
+    image: metatron-cognition-node:${METATRON_COGNITION_NODE_TAG:-pilot}
+    restart: unless-stopped
+    ports:
+      - "${COGNITION_BIND_IP:-127.0.0.1}:${COGNITION_HOST_PORT:-8091}:8091"
+    environment:
+      COGNITION_LISTEN_HOST: "0.0.0.0"
+      COGNITION_LISTEN_PORT: "8091"
+      COGNITION_AUTH_TOKEN: "${COGNITION_AUTH_TOKEN:?required}"
+      COGNITION_BACKEND_URL: "${COGNITION_BACKEND_URL:?required}"
+      COGNITION_ALLOWED_BACKEND_HOSTS: "${COGNITION_ALLOWED_BACKEND_HOSTS:-127.0.0.1,localhost,::1}"
+      COGNITION_MODEL: "${COGNITION_MODEL:?required}"
+      COGNITION_ENDPOINT_ID: "${COGNITION_ENDPOINT_ID:-metatron-cognition-node}"
+      COGNITION_BACKEND_TIMEOUT_SECONDS: "${COGNITION_BACKEND_TIMEOUT_SECONDS:-120}"
+      COGNITION_MAX_BODY_BYTES: "${COGNITION_MAX_BODY_BYTES:-2097152}"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8091/healthz', timeout=2)); assert d['status']=='UP' and d['computeOwner']=='METATRON_OWNED' and d['externalFrontierCredentials'] is False"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
