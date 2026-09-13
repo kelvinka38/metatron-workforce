@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 
 /** Production composition for shared provider-neutral Intelligence plus durable Case/depth/cognitive state. */
 @Configuration
@@ -23,8 +24,20 @@ public class IntelligenceRuntimeConfiguration {
     }
 
     @Bean
-    InferenceConsumptionLedger inferenceConsumptionLedger() {
-        return new InMemoryInferenceConsumptionLedger();
+    InferenceConsumptionLedger inferenceConsumptionLedger(
+            ObjectMapper objectMapper,
+            @Value("${METATRON_INFERENCE_LEDGER_PATH:/var/lib/metatron-workforce/inference-ledger.jsonl}") String configured) {
+        return new PersistentInferenceConsumptionLedger(Path.of(configured), objectMapper);
+    }
+
+    @Bean
+    CognitionCapacityEventStore cognitionCapacityEventStore(
+            ObjectMapper objectMapper,
+            @Value("${METATRON_COGNITION_CAPACITY_EVENT_PATH:/var/lib/metatron-workforce/cognition-capacity-events.jsonl}") String configured) {
+        PersistentCognitionCapacityEventStore store =
+                new PersistentCognitionCapacityEventStore(Path.of(configured), objectMapper);
+        store.reconcileIncomplete();
+        return store;
     }
 
     @Bean
@@ -37,12 +50,23 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
             @Value("${METATRON_COGNITION_URL:}") String cognitionUrl,
             @Value("${METATRON_COGNITION_AUTH:}") String cognitionAuth,
+            @Value("${METATRON_COGNITION_MAX_CONCURRENT:4}") int cognitionMaxConcurrent,
+            @Value("${METATRON_COGNITION_MAX_QUEUED:1024}") int cognitionMaxQueued,
+            @Value("${METATRON_COGNITION_QUEUE_WAIT_MS:60000}") long cognitionQueueWaitMillis,
             ObjectMapper objectMapper,
             CognitiveArtifactStore artifactStore,
-            InferenceConsumptionLedger inferenceLedger) {
-        MetatronCognitionClient cognitionClient = cognitionUrl == null || cognitionUrl.isBlank()
-                ? null
-                : new HttpMetatronCognitionClient(cognitionUrl, cognitionAuth, objectMapper);
+            InferenceConsumptionLedger inferenceLedger,
+            CognitionCapacityEventStore cognitionCapacityEvents) {
+        MetatronCognitionClient cognitionClient = null;
+        if (cognitionUrl != null && !cognitionUrl.isBlank()) {
+            MetatronCognitionClient transport = new HttpMetatronCognitionClient(cognitionUrl, cognitionAuth, objectMapper);
+            cognitionClient = new CognitionCapacityCoordinator(
+                    transport,
+                    cognitionCapacityEvents,
+                    cognitionMaxConcurrent,
+                    cognitionMaxQueued,
+                    Duration.ofMillis(Math.max(0L, cognitionQueueWaitMillis)));
+        }
         return new InstitutionalIntelligenceRuntime(
                 openAiApiKey, googleApiKey, anthropicApiKey,
                 openAiModel, googleModel, anthropicModel, objectMapper, artifactStore,

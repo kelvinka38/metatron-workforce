@@ -36,6 +36,8 @@ import org.springframework.boot.test.context.SpringBootTest;
                 "METATRON_CONVERSATION_MEMORY_PATH=build/test-runtime/conversations",
                 "METATRON_CONVERSATION_SURFACE_MODE_PATH=build/test-runtime/conversation-surface-mode",
                 "METATRON_FOUNDER_WORKER_PRODUCT_DIR=build/test-runtime/founder-worker-products",
+                "METATRON_INFERENCE_LEDGER_PATH=build/test-runtime/inference-ledger.jsonl",
+                "METATRON_COGNITION_CAPACITY_EVENT_PATH=build/test-runtime/cognition-capacity-events.jsonl",
                 "OPENAI_API_KEY=startup-test-placeholder",
                 "OPENAI_MODEL=startup-test-model"
         })
