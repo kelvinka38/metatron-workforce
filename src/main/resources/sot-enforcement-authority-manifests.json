@@ -3,6 +3,7 @@
     {
       "manifestId": "metatron-founder-repository-coding",
       "targetPatterns": [
+        "repository:*",
         "kelvinka38/universal",
         "https://github.com/kelvinka38/universal",
         "kelvinka38/metatron-institution",
@@ -37,7 +38,7 @@
           "repository": "kelvinka38/universal",
           "artifactPath": "SOT_CHANGE_CONTROL.md",
           "repositoryCommitSha": "b6cf76a71bcb656d18bf309b6a22bb83b198c03a",
-          "contentHash": "git-sha1:6e1cbe39b9a6566dc10b96362c944452abc75c15",
+          "contentHash": "git-sha1:e91d3fd18e5e707f3d85db86df7484df97c75db3",
           "status": "GOVERNED",
           "scope": "semantic-change-control"
         },
