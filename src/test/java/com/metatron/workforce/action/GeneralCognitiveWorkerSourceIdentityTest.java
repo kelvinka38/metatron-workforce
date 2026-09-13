@@ -26,7 +26,7 @@ class GeneralCognitiveWorkerSourceIdentityTest {
                         "sourceCommitSha", SHA,
                         "localBaselineCommitSha", BASELINE,
                         "materializedFiles", "321",
-                        "workspaceRef", "objective-workspace:0123456789abcdef0123456789abcdef"),
+                        "workspaceRef", "execution-workspace:0123456789abcdef0123456789abcdef"),
                 List.of("repository-materialized:kelvinka38/metatron-workforce@" + SHA), Instant.now());
 
         CognitiveWorkerRuntime.Reflection reflection =
@@ -48,7 +48,7 @@ class GeneralCognitiveWorkerSourceIdentityTest {
                         "sourceCommitSha", "1111111111111111111111111111111111111111",
                         "localBaselineCommitSha", BASELINE,
                         "materializedFiles", "321",
-                        "workspaceRef", "objective-workspace:0123456789abcdef0123456789abcdef"),
+                        "workspaceRef", "execution-workspace:0123456789abcdef0123456789abcdef"),
                 List.of(), Instant.now());
 
         CognitiveWorkerRuntime.Reflection reflection =
@@ -78,7 +78,7 @@ class GeneralCognitiveWorkerSourceIdentityTest {
                         "sourceCommitSha", SHA,
                         "localBaselineCommitSha", BASELINE,
                         "materializedFiles", "321",
-                        "workspaceRef", "objective-workspace:0123456789abcdef0123456789abcdef"),
+                        "workspaceRef", "execution-workspace:0123456789abcdef0123456789abcdef"),
                 List.of(), Instant.now());
 
         CognitiveWorkerRuntime.Reflection reflection =
