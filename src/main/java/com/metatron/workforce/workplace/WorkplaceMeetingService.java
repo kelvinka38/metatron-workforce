@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 @Service
 public final class WorkplaceMeetingService {
     private static final Pattern FOLLOW_UP_REFERENCE = Pattern.compile("meeting-follow-up:(meeting:[a-zA-Z0-9._:-]+)");
-    private static final Pattern WORKER_REFERENCE = Pattern.compile("\\b((?:worker:[a-zA-Z0-9._:-]+|WORKER-[a-zA-Z0-9._:-]+))\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern WORKER_REFERENCE = Pattern.compile("(?<![a-zA-Z0-9_./:-])((?:worker:[a-zA-Z0-9._:-]+|WORKER-[a-zA-Z0-9._:-]+))\\b", Pattern.CASE_INSENSITIVE);
     private final PersistentMeetingStore store;
     private final ExecutionObjectiveHandoff executionObjectiveHandoff;
     private final MeetingWorkerDirectory workerDirectory;
@@ -526,8 +526,8 @@ public final class WorkplaceMeetingService {
                 || lower.contains("list active worker")
                 || lower.contains("show active workers")
                 || lower.contains("show active worker")
-                || lower.contains("worker ids")
-                || lower.contains("worker id")
+                || lower.equals("worker ids")
+                || lower.equals("worker id")
                 || lower.contains("danh sach worker")
                 || lower.contains("cac worker")
                 || lower.contains("worker dang hoat dong")
