@@ -642,7 +642,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 || semantic.contains("cleanup") || semantic.contains("terminate")
                 || semantic.contains("maintenance session");
         return List.of(new ExecutionWorkSpec(
-                "host-commander-execution", normalized.objective(), normalized.target(), HOST_COMMANDER, List.of(),
+                "host-commander-execution", normalized.objective(), "host:metatron-production", HOST_COMMANDER, List.of(),
                 mutating ? ExecutionWorkSpec.Consequence.MUTATING : ExecutionWorkSpec.Consequence.READ_ONLY,
                 List.of("Requested Metatron host operation completes through the governed Host Commander and is independently verified"),
                 List.of("host-commander broker execution evidence", "Host Commander security boundaries remain fail-closed")));
