@@ -354,6 +354,47 @@ final class ExecutionWorkPlannerTest {
     }
 
     @Test
+    void telegramGeneralEngineeringProhibitionsBindDeterministicallyWithoutHostCommander() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("bounded repository workspace work must not reach frontier planning");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        String sha = "a1fdf79af04b35620615b1d60bc7d4635bdf1be9";
+        String objective = "Take ownership of one Objective: using repository kelvinka38/metatron-workforce at exact source SHA "
+                + sha + ", materialize that exact source, create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md "
+                + "with the exact UTF-8 content source_sha=" + sha + ", run the repository test suite, stage only that proof file, "
+                + "create one local Git commit, then verify the resulting commit and Git status.";
+        NormalizedRequest normalized = new NormalizedRequest(
+                objective,
+                "kelvinka38/metatron-workforce",
+                List.of(objective),
+                IntelligenceDepth.DEEP,
+                "durable evidence for materialization, file mutation, test success, local commit, and final verification",
+                List.of(),
+                List.of("Do not push, publish a PR, merge, or deploy"),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.AUDIT, AnalyticalProtocolType.IMPROVEMENT),
+                DeterministicCapability.NONE, List.of(), List.of(), false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-telegram-general-engineering", normalized,
+                List.of("execution.general.workspace", "host.commander.execute"));
+
+        assertEquals(0, calls.get());
+        assertEquals(List.of("general-snapshot", "general-file-write", "general-test", "general-local-commit"),
+                plan.stream().map(ExecutionWorkSpec::stepId).toList());
+        assertTrue(plan.stream().allMatch(step -> step.requiredCapability().equals("execution.general.workspace")));
+        assertTrue(plan.stream().noneMatch(step -> step.requiredCapability().equals("host.commander.execute")));
+    }
+
+    @Test
     void gatewayDirectorAppointmentBindsWithoutFrontierPlanning() {
         AtomicInteger calls = new AtomicInteger();
         LlmProviderClient google = new LlmProviderClient() {
