@@ -109,6 +109,8 @@ services:
       METATRON_MANAGEMENT_STATE_PATH: "${METATRON_MANAGEMENT_STATE_PATH:-/var/lib/metatron-workforce/management-state.json}"
       METATRON_WORKFORCE_CORE_STATE_PATH: "${METATRON_WORKFORCE_CORE_STATE_PATH:-/var/lib/metatron-workforce/workforce-core-state.json}"
       METATRON_RUNTIME_EVIDENCE_DIR: "${METATRON_RUNTIME_EVIDENCE_DIR:-/var/lib/metatron-workforce/runtime-evidence}"
+      METATRON_COMMANDER_SSH_KEY: "${METATRON_COMMANDER_SSH_KEY:-/run/secrets/metatron_commander_ed25519}"
+      METATRON_COMMANDER_SSH_TARGET: "${METATRON_COMMANDER_SSH_TARGET:-metatron-mcp@host.docker.internal}"
       METATRON_INFERENCE_LEDGER_PATH: "${METATRON_INFERENCE_LEDGER_PATH:-/var/lib/metatron-workforce/inference-ledger.jsonl}"
       METATRON_COGNITION_CAPACITY_EVENT_PATH: "${METATRON_COGNITION_CAPACITY_EVENT_PATH:-/var/lib/metatron-workforce/cognition-capacity-events.jsonl}"
       METATRON_COGNITION_URL: "${METATRON_COGNITION_URL:-}"
@@ -154,6 +156,7 @@ services:
       - workforce-state:/var/lib/metatron-workforce
       - workforce-objective-workspaces:/var/lib/metatron-workforce/objective-workspaces
       - workforce-execution-workspaces:/var/lib/metatron/executions
+      - /opt/metatron/workforce-commander/id_ed25519:/run/secrets/metatron_commander_ed25519:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null"]
       interval: 2s
