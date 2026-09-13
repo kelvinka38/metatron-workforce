@@ -2,6 +2,7 @@ package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.execution.ExecutionAdmissionService;
+import com.metatron.workforce.execution.governance.GovernanceDeniedException;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import org.junit.jupiter.api.Test;
 
@@ -75,6 +76,31 @@ class GovernedAutonomousExecutionCapabilityTest {
         assertTrue(core.allAssignments().isEmpty());
         assertTrue(core.allCapacityReservations().isEmpty());
         assertEquals(1.0, core.remainingCapacity("worker-a"), 0.000001);
+    }
+
+    @Test
+    void brokerGovernedCommanderMutationBypassesLegacyUnboundAdmissionButStillRequiresDurableAttempt() {
+        WorkforceCoreService core = seededCore("worker-a", 1.0);
+        core.attestCapability("worker-a", HostCommanderAutonomousCapability.CAPABILITY, 1.0, "evidence:commander");
+        AtomicInteger effects = new AtomicInteger();
+        AutonomousExecutionCapability delegate = new TestCapability("worker-a") {
+            @Override public String capabilityRef() { return HostCommanderAutonomousCapability.CAPABILITY; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                effects.incrementAndGet();
+                return success(request, "commander-effect");
+            }
+        };
+        GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
+                delegate, core, new ExecutionAdmissionService(), CLOCK, Duration.ZERO);
+        var request = new AutonomousExecutionCapability.CapabilityRequest(
+                "human:primary", "org-metatron", "objective-commander",
+                new ExecutionWorkSpec("commander-step", "Verify production operation", "host:metatron-production",
+                        HostCommanderAutonomousCapability.CAPABILITY, List.of(), ExecutionWorkSpec.Consequence.MUTATING));
+
+        GovernanceDeniedException failure = assertThrows(GovernanceDeniedException.class, () -> governed.execute(request));
+
+        assertTrue(failure.getMessage().contains("durable attempt/fencing"));
+        assertEquals(0, effects.get());
     }
 
     @Test
