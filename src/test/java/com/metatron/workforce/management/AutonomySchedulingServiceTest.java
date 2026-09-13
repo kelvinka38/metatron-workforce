@@ -79,6 +79,24 @@ class AutonomySchedulingServiceTest {
     }
 
     @Test
+    void selectedObjectiveOwnerIsPreferredAsActualPerformerWhenEligible() {
+        Instant now = Instant.parse("2026-08-31T12:15:00Z");
+        WorkforceCoreService core = new WorkforceCoreService();
+        addWorker(core, "worker-a", 1.0);
+        addWorker(core, "worker-b", 1.0);
+        AutonomySchedulingService scheduler = new AutonomySchedulingService(
+                core, safety(now), new InMemoryAutonomySchedulingStateStore(), 4);
+        AutonomousExecutionCapability capability = capability();
+
+        AutonomySchedulingDecision decision = scheduler.decide(
+                "objective-owner", 1,
+                List.of(node("step-owner", ExecutionWorkSpec.Consequence.READ_ONLY)),
+                Map.of(capability.capabilityRef(), capability), "worker-b", now);
+
+        assertEquals("worker-b", decision.projectedWorkerByStep().get("step-owner"));
+    }
+
+    @Test
     void absentCapacityAllowsOnlyOneStaffingBootstrapPerCapability() {
         Instant now = Instant.parse("2026-08-31T12:20:00Z");
         WorkforceCoreService core = new WorkforceCoreService();

@@ -43,7 +43,22 @@ public final class AutonomySchedulingService {
             List<DurableWorkGraph.Node> readyNodes,
             Map<String, AutonomousExecutionCapability> capabilities,
             Instant at) {
+        return decide(objectiveId, graphVersion, readyNodes, capabilities, "", at);
+    }
+
+    /**
+     * Prefer the already-selected Objective owner when that Worker is genuinely eligible for the Work.
+     * Generic/head-owned Objectives still delegate normally because an ineligible owner is ignored.
+     */
+    public synchronized AutonomySchedulingDecision decide(
+            String objectiveId,
+            int graphVersion,
+            List<DurableWorkGraph.Node> readyNodes,
+            Map<String, AutonomousExecutionCapability> capabilities,
+            String preferredWorkerId,
+            Instant at) {
         require(objectiveId, "objectiveId");
+        String preferredWorker = preferredWorkerId == null ? "" : preferredWorkerId.trim();
         if (graphVersion < 1) throw new IllegalArgumentException("graphVersion must be positive");
         Objects.requireNonNull(readyNodes, "readyNodes");
         Objects.requireNonNull(capabilities, "capabilities");
@@ -110,7 +125,13 @@ public final class AutonomySchedulingService {
 
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
                             capability.capabilityRef(), capability.minimumCapabilityLevel(), requiredCapacity, at)
-                    .stream().filter(worker -> capability.supportsWorker(worker.workerId(), node.spec())).toList();
+                    .stream()
+                    .filter(worker -> capability.supportsWorker(worker.workerId(), node.spec()))
+                    .sorted(Comparator
+                            .comparingInt((WorkforceCoreService.Worker worker) ->
+                                    worker.workerId().equals(preferredWorker) ? 0 : 1)
+                            .thenComparing(WorkforceCoreService.Worker::workerId))
+                    .toList();
             WorkforceCoreService.Worker projectedWorker = null;
             for (WorkforceCoreService.Worker candidate : eligible) {
                 double projectedRemaining = projectedRemainingCapacity.computeIfAbsent(
