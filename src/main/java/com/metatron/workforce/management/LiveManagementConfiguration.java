@@ -12,6 +12,7 @@ import com.metatron.workforce.execution.governance.GovernanceAttemptBindingServi
 import com.metatron.workforce.execution.governance.GovernancePlanService;
 import com.metatron.workforce.execution.governance.GovernanceStateStore;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
+import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import com.metatron.workforce.observation.FileObservationStateStore;
 import com.metatron.workforce.observation.ObservationClosureService;
 import com.metatron.workforce.observation.ObservationStateStore;
@@ -221,22 +222,47 @@ public class LiveManagementConfiguration {
             RuntimeCapacityCoordinator runtimeCapacity,
             GovernancePlanService governancePlans,
             GovernanceAttemptBindingService governanceAttempts,
-            ExecutionGate executionGate) {
+            ExecutionGate executionGate,
+            WorkerIntelligenceService workerIntelligence,
+            @Value("${METATRON_COGNITION_ENABLED:false}") boolean cognitionEnabled) {
         Clock clock = Clock.systemUTC();
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
-                .map(capability -> (AutonomousExecutionCapability) new ResourceScheduledAutonomousExecutionCapability(
-                        capability, resourceScheduling, clock))
-                .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
-                        capability, core, admission, clock, staffing, attempts, runtimeCapacity,
-                        governancePlans, governanceAttempts, executionGate))
-                .map(capability -> (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
-                        capability, safety, clock))
+                .map(capability -> {
+                    AutonomousExecutionCapability cognitionBound = cognitionBoundary(
+                            capability, workerIntelligence, cognitionEnabled);
+                    AutonomousExecutionCapability executionBound;
+                    if (HostCommanderAutonomousCapability.CAPABILITY.equals(capability.capabilityRef())) {
+                        // Commander is already the host effect security boundary. Bind the durable
+                        // scheduler-selected Worker once per Work and keep ExecutionAttempt/fencing,
+                        // but do not restaff, reserve capacity, create a second Assignment, provision
+                        // a generic runtime, or replay SoT/admission machinery for every broker call.
+                        executionBound = new BrokerGovernedAutonomousExecutionCapability(
+                                cognitionBound, core, attempts, clock);
+                    } else {
+                        AutonomousExecutionCapability resourceBound = new ResourceScheduledAutonomousExecutionCapability(
+                                cognitionBound, resourceScheduling, clock);
+                        executionBound = new GovernedAutonomousExecutionCapability(
+                                resourceBound, core, admission, clock, staffing, attempts, runtimeCapacity,
+                                governancePlans, governanceAttempts, executionGate);
+                    }
+                    return (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
+                            executionBound, safety, clock);
+                })
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
                 management, planner, governedCapabilities, coordination, observationClosure, safety, clock);
         runner.configureScheduling(scheduling);
         runner.start();
         return runner;
+    }
+
+    static AutonomousExecutionCapability cognitionBoundary(
+            AutonomousExecutionCapability capability,
+            WorkerIntelligenceService workerIntelligence,
+            boolean cognitionEnabled) {
+        return cognitionEnabled
+                ? new CognitionBoundAutonomousExecutionCapability(capability, workerIntelligence)
+                : capability;
     }
 
     private static double positiveDouble(String name, double fallback) {
