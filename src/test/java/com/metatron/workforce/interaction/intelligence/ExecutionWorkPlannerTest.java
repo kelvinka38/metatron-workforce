@@ -238,7 +238,8 @@ final class ExecutionWorkPlannerTest {
         assertEquals(List.of("general-snapshot"), plan.get(1).dependsOn());
         assertEquals(List.of("general-file-write"), plan.get(2).dependsOn());
         assertEquals(List.of("general-test"), plan.get(3).dependsOn());
-        assertEquals("docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md", plan.get(1).target());
+        assertEquals("kelvinka38/metatron-workforce", plan.get(1).target());
+        assertEquals("kelvinka38/metatron-workforce", plan.get(3).target());
         assertTrue(plan.get(1).objective().contains("source_sha=3e86d4e2876a90c580383d5c1de48360b5049b3b"));
     }
 
@@ -285,7 +286,8 @@ final class ExecutionWorkPlannerTest {
         assertEquals(4, plan.size());
         assertEquals(List.of("general-snapshot", "general-file-write", "general-test", "general-local-commit"),
                 plan.stream().map(ExecutionWorkSpec::stepId).toList());
-        assertEquals("docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md", plan.get(1).target());
+        assertEquals("kelvinka38/metatron-workforce", plan.get(1).target());
+        assertEquals("kelvinka38/metatron-workforce", plan.get(3).target());
         assertTrue(plan.get(1).objective().contains("source_sha=" + sha));
     }
 
