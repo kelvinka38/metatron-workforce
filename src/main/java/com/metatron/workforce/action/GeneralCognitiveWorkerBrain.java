@@ -730,7 +730,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "Materialized repository mismatch: expected=" + expectedRepository
                             + " observed=" + actualRepository);
         }
-        if (!workspaceRef.startsWith("objective-workspace:") || materializedFiles < 1) {
+        if (!workspaceRef.startsWith("execution-workspace:") || materializedFiles < 1) {
             return CognitiveWorkerRuntime.Reflection.failed(
                     "Materialization evidence is incomplete: workspaceRef/files do not prove an accessible source snapshot");
         }
