@@ -267,10 +267,19 @@ class Point5WorkplaceRuntimeConformanceTest {
                 .stream().anyMatch(role -> role.equals("Head of Gateway")));
         assertFalse(service.supports("Let's have a meeting sometime."));
         assertFalse(service.supports("Finance outlook this week?"));
+        assertFalse(service.supports("Implement GET /internal/metatron/worker-proof in metatron-workforce."));
+        assertEquals(List.of(), WorkplaceMeetingService.requestedWorkerIds(
+                "Implement GET /internal/metatron/worker-proof in metatron-workforce."));
+        assertEquals(List.of("WORKER-GATEWAY-DIRECTOR"), WorkplaceMeetingService.requestedWorkerIds(
+                "Call WORKER-GATEWAY-DIRECTOR into the meeting."));
         assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("Worker active"));
         assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("active worker"));
         assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("workers active"));
         assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("worker đang hoạt động"));
+        assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("worker id"));
+        assertTrue(WorkplaceMeetingService.isWorkerDirectoryRequest("worker ids"));
+        assertFalse(WorkplaceMeetingService.isWorkerDirectoryRequest(
+                "Do not require a Worker ID. Workforce must staff the Objective itself."));
     }
 
     private static MetatronInteraction interaction(String conversationId, String externalRef, String text) {
