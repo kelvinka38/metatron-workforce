@@ -21,6 +21,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String REPOSITORY_AUDIT_READ = "repository.audit.read";
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
     private static final String GENERAL_WORKSPACE = "execution.general.workspace";
+    private static final String HOST_COMMANDER = "host.commander.execute";
     private static final String GATEWAY_DIRECTOR_APPOINTMENT = "workforce.staffing.gateway-director";
     private static final java.util.regex.Pattern EXACT_GIT_SHA =
             java.util.regex.Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
@@ -136,6 +137,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         if (!deterministicGatewayDirectorAppointment.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
             validate(deterministicGatewayDirectorAppointment);
             return deterministicGatewayDirectorAppointment;
+        }
+
+        List<ExecutionWorkSpec> deterministicHostCommanderPlan = deterministicHostCommanderWork(
+                normalized, availableExecutionCapabilities);
+        if (!deterministicHostCommanderPlan.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicHostCommanderPlan);
+            return deterministicHostCommanderPlan;
         }
 
         List<ExecutionWorkSpec> deterministicCrossRepositoryFallback = deterministicCrossRepositoryAudit(
@@ -610,6 +618,36 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     }
 
 
+    private static List<ExecutionWorkSpec> deterministicHostCommanderWork(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, HOST_COMMANDER)) return List.of();
+        if (!requestedRepositoryTargets(normalized.target()).isEmpty()) return List.of();
+        String semantic = (normalized.objective() + " " + normalized.target() + " "
+                + normalized.constraints() + " " + normalized.explicitProhibitions() + " "
+                + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean commanderIntent = semantic.contains("host commander")
+                || semantic.contains("real host")
+                || semantic.contains("metatron host")
+                || semantic.contains("commander session");
+        boolean hostEffect = semantic.contains("uptime") || semantic.contains("docker")
+                || semantic.contains("container") || semantic.contains("/tmp/metatron-commander/")
+                || semantic.contains("runtime identity") || semantic.contains("generation")
+                || semantic.contains("host file") || semantic.contains("host process")
+                || semantic.contains("host storage") || semantic.contains("host network");
+        if (!commanderIntent || !hostEffect) return List.of();
+        boolean mutating = semantic.contains("create") || semantic.contains("write")
+                || semantic.contains("patch") || semantic.contains("remove")
+                || semantic.contains("delete") || semantic.contains("restart")
+                || semantic.contains("cleanup") || semantic.contains("terminate")
+                || semantic.contains("maintenance session");
+        return List.of(new ExecutionWorkSpec(
+                "host-commander-execution", normalized.objective(), normalized.target(), HOST_COMMANDER, List.of(),
+                mutating ? ExecutionWorkSpec.Consequence.MUTATING : ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Requested Metatron host operation completes through the governed Host Commander and is independently verified"),
+                List.of("host-commander broker execution evidence", "Host Commander security boundaries remain fail-closed")));
+    }
+
     private static List<ExecutionWorkSpec> deterministicExternalResearchWork(
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities) {
@@ -618,6 +656,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
 
         String semantic = (normalized.objective() + " " + normalized.target() + " "
                 + normalized.constraints() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        boolean hostOperation = (semantic.contains("host commander") || semantic.contains("real host") || semantic.contains("metatron host"))
+                && (semantic.contains("uptime") || semantic.contains("docker") || semantic.contains("container")
+                || semantic.contains("/tmp/metatron-commander/") || semantic.contains("runtime identity"));
+        if (hostOperation) return List.of();
         boolean researchIntent = semantic.contains("research")
                 || semantic.contains("paper") || semantic.contains("publication")
                 || semantic.contains("report") || semantic.contains("standard")

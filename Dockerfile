@@ -3,7 +3,10 @@ ARG METATRON_COMMIT_SHA=unknown
 LABEL org.opencontainers.image.title="Metatron Workforce" \
       org.opencontainers.image.revision="${METATRON_COMMIT_SHA}"
 WORKDIR /app
-RUN useradd --system --create-home --uid 10001 workforce
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --create-home --uid 10001 workforce
 COPY build/libs/metatron-workforce-0.1.0.jar /app/app.jar
 USER 10001
 EXPOSE 8080
