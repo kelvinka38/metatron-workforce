@@ -33,6 +33,10 @@ public final class SafetyGovernedAutonomousExecutionCapability implements Autono
     @Override public boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
         return delegate.supportsWorker(workerId, workSpec);
     }
+    @Override public boolean supportsWork(ExecutionWorkSpec workSpec) { return delegate.supportsWork(workSpec); }
+    @Override public boolean requiresIndependentObservation(ExecutionWorkSpec workSpec) {
+        return delegate.requiresIndependentObservation(workSpec);
+    }
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {

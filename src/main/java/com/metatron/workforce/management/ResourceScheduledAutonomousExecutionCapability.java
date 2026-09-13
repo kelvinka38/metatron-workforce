@@ -55,6 +55,12 @@ public final class ResourceScheduledAutonomousExecutionCapability implements Aut
     @Override public boolean supportsWorker(String workerId, com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec workSpec) {
         return delegate.supportsWorker(workerId, workSpec);
     }
+    @Override public boolean supportsWork(com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec workSpec) {
+        return delegate.supportsWork(workSpec);
+    }
+    @Override public boolean requiresIndependentObservation(com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec workSpec) {
+        return delegate.requiresIndependentObservation(workSpec);
+    }
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
