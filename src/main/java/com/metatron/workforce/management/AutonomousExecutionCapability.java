@@ -28,6 +28,24 @@ public interface AutonomousExecutionCapability {
         return supportsWorker(workerId);
     }
 
+    /**
+     * Executable-domain contract. Planning may name a capability only when the real adapter
+     * confirms that the proposed Work is expressible by that capability.
+     */
+    default boolean supportsWork(ExecutionWorkSpec workSpec) {
+        Objects.requireNonNull(workSpec, "workSpec");
+        return true;
+    }
+
+    /**
+     * Whether successful capability evidence still requires a separate outcome Observation pass.
+     * Self-verifying deterministic adapters may return false; outcome-oriented effects should keep true.
+     */
+    default boolean requiresIndependentObservation(ExecutionWorkSpec workSpec) {
+        Objects.requireNonNull(workSpec, "workSpec");
+        return true;
+    }
+
     CapabilityResult execute(CapabilityRequest request);
 
     record CapabilityRequest(
@@ -41,6 +59,7 @@ public interface AutonomousExecutionCapability {
             String dispatchReference,
             int dispatchAttempt,
             String schedulingDecisionReference,
+            String scheduledWorkerId,
             String executionAttemptId,
             long executionAttemptFencingToken,
             GovernanceExecutionContext governanceContext) {
@@ -54,6 +73,7 @@ public interface AutonomousExecutionCapability {
             authorizationReference = clean(authorizationReference);
             dispatchReference = clean(dispatchReference);
             schedulingDecisionReference = clean(schedulingDecisionReference);
+            scheduledWorkerId = clean(scheduledWorkerId);
             executionAttemptId = clean(executionAttemptId);
             if (dispatchAttempt < 0) throw new IllegalArgumentException("dispatchAttempt must not be negative");
             if (executionAttemptFencingToken < 0) throw new IllegalArgumentException("executionAttemptFencingToken must not be negative");
@@ -70,7 +90,20 @@ public interface AutonomousExecutionCapability {
                                  GovernanceExecutionContext governanceContext) {
             this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
                     assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
-                    "", "", 0, governanceContext);
+                    "", "", "", 0, governanceContext);
+        }
+
+        /** Source-compatible previous canonical shape with scheduling and execution-attempt identity. */
+        public CapabilityRequest(String humanId, String organizationContextId, String objectiveId,
+                                 ExecutionWorkSpec workSpec, String allocatedWorkerId,
+                                 String assignmentReference, String authorizationReference,
+                                 String dispatchReference, int dispatchAttempt,
+                                 String schedulingDecisionReference,
+                                 String executionAttemptId, long executionAttemptFencingToken,
+                                 GovernanceExecutionContext governanceContext) {
+            this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
+                    assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
+                    schedulingDecisionReference, "", executionAttemptId, executionAttemptFencingToken, governanceContext);
         }
 
         /** Source-compatible full shape with explicit execution attempt from the previous contract. */
@@ -82,7 +115,7 @@ public interface AutonomousExecutionCapability {
                                  GovernanceExecutionContext governanceContext) {
             this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
                     assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
-                    "", executionAttemptId, executionAttemptFencingToken, governanceContext);
+                    "", "", executionAttemptId, executionAttemptFencingToken, governanceContext);
         }
 
         /** Source-compatible primary-shape constructor used by existing callers. */
@@ -92,14 +125,14 @@ public interface AutonomousExecutionCapability {
                                  String dispatchReference, int dispatchAttempt) {
             this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
                     assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
-                    "", "", 0, null);
+                    "", "", "", 0, null);
         }
 
         /** Compatibility request; production delegates receive allocation and dispatch bindings. */
         public CapabilityRequest(String humanId, String organizationContextId, String objectiveId,
                                  ExecutionWorkSpec workSpec) {
             this(humanId, organizationContextId, objectiveId, workSpec,
-                    "", "", "", "", 0, "", "", 0, null);
+                    "", "", "", "", 0, "", "", "", 0, null);
         }
 
         /** Compatibility constructor for callers that only bind allocation. */
@@ -107,13 +140,13 @@ public interface AutonomousExecutionCapability {
                                  ExecutionWorkSpec workSpec, String allocatedWorkerId,
                                  String assignmentReference, String authorizationReference) {
             this(humanId, organizationContextId, objectiveId, workSpec, allocatedWorkerId,
-                    assignmentReference, authorizationReference, "", 0, "", "", 0, null);
+                    assignmentReference, authorizationReference, "", 0, "", "", "", 0, null);
         }
 
         public CapabilityRequest withAllocation(String workerId, String assignmentRef, String authorizationRef) {
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
                     workerId, assignmentRef, authorizationRef, dispatchReference, dispatchAttempt,
-                    schedulingDecisionReference, executionAttemptId, executionAttemptFencingToken, governanceContext);
+                    schedulingDecisionReference, scheduledWorkerId, executionAttemptId, executionAttemptFencingToken, governanceContext);
         }
 
         public CapabilityRequest withDispatch(String dispatchRef, int attempt) {
@@ -121,14 +154,18 @@ public interface AutonomousExecutionCapability {
             if (attempt < 1) throw new IllegalArgumentException("dispatch attempt must be positive");
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
                     allocatedWorkerId, assignmentReference, authorizationReference, dispatchRef, attempt,
-                    schedulingDecisionReference, executionAttemptId, executionAttemptFencingToken, governanceContext);
+                    schedulingDecisionReference, scheduledWorkerId, executionAttemptId, executionAttemptFencingToken, governanceContext);
         }
 
         public CapabilityRequest withSchedulingDecision(String decisionRef) {
+            return withSchedulingDecision(decisionRef, scheduledWorkerId);
+        }
+
+        public CapabilityRequest withSchedulingDecision(String decisionRef, String workerId) {
             if (decisionRef == null || decisionRef.isBlank()) throw new IllegalArgumentException("decisionRef required");
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
                     allocatedWorkerId, assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
-                    decisionRef, executionAttemptId, executionAttemptFencingToken, governanceContext);
+                    decisionRef, clean(workerId), executionAttemptId, executionAttemptFencingToken, governanceContext);
         }
 
         public CapabilityRequest withExecutionAttempt(String attemptId, long fencingToken) {
@@ -136,13 +173,13 @@ public interface AutonomousExecutionCapability {
             if (fencingToken < 1) throw new IllegalArgumentException("fencingToken must be positive");
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
                     allocatedWorkerId, assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
-                    schedulingDecisionReference, attemptId, fencingToken, governanceContext);
+                    schedulingDecisionReference, scheduledWorkerId, attemptId, fencingToken, governanceContext);
         }
 
         public CapabilityRequest withGovernance(GovernanceExecutionContext context) {
             return new CapabilityRequest(humanId, organizationContextId, objectiveId, workSpec,
                     allocatedWorkerId, assignmentReference, authorizationReference, dispatchReference, dispatchAttempt,
-                    schedulingDecisionReference, executionAttemptId, executionAttemptFencingToken,
+                    schedulingDecisionReference, scheduledWorkerId, executionAttemptId, executionAttemptFencingToken,
                     Objects.requireNonNull(context, "context"));
         }
 
