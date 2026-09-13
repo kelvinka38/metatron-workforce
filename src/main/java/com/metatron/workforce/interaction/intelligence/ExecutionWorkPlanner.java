@@ -770,7 +770,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 "general-file-write",
                 "Create or replace only " + workspacePath + " with a short proof containing exact source SHA "
                         + sourceSha + ". Exact UTF-8 content: " + proofContent.trim(),
-                workspacePath,
+                repository,
                 GENERAL_WORKSPACE,
                 List.of(snapshot.stepId()),
                 ExecutionWorkSpec.Consequence.MUTATING,
@@ -791,7 +791,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 "general-local-commit",
                 "Stage only " + workspacePath + " and create one local Git commit as the immutable work product; "
                         + "verify the commit and do not push or modify remote repository state",
-                workspacePath,
+                repository,
                 GENERAL_WORKSPACE,
                 List.of(tests.stepId()),
                 ExecutionWorkSpec.Consequence.MUTATING,

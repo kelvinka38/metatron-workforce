@@ -96,7 +96,7 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                 "general-file-write",
                 "Create or replace only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md with a short proof containing exact source SHA "
                         + SHA + ". Exact UTF-8 content: source_sha=" + SHA,
-                "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                "kelvinka38/metatron-workforce",
                 "execution.general.workspace",
                 List.of("general-snapshot"),
                 ExecutionWorkSpec.Consequence.MUTATING,
@@ -664,8 +664,8 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     private static ExecutionWorkSpec stageAndCommitWork() {
         return new ExecutionWorkSpec(
                 "stage_and_commit",
-                "Stage and commit the proof file locally",
-                "docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md",
+                "Stage only docs/AUTONOMY_CLOSURE/GS2_GENERAL_RUNTIME_PROOF.md and commit the proof file locally",
+                "kelvinka38/metatron-workforce",
                 "execution.general.workspace",
                 List.of("run_tests"),
                 ExecutionWorkSpec.Consequence.MUTATING,

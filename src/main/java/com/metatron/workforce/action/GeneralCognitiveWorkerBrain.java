@@ -17,6 +17,8 @@ import java.util.regex.Pattern;
 public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime.Brain {
     private static final Pattern OWNER_REPOSITORY = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
     private static final Pattern EXACT_GIT_SHA = Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
+    private static final Pattern WORKSPACE_FILE_PATH = Pattern.compile(
+            "(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\\.[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.-])");
     private static final Pattern EXACT_TEXT_REPLACEMENT = Pattern.compile(
             "(?is)\\bread\\s+([^\\s]+)\\s+and\\s+replace\\s+exactly\\s+one\\s+.*?'([^'\\r\\n]+)'\\s+with\\s+'([^'\\r\\n]+)'");
     private static final Pattern RESEARCH_TOP_N = Pattern.compile("(?i)\\b(?:top\\s*|exactly\\s+)(\\d{1,2})\\b");
@@ -299,7 +301,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (!requiresExactShaFileWrite(context)) return null;
         if (successfulAction(context, "workspace.file.write")) return null;
 
-        String path = governedStagePath(context.workSpec().target());
+        String path = governedMutationPath(context);
         String sourceSha = exactRef(context);
         if (path.isBlank() || sourceSha.isBlank()) return null;
         return new CognitiveWorkerRuntime.Thought(
@@ -311,7 +313,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static boolean requiresExactShaFileWrite(CognitiveWorkerRuntime.CognitiveContext context) {
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
-        String path = governedStagePath(context.workSpec().target());
+        String path = governedMutationPath(context);
         if (path.isBlank()) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return !exactRef(context).isBlank()
@@ -627,7 +629,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static String governedMutationPath(CognitiveWorkerRuntime.CognitiveContext context) {
         ExactTextReplacement replacement = exactTextReplacement(context);
         if (replacement != null) return replacement.path();
-        return governedStagePath(context.workSpec().target());
+        String direct = governedStagePath(context.workSpec().target());
+        if (!direct.isBlank()) return direct;
+        Matcher matcher = WORKSPACE_FILE_PATH.matcher(workText(context));
+        while (matcher.find()) {
+            String candidate = matcher.group(1).trim();
+            if (safeWorkspaceMutationPath(candidate)) return candidate;
+        }
+        return "";
     }
 
     private static boolean requiresWorkspaceSourceMutation(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -730,7 +739,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "Materialized repository mismatch: expected=" + expectedRepository
                             + " observed=" + actualRepository);
         }
-        if (!workspaceRef.startsWith("objective-workspace:") || materializedFiles < 1) {
+        if (!workspaceRef.startsWith("execution-workspace:") || materializedFiles < 1) {
             return CognitiveWorkerRuntime.Reflection.failed(
                     "Materialization evidence is incomplete: workspaceRef/files do not prove an accessible source snapshot");
         }
