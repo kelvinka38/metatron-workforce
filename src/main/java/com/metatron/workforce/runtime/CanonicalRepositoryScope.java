@@ -1,28 +1,41 @@
 package com.metatron.workforce.runtime;
 
 import java.util.Locale;
-import java.util.Set;
+import java.util.regex.Pattern;
 
-/** Canonical repository scope approved for the current Metatron institutional repository control plane. */
+/**
+ * Canonical repository identifier boundary for the Repository Control Plane.
+ *
+ * <p>This class intentionally performs syntax/normalization checks only. Repository authorization
+ * is decided server-side by the provisioned GitHub credential when the control plane resolves or
+ * materializes the repository. Workers, MCP/model clients and sandboxes never receive that
+ * credential.</p>
+ */
 public final class CanonicalRepositoryScope {
-    public static final Set<String> REPOSITORIES = Set.of(
-            "kelvinka38/universal",
-            "kelvinka38/metatron-institution",
-            "kelvinka38/metatron-workforce",
-            "kelvinka38/bios");
+    private static final Pattern REPOSITORY = Pattern.compile(
+            "^[a-z0-9][a-z0-9_.-]{0,99}/[a-z0-9][a-z0-9_.-]{0,99}$");
 
     private CanonicalRepositoryScope() {}
 
+    /** Compatibility name retained for existing call sites; this is no longer a static allowlist. */
     public static boolean allowed(String repository) {
-        if (repository == null) return false;
-        String value = normalize(repository);
-        return REPOSITORIES.contains(value);
+        try {
+            requireAllowed(repository);
+            return true;
+        } catch (RuntimeException denied) {
+            return false;
+        }
     }
 
+    /**
+     * Require a safe GitHub owner/repository identifier. Access is checked later by the server-side
+     * Repository Control Plane credential, not by a hard-coded repository list.
+     */
     public static String requireAllowed(String repository) {
         String value = normalize(repository);
-        if (!REPOSITORIES.contains(value)) {
-            throw new SecurityException("repository-outside-canonical-scope:" + value);
+        if (value.length() > 200 || !REPOSITORY.matcher(value).matches()
+                || value.contains("..") || value.contains("//")) {
+            throw new SecurityException("repository-identifier-invalid:" + value);
         }
         return value;
     }

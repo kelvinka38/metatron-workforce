@@ -3,6 +3,7 @@
     {
       "manifestId": "metatron-founder-repository-coding",
       "targetPatterns": [
+        "repository:*",
         "kelvinka38/universal",
         "https://github.com/kelvinka38/universal",
         "kelvinka38/metatron-institution",
