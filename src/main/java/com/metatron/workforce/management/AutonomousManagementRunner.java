@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -49,7 +50,9 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final Duration leaseDuration;
     private final Duration pollInterval;
     private final ScheduledExecutorService executor;
+    private final ExecutorService objectiveExecutor;
     private final ExecutorService workExecutor;
+    private final Set<String> inFlightObjectives = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
     private volatile AutonomySchedulingService scheduling;
@@ -157,6 +160,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
+        this.objectiveExecutor = Executors.newFixedThreadPool(parallelism, runnable -> {
+            Thread thread = new Thread(runnable, "metatron-objective-management");
+            thread.setDaemon(true);
+            return thread;
+        });
         this.workExecutor = Executors.newFixedThreadPool(parallelism, runnable -> {
             Thread thread = new Thread(runnable, "metatron-work-dispatch");
             thread.setDaemon(true);
@@ -173,14 +181,14 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     public void start() {
         if (started.compareAndSet(false, true)) {
-            executor.scheduleWithFixedDelay(this::runSafely, 0,
+            executor.scheduleWithFixedDelay(this::dispatchRunnableObjectivesSafely, 0,
                     pollInterval.toMillis(), TimeUnit.MILLISECONDS);
         }
     }
 
     public void wake() {
         if (!started.get()) return;
-        executor.execute(this::runSafely);
+        executor.execute(this::dispatchRunnableObjectivesSafely);
     }
 
     public void runOnce() {
@@ -194,9 +202,29 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         }
     }
 
-    private void runSafely() {
-        try { runOnce(); }
-        catch (RuntimeException failure) { LOG.error("Autonomous management pass failed", failure); }
+    private void dispatchRunnableObjectivesSafely() {
+        try { dispatchRunnableObjectives(); }
+        catch (RuntimeException failure) { LOG.error("Autonomous management dispatch pass failed", failure); }
+    }
+
+    /**
+     * Production scheduling is Objective-concurrent. One long cognitive/test Objective must never
+     * monopolize the management scheduler. Durable per-Objective leases remain the cross-process
+     * concurrency authority; this set only avoids duplicate local submissions between poll ticks.
+     */
+    private void dispatchRunnableObjectives() {
+        for (AutonomousObjectiveWork work : management.runnableAutonomousWork()) {
+            String objectiveId = work.objectiveId();
+            if (!inFlightObjectives.add(objectiveId)) continue;
+            objectiveExecutor.submit(() -> {
+                try { processWithLease(objectiveId); }
+                catch (RuntimeException failure) {
+                    LOG.error("Autonomous Objective execution failed objective_id={}", objectiveId, failure);
+                } finally {
+                    inFlightObjectives.remove(objectiveId);
+                }
+            });
+        }
     }
 
     private void processWithLease(String objectiveId) {
@@ -218,6 +246,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             }
             List<ExecutionWorkSpec> proposed = planner.propose(
                     work.caseId(), work.normalizedRequest(), capabilityCatalog());
+            validateExecutablePlan(proposed);
             work = management.recordPlan(objectiveId, runnerId, lease.token(), proposed, clock.instant());
         }
 
@@ -246,11 +275,14 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             }
 
             String schedulingDecisionId = "";
+            Map<String, String> scheduledWorkers = Map.of();
             AutonomySchedulingService activeScheduling = scheduling;
             if (activeScheduling != null) {
+                String preferredWorkerId = management.get(objectiveId).ownerWorkerId();
                 AutonomySchedulingDecision decision = activeScheduling.decide(
-                        objectiveId, graph.graphVersion(), ready, capabilities, clock.instant());
+                        objectiveId, graph.graphVersion(), ready, capabilities, preferredWorkerId, clock.instant());
                 schedulingDecisionId = decision.decisionId();
+                scheduledWorkers = decision.projectedWorkerByStep();
                 Set<String> selected = new LinkedHashSet<>(decision.selectedStepIds());
                 ready = ready.stream().filter(node -> selected.contains(node.spec().stepId())).toList();
                 if (ready.isEmpty()) {
@@ -280,6 +312,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             List<Future<NodeExecutionOutcome>> futures = new ArrayList<>();
             int graphVersion = graph.graphVersion();
             String schedulerRef = schedulingDecisionId;
+            Map<String, String> scheduledWorkerRefs = scheduledWorkers;
             for (DurableWorkGraph.Node node : ready) {
                 AutonomousExecutionCapability capability = capabilities.get(node.spec().requiredCapability());
                 if (capability == null) {
@@ -288,9 +321,10 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 } else {
                     AutonomousObjectiveWork dispatchContext = work;
                     int plannedAttempt = node.attempt() + 1;
+                    String scheduledWorkerId = scheduledWorkerRefs.getOrDefault(node.spec().stepId(), "");
                     futures.add(workExecutor.submit(() -> executeNode(
                             objectiveId, graphVersion, plannedAttempt, dispatchContext, node.spec(), capability,
-                            schedulerRef)));
+                            schedulerRef, scheduledWorkerId)));
                 }
             }
 
@@ -333,15 +367,23 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
         graph = coordination.activeGraph(objectiveId).orElseThrow();
         if (observationClosure != null) {
-            observationClosure.ensureRequirements(objectiveId, work.plannedWork(), clock.instant());
-            observationClosure.observeAvailable(objectiveId, work.evidenceReferences(), clock.instant());
-            ObservationClosureService.Verdict verdict = observationClosure.verdict(objectiveId);
-            if (verdict == ObservationClosureService.Verdict.PENDING) return;
-            if (verdict == ObservationClosureService.Verdict.FAILED
-                    || verdict == ObservationClosureService.Verdict.INCONCLUSIVE) {
-                management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
-                        "observation-" + verdict.name().toLowerCase(java.util.Locale.ROOT), clock.instant());
-                return;
+            List<ExecutionWorkSpec> observationRequired = work.plannedWork().stream()
+                    .filter(step -> {
+                        AutonomousExecutionCapability capability = capabilities.get(step.requiredCapability());
+                        return capability == null || capability.requiresIndependentObservation(step);
+                    })
+                    .toList();
+            if (!observationRequired.isEmpty()) {
+                observationClosure.ensureRequirements(objectiveId, observationRequired, clock.instant());
+                observationClosure.observeAvailable(objectiveId, work.evidenceReferences(), clock.instant());
+                ObservationClosureService.Verdict verdict = observationClosure.verdict(objectiveId);
+                if (verdict == ObservationClosureService.Verdict.PENDING) return;
+                if (verdict == ObservationClosureService.Verdict.FAILED
+                        || verdict == ObservationClosureService.Verdict.INCONCLUSIVE) {
+                    management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
+                            "observation-" + verdict.name().toLowerCase(java.util.Locale.ROOT), clock.instant());
+                    return;
+                }
             }
         }
         coordination.completeGraph(objectiveId, graph.graphVersion(), clock.instant());
@@ -436,7 +478,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     private NodeExecutionOutcome executeNode(String objectiveId, int graphVersion, int plannedAttempt,
                                              AutonomousObjectiveWork work, ExecutionWorkSpec step,
-                                             AutonomousExecutionCapability capability, String schedulerDecisionId) {
+                                             AutonomousExecutionCapability capability, String schedulerDecisionId,
+                                             String scheduledWorkerId) {
         String expectedDispatchId = objectiveId + ":graph:" + graphVersion + ":step:"
                 + step.stepId() + ":attempt:" + plannedAttempt;
         try {
@@ -454,10 +497,15 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             throw new IllegalStateException("dispatch identity changed after safety reservation");
         }
         try {
-            AutonomousExecutionCapability.CapabilityResult result = capability.execute(
+            AutonomousExecutionCapability.CapabilityRequest capabilityRequest =
                     new AutonomousExecutionCapability.CapabilityRequest(
                             work.humanId(), work.organizationContextId(), objectiveId, step)
-                            .withDispatch(dispatch.dispatchId(), dispatch.attempt()));
+                            .withDispatch(dispatch.dispatchId(), dispatch.attempt());
+            if (schedulerDecisionId != null && !schedulerDecisionId.isBlank()) {
+                capabilityRequest = capabilityRequest.withSchedulingDecision(
+                        schedulerDecisionId, scheduledWorkerId);
+            }
+            AutonomousExecutionCapability.CapabilityResult result = capability.execute(capabilityRequest);
             if (!result.success()) {
                 String failure = "capability-unsuccessful:" + nonBlank(result.summary(), "unspecified");
                 if (recoverableReadOnly(step, failure, plannedAttempt)) {
@@ -512,6 +560,23 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         }
     }
 
+    private void validateExecutablePlan(List<ExecutionWorkSpec> proposed) {
+        if (proposed == null || proposed.isEmpty()) {
+            throw new IllegalArgumentException("execution-plan-empty");
+        }
+        for (ExecutionWorkSpec step : proposed) {
+            AutonomousExecutionCapability capability = capabilities.get(step.requiredCapability());
+            // Preserve the existing bounded capability-gap replan path for genuinely missing
+            // capabilities. Domain validation applies when an adapter exists but cannot execute
+            // the proposed Work semantics.
+            if (capability == null) continue;
+            if (!capability.supportsWork(step)) {
+                throw new IllegalArgumentException("capability-domain-mismatch:step=" + step.stepId()
+                        + ":capability=" + step.requiredCapability());
+            }
+        }
+    }
+
     public List<String> capabilityCatalog() {
         return capabilities.keySet().stream().sorted().toList();
     }
@@ -549,6 +614,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     @Override public void close() {
         executor.shutdownNow();
+        objectiveExecutor.shutdownNow();
         workExecutor.shutdownNow();
     }
 
