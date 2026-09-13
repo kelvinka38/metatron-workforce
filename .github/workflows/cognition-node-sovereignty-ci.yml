@@ -1,0 +1,49 @@
+name: Cognition Node Sovereignty CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cognition-node/**'
+      - 'src/main/java/com/metatron/workforce/interaction/intelligence/**'
+      - 'src/test/java/com/metatron/workforce/interaction/intelligence/**'
+      - '.github/workflows/cognition-node-sovereignty-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sovereignty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Python contract tests
+        run: python3 -m unittest cognition-node/test_server.py -v
+      - name: Compile node source
+        run: python3 -m py_compile cognition-node/server.py cognition-node/test_server.py
+      - name: Enforce no frontier secret injection into Cognition Node compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          C=cognition-node/docker-compose.yml
+          ! grep -q 'OPENAI_API_KEY' "$C"
+          ! grep -q 'GEMINI_API_KEY' "$C"
+          ! grep -q 'ANTHROPIC_API_KEY' "$C"
+          grep -q 'COGNITION_AUTH_TOKEN' "$C"
+          grep -q 'COGNITION_BACKEND_URL' "$C"
+          grep -q 'read_only: true' "$C"
+          echo 'COGNITION_NODE_SECRET_BOUNDARY=PASS'
+      - name: Build Cognition Node image
+        run: docker build -f cognition-node/Dockerfile -t metatron-cognition-node:ci .
+      - name: Static sovereignty markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          S=cognition-node/server.py
+          grep -q 'external_frontier_credentials_forbidden' "$S"
+          grep -q 'cognition_backend_must_be_private' "$S"
+          grep -q 'computeOwner.*METATRON_OWNED' "$S"
+          grep -q 'Never claim an external effect without evidence' "$S"
+          echo 'COGNITION_NODE_PRIVATE_PROVIDER_NEUTRAL_CONTRACT=PASS'
