@@ -87,15 +87,18 @@ jobs:
           echo "PRODUCTION_RELEASE_SHA=$GITHUB_SHA"
           echo 'WORKFORCE_EXACT_SHA_RELEASE=PASS'
 
-      - name: Promote MCP G17 through fenced broker and prove dynamic private repository access
+      - name: Promote MCP G18 Host Commander through fenced broker
         shell: bash
-        env:
-          MCP_DYNAMIC_REPOSITORY_ACCEPTANCE: kelvinka38/archive
         run: |
           set -euo pipefail
-          bash -n scripts/mcp/release-dynamic-repository-g17.sh
-          node --check scripts/mcp/patch-dynamic-repository-g17.mjs
-          # This is the repository's single approved automatic self-hosted release ingress.
-          # The MCP mutation itself is fenced and promoted by metatron-mcp-broker.
-          bash scripts/mcp/release-dynamic-repository-g17.sh "$GITHUB_SHA"
-          echo 'MCP_DYNAMIC_REPOSITORY_RELEASE=PASS'
+          bash -n scripts/mcp/release-host-commander-g18.sh
+          node --check scripts/mcp/patch-host-commander-runtime-g18.mjs
+          python3 -m py_compile \
+            scripts/mcp/patch-host-commander-broker-g18.py \
+            scripts/mcp/commander-supervisor-g18.py \
+            scripts/mcp/test-host-commander-g18.py
+          python3 scripts/mcp/test-host-commander-g18.py
+          # This remains the repository's single approved automatic self-hosted release ingress.
+          # Runtime promotion is fenced by metatron-mcp-broker; Commander does not create an alternate deploy lane.
+          bash scripts/mcp/release-host-commander-g18.sh "$GITHUB_SHA"
+          echo 'MCP_HOST_COMMANDER_G18_RELEASE=PASS'
