@@ -2,39 +2,35 @@ package com.metatron.workforce.runtime;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** RC-05/RC-06: repository execution boundary is exactly the approved four-repository scope. */
+/** Repository identifiers are syntax-bounded locally; server credential decides actual access. */
 final class CanonicalRepositoryScopeTest {
     @Test
-    void acceptsExactlyTheFourCanonicalRepositories() {
-        List<String> expected = List.of(
-                "kelvinka38/universal",
-                "kelvinka38/metatron-institution",
-                "kelvinka38/metatron-workforce",
-                "kelvinka38/bios");
-        assertEquals(4, CanonicalRepositoryScope.REPOSITORIES.size());
-        expected.forEach(repository -> {
-            assertTrue(CanonicalRepositoryScope.allowed(repository));
-            assertEquals(repository, CanonicalRepositoryScope.requireAllowed(repository));
-        });
+    void acceptsAnySafeGithubRepositoryIdentifierWithoutStaticAllowlist() {
+        assertTrue(CanonicalRepositoryScope.allowed("kelvinka38/metatron-workforce"));
+        assertTrue(CanonicalRepositoryScope.allowed("kelvinka38/random-other-repo"));
+        assertTrue(CanonicalRepositoryScope.allowed("another-owner/private_repo.v2"));
+        assertEquals("another-owner/private_repo.v2",
+                CanonicalRepositoryScope.requireAllowed("Another-Owner/Private_Repo.V2"));
     }
 
     @Test
-    void rejectsSameOwnerUnknownRepositoryAndOtherOwners() {
+    void rejectsMalformedOrTraversalLikeRepositoryIdentifiers() {
+        assertFalse(CanonicalRepositoryScope.allowed("owner-only"));
+        assertFalse(CanonicalRepositoryScope.allowed("owner/repo/extra"));
+        assertFalse(CanonicalRepositoryScope.allowed("owner/../repo"));
+        assertFalse(CanonicalRepositoryScope.allowed("https://example.com/owner/repo"));
         assertThrows(SecurityException.class,
-                () -> CanonicalRepositoryScope.requireAllowed("kelvinka38/random-other-repo"));
-        assertThrows(SecurityException.class,
-                () -> CanonicalRepositoryScope.requireAllowed("someone/metatron-workforce"));
+                () -> CanonicalRepositoryScope.requireAllowed("owner/../repo"));
     }
 
     @Test
-    void normalizesGithubUrlWithoutWideningScope() {
+    void normalizesGithubUrlWithoutChangingAuthorizationSemantics() {
         assertEquals("kelvinka38/bios",
-                CanonicalRepositoryScope.requireAllowed("https://github.com/kelvinka38/bios.git"));
+                CanonicalRepositoryScope.requireAllowed("https://github.com/KelvinKa38/BIOS.git"));
     }
 }
