@@ -31,7 +31,7 @@ concurrency:
 jobs:
   enqueue-release:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 
@@ -82,10 +82,20 @@ jobs:
           echo 'HIGHWAY_GITHUB_EXECUTION_PLANE=BYPASSED'
           echo 'HIGHWAY_RELEASE_INGRESS=PASS'
 
-          # GitHub is release ingress/observer only. The persistent Highway performs
-          # build, production mutation and the deploy task's canonical on-success
-          # production acceptance fanout. Vertical product/research proofs are
-          # intentionally separate from generic Workforce release success.
+          # Workforce mutation remains owned by the persistent Highway.
           $CTL wait "$DEPLOY" --timeout 1200 --poll 2
           echo "PRODUCTION_RELEASE_SHA=$GITHUB_SHA"
           echo 'WORKFORCE_EXACT_SHA_RELEASE=PASS'
+
+      - name: Promote MCP G17 through fenced broker and prove dynamic private repository access
+        shell: bash
+        env:
+          MCP_DYNAMIC_REPOSITORY_ACCEPTANCE: kelvinka38/archive
+        run: |
+          set -euo pipefail
+          bash -n scripts/mcp/release-dynamic-repository-g17.sh
+          node --check scripts/mcp/patch-dynamic-repository-g17.mjs
+          # This is the repository's single approved automatic self-hosted release ingress.
+          # The MCP mutation itself is fenced and promoted by metatron-mcp-broker.
+          bash scripts/mcp/release-dynamic-repository-g17.sh "$GITHUB_SHA"
+          echo 'MCP_DYNAMIC_REPOSITORY_RELEASE=PASS'
