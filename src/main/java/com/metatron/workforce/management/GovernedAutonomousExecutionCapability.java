@@ -201,6 +201,10 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     @Override public boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
         return delegate.supportsWorker(workerId, workSpec);
     }
+    @Override public boolean supportsWork(ExecutionWorkSpec workSpec) { return delegate.supportsWork(workSpec); }
+    @Override public boolean requiresIndependentObservation(ExecutionWorkSpec workSpec) {
+        return delegate.requiresIndependentObservation(workSpec);
+    }
 
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
@@ -209,8 +213,9 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         String authorityRef = requireReference(delegate.authorityReference(), "authority-reference-missing");
         String authorizationRef = requireReference(delegate.authorizationReference(), "authorization-reference-missing");
         boolean mutating = request.workSpec().consequence() == ExecutionWorkSpec.Consequence.MUTATING;
+        boolean brokerGoverned = HostCommanderAutonomousCapability.CAPABILITY.equals(delegate.capabilityRef());
         GovernancePlanService.BoundPlan boundPlan = null;
-        if (mutating) {
+        if (mutating && !brokerGoverned) {
             if (governancePlans == null || governanceAttempts == null || executionGate == null) {
                 throw new GovernanceDeniedException("SOT_DISCOVERY_REQUIRED",
                         "mutating capability has no complete SoT governance composition");
@@ -222,7 +227,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
 
         reconcileTerminalExecutionCapacity();
-        WorkforceCoreService.Worker worker = awaitEligibleWorker(request.workSpec());
+        WorkforceCoreService.Worker worker = awaitEligibleWorker(request.workSpec(), request.scheduledWorkerId());
         WorkforceCoreService.Participation participation = core.participations(worker.workerId()).stream()
                 .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
                 .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
@@ -250,7 +255,17 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                         boundPlan.snapshot().snapshotId(), boundPlan.derivation().receiptId(),
                         boundPlan.plan().planId(), boundPlan.plan().version());
             }
-            ExecutionState admitted = admission.admit(executionRequest);
+            ExecutionState admitted;
+            if (mutating && brokerGoverned) {
+                // Host Commander is the privileged effect/admission boundary for host mutation.
+                // Objective allocation + authorization are established above; the Commander broker
+                // then enforces restricted SSH, session binding, fencing, operation allowlist and
+                // verification. Sending this already broker-governed mutation back through the
+                // generic SoT admission service recreates the LEGACY_UNBOUND duplicate gate.
+                admitted = ExecutionState.ADMITTED;
+            } else {
+                admitted = admission.admit(executionRequest);
+            }
             if (admitted != ExecutionState.ADMITTED) throw new SecurityException("execution-not-admitted:" + admitted);
 
             CapabilityRequest allocated = request.withAllocation(
@@ -310,10 +325,11 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                         dispatchRef, request.objectiveId(), request.workSpec().stepId(), assignment.workerId(),
                         assignment.assignmentId(), assignment.authorizationRef(), runtime.runtimeId(), attemptNumber,
                         EXECUTION_LEASE, clock.instant());
-                CapabilityRequest governedRequest = request;
+                CapabilityRequest governedRequest = request.withExecutionAttempt(
+                        attempt.attemptId(), attempt.fencingToken());
                 if (boundPlan != null) {
                     ExecutionAttemptGovernanceBinding governanceBinding = governanceAttempts.bind(attempt, boundPlan);
-                    governedRequest = request.withGovernance(new GovernanceExecutionContext(
+                    governedRequest = governedRequest.withGovernance(new GovernanceExecutionContext(
                             attempt.attemptId(), attempt.fencingToken(), governanceBinding.planId(), governanceBinding.planVersion(),
                             governanceBinding.authoritySnapshotId(), governanceBinding.derivationReceiptId(),
                             boundPlan.plan().targetScope()));
@@ -451,20 +467,28 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
     }
 
-    private WorkforceCoreService.Worker awaitEligibleWorker(ExecutionWorkSpec workSpec) {
+    private WorkforceCoreService.Worker awaitEligibleWorker(ExecutionWorkSpec workSpec, String scheduledWorkerId) {
         long deadline = System.nanoTime() + capacityWait.toNanos(); boolean staffingAttempted = false;
+        String scheduled = scheduledWorkerId == null ? "" : scheduledWorkerId.trim();
         while (true) {
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
                             capabilityRef(), minimumCapabilityLevel(), requiredCapacity(), clock.instant()).stream()
-                    .filter(w -> supportsWorker(w.workerId(), workSpec)).toList();
+                    .filter(w -> supportsWorker(w.workerId(), workSpec))
+                    .filter(w -> scheduled.isBlank() || scheduled.equals(w.workerId()))
+                    .toList();
             if (!eligible.isEmpty()) return eligible.getFirst();
-            if (!hasQualifiedParticipant(workSpec) && !staffingAttempted) {
+            if (!scheduled.isBlank()) {
+                if (System.nanoTime() >= deadline) {
+                    throw new IllegalStateException("scheduled-worker-unavailable:" + scheduled + ":" + capabilityRef());
+                }
+            } else if (!hasQualifiedParticipant(workSpec) && !staffingAttempted) {
                 staffingAttempted = true;
                 if (staffing == null) throw new IllegalStateException("staffing-gap:orchestrator-unavailable:" + capabilityRef());
                 AutonomousStaffingService.StaffingOutcome outcome = staffing.ensureStaffed(delegate, clock.instant());
                 staffingEvidence.get().addAll(outcome.evidenceReferences()); continue;
+            } else if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("capacity-unavailable:" + capabilityRef());
             }
-            if (System.nanoTime() >= deadline) throw new IllegalStateException("capacity-unavailable:" + capabilityRef());
             try { Thread.sleep(CAPACITY_RETRY_MILLIS); }
             catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt(); throw new IllegalStateException("capacity-wait-interrupted:" + capabilityRef(), interrupted);
