@@ -10,23 +10,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class DirectCodingIngressValidationTest {
     @Test
-    void directCodingAcceptsOnlyVerifiedClientsAndCanonicalRepositories() {
-        assertEquals("chatgpt", DirectCodingIngressService.validateClient("chatgpt"));
-        assertEquals("claude", DirectCodingIngressService.validateClient("CLAUDE"));
+    void directCodingAcceptsOpaqueVerifiedClientsAndCanonicalRepositories() {
+        assertEquals("oauth-client-123", DirectCodingIngressService.validateClient("oauth-client-123"));
+        assertEquals("CaseSensitiveClient", DirectCodingIngressService.validateClient("CaseSensitiveClient"));
         assertEquals("kelvinka38/bios", DirectCodingIngressService.validateRepository("kelvinka38/bios"));
         assertEquals("kelvinka38/universal", DirectCodingIngressService.validateRepository("kelvinka38/universal"));
         assertEquals("kelvinka38/metatron-institution", DirectCodingIngressService.validateRepository("kelvinka38/metatron-institution"));
         assertEquals("kelvinka38/metatron-workforce", DirectCodingIngressService.validateRepository("kelvinka38/metatron-workforce"));
         assertThrows(SecurityException.class, () -> DirectCodingIngressService.validateRepository("kelvinka38/random-other-repo"));
         assertThrows(SecurityException.class, () -> DirectCodingIngressService.validateRepository("other-owner/bios"));
-        assertThrows(SecurityException.class, () -> DirectCodingIngressService.validateClient("anonymous"));
+        assertThrows(IllegalArgumentException.class, () -> DirectCodingIngressService.validateClient("bad\nclient"));
     }
 
     @Test
-    void objectiveIdentityIsBoundToVerifiedClient() {
-        String id = "direct-mcp:gemini:123e4567-e89b-12d3-a456-426614174000";
-        assertEquals(id, DirectCodingIngressService.validateObjective("gemini", id));
-        assertThrows(SecurityException.class, () -> DirectCodingIngressService.validateObjective("claude", id));
+    void objectiveIdentityIsBoundToOpaqueVerifiedClient() {
+        String client = "oauth-client-123";
+        String id = "direct-mcp:" + DirectCodingIngressService.clientBinding(client) + ":123e4567-e89b-12d3-a456-426614174000";
+        assertEquals(id, DirectCodingIngressService.validateObjective(client, id));
+        assertThrows(SecurityException.class, () -> DirectCodingIngressService.validateObjective("different-client", id));
+        String legacy = "direct-mcp:legacy-client:123e4567-e89b-12d3-a456-426614174000";
+        assertEquals(legacy, DirectCodingIngressService.validateObjective("legacy-client", legacy));
     }
 
     @Test
