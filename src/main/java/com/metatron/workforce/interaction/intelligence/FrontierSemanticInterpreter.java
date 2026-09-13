@@ -167,7 +167,8 @@ public final class FrontierSemanticInterpreter {
                         : providerBudget.toFrontierCallBudget();
                 LlmResponse response = router.complete(new LlmRequest(
                         provider, modelSelector.apply(provider), SYSTEM, input,
-                        logicalRequestRef, caseRef, purpose, reasonCode, callBudget));
+                        logicalRequestRef, caseRef, purpose, reasonCode, callBudget,
+                        "HUMAN", "human", "", "", "", "", ""));
                 return parse(response, semanticActiveCase != null, humanText);
             } catch (RuntimeException failure) {
                 failures.add(new IllegalStateException("semantic provider failed: " + provider + ": " + failure.getMessage(), failure));

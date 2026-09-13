@@ -1,0 +1,30 @@
+services:
+  frontier-broker:
+    build:
+      context: ..
+      dockerfile: frontier-broker/Dockerfile
+    image: metatron-frontier-broker:${METATRON_FRONTIER_BROKER_TAG:-pilot}
+    restart: unless-stopped
+    ports:
+      - "${FRONTIER_BROKER_BIND_IP:-127.0.0.1}:${FRONTIER_BROKER_HOST_PORT:-8092}:8092"
+    environment:
+      FRONTIER_BROKER_LISTEN_HOST: "0.0.0.0"
+      FRONTIER_BROKER_LISTEN_PORT: "8092"
+      FRONTIER_BROKER_AUTH_TOKEN: "${FRONTIER_BROKER_AUTH_TOKEN:?required}"
+      FRONTIER_PROVIDER_TIMEOUT_SECONDS: "${FRONTIER_PROVIDER_TIMEOUT_SECONDS:-30}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8092/healthz', timeout=2)); assert d['status']=='UP' and d['computeOwner']=='EXTERNAL_PAID' and d['allowedOrigins']==['HUMAN']"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
