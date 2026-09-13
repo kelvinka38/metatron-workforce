@@ -44,7 +44,7 @@ services:
     mem_limit: ${METATRON_SANDBOX_MEM_LIMIT:-1280m}
     mem_reservation: ${METATRON_SANDBOX_MEM_RESERVATION:-512m}
     cpus: ${METATRON_SANDBOX_CPUS:-1.00}
-    pids_limit: 192
+    pids_limit: 512
     expose:
       - "8090"
     environment:
