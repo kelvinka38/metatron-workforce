@@ -207,7 +207,13 @@ printf '%s' "$PATCH" | grep -q '"ok": true\|"ok":true'
 READ="$(broker_call "{\"op\":\"commander_file_read\",\"args\":{$auth,\"path\":\"/tmp/metatron-commander/g19-acceptance.txt\"}}")"
 printf '%s' "$READ" | grep -q 'beta'
 REMOVE="$(broker_call "{\"op\":\"commander_file_remove\",\"args\":{$auth,\"path\":\"/tmp/metatron-commander/g19-acceptance.txt\"}}")"
-printf '%s' "$REMOVE" | grep -q '"verified":true\|"verified": true'
+printf '%s' "$REMOVE" > "$TMP/remove.json"
+python3 - "$TMP/remove.json" <<'PY_REMOVE'
+import json,sys
+outer=json.load(open(sys.argv[1])); assert outer.get('ok') is True, outer
+inner=json.loads(outer['stdout'])
+assert inner.get('verified') is True and inner.get('removed') is True and inner.get('executed') is True, inner
+PY_REMOVE
 [ ! -e /tmp/metatron-commander/g19-acceptance.txt ] || { echo 'MCP_G19_FILE_REMOVE_VERIFY_FAILED' >&2; exit 10; }
 echo 'MCP_G19_FILE_REMOVE_ACCEPTANCE=PASS'
 echo 'MCP_G19_FILE_PLANE_ACCEPTANCE=PASS'
