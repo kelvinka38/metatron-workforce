@@ -48,6 +48,26 @@ public final class ExecutionAttemptService {
         if(!abandoned.isEmpty()) persist(); return List.copyOf(abandoned);
     }
 
+    /**
+     * Founder-directed admin override (2026-09-14): unlike reconcileExpired(), this ignores
+     * leaseExpiresAt entirely and abandons every currently non-terminal attempt. Added after manual
+     * production incident response: 75 attempts stayed non-terminal indefinitely (their leases kept
+     * being valid per their own terms even though nothing was actively working on them -- confirmed
+     * waitingExecutions=0/admittedExecutions=0 system-wide for hours), and their backing workspace
+     * directories had already been directly removed from the volume during disk-pressure triage, so
+     * there was no remaining work product to protect. This is intentionally blunt and is not a
+     * substitute for reconcileExpired() in normal operation -- it is an explicit admin action for
+     * exactly this "system is idle, these will never resolve on their own, and there is nothing left
+     * to lose" situation.
+     */
+    public synchronized List<ExecutionAttempt> forceAbandonAllNonTerminal(String reason,Instant at){
+        if(reason==null||reason.isBlank()) throw new IllegalArgumentException("reason required");
+        List<ExecutionAttempt> abandoned=new ArrayList<>();
+        for(var e:new ArrayList<>(attempts.entrySet())){ExecutionAttempt a=e.getValue(); if(!a.terminal()){ExecutionAttempt n=copy(a,ExecutionAttempt.Status.ABANDONED,a.leaseExpiresAt(),a.heartbeatAt(),a.checkpointRef(),reason,at); attempts.put(e.getKey(),n); abandoned.add(n);ExecutionAttemptContext.clearIf(a.attemptId());}}
+        if(!abandoned.isEmpty()) persist(); return List.copyOf(abandoned);
+    }
+
+
     public synchronized Optional<ExecutionAttempt> find(String id){return Optional.ofNullable(attempts.get(id));}
     public synchronized List<ExecutionAttempt> all(){return List.copyOf(attempts.values());}
 
