@@ -308,22 +308,48 @@ public final class TelegramWebhookController {
     private void startLiveMonitor(String objectiveId, String chatId, long messageId) {
         ScheduledFuture<?> prior = monitorTasks.remove(objectiveId);
         if (prior != null) prior.cancel(false);
+        AtomicInteger consecutiveFailures = new AtomicInteger();
         ScheduledFuture<?> future = monitorExecutor.scheduleAtFixedRate(() -> {
             try {
                 gateway.editWorkCard(chatId, messageId, workCardRenderer.render(objectiveId));
+                consecutiveFailures.set(0);
                 if (workCardRenderer.terminal(objectiveId)) {
-                    ScheduledFuture<?> completed = monitorTasks.remove(objectiveId);
-                    if (completed != null) completed.cancel(false);
-                    LOG.info("telegram_monitor_terminal objective_id={} chat={} message_id={}", objectiveId, chatId, messageId);
+                    stopMonitor(objectiveId, "refresh-succeeded-terminal");
                 }
             } catch (RuntimeException failure) {
                 LOG.warn("telegram_monitor_refresh_failed objective_id={} chat={} message_id={} reason={}",
                         objectiveId, chatId, messageId, failure.getMessage());
+                // Root-cause fix (2026-09-14): this catch block previously never checked whether the
+                // Objective had already reached a terminal state, so a monitor whose edit keeps
+                // failing (e.g. the underlying Telegram message became uneditable, or the Objective
+                // was cancelled out from under it) retried every 5 seconds forever. Observed live in
+                // production: 15+ minutes of continuous "message can't be edited" warnings for an
+                // Objective that had already been cancelled hours earlier. The success path already
+                // checked terminal() to decide whether to stop; the failure path must do the same, or
+                // a terminal Objective's monitor never stops on its own.
+                if (workCardRenderer.terminal(objectiveId)) {
+                    stopMonitor(objectiveId, "refresh-failed-but-terminal");
+                    return;
+                }
+                // Safety net for a class of failure this fix does not otherwise cover (terminal()
+                // itself misreporting, or a non-terminal Objective whose card can never be rendered
+                // again for some other reason): bound retries instead of relying solely on terminal()
+                // ever becoming true. 20 consecutive failures at the 5s cadence below is ~100 seconds.
+                if (consecutiveFailures.incrementAndGet() >= 20) {
+                    stopMonitor(objectiveId, "refresh-failed-consecutive-limit");
+                }
             }
         }, MONITOR_REFRESH_SECONDS, MONITOR_REFRESH_SECONDS, TimeUnit.SECONDS);
         monitorTasks.put(objectiveId, future);
         LOG.info("telegram_monitor_live objective_id={} chat={} message_id={}", objectiveId, chatId, messageId);
     }
+
+    private void stopMonitor(String objectiveId, String reason) {
+        ScheduledFuture<?> completed = monitorTasks.remove(objectiveId);
+        if (completed != null) completed.cancel(false);
+        LOG.info("telegram_monitor_terminal objective_id={} reason={}", objectiveId, reason);
+    }
+
 
     static boolean requiresObjectiveBeforeAck(String text) {
         return CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(text);
