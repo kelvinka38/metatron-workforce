@@ -15,7 +15,17 @@ import java.util.Objects;
  * entry still references the attempt, and the binding version being deleted is still current.
  */
 public final class ExecutionWorkspaceReconciler {
+    /**
+     * Grace period before an orphaned binding (no ExecutionAttempt record at all) is reclaimed. Deliberately
+     * far shorter than the normal evidence-retention window: there is no completed work to protect here,
+     * only a possible provision-vs-persist race between two separate stores, which resolves in milliseconds
+     * in practice. 5 minutes is a generous safety margin without reintroducing the multi-hour cleanup delay
+     * that reusing the 24h retention window caused.
+     */
+    private static final Duration ORPHAN_GRACE_PERIOD = Duration.ofMinutes(5);
+
     private final ExecutionAttemptService attempts;
+
     private final ExecutionWorkspaceManager workspaces;
     private final ExecutionWorkspaceBindingStore bindings;
     private final ExecutionResourceManager resources;
@@ -53,16 +63,16 @@ public final class ExecutionWorkspaceReconciler {
             ExecutionAttempt attempt = attempts.find(snapshot.attemptId()).orElse(null);
 
             if (attempt == null) {
-                // Orphaned-binding fix (2026-09-14): a binding whose attemptId has no corresponding
-                // ExecutionAttempt record at all can never pass the `attempt.terminal()` check below and
-                // was previously skipped forever, leaking its workspace directory permanently. Confirmed
-                // live: 78 such bindings sat at a constant MATERIALIZING count across 30+ independent
-                // reconciler ticks with zero incoming activity after the reconcileExpired-frequency fix
-                // shipped earlier today, proving the blocker is here, not attempt lease expiry. Apply the
-                // same retention grace period used elsewhere in this method as a safety margin against a
-                // genuine provision-vs-persist race before concluding the attempt record will never
-                // appear, then reclaim directly -- there is no attempt lifecycle to seal/retain against.
-                if (!snapshot.updatedAt().plus(retention).isAfter(at)) {
+                // Orphaned-binding fix (2026-09-14, tightened same day): a binding with no ExecutionAttempt
+                // record has nothing legitimate to protect -- unlike a normal SEALED/RETAINED workspace,
+                // there is no completed work whose evidence needs a review window. The only real reason to
+                // wait at all is a brief provision-vs-persist race (the workspace binding and the attempt
+                // record are written to two different stores) -- that resolves in milliseconds in practice,
+                // not hours. Originally this reused the full 24h `retention` window out of excess caution,
+                // which measurably slowed cleanup to ~1 reclaim per several minutes for no safety benefit.
+                // A short, dedicated grace period is the correct, decisive fix, not a 24h wait for a
+                // millisecond race.
+                if (!snapshot.updatedAt().plus(ORPHAN_GRACE_PERIOD).isAfter(at)) {
                     ExecutionWorkspaceBinding removed = workspaces.reclaimOrphaned(snapshot.attemptId(), snapshot.stateVersion(), at);
                     disposed++;
                     changed.add(removed.workspaceId() + ":orphan-reclaimed");
@@ -70,6 +80,7 @@ public final class ExecutionWorkspaceReconciler {
                 continue;
             }
             if (!attempt.terminal()) continue;
+
 
             ExecutionWorkspaceBinding current = workspaces.get(snapshot.attemptId()).orElse(snapshot);
             if (current.mutable()) {
