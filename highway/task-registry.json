@@ -322,126 +322,6 @@
       "max_attempts": 1,
       "priority": 55
     },
-    "bios-aquaculture-execution-verify": {
-      "name": "BIOS Aquaculture execution verify",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/bios-aquaculture-execution-verify.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 300,
-      "max_attempts": 1,
-      "priority": 55
-    },
-    "bios-aquaculture-production-verify": {
-      "name": "BIOS Aquaculture production verify",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/bios-aquaculture-production-verify.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 300,
-      "max_attempts": 1,
-      "priority": 55
-    },
-    "bios-aquaculture-public-reconcile": {
-      "name": "BIOS Aquaculture public Gateway reconcile",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/bios-aquaculture-public-reconcile.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "WRITE"
-        }
-      ],
-      "timeout_seconds": 480,
-      "max_attempts": 1,
-      "priority": 80
-    },
-    "bios-production-final-acceptance": {
-      "name": "BIOS production final acceptance",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/bios-production-final-acceptance.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 600,
-      "max_attempts": 1,
-      "priority": 55
-    },
-    "gateway-bios-cluster-reconcile": {
-      "name": "Gateway BIOS cluster reconcile",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/gateway-bios-cluster-reconcile.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "WRITE"
-        }
-      ],
-      "timeout_seconds": 480,
-      "max_attempts": 1,
-      "priority": 80
-    },
-    "gateway-bios-route-diagnostic": {
-      "name": "Gateway BIOS route diagnostic",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/gateway-bios-route-diagnostic.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 300,
-      "max_attempts": 1,
-      "priority": 45
-    },
     "gateway-final-live-acceptance": {
       "name": "Gateway final live acceptance",
       "command": [
@@ -566,30 +446,6 @@
       "max_attempts": 1,
       "priority": 45
     },
-    "bios-p10-release-readiness": {
-      "name": "BIOS P10 release readiness",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/bios-p10-release-readiness.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "WRITE"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "READ"
-        },
-        {
-          "name": "github:bios",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 1800,
-      "max_attempts": 1,
-      "priority": 75
-    },
     "gateway-director-live-acceptance": {
       "name": "Gateway Director live acceptance",
       "command": [
@@ -614,70 +470,6 @@
       "max_attempts": 1,
       "priority": 55
     },
-    "mother-baby-bios-live-objective": {
-      "name": "Mother Baby BIOS live objective",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/mother-baby-bios-live-objective.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:workforce",
-          "mode": "READ"
-        },
-        {
-          "name": "state:management",
-          "mode": "WRITE"
-        },
-        {
-          "name": "github",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 1200,
-      "max_attempts": 1,
-      "priority": 55
-    },
-    "ops-diagnose-bios-objective": {
-      "name": "Diagnose BIOS objective",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/ops-diagnose-bios-objective.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "READ"
-        },
-        {
-          "name": "prod:workforce",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 300,
-      "max_attempts": 1,
-      "priority": 25
-    },
-    "ops-forensic-gs2-blocked": {
-      "name": "Forensic GS2 blocked objective",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/ops-forensic-gs2-blocked.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:workforce",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 300,
-      "max_attempts": 1,
-      "priority": 25
-    },
     "ops-inspect-runners": {
       "name": "Inspect production runner services",
       "command": [
@@ -697,42 +489,6 @@
       "timeout_seconds": 300,
       "max_attempts": 1,
       "priority": 20
-    },
-    "ops-live-probe-gs2": {
-      "name": "Read GS2 independent probe evidence",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/ops-live-probe-gs2.sh"
-      ],
-      "resources": [
-        {
-          "name": "host:runner",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 180,
-      "max_attempts": 1,
-      "priority": 20
-    },
-    "ops-reconcile-bios-auth": {
-      "name": "Reconcile BIOS auth on production runner",
-      "command": [
-        "bash",
-        "scripts/highway-tasks/ops-reconcile-bios-auth.sh"
-      ],
-      "resources": [
-        {
-          "name": "prod:bios",
-          "mode": "WRITE"
-        },
-        {
-          "name": "prod:gateway",
-          "mode": "READ"
-        }
-      ],
-      "timeout_seconds": 600,
-      "max_attempts": 1,
-      "priority": 70
     }
   }
 }
