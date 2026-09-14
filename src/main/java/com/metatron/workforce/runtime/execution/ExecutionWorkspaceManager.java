@@ -64,9 +64,10 @@ public final class ExecutionWorkspaceManager {
             String workspaceId="execution-workspace:"+key;
             atomicWrite(path.resolve(".metatron-execution-workspace"),
                     "workspaceId="+workspaceId+"\nattemptId="+attemptId+"\nattemptFence="+attemptFence+"\nworkerId="+attempt.workerId()+"\nobjectiveId="+attempt.objectiveId()+"\nstepId="+attempt.stepId()+"\n");
+            List<ExecutionRepositoryComponent> carried = carryForwardCommittedComponents(attempt.objectiveId(), attempt.workerId(), path);
             ExecutionWorkspaceBinding binding = new ExecutionWorkspaceBinding(workspaceId,attemptId,attemptFence,
                     attempt.workerId(),attempt.objectiveId(),attempt.stepId(),path.toString(),1,
-                    ExecutionWorkspaceBinding.Status.ALLOCATED,List.of(),at,at,null,null);
+                    ExecutionWorkspaceBinding.Status.ALLOCATED,carried,at,at,null,null);
             bindings.put(attemptId,binding); persist(); return binding;
         } catch(IOException e) { throw new IllegalStateException("cannot allocate execution workspace",e); }
     }
@@ -200,4 +201,57 @@ public final class ExecutionWorkspaceManager {
     private static void rejectExistingSymlinks(Path base,Path target){Path current=base;for(Path part:base.relativize(target)){current=current.resolve(part);if(Files.exists(current,LinkOption.NOFOLLOW_LINKS)&&Files.isSymbolicLink(current))throw new SecurityException("workspace symlink traversal denied");}}
     private static void deleteTree(Path path){try{if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS))return;if(Files.isSymbolicLink(path))throw new SecurityException("workspace root symlink denied");try(var stream=Files.walk(path)){for(Path p:stream.sorted(java.util.Comparator.reverseOrder()).toList()){if(Files.isSymbolicLink(p))Files.deleteIfExists(p);else Files.deleteIfExists(p);}}}catch(IOException e){throw new IllegalStateException("cannot dispose execution workspace",e);}}
     private void persist(){store.save(bindings);}
+
+    /**
+     * Root-cause fix for GITHUB-PUBLISH-EMPTY-DELTA: workspace identity is intentionally attempt-scoped
+     * (see class doc), but that means a later ExecutionAttempt for the same Objective/Worker (e.g. a
+     * "publish GitHub proposal" step run after a separate "commit" attempt) always starts from a blank
+     * re-materialized workspace and can never observe Git history a prior attempt already committed,
+     * so GitHubWorkspaceProposalPublisher.publish() deterministically fails with
+     * "proposal requires a committed work-product delta" every time commit and publish land in different
+     * attempts. This carries forward only components with real committed history (COMMITTED/PROPOSED/
+     * SEALED) from the most recently updated non-disposed binding for the same objectiveId+workerId,
+     * by copying (never moving) the component's directory tree into the newly allocated attempt
+     * workspace before it is returned. Attempts for different Objectives or different Workers remain
+     * fully isolated, and an Objective's first attempt behaves exactly as before (no prior binding to
+     * carry forward from).
+     */
+    private List<ExecutionRepositoryComponent> carryForwardCommittedComponents(String objectiveId,String workerId,Path newRoot){
+        ExecutionWorkspaceBinding source=null;
+        for(ExecutionWorkspaceBinding candidate:bindings.values()){
+            if(!candidate.objectiveId().equals(objectiveId)||!candidate.workerId().equals(workerId)) continue;
+            if(candidate.status()==ExecutionWorkspaceBinding.Status.DISPOSED) continue;
+            if(source==null||candidate.updatedAt().isAfter(source.updatedAt())) source=candidate;
+        }
+        if(source==null) return List.of();
+        Path sourceRoot;
+        try{ sourceRoot=resolveRoot(source); }catch(SecurityException invalid){ return List.of(); }
+        if(!Files.isDirectory(sourceRoot,LinkOption.NOFOLLOW_LINKS)) return List.of();
+        List<ExecutionRepositoryComponent> carried=new ArrayList<>();
+        for(ExecutionRepositoryComponent component:source.repositories()){
+            if(component.status()!=ExecutionRepositoryComponent.Status.COMMITTED
+                    &&component.status()!=ExecutionRepositoryComponent.Status.PROPOSED
+                    &&component.status()!=ExecutionRepositoryComponent.Status.SEALED) continue;
+            Path from=sourceRoot.resolve(component.relativePath()).normalize();
+            if(!from.startsWith(sourceRoot)||!Files.isDirectory(from,LinkOption.NOFOLLOW_LINKS)) continue;
+            Path to=newRoot.resolve(component.relativePath()).normalize();
+            if(!to.startsWith(newRoot)) continue;
+            try{ copyTree(from,to); }
+            catch(IOException e){ throw new IllegalStateException("cannot carry forward committed repository component: "+component.componentId(),e); }
+            carried.add(component);
+        }
+        return List.copyOf(carried);
+    }
+
+    private static void copyTree(Path from,Path to)throws IOException{
+        try(var stream=Files.walk(from)){
+            for(Path source:stream.sorted().toList()){
+                if(Files.isSymbolicLink(source)) throw new SecurityException("carry-forward source contains symlink: "+source);
+                Path relative=from.relativize(source);
+                Path target=to.resolve(relative);
+                if(Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(target);
+                else { Files.createDirectories(target.getParent()); Files.copy(source,target,StandardCopyOption.COPY_ATTRIBUTES); }
+            }
+        }
+    }
 }
