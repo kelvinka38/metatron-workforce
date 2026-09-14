@@ -634,7 +634,12 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 || semantic.contains("container") || semantic.contains("/tmp/metatron-commander/")
                 || semantic.contains("runtime identity") || semantic.contains("generation")
                 || semantic.contains("host file") || semantic.contains("host process")
-                || semantic.contains("host storage") || semantic.contains("host network");
+                || semantic.contains("host storage") || semantic.contains("host network")
+                || semantic.contains("cleanup") || semantic.contains("reclaim")
+                || semantic.contains("build cache") || semantic.contains("builder cache")
+                || semantic.contains("journal") || semantic.contains("disk usage")
+                || semantic.contains("free disk") || semantic.contains("free space");
+
         if (!commanderIntent || !hostEffect) return List.of();
         boolean mutating = semantic.contains("create") || semantic.contains("write")
                 || semantic.contains("patch") || semantic.contains("remove")

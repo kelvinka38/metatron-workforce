@@ -153,6 +153,22 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
                 outputs.add("uptime=" + oneLine(uptime.path("output").asText()));
                 evidence.add("host-commander:uptime-verified");
             }
+            if (semantic.contains("cleanup") || semantic.contains("reclaim") || semantic.contains("free disk")
+                    || semantic.contains("free space") || semantic.contains("disk usage") || semantic.contains("build cache")
+                    || semantic.contains("builder cache") || semantic.contains("journal") || (semantic.contains("disk") && semantic.contains("storage"))) {
+                // Root-cause fix for "system has a cleanup capability but no worker can invoke it" (2026-09-14):
+                // host.commander.execute previously only ever routed to runtime-identity/uptime/docker-inspect --
+                // any host disk/cache/journal cleanup objective fell through to the generic "not yet expressible"
+                // rejection below, so no autonomous worker could ever trigger the storage cleanup that already
+                // exists and is already governed (commander_storage_cleanup -> host_safe_cleanup on the broker).
+                // Bounded, conservative defaults matching what has been run manually today: builder cache older
+                // than 24h, journal capped at 500MB. Never touches containers, volumes, or workspace data.
+                JsonNode cleanup = call("commander_storage_cleanup",
+                        with(sessionArgs(session), "journal_max_mb", 500, "builder_until_hours", 24));
+                String cleanupOutput = oneLine(cleanup.path("output").asText(cleanup.toString()));
+                outputs.add("storage-cleanup=" + cleanupOutput);
+                evidence.add("host-commander:storage-cleanup-verified");
+            }
             String container = containerName(semantic);
             if (!container.isBlank() && (semantic.contains("docker") || semantic.contains("container"))) {
                 JsonNode state = call("commander_docker_inspect", with(sessionArgs(session), "container", container));
@@ -218,8 +234,23 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
             JsonNode outer = out.isBlank() ? json.createObjectNode() : json.readTree(out);
             boolean outerOk = outer.path("ok").asBoolean(false) && process.exitValue() == 0;
             String innerText = outer.path("stdout").asText("").trim();
-            JsonNode inner = innerText.isBlank() ? json.createObjectNode() : json.readTree(innerText);
+            JsonNode inner;
+            if (innerText.isBlank()) {
+                inner = json.createObjectNode();
+            } else {
+                try {
+                    inner = json.readTree(innerText);
+                } catch (com.fasterxml.jackson.core.JsonProcessingException notJson) {
+                    // Not every Host Commander op returns a JSON-shaped stdout (e.g. commander_storage_cleanup
+                    // forwards host_safe_cleanup's result verbatim, which is plaintext k=v report lines, not
+                    // JSON). Previously this threw and the whole call failed with an opaque transport error
+                    // for any op whose stdout happens to be plaintext -- fall back to wrapping the raw text
+                    // so callers can still read it via inner.path("output"), instead of losing it entirely.
+                    inner = json.createObjectNode().put("verified", outerOk).put("output", innerText);
+                }
+            }
             boolean innerVerified = inner.path("verified").asBoolean(outerOk);
+
             boolean ok = outerOk && innerVerified;
             return new BrokerEnvelope(ok, inner, raw);
         } catch (Exception failure) {
