@@ -4,7 +4,9 @@ This file is a deployment-trace marker for the final production certification li
 
 It exists so the canonical `main` commit after temporary forensic/proof instrumentation is removed is itself deployed and re-validated through the normal production chain:
 
-`Production Deploy -> Workforce Live Acceptance -> G12 Production Readiness Evidence`
+`main exact SHA -> Highway Release Ingress -> persistent Highway workforce-build/workforce-deploy -> Workforce Live Acceptance -> G12 Production Readiness Evidence`
+
+`deploy/deploy-production-sha.sh` is the only supported repository compatibility entrypoint for an explicit exact-SHA production release, and it delegates mutation to Highway. `deploy/deploy.sh` is a compatibility wrapper to that path; the historical PowerShell direct-Docker deploy path is retired.
 
 Fresh-data resilience closure additionally requires the deployed runtime behavior introduced in this line: successful web evidence must remain usable even when LLM synthesis providers are unavailable. A prior controlled production proof exercised `Giá vàng hôm nay` through the public Telegram webhook and observed web research completion followed by a normal Telegram answer/send path. That proof remains execution evidence of the tested deployed source; this marker does not substitute for the final clean-head workflows.
 
