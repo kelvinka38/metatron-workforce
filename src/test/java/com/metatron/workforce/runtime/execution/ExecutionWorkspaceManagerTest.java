@@ -49,4 +49,30 @@ class ExecutionWorkspaceManagerTest {
         assertTrue(replacement.fencingToken()>a.fencingToken());
         assertThrows(RuntimeException.class,()->manager.requireActive(a.attemptId(),a.fencingToken(),t.plusSeconds(3)));
     }
+
+    @Test void reclaimOrphanedDisposesBindingWithNoBackingAttempt(){
+        Instant t=Instant.parse("2026-09-12T00:00:00Z");
+        ExecutionAttemptService attempts=new ExecutionAttemptService();
+        InMemoryExecutionWorkspaceBindingStore store=new InMemoryExecutionWorkspaceBindingStore();
+        ExecutionWorkspaceBinding orphan=new ExecutionWorkspaceBinding(
+                "execution-workspace:orphan","orphan-attempt",1,"worker","objective:legacy","step",
+                temp.resolve("orphan").toString(),1,ExecutionWorkspaceBinding.Status.MATERIALIZING,
+                java.util.List.of(),t,t,null,null);
+        store.save(java.util.Map.of("orphan-attempt",orphan));
+        ExecutionWorkspaceManager manager=new ExecutionWorkspaceManager(temp,attempts,store);
+
+        assertTrue(attempts.find("orphan-attempt").isEmpty());
+        ExecutionWorkspaceBinding disposed=manager.reclaimOrphaned("orphan-attempt",1,t.plusSeconds(1));
+        assertEquals(ExecutionWorkspaceBinding.Status.DISPOSED,disposed.status());
+    }
+
+    @Test void reclaimOrphanedRefusesWhenAttemptActuallyExists(){
+        Instant t=Instant.parse("2026-09-12T00:00:00Z");
+        ExecutionAttemptService attempts=new ExecutionAttemptService();
+        ExecutionAttempt a=attempts.begin("d","o","s","w","a","z","r",1,Duration.ofHours(1),t);
+        ExecutionWorkspaceManager manager=new ExecutionWorkspaceManager(temp,attempts,new InMemoryExecutionWorkspaceBindingStore());
+        ExecutionWorkspaceBinding binding=manager.allocate(a.attemptId(),a.fencingToken(),t);
+        assertThrows(IllegalStateException.class,()->manager.reclaimOrphaned(a.attemptId(),binding.stateVersion(),t.plusSeconds(1)));
+    }
 }
+
