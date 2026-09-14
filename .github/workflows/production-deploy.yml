@@ -17,6 +17,7 @@ on:
       - 'gradle.properties'
       - 'highway/**'
       - 'scripts/**'
+      - '!scripts/mcp/**'
       - '.github/workflows/production-deploy.yml'
   workflow_dispatch:
 
@@ -86,19 +87,3 @@ jobs:
           $CTL wait "$DEPLOY" --timeout 1200 --poll 2
           echo "PRODUCTION_RELEASE_SHA=$GITHUB_SHA"
           echo 'WORKFORCE_EXACT_SHA_RELEASE=PASS'
-
-      - name: Promote MCP G19 Host Commander through fenced broker
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash -n scripts/mcp/release-host-commander-g19.sh
-          node --check scripts/mcp/patch-host-commander-runtime-g19.mjs
-          python3 -m py_compile \
-            scripts/mcp/patch-host-commander-broker-g19.py \
-            scripts/mcp/commander-supervisor-g18.py \
-            scripts/mcp/test-host-commander-g19.py
-          python3 scripts/mcp/test-host-commander-g19.py
-          # This remains the repository's single approved automatic self-hosted release ingress.
-          # Runtime promotion is fenced by metatron-mcp-broker; Commander does not create an alternate deploy lane.
-          bash scripts/mcp/release-host-commander-g19.sh "$GITHUB_SHA"
-          echo 'MCP_HOST_COMMANDER_G19_RELEASE=PASS'
