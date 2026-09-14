@@ -5,7 +5,10 @@ export GITHUB_ENV="${HIGHWAY_STATE_DIR}/${HIGHWAY_TASK_ID}.github-env"
 
 # migrated workflow step 1
 set -euo pipefail
-set -a; source /opt/metatron/metatron-workforce/.env; set +a
+WORKFORCE_ENV="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+BIOS_ENV="${METATRON_BIOS_ENV_FILE:-$HOME/.metatron/bios/.env}"
+test -r "$WORKFORCE_ENV"
+set -a; source "$WORKFORCE_ENV"; set +a
 rm -rf /tmp/bios-p10
 cat >/tmp/askpass <<'SH'
 #!/bin/sh
@@ -21,11 +24,11 @@ if [ -s "$GITHUB_ENV" ]; then set -a; source "$GITHUB_ENV"; set +a; fi
 
 # migrated workflow step 2
 set -euo pipefail
-BASE=/opt/metatron/metatron-workforce/bios-product-v2
-set -a; source "$BASE/.env"; set +a
+test -r "$BIOS_ENV"
+set -a; source "$BIOS_ENV"; set +a
 export BIOS_IMAGE_TAG="$BIOS_P10_SHA" BIOS_COMMIT_SHA="$BIOS_P10_SHA"
 docker build --pull -t "metatron-bios:$BIOS_P10_SHA" /tmp/bios-p10
-docker compose -p bios --env-file "$BASE/.env" -f /tmp/bios-p10/deploy/docker-compose.yml up -d --force-recreate bios
+docker compose -p bios --env-file "$BIOS_ENV" -f /tmp/bios-p10/deploy/docker-compose.yml up -d --force-recreate bios
 CID=$(docker ps -aq --filter name='^metatron-bios$' | head -1); test -n "$CID"
 for i in $(seq 1 60); do
   STATUS=$(docker inspect "$CID" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
@@ -41,7 +44,8 @@ if [ -s "$GITHUB_ENV" ]; then set -a; source "$GITHUB_ENV"; set +a; fi
 
 # migrated workflow step 3
 set -euo pipefail
-set -a; source /opt/metatron/metatron-workforce/bios-product-v2/.env; set +a
+test -r "$BIOS_ENV"
+set -a; source "$BIOS_ENV"; set +a
 cd /tmp/bios-p10
 python3 - <<'PY' | tee -a /tmp/p10-evidence.txt
 import json,urllib.request,urllib.error,uuid,os

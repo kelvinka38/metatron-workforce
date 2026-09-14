@@ -118,8 +118,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE=/opt/metatron/metatron-workforce
-          set -a; source "$BASE/.env"; set +a
+          ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+          test -r "$ENV_FILE"
+          set -a; source "$ENV_FILE"; set +a
           set -a; source "$HOME/.metatron/highway/highway.env"; set +a
           bash "$HOME/.metatron/highway/current/ensure-running.sh"
           CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"

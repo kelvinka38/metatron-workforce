@@ -3,15 +3,15 @@ set -euo pipefail
 
 : "${TARGET_SHA:?TARGET_SHA is required}"
 
-BASE=${METATRON_PRODUCTION_BASE:-/opt/metatron/metatron-workforce}
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 RUN_ID=${GITHUB_RUN_ID:-$(date +%s)}
 OUT=${POINT5_OUT_DIR:-/tmp/runtime-conformance-point5-${RUN_ID}}
 mkdir -p "$OUT"
 
-test -r "$BASE/.env"
+test -r "$ENV_FILE"
 set -a
 # shellcheck disable=SC1090
-source "$BASE/.env"
+source "$ENV_FILE"
 set +a
 
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"

@@ -2,12 +2,12 @@
 set -euo pipefail
 
 : "${TARGET_SHA:?TARGET_SHA required}"
-BASE=/opt/metatron/metatron-workforce
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 COMPOSE="${GITHUB_WORKSPACE:?}/deploy/docker-compose.yml"
 OUT="/tmp/metatron-production-highway-${GITHUB_RUN_ID:?}"
 mkdir -p "$OUT"
-test -r "$BASE/.env"; test -f "$COMPOSE"; command -v flock >/dev/null
-set -a; source "$BASE/.env"; set +a
+test -r "$ENV_FILE"; test -f "$COMPOSE"; command -v flock >/dev/null
+set -a; source "$ENV_FILE"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"; test -n "${TELEGRAM_ALLOWED_USER_ID:-}"; test -n "${METATRON_ORGANIZATION_ID:-}"
 test -n "${OPENAI_API_KEY:-}${GEMINI_API_KEY:-}${ANTHROPIC_API_KEY:-}"
 
@@ -105,7 +105,7 @@ down_lane() {
   local project="$1" port="$2" lane="$3"
   METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
   METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" \
-  docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
+  docker compose -p "$project" --env-file "$ENV_FILE" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 cleanup() { set +e; down_lane "$PROJECT_A" "$PORT_A" lane-a; down_lane "$PROJECT_B" "$PORT_B" lane-b; kill "$SINK_PID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -169,11 +169,11 @@ start_lane() {
   if ! METATRON_VERSION=0.1.0 METATRON_ENVIRONMENT=production METATRON_IMAGE_TAG="$TARGET_SHA" METATRON_COMMIT_SHA="$TARGET_SHA" \
     METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" \
     METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" METATRON_CONTAINER_MEM_LIMIT=512m METATRON_CONTAINER_MEM_RESERVATION=256m METATRON_CONTAINER_CPUS=0.75 \
-    TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate >&2; then
+    TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" docker compose -p "$project" --env-file "$ENV_FILE" -f "$COMPOSE" up -d --no-build --force-recreate >&2; then
     echo "HIGHWAY_LANE_START_FAILED lane=$lane project=$project port=$port" >&2
     return 1
   fi
-  cid=$(METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" docker compose -p "$project" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce) || return 1
+  cid=$(METATRON_HOST_PORT="$port" METATRON_STATE_VOLUME_NAME="${project}-state" METATRON_WORKFORCE_NETWORK_NAME="${project}-network" METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-${lane}-${GITHUB_RUN_ID}" docker compose -p "$project" --env-file "$ENV_FILE" -f "$COMPOSE" ps -q workforce) || return 1
   if [ -z "$cid" ]; then echo "HIGHWAY_LANE_CID_MISSING lane=$lane" >&2; return 1; fi
   if ! wait_lane_ready "$port" "$cid"; then echo "HIGHWAY_LANE_HEALTH_TIMEOUT lane=$lane cid=$cid port=$port" >&2; docker logs "$cid" >&2 || true; return 1; fi
   test "$(docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)" = "$TARGET_SHA" || return 1

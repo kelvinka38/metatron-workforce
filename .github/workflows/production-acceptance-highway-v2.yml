@@ -50,9 +50,10 @@ jobs:
             FULL) KIND=production-highway-full; PRIORITY=40 ;;
             *) echo "unsupported profile: $PROFILE" >&2; exit 1 ;;
           esac
-          BASE=/opt/metatron/metatron-workforce
+          ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+          test -r "$ENV_FILE"
           set -a
-          source "$BASE/.env"
+          source "$ENV_FILE"
           source "$HOME/.metatron/highway/highway.env"
           set +a
           bash "$HOME/.metatron/highway/current/ensure-running.sh"

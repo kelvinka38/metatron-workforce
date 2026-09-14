@@ -12,11 +12,11 @@ shift 3 || true
 
 bash highway/publish-release.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
 
-BASE=/opt/metatron/metatron-workforce
-test -r "$BASE/.env"
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+test -r "$ENV_FILE"
 test -r "$HOME/.metatron/highway/highway.env"
 set -a
-source "$BASE/.env"
+source "$ENV_FILE"
 source "$HOME/.metatron/highway/highway.env"
 set +a
 bash "$HOME/.metatron/highway/current/ensure-running.sh"

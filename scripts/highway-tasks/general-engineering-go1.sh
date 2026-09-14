@@ -3,11 +3,11 @@ set -euo pipefail
 export TARGET_SHA="${TARGET_SHA:-${HIGHWAY_SOURCE_SHA:?HIGHWAY_SOURCE_SHA required}}"
 export GITHUB_RUN_ID="${GITHUB_RUN_ID:-$(date +%s)}"
 set -euo pipefail
-BASE=/opt/metatron/metatron-workforce
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 COMPOSE="$GITHUB_WORKSPACE/deploy/docker-compose.yml"
-test -r "$BASE/.env"
+test -r "$ENV_FILE"
 set -a
-source "$BASE/.env"
+source "$ENV_FILE"
 set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
 test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
@@ -63,7 +63,7 @@ cleanup() {
   METATRON_WORKFORCE_NETWORK_NAME="${PROJECT}-network" \
   METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-go1-${GITHUB_RUN_ID}" \
   TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" \
-  docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
+  docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE" down -v --remove-orphans >/dev/null 2>&1 || true
   kill "$SINK_PID" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -87,13 +87,13 @@ METATRON_CONTAINER_MEM_LIMIT=768m \
 METATRON_CONTAINER_MEM_RESERVATION=384m \
 METATRON_CONTAINER_CPUS=1.0 \
 TELEGRAM_API_BASE_URL="http://host.docker.internal:$SINK_PORT" \
-docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" up -d --no-build --force-recreate
+docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE" up -d --no-build --force-recreate
 
 CID=$(METATRON_HOST_PORT="$HOST_PORT" \
   METATRON_STATE_VOLUME_NAME="${PROJECT}-state" \
   METATRON_WORKFORCE_NETWORK_NAME="${PROJECT}-network" \
   METATRON_WORKFORCE_GATEWAY_ALIAS="workforce-go1-${GITHUB_RUN_ID}" \
-  docker compose -p "$PROJECT" --env-file "$BASE/.env" -f "$COMPOSE" ps -q workforce)
+  docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE" ps -q workforce)
 test -n "$CID"
 READY=0
 for _ in $(seq 1 90); do
