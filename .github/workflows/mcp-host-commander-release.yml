@@ -1,0 +1,38 @@
+name: MCP Host Commander Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/mcp/**'
+      - '.github/workflows/mcp-host-commander-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-host-commander-release-main
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate and promote MCP G19 Host Commander through fenced broker
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/mcp/release-host-commander-g19.sh
+          node --check scripts/mcp/patch-host-commander-runtime-g19.mjs
+          python3 -m py_compile \
+            scripts/mcp/patch-host-commander-broker-g19.py \
+            scripts/mcp/commander-supervisor-g18.py \
+            scripts/mcp/test-host-commander-g19.py
+          python3 scripts/mcp/test-host-commander-g19.py
+          bash scripts/mcp/release-host-commander-g19.sh "$GITHUB_SHA"
+          echo "MCP_RELEASE_SHA=$GITHUB_SHA"
+          echo 'MCP_HOST_COMMANDER_G19_RELEASE=PASS'
