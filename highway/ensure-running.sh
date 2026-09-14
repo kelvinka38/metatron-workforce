@@ -3,7 +3,7 @@ set -euo pipefail
 
 INSTALL="${METATRON_HIGHWAY_INSTALL_DIR:-$HOME/.metatron/highway}"
 STATE="${METATRON_HIGHWAY_STATE_DIR:-$INSTALL/state}"
-BASE_ENV=/opt/metatron/metatron-workforce/.env
+BASE_ENV="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 ENV_FILE="$INSTALL/highway.env"
 PID_FILE="$STATE/highwayd.pid"
 LOG_FILE="$STATE/highwayd.log"

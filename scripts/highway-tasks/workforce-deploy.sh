@@ -13,7 +13,7 @@ exec 9>"$HOME/.metatron/production-mutation.lock"
 flock -w 600 9
 echo 'PRODUCTION_MUTATION_LOCK=ACQUIRED'
 
-BASE=/opt/metatron/metatron-workforce
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 SOURCE="$HIGHWAY_INSTALL_DIR/releases/$SHA"
 ARTIFACT="$HIGHWAY_STATE_DIR/artifacts/$SHA"
 WORK_ROOT="$HIGHWAY_STATE_DIR/workspaces"
@@ -32,7 +32,7 @@ cleanup_workspace() { rm -rf "$TMP" "$WORKSPACE"; }
 trap cleanup_workspace EXIT
 
 echo '=== PRE-FLIGHT ==='
-test -r "$BASE/.env"
+test -r "$ENV_FILE"
 test -d "$SOURCE"
 test "$(cat "$SOURCE/.highway-source-sha")" = "$SHA"
 test -d "$ARTIFACT"
@@ -57,10 +57,10 @@ test "$(cat "$WORKSPACE/.highway-source-sha")" = "$SHA"
 echo 'HIGHWAY_RELEASE_IDENTITY=PASS'
 echo 'HIGHWAY_SEALED_ARTIFACT_IDENTITY=PASS'
 echo 'HIGHWAY_DEPLOY_WORKSPACE_ISOLATION=PASS'
-set -a; source "$BASE/.env"; set +a
+set -a; source "$ENV_FILE"; set +a
 
 # Internal effect-boundary tokens are host-local credentials. Persist them once, never log them.
-python3 - "$BASE/.env" <<'PY'
+python3 - "$ENV_FILE" <<'PY'
 import os,secrets,sys
 path=sys.argv[1]
 with open(path,'r',encoding='utf-8') as f:
@@ -83,7 +83,7 @@ if changed:
     os.chmod(tmp,0o600)
     os.replace(tmp,path)
 PY
-set -a; source "$BASE/.env"; set +a
+set -a; source "$ENV_FILE"; set +a
 test -n "${METATRON_RUNTIME_EXECUTION_TOKEN:-}"
 test -n "${METATRON_SANDBOX_TOKEN:-}"
 METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" docker compose -p "$PROJECT" -f "$COMPOSE" config >/dev/null
