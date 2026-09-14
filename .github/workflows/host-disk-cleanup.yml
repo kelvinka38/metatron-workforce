@@ -1,0 +1,48 @@
+name: Production Host Disk Cleanup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-host-disk-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    # Highway Conformance CI and the deploy pipeline both build on this same self-hosted
+    # runner for every autonomous-system PR, which leaves BuildKit cache and dangling images
+    # behind continuously. Without a recurring sweep, disk usage climbs unbounded between
+    # manual interventions. Never removes containers or named volumes.
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 10
+    steps:
+      - name: Disk usage before
+        shell: bash
+        run: df -h / || true
+
+      - name: apt cache clean
+        shell: bash
+        run: sudo apt-get clean || true
+
+      - name: Vacuum journal logs (cap 500MB)
+        shell: bash
+        run: sudo journalctl --vacuum-size=500M || true
+
+      - name: Prune dangling Docker images
+        shell: bash
+        run: docker image prune -f
+
+      - name: Prune BuildKit cache older than 24h
+        shell: bash
+        run: docker builder prune -f --filter until=24h
+
+      - name: Disk usage after
+        shell: bash
+        run: |
+          df -h /
+          echo 'HOST_DISK_CLEANUP_SCHEDULED=PASS'
