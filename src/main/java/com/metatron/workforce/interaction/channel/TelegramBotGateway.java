@@ -124,7 +124,8 @@ public final class TelegramBotGateway implements ChannelGateway {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("chat_id", chatId);
         payload.put("text", text);
-        payload.put("reply_markup", workReplyMarkup());
+        // This message is intentionally editable. Do not attach ReplyKeyboardMarkup to the
+        // Work Card itself; the persistent Work keyboard is already managed by normal replies.
         ApiResult result = invoke("sendMessage", payload);
         long messageId = result.json().path("result").path("message_id").asLong(-1L);
         if (messageId < 0) throw new IllegalStateException("telegram_work_card_message_id_missing");

@@ -18,6 +18,7 @@ import java.util.UUID;
 
 /** Durable Workforce-side coordination service for autonomous management behavior. */
 public final class ManagementAutonomyService {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(ManagementAutonomyService.class);
     private final Map<String, ManagementObjective> objectives = new LinkedHashMap<>();
     private final Map<String, List<ManagementEvent>> events = new LinkedHashMap<>();
     private final Map<String, AutonomousObjectiveWork> objectiveWork = new LinkedHashMap<>();
@@ -37,6 +38,12 @@ public final class ManagementAutonomyService {
         objectiveWork.putAll(snapshot.objectiveWork());
         leases.putAll(snapshot.leases());
         outbox.addAll(snapshot.outbox());
+        objectiveWork.values().stream()
+                .filter(work -> !work.terminal())
+                .forEach(work -> LOG.info(
+                        "management_state_loaded objective_id={} status={} planned_steps={} completed_steps={} blocker={}",
+                        work.objectiveId(), work.status(), work.plannedWork().size(), work.completedStepIds().size(),
+                        boundedLog(work.blocker())));
     }
 
     public synchronized ManagementObjective acceptObjective(String objectiveId, String ownerWorkerId,
@@ -702,6 +709,12 @@ public final class ManagementAutonomyService {
     private static String stripActorPrefix(String actorId) {
         int separator = actorId.indexOf(':');
         return separator < 0 ? actorId : actorId.substring(separator + 1);
+    }
+
+    private static String boundedLog(String value) {
+        if (value == null || value.isBlank()) return "";
+        String normalized = value.replace('\n', ' ').replace('\r', ' ').trim();
+        return normalized.length() <= 1200 ? normalized : normalized.substring(0, 1200);
     }
 
     private static String requireText(String value, String field) {
