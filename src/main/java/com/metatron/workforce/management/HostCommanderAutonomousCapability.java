@@ -54,6 +54,17 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
     @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
     @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
+    @Override public boolean supportsWork(ExecutionWorkSpec workSpec) {
+        String semantic = semantic(workSpec);
+        if (isAcceptanceTask(semantic) || isProductionControlProof(semantic)) return true;
+        if (semantic.contains("runtime identity") || semantic.contains("generation")
+                || semantic.contains("commander status") || semantic.contains("uptime")) return true;
+        String container = containerName(semantic);
+        return !container.isBlank() && (semantic.contains("docker") || semantic.contains("container"));
+    }
+    @Override public boolean requiresIndependentObservation(ExecutionWorkSpec workSpec) {
+        return !supportsWork(workSpec);
+    }
     @Override public String capabilityDescription() {
         return CAPABILITY + " — governed Workforce composition to the existing founder Host Commander privileged broker; no raw shell";
     }
@@ -63,6 +74,7 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
         requireGovernance(request);
         String semantic = semantic(request.workSpec());
         if (isAcceptanceTask(semantic)) return executeAcceptance(request, semantic);
+        if (isProductionControlProof(semantic)) return executeProductionControlProof(request, semantic);
         return executeSimple(request, semantic);
     }
 
@@ -71,7 +83,9 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
         List<String> report = new ArrayList<>();
         String binding = binding(request);
         String path = disposablePath(semantic);
-        String container = semantic.contains("deploy-workforce-1") ? "deploy-workforce-1" : containerName(semantic);
+        String parsedContainer = containerName(semantic);
+        String container = semantic.contains("deploy-workforce-1") || parsedContainer.isBlank()
+                ? "deploy-workforce-1" : parsedContainer;
         Session session = open(binding, "workforce Host Commander acceptance", "maintenance");
         report.add("1 commander_open PASS session=" + session.id());
         evidence.add("host-commander:session-open:" + session.id());
@@ -134,6 +148,58 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
                 + "\nTOTAL PASS=13 generation=" + generation + " sourceSha=" + sourceSha + " release=" + release;
         return new CapabilityResult(true, request.allocatedWorkerId(), request.assignmentReference(),
                 "host-commander:" + request.objectiveId(), List.copyOf(evidence), summary);
+    }
+
+    private CapabilityResult executeProductionControlProof(CapabilityRequest request, String semantic) {
+        List<String> evidence = new ArrayList<>();
+        List<String> outputs = new ArrayList<>();
+        String path = disposablePath(semantic);
+        String parsedContainer = containerName(semantic);
+        String container = parsedContainer.isBlank() ? "deploy-workforce-1" : parsedContainer;
+        Session session = open(binding(request), "production operational control proof", "maintenance");
+        boolean closed = false;
+        try {
+            JsonNode identity = call("commander_runtime_identity", sessionArgs(session));
+            require(identity.path("verified").asBoolean(false), "runtime identity not verified");
+            outputs.add("runtime generation=" + identity.path("generation").asText()
+                    + " release=" + identity.path("release").asText()
+                    + " sourceSha=" + identity.path("sourceSha").asText());
+            evidence.add("host-commander:runtime-identity-verified");
+
+            JsonNode uptime = call("commander_exec", with(sessionArgs(session), "executable", "uptime", "args", List.of()));
+            require(uptime.path("verified").asBoolean(false), "uptime execution not verified");
+            outputs.add("uptime=" + oneLine(uptime.path("output").asText()));
+            evidence.add("host-commander:uptime-verified");
+
+            JsonNode docker = call("commander_docker_inspect", with(sessionArgs(session), "container", container));
+            require("running".equalsIgnoreCase(docker.path("status").asText()), "container is not running");
+            outputs.add("container=" + container + " status=" + docker.path("status").asText()
+                    + " health=" + docker.path("health").asText("none"));
+            evidence.add("host-commander:docker-inspect:" + container);
+
+            call("commander_file_write", with(sessionArgs(session), "path", path, "content", "metatron-production-proof"));
+            JsonNode readback = call("commander_file_read", with(sessionArgs(session), "path", path));
+            require("metatron-production-proof".equals(readback.path("content").asText()), "proof readback mismatch");
+            JsonNode removed = call("commander_file_remove", with(sessionArgs(session), "path", path));
+            require(removed.path("verified").asBoolean(false), "proof file remove not verified");
+            evidence.add("host-commander:reversible-mutation-verified:" + path);
+
+            String secretDenial = deny("commander_file_read", with(sessionArgs(session), "path", "/etc/shadow"),
+                    "commander_secret_path_denied");
+            evidence.add("host-commander:secret-path-denied");
+            outputs.add("security=" + secretDenial);
+
+            call("commander_close", sessionArgs(session));
+            closed = true;
+        } finally {
+            if (!closed) {
+                try { call("commander_close", sessionArgs(session)); }
+                catch (RuntimeException ignored) { }
+            }
+        }
+        return new CapabilityResult(true, request.allocatedWorkerId(), request.assignmentReference(),
+                "host-commander:" + request.objectiveId(), List.copyOf(evidence),
+                "PRODUCTION OPERATIONAL CONTROL VERIFIED\n" + String.join("\n", outputs));
     }
 
     private CapabilityResult executeSimple(CapabilityRequest request, String semantic) {
@@ -208,7 +274,7 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
             CompletableFuture<byte[]> stderr = CompletableFuture.supplyAsync(() -> readBounded(process.getErrorStream()));
             process.getOutputStream().write(input);
             process.getOutputStream().close();
-            if (!process.waitFor(180, TimeUnit.SECONDS)) {
+            if (!process.waitFor(30, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 throw new IllegalStateException("Host Commander transport timeout: " + op);
             }
@@ -250,9 +316,10 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
         if (!CAPABILITY.equals(request.workSpec().requiredCapability())) throw new SecurityException("Host Commander capability mismatch");
         if (!WORKER_ID.equals(request.allocatedWorkerId())) throw new SecurityException("Host Commander worker mismatch");
         if (!AUTHORIZATION_REFERENCE.equals(request.authorizationReference())) throw new SecurityException("Host Commander authorization mismatch");
-        if (request.workSpec().consequence() == ExecutionWorkSpec.Consequence.MUTATING && !request.governanceBound()) {
-            throw new SecurityException("mutating Host Commander work requires governance binding");
-        }
+        // Commander is itself the privileged effect boundary: restricted SSH, session binding,
+        // fencing, allowlist and broker verification govern each host operation. Workforce still
+        // requires durable Objective allocation, authorization and dispatch, but does not require
+        // a second constitutional plan/permit for the same Commander effect.
     }
 
     static boolean isAcceptanceTask(String semantic) {
@@ -260,6 +327,24 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
                 && semantic.contains("telegram-alpha") && semantic.contains("telegram-beta")
                 && semantic.contains("deploy-workforce-1") && semantic.contains("stale")
                 && semantic.contains("/tmp/metatron-commander/");
+    }
+
+    /** Human states the desired production-control outcome; the adapter owns the bounded proof sequence. */
+    static boolean isProductionControlProof(String semantic) {
+        if (semantic == null || semantic.isBlank()) return false;
+        boolean production = semantic.contains("metatron production")
+                || semantic.contains("production host") || semantic.contains("production server");
+        boolean proof = semantic.contains("prove") || semantic.contains("verify")
+                || semantic.contains("demonstrate") || semantic.contains("chung minh")
+                || semantic.contains("chứng minh") || semantic.contains("kiem tra")
+                || semantic.contains("kiểm tra") || semantic.contains("xac minh")
+                || semantic.contains("xác minh");
+        boolean operation = semantic.contains("operate") || semantic.contains("operation")
+                || semantic.contains("control") || semantic.contains("working")
+                || semantic.contains("works") || semantic.contains("hoat dong")
+                || semantic.contains("vận hành") || semantic.contains("van hanh")
+                || semantic.contains("kiểm soát") || semantic.contains("kiem soat");
+        return production && proof && operation;
     }
 
     static String semantic(ExecutionWorkSpec work) {

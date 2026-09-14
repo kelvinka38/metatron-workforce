@@ -395,6 +395,68 @@ final class ExecutionWorkPlannerTest {
     }
 
     @Test
+    void highLevelProductionControlOutcomeTranslatesToCommanderWithoutHumanToolPrompt() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("bounded production control proof must not require frontier planning");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Prove Metatron production can operate safely end-to-end and give me evidence when it is working",
+                "Metatron production", List.of("safe bounded proof"), IntelligenceDepth.ANALYZE,
+                "evidence-backed completion", List.of(), List.of(), "current", "",
+                IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.AUDIT), DeterministicCapability.NONE,
+                List.of(), List.of(), false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-production-control-proof", normalized, List.of("host.commander.execute"));
+
+        assertEquals(0, calls.get());
+        assertEquals(1, plan.size());
+        assertEquals("host.commander.execute", plan.getFirst().requiredCapability());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, plan.getFirst().consequence());
+        assertTrue(plan.getFirst().verifiable());
+    }
+
+    @Test
+    void vietnameseHumanProductionControlOutcomeBindsCommanderWithoutFrontierPlanning() {
+        AtomicInteger calls = new AtomicInteger();
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("Vietnamese bounded production control must not require frontier planning");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Kiểm tra, khắc phục và chứng minh khả năng tự vận hành và kiểm soát an toàn end-to-end của Metatron production bằng kết quả thực tế",
+                "Metatron production", List.of("Tự xử lý nếu phát sinh vấn đề", "Chỉ báo hoàn tất khi đã xác minh bằng kết quả thực tế"),
+                IntelligenceDepth.ANALYZE, "bằng chứng thực tế", List.of(), List.of(), "current", "",
+                IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(AnalyticalProtocolType.AUDIT), DeterministicCapability.NONE,
+                List.of(), List.of(), false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan(
+                "case-production-control-proof-vi", normalized, List.of("host.commander.execute"));
+
+        assertEquals(0, calls.get());
+        assertEquals(1, plan.size());
+        assertEquals("host.commander.execute", plan.getFirst().requiredCapability());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, plan.getFirst().consequence());
+        assertTrue(plan.getFirst().verifiable());
+    }
+
+    @Test
     void gatewayDirectorAppointmentBindsWithoutFrontierPlanning() {
         AtomicInteger calls = new AtomicInteger();
         LlmProviderClient google = new LlmProviderClient() {
