@@ -1,0 +1,110 @@
+name: Git Branch Hygiene
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/git-branch-hygiene.yml'
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Delete historical metatron/objective-* branches already merged into main
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  delete-merged-objective-head:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'metatron/objective-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete merged governed Objective branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          encoded_ref="$(python3 - "$HEAD_REF" <<'PY'
+          import sys, urllib.parse
+          print(urllib.parse.quote(sys.argv[1], safe=''))
+          PY
+          )"
+          curl --fail-with-body --silent --show-error \
+            -X DELETE \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/git/refs/heads/$encoded_ref"
+          echo "MERGED_OBJECTIVE_BRANCH_DELETED=$HEAD_REF"
+
+  historical-merged-objective-sweep:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Audit or prune historical merged Objective branches
+        env:
+          APPLY: ${{ github.event_name == 'push' || inputs.apply }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+
+          mapfile -t branches < <(
+            git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin/metatron/ \
+              | grep '^metatron/objective-' \
+              | sort
+          )
+
+          candidates=()
+          for branch in "${branches[@]}"; do
+            if git merge-base --is-ancestor "refs/remotes/origin/$branch" origin/main; then
+              candidates+=("$branch")
+            fi
+          done
+
+          echo "MERGED_OBJECTIVE_BRANCH_CANDIDATES=${#candidates[@]}"
+          printf '%s\n' "${candidates[@]}"
+
+          if [[ "$APPLY" != "true" ]]; then
+            echo 'GIT_BRANCH_HYGIENE_DRY_RUN=PASS'
+            exit 0
+          fi
+
+          deleted=0
+          for branch in "${candidates[@]}"; do
+            encoded_ref="$(python3 - "$branch" <<'PY'
+          import sys, urllib.parse
+          print(urllib.parse.quote(sys.argv[1], safe=''))
+          PY
+          )"
+            curl --fail-with-body --silent --show-error \
+              -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$REPOSITORY/git/refs/heads/$encoded_ref"
+            deleted=$((deleted + 1))
+            echo "DELETED=$branch"
+          done
+
+          echo "MERGED_OBJECTIVE_BRANCHES_DELETED=$deleted"
+          echo 'GIT_BRANCH_HYGIENE_APPLY=PASS'
