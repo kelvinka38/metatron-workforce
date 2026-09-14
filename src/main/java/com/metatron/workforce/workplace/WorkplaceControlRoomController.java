@@ -161,14 +161,30 @@ public final class WorkplaceControlRoomController {
             @RequestHeader(value="Authorization", required=false) String authorization,
             @RequestBody(required=false) Map<String,String> body) {
         requireAuthenticated(authorization);
-        return switch (action.toLowerCase(java.util.Locale.ROOT)) {
-            case "pause" -> founderControl.pause(objectiveId);
-            case "resume" -> founderControl.resume(objectiveId);
-            case "cancel" -> founderControl.cancel(objectiveId);
-            case "replan" -> founderControl.replan(objectiveId, body == null ? "" : body.get("reason"));
-            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported control action");
-        };
+        try {
+            return switch (action.toLowerCase(java.util.Locale.ROOT)) {
+                case "pause" -> founderControl.pause(objectiveId);
+                case "resume" -> founderControl.resume(objectiveId);
+                case "cancel" -> founderControl.cancel(objectiveId);
+                case "replan" -> founderControl.replan(objectiveId, body == null ? "" : body.get("reason"));
+                default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unsupported control action");
+            };
+        } catch (IllegalArgumentException missing) {
+            // Control Room lists Objectives from Management/Dashboard truth, which can include legacy
+            // Objectives admitted before WorkplaceContinuityService bound continuity on ingress (modern
+            // HumanObjectiveIngressService binds it at accept time via bindAcceptedObjective, so this is
+            // a pre-existing-data gap, not an architecture gap in new admissions). Surface it as a
+            // structured, retriable 409 instead of an opaque 500 -- the caller can still see and reason
+            // about the Objective, it just cannot be controlled through this workplace-bound path.
+            String reason = missing.getMessage() != null && missing.getMessage().startsWith("Workplace continuity not found")
+                    ? "OBJECTIVE_NOT_WORKPLACE_BOUND: " + missing.getMessage()
+                    : missing.getMessage();
+            throw new ResponseStatusException(HttpStatus.CONFLICT, reason, missing);
+        } catch (IllegalStateException conflict) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, conflict.getMessage(), conflict);
+        }
     }
+
 
     private double currentCapacity(String workerId) {
         return core.availability(workerId).map(WorkforceCoreService.Availability::capacity).orElse(1.0);
