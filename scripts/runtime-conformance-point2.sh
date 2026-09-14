@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE=/opt/metatron/metatron-workforce
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 OUT="/tmp/metatron-production-highway-${GITHUB_RUN_ID:-manual}/point2-root"
 mkdir -p "$OUT"
-test -r "$BASE/.env"
-set -a; source "$BASE/.env"; set +a
+test -r "$ENV_FILE"
+set -a; source "$ENV_FILE"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
 test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
 test -n "${TARGET_SHA:-}"

@@ -4,11 +4,11 @@ set -euo pipefail
 : "${GITHUB_RUN_ID:=${HIGHWAY_TASK_ID//[^0-9]/}}"
 export GITHUB_RUN_ID
 set -euo pipefail
-BASE=/opt/metatron/metatron-workforce
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 OUT=/tmp/runtime-conformance-point4-${GITHUB_RUN_ID}
 mkdir -p "$OUT"
-test -r "$BASE/.env"
-set -a; source "$BASE/.env"; set +a
+test -r "$ENV_FILE"
+set -a; source "$ENV_FILE"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
 test -n "${TELEGRAM_ALLOWED_USER_ID:-}"
 test -n "${GITHUB_TOKEN:-}"

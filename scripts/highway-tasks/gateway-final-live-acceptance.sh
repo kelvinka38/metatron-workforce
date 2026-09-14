@@ -4,13 +4,15 @@ set -euo pipefail
 : "${GITHUB_RUN_ID:=${HIGHWAY_TASK_ID//[^0-9]/}}"
 export GITHUB_RUN_ID
 set -euo pipefail
-BASE=/opt/metatron/metatron-workforce
+SOURCE_ROOT="${GITHUB_WORKSPACE:?}"
+ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 CID=$(docker ps --filter name=deploy-workforce-1 --format '{{.ID}}' | head -1)
 test -n "$CID"
 DEPLOYED_SHA=$(docker inspect "$CID" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^METATRON_COMMIT_SHA=//p' | head -1)
 test "$DEPLOYED_SHA" = "$TARGET_SHA"
 
-set -a; source "$BASE/.env"; set +a
+test -r "$ENV_FILE"
+set -a; source "$ENV_FILE"; set +a
 test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
 test -n "${GITHUB_TOKEN:-}"
 
@@ -96,7 +98,7 @@ DENIED=$(curl -sS -o /tmp/gateway-final/denied.json -w '%{http_code}' -X POST \
 test "$DENIED" != 200
 pass UNAUTHORIZED_EGRESS_DENIAL
 
-! grep -Rqs "${GITHUB_TOKEN}" "$BASE/src" "$BASE/deploy" "$BASE/.github" 2>/dev/null
+! grep -Rqs "${GITHUB_TOKEN}" "$SOURCE_ROOT/src" "$SOURCE_ROOT/deploy" "$SOURCE_ROOT/.github" 2>/dev/null
 docker image inspect metatron-workforce:rollback >/dev/null
 pass SECRET_SOURCE_SEPARATION
 pass KNOWN_GOOD_ROLLBACK

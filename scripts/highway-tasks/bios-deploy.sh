@@ -2,11 +2,11 @@
 set -euo pipefail
 : "${BIOS_REQUESTED_SHA:?BIOS_REQUESTED_SHA required}"
 set -euo pipefail
-WORKFORCE_BASE=/opt/metatron/metatron-workforce
+WORKFORCE_ENV="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
 BIOS_BASE="$HOME/.metatron/bios"
 STAGE=/tmp/metatron-bios-deploy
-test -r "$WORKFORCE_BASE/.env"
-set -a; source "$WORKFORCE_BASE/.env"; set +a
+test -r "$WORKFORCE_ENV"
+set -a; source "$WORKFORCE_ENV"; set +a
 test -n "${GITHUB_TOKEN:-}"
 docker network inspect metatron-gateway-online >/dev/null
 
