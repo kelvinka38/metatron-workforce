@@ -19,35 +19,27 @@ permissions:
   contents: write
 
 jobs:
-  delete-merged-objective-head:
+  delete-closed-objective-head:
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'metatron/objective-')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Delete merged governed Objective branch
+      - uses: actions/checkout@v7
+      - name: Delete closed governed Objective branch
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         shell: bash
         run: |
           set -euo pipefail
-          encoded_ref="$(python3 - "$HEAD_REF" <<'PY'
-          import sys, urllib.parse
-          print(urllib.parse.quote(sys.argv[1], safe=''))
-          PY
-          )"
-          curl --fail-with-body --silent --show-error \
-            -X DELETE \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPOSITORY/git/refs/heads/$encoded_ref"
-          echo "MERGED_OBJECTIVE_BRANCH_DELETED=$HEAD_REF"
+          if git ls-remote --exit-code --heads origin "$HEAD_REF" >/dev/null 2>&1; then
+            git push origin --delete "$HEAD_REF"
+            echo "CLOSED_OBJECTIVE_BRANCH_DELETED=$HEAD_REF"
+          else
+            echo "CLOSED_OBJECTIVE_BRANCH_ALREADY_ABSENT=$HEAD_REF"
+          fi
 
   historical-merged-objective-sweep:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
@@ -61,8 +53,6 @@ jobs:
       - name: Audit or prune historical merged Objective branches
         env:
           APPLY: ${{ github.event_name == 'push' || inputs.apply }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -91,19 +81,13 @@ jobs:
 
           deleted=0
           for branch in "${candidates[@]}"; do
-            encoded_ref="$(python3 - "$branch" <<'PY'
-          import sys, urllib.parse
-          print(urllib.parse.quote(sys.argv[1], safe=''))
-          PY
-          )"
-            curl --fail-with-body --silent --show-error \
-              -X DELETE \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/$REPOSITORY/git/refs/heads/$encoded_ref"
-            deleted=$((deleted + 1))
-            echo "DELETED=$branch"
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              git push origin --delete "$branch"
+              deleted=$((deleted + 1))
+              echo "DELETED=$branch"
+            else
+              echo "ALREADY_ABSENT=$branch"
+            fi
           done
 
           echo "MERGED_OBJECTIVE_BRANCHES_DELETED=$deleted"
