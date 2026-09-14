@@ -152,10 +152,11 @@ public class GeneralExecutionRuntimeConfiguration {
             ResourceLeaseReconciler leases,
             IntegrationQueueReconciler integration,
             ExecutionWorkspaceReconciler workspaces,
+            ExecutionAttemptService attempts,
             @Value("${METATRON_EXECUTION_RECONCILE_SECONDS:15}") long intervalSeconds) {
         if (intervalSeconds < 1) throw new IllegalArgumentException("METATRON_EXECUTION_RECONCILE_SECONDS must be positive");
         ExecutionIsolationReconciler reconciler = new ExecutionIsolationReconciler(
-                leases, integration, workspaces, Clock.systemUTC(), Duration.ofSeconds(intervalSeconds));
+                leases, integration, workspaces, attempts, Clock.systemUTC(), Duration.ofSeconds(intervalSeconds));
         reconciler.start();
         return reconciler;
     }
