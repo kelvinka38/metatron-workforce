@@ -9,13 +9,27 @@ test "$(git -C "$CHECKOUT" rev-parse HEAD)" = "$SHA"
 
 INSTALL="${METATRON_HIGHWAY_INSTALL_DIR:-$HOME/.metatron/highway}"
 STATE="${METATRON_HIGHWAY_STATE_DIR:-$INSTALL/state}"
-BASE_ENV=/opt/metatron/metatron-workforce/.env
+PRODUCTION_CONFIG_DIR="${METATRON_PRODUCTION_CONFIG_DIR:-$HOME/.metatron/config}"
+BASE_ENV="${METATRON_PRODUCTION_ENV_FILE:-$PRODUCTION_CONFIG_DIR/workforce.env}"
+LEGACY_ENV="${METATRON_LEGACY_PRODUCTION_ENV_FILE:-/opt/metatron/metatron-workforce/.env}"
 CURRENT="$INSTALL/current"
 RELEASE="$INSTALL/releases/$SHA"
 ENV_FILE="$INSTALL/highway.env"
 
-test -r "$BASE_ENV"
 mkdir -p "$INSTALL/releases" "$STATE/logs" "$STATE/workspaces" "$STATE/artifacts"
+if [ ! -r "$BASE_ENV" ]; then
+  test -r "$LEGACY_ENV"
+  install -d -m 700 "$PRODUCTION_CONFIG_DIR"
+  umask 077
+  TMP_ENV="$BASE_ENV.tmp.$$"
+  cp "$LEGACY_ENV" "$TMP_ENV"
+  chmod 600 "$TMP_ENV"
+  mv "$TMP_ENV" "$BASE_ENV"
+  echo 'PRODUCTION_ENV_MIGRATED=YES'
+else
+  echo 'PRODUCTION_ENV_MIGRATED=NO'
+fi
+test -r "$BASE_ENV"
 
 # Source publication is immutable and serialized independently from task execution.
 # Re-installing the control plane must never replace a release an executor is using.
