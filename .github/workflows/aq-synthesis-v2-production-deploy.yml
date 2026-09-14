@@ -1,8 +1,0 @@
-name: Retired - aq-synthesis-v2-production-deploy
-on:
-  workflow_dispatch:
-jobs:
-  retired:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo 'Retired legacy one-shot workflow; use canonical Highway ingress.'
