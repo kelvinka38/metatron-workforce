@@ -51,7 +51,25 @@ public final class ExecutionWorkspaceReconciler {
         for (ExecutionWorkspaceBinding snapshot : bindings.load().values()) {
             if (snapshot.status() == ExecutionWorkspaceBinding.Status.DISPOSED) continue;
             ExecutionAttempt attempt = attempts.find(snapshot.attemptId()).orElse(null);
-            if (attempt == null || !attempt.terminal()) continue;
+
+            if (attempt == null) {
+                // Orphaned-binding fix (2026-09-14): a binding whose attemptId has no corresponding
+                // ExecutionAttempt record at all can never pass the `attempt.terminal()` check below and
+                // was previously skipped forever, leaking its workspace directory permanently. Confirmed
+                // live: 78 such bindings sat at a constant MATERIALIZING count across 30+ independent
+                // reconciler ticks with zero incoming activity after the reconcileExpired-frequency fix
+                // shipped earlier today, proving the blocker is here, not attempt lease expiry. Apply the
+                // same retention grace period used elsewhere in this method as a safety margin against a
+                // genuine provision-vs-persist race before concluding the attempt record will never
+                // appear, then reclaim directly -- there is no attempt lifecycle to seal/retain against.
+                if (!snapshot.updatedAt().plus(retention).isAfter(at)) {
+                    ExecutionWorkspaceBinding removed = workspaces.reclaimOrphaned(snapshot.attemptId(), snapshot.stateVersion(), at);
+                    disposed++;
+                    changed.add(removed.workspaceId() + ":orphan-reclaimed");
+                }
+                continue;
+            }
+            if (!attempt.terminal()) continue;
 
             ExecutionWorkspaceBinding current = workspaces.get(snapshot.attemptId()).orElse(snapshot);
             if (current.mutable()) {

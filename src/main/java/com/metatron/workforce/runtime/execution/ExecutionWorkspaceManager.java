@@ -166,6 +166,28 @@ public final class ExecutionWorkspaceManager {
         bindings.put(attemptId,next); persist(); return next;
     }
 
+    /**
+     * Root-cause fix for the orphaned-workspace disk leak (2026-09-14): a small number of workspace
+     * bindings reference an attemptId with NO corresponding ExecutionAttempt record at all (not merely
+     * non-terminal -- genuinely absent from the store, most plausibly from the legacy
+     * ObjectiveWorkspaceService root predating this attempt-scoped manager). dispose() above requires
+     * attempts.find(attemptId) to succeed, so no existing reconciliation path -- including the
+     * reconcileExpired-frequency fix that shipped earlier today -- can ever reach these; they were
+     * confirmed stuck at a constant count across 30+ independent 15s reconciler ticks with zero
+     * incoming/outgoing activity. This is a deliberately separate, narrower method rather than relaxing
+     * dispose()'s precondition, so every other caller of dispose() keeps requiring a real terminal
+     * attempt. It re-verifies the attempt is still absent at call time (defense in depth against a
+     * caller racing a fresh provision under the same id) before deleting anything.
+     */
+    public synchronized ExecutionWorkspaceBinding reclaimOrphaned(String attemptId,long expectedVersion,Instant at){
+        ExecutionWorkspaceBinding b=requireVersion(attemptId,expectedVersion);
+        if(attempts.find(attemptId).isPresent()) throw new IllegalStateException("execution attempt exists; not orphaned: "+attemptId);
+        deleteTree(resolveRoot(b));
+        ExecutionWorkspaceBinding next=copy(b,b.stateVersion()+1,ExecutionWorkspaceBinding.Status.DISPOSED,b.repositories(),at,b.sealedAt(),b.retentionUntil());
+        bindings.put(attemptId,next); persist(); return next;
+    }
+
+
     public Path rootPath(ExecutionWorkspaceBinding binding){verifyIdentity(binding);return resolveRoot(binding);}
     public Path repositoryPath(ExecutionWorkspaceBinding binding,String componentId){
         ExecutionRepositoryComponent c=binding.requireComponent(componentId);
