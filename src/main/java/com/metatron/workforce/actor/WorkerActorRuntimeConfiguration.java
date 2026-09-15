@@ -44,6 +44,11 @@ public class WorkerActorRuntimeConfiguration {
     }
 
     @Bean(destroyMethod = "close")
+    WorkerActorAssignmentConsumer workerActorAssignmentConsumer(WorkerActorRuntime actors) {
+        return new WorkerActorAssignmentConsumer(actors);
+    }
+
+    @Bean(destroyMethod = "close")
     WorkerActorAssignmentReconciler workerActorAssignmentReconciler(
             WorkforceCoreService core,
             WorkerActorRuntime actors,
@@ -52,8 +57,23 @@ public class WorkerActorRuntimeConfiguration {
         return new WorkerActorAssignmentReconciler(core, actors, Duration.ofMillis(intervalMillis));
     }
 
+    @Bean(destroyMethod = "close")
+    WorkerActorAssignmentSupervisor workerActorAssignmentSupervisor(
+            WorkforceCoreService core,
+            com.metatron.workforce.management.ManagementAutonomyService management,
+            com.metatron.workforce.management.AutonomyCoordinationService coordination,
+            WorkerActorRuntime actors,
+            java.util.List<com.metatron.workforce.management.AutonomousExecutionCapability> capabilities) {
+        return new WorkerActorAssignmentSupervisor(core, management, coordination, actors, capabilities);
+    }
+
     @Bean
-    ApplicationRunner workerActorRuntimeBootstrap(WorkerActorAssignmentReconciler reconciler) {
-        return args -> reconciler.start();
+    ApplicationRunner workerActorRuntimeBootstrap(
+            WorkerActorAssignmentReconciler reconciler,
+            WorkerActorAssignmentSupervisor supervisor) {
+        return args -> {
+            reconciler.start();
+            supervisor.start();
+        };
     }
 }

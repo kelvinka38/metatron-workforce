@@ -216,7 +216,8 @@ public class LiveManagementConfiguration {
             RuntimeCapacityCoordinator runtimeCapacity,
             GovernancePlanService governancePlans,
             GovernanceAttemptBindingService governanceAttempts,
-            ExecutionGate executionGate) {
+            ExecutionGate executionGate,
+            com.metatron.workforce.actor.WorkerActorAssignmentConsumer assignmentConsumer) {
         Clock clock = Clock.systemUTC();
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
                 .map(capability -> (AutonomousExecutionCapability) new ResourceScheduledAutonomousExecutionCapability(
@@ -234,6 +235,7 @@ public class LiveManagementConfiguration {
                 management, planner, governedCapabilities, coordination, observationClosure, safety, clock);
         runner.configureScheduling(scheduling);
         runner.configureAssignmentLifecycle(core);
+        runner.configureAssignmentConsumer(assignmentConsumer);
         runner.start();
         return runner;
     }
