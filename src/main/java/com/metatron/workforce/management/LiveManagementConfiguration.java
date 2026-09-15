@@ -136,11 +136,6 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    RuntimeCapacityCoordinator runtimeCapacityCoordinator(RuntimeRegistry registry) {
-        return new RuntimeCapacityCoordinator(registry);
-    }
-
-    @Bean
     AutonomousStaffingService autonomousStaffingService(WorkforceCoreService core,
                                                          List<AutonomousStaffingPolicy> policies,
                                                          WorkerRuntimeProfileBindingService runtimeProfiles,
