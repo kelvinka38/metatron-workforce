@@ -237,6 +237,9 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             List<ExecutionWorkSpec> proposed = planner.propose(
                     work.caseId(), work.normalizedRequest(), capabilityCatalog());
             work = management.recordPlan(objectiveId, runnerId, lease.token(), proposed, clock.instant());
+            LOG.info("autonomy_plan_recorded objective_id={} steps={}", objectiveId,
+                    proposed.stream().map(step -> step.stepId() + "=" + step.requiredCapability()
+                            + "/" + step.consequence()).toList());
         }
 
         if (work.status() != AutonomousObjectiveWork.Status.READY
@@ -365,6 +368,10 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         coordination.completeGraph(objectiveId, graph.graphVersion(), clock.instant());
         completeAssignmentsAfterObservation(objectiveId);
         management.completeAutonomousObjective(objectiveId, runnerId, lease.token(), clock.instant());
+        AutonomousObjectiveWork completed = management.findAutonomousWork(objectiveId).orElseThrow();
+        LOG.info("autonomy_objective_completed objective_id={} completed_steps={} planned_steps={} evidence_count={}",
+                objectiveId, completed.completedStepIds().size(), completed.plannedWork().size(),
+                completed.evidenceReferences().size());
     }
 
     private void completeAssignmentsAfterObservation(String objectiveId) {
@@ -508,6 +515,9 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             }
             if (!result.success()) {
                 String failure = "capability-unsuccessful:" + nonBlank(result.summary(), "unspecified");
+                LOG.warn("autonomy_step_execution_failed objective_id={} step_id={} capability={} worker={} assignment={} dispatch={} attempt={} failure={}",
+                        objectiveId, step.stepId(), step.requiredCapability(), result.workerId(),
+                        result.assignmentReference(), dispatch.dispatchId(), plannedAttempt, failure);
                 if (recoverableReadOnly(step, failure, plannedAttempt)) {
                     return NodeExecutionOutcome.recoverable(step.stepId(), failure, plannedAttempt);
                 }
@@ -526,9 +536,14 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 evidence.add("scheduler-decision:" + schedulerDecisionId);
             }
             coordination.completeDispatch(dispatch.dispatchId(), evidence, clock.instant());
+            LOG.info("autonomy_step_execution_succeeded objective_id={} step_id={} capability={} worker={} assignment={} dispatch={} attempt={} evidence_count={}",
+                    objectiveId, step.stepId(), step.requiredCapability(), result.workerId(),
+                    result.assignmentReference(), dispatch.dispatchId(), plannedAttempt, evidence.size());
             return NodeExecutionOutcome.succeeded(step.stepId(), result.assignmentReference(), evidence, plannedAttempt);
         } catch (RuntimeException failure) {
             String classified = classify(failure);
+            LOG.warn("autonomy_step_execution_exception objective_id={} step_id={} capability={} dispatch={} attempt={} failure={}",
+                    objectiveId, step.stepId(), step.requiredCapability(), dispatch.dispatchId(), plannedAttempt, classified);
             if (recoverableReadOnly(step, classified, plannedAttempt)) {
                 return NodeExecutionOutcome.recoverable(step.stepId(), classified, plannedAttempt);
             }
