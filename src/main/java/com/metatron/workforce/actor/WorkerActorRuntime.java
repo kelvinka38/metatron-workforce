@@ -41,6 +41,9 @@ public final class WorkerActorRuntime implements AutoCloseable {
     private final Map<String, WorkerActorSnapshot> actors = new LinkedHashMap<>();
     private final Map<String, List<WorkerActorMessage>> mailboxes = new LinkedHashMap<>();
     private final Map<String, ReentrantLock> lanes = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tracks the current thread's actor lanes so nested cognition is re-entrant and cannot deadlock
+     * waiting on a semaphore/lock already held by the same Worker turn. */
+    private final ThreadLocal<Set<String>> activeActorLanes = ThreadLocal.withInitial(java.util.HashSet::new);
 
     public WorkerActorRuntime(WorkerActorStateStore store, int maxConcurrentTurns) {
         this(store, maxConcurrentTurns, Clock.systemUTC());
@@ -175,6 +178,13 @@ public final class WorkerActorRuntime implements AutoCloseable {
                 safe(senderRef), safe(objectiveId), safe(assignmentId), safe(stepId), safe(capabilityRef), safe(payload),
                 clock.instant(), null, null, ""));
 
+        // Cognition/capability code may call the actor-scoped intelligence service recursively on
+        // the same Worker. Re-enter the current serialized lane inline; submitting another task would
+        // wait for the non-reentrant semaphore while the outer turn is holding it.
+        if (activeActorLanes.get().contains(target)) {
+            return executeNested(message, work);
+        }
+
         CompletableFuture<T> result = new CompletableFuture<>();
         executor.submit(() -> executeMessage(message.messageId(), work, result));
         try {
@@ -303,8 +313,10 @@ public final class WorkerActorRuntime implements AutoCloseable {
         ReentrantLock lane = lanes.computeIfAbsent(workerId, ignored -> new ReentrantLock(true));
         boolean permit = false;
         lane.lock();
+        Set<String> active = activeActorLanes.get();
         try {
             computePermits.acquire();
+            active.add(workerId);
             permit = true;
             synchronized (this) {
                 WorkerActorSnapshot actor = ensureActor(workerId);
@@ -340,8 +352,30 @@ public final class WorkerActorRuntime implements AutoCloseable {
         } catch (Throwable failure) {
             failTurn(envelope, failure, result);
         } finally {
+            active.remove(workerId);
             if (permit) computePermits.release();
             lane.unlock();
+            if (active.isEmpty()) activeActorLanes.remove();
+        }
+    }
+
+    private <T> T executeNested(WorkerActorMessage message, Callable<T> work) {
+        WorkerActorMessage claimed;
+        synchronized (this) {
+            claimed = replaceMessage(message.claim(clock.instant()));
+        }
+        try {
+            T value = work.call();
+            synchronized (this) {
+                replaceMessage(claimed.complete(clock.instant()));
+            }
+            return value;
+        } catch (Throwable failure) {
+            synchronized (this) {
+                replaceMessage(claimed.fail(safe(failure.getMessage()), clock.instant()));
+            }
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            throw new IllegalStateException("nested worker actor turn failed: " + message.workerId(), failure);
         }
     }
 

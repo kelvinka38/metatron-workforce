@@ -62,6 +62,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     private final GovernancePlanService governancePlans;
     private final GovernanceAttemptBindingService governanceAttempts;
     private final ExecutionGate executionGate;
+    private volatile boolean assignmentCompletionDeferred;
     private final ThreadLocal<List<String>> staffingEvidence = ThreadLocal.withInitial(ArrayList::new);
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
@@ -202,6 +203,12 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         return delegate.supportsWorker(workerId, workSpec);
     }
 
+    /** Production composition opts into Observation-gated Assignment completion. */
+    public GovernedAutonomousExecutionCapability deferAssignmentCompletionUntilObservation() {
+        this.assignmentCompletionDeferred = true;
+        return this;
+    }
+
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
         Objects.requireNonNull(request, "request");
@@ -263,10 +270,19 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     : executeWithRecovery(allocated, coreAssignment, boundPlan);
             verifyAttribution(result, coreAssignment);
 
-            core.transitionAssignment(coreAssignment.assignmentId(), result.success()
-                    ? WorkforceCoreService.AssignmentStatus.COMPLETED : WorkforceCoreService.AssignmentStatus.CANCELLED);
+            // Production execution with durable attempts defers Assignment completion to the independent
+            // Observation boundary. Compatibility adapters without durable attempts retain the legacy
+            // terminal projection because they have no later Observation lifecycle to own it.
+            if (!result.success()) {
+                core.transitionAssignment(coreAssignment.assignmentId(), WorkforceCoreService.AssignmentStatus.CANCELLED);
+            } else if (!assignmentCompletionDeferred) {
+                core.transitionAssignment(coreAssignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+            }
 
             List<String> evidence = new ArrayList<>(staffingEvidence.get());
+            evidence.add("assignment-effect-terminal=" + (result.success()
+                    ? (assignmentCompletionDeferred ? "awaiting-observation" : "completed-compatibility")
+                    : "cancelled"));
             evidence.addAll(result.evidenceReferences());
             evidence.add("allocation:worker=" + coreAssignment.workerId()
                     + ":assignment=" + coreAssignment.assignmentId()
@@ -339,7 +355,7 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
 
                 try {
                     ExecutionPermit capabilityPermit = authorizeCapabilityEffectIfRequired(governedRequest, attempt, boundPlan);
-                    CapabilityResult result = delegate.execute(governedRequest);
+                    CapabilityResult result = executeOnWorkerActor(governedRequest);
                     RuntimeException leaseFailure = heartbeatFailure.get();
                     if (leaseFailure != null) throw leaseFailure;
                     verifyAttribution(result, assignment);
@@ -376,6 +392,34 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         } finally {
             releaseRuntimeIfPresent(assignment.workerId(), runtime);
         }
+    }
+
+    /** Execute the complete capability turn inside the selected Worker's serialized actor lane.
+     * Nested actor-scoped cognition re-enters inline, so the lane never self-deadlocks. */
+    private CapabilityResult executeOnWorkerActor(CapabilityRequest request) {
+        if (runtimeCapacity == null || runtimeCapacity.actors() == null || request.allocatedWorkerId().isBlank()) {
+            return delegate.execute(request);
+        }
+        com.metatron.workforce.execution.ExecutionAttemptContext.Binding binding =
+                com.metatron.workforce.execution.ExecutionAttemptContext.current().orElse(null);
+        return runtimeCapacity.actors().runTurn(
+                request.allocatedWorkerId(),
+                com.metatron.workforce.actor.WorkerActorMessage.Type.ASSIGNMENT,
+                "workforce:assignment-dispatch",
+                request.objectiveId(),
+                request.assignmentReference(),
+                request.workSpec().stepId(),
+                "assignment-dispatch:" + request.workSpec().requiredCapability(),
+                request.workSpec().objective(),
+                () -> {
+                    if (binding == null) return delegate.execute(request);
+                    com.metatron.workforce.execution.ExecutionAttemptContext.bind(binding);
+                    try {
+                        return delegate.execute(request);
+                    } finally {
+                        com.metatron.workforce.execution.ExecutionAttemptContext.clearIf(binding.attemptId());
+                    }
+                });
     }
 
     private ExecutionPermit authorizeCapabilityEffectIfRequired(CapabilityRequest request,
