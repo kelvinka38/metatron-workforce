@@ -57,9 +57,11 @@ public class IntelligenceRuntimeConfiguration {
             CognitiveArtifactStore artifactStore,
             InferenceConsumptionLedger inferenceLedger,
             CognitionCapacityEventStore cognitionCapacityEvents) {
-        MetatronCognitionClient cognitionClient = null;
-        if (cognitionUrl != null && !cognitionUrl.isBlank()) {
-            MetatronCognitionClient transport = new HttpMetatronCognitionClient(cognitionUrl, cognitionAuth, objectMapper);
+        String ownedCognitionUrl = cognitionUrl == null || cognitionUrl.isBlank()
+                ? "http://metatron-cognition-node:8091" : cognitionUrl;
+        MetatronCognitionClient cognitionClient;
+        {
+            MetatronCognitionClient transport = new HttpMetatronCognitionClient(ownedCognitionUrl, cognitionAuth, objectMapper);
             cognitionClient = new CognitionCapacityCoordinator(
                     transport,
                     cognitionCapacityEvents,
