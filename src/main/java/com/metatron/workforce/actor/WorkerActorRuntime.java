@@ -96,6 +96,28 @@ public final class WorkerActorRuntime implements AutoCloseable {
         return mailboxDepthUnsafe(workerId);
     }
 
+    /**
+     * Root-cause fix (WORKFORCE RUNTIME RE-FOUNDATION, part 2 of 2): true when this Worker's actor is
+     * safe to hand a new/retry Assignment to right now. Excludes PAUSED and OFFLINE (explicit
+     * operator holds), WORKING (already mid-turn -- would violate the one-serial-lane-per-Worker
+     * invariant), and RECOVERING (post-restart reconciliation in progress, not yet settled).
+     * Deliberately includes BLOCKED: a Worker whose last turn failed is exactly who bounded recovery
+     * is supposed to re-dispatch to next -- Worker identity must survive across a recovery retry
+     * (confirmed by WorkerActorAutonomyConformanceAcceptanceTest, which asserts every recovered
+     * ExecutionAttempt keeps the same workerId). Excluding BLOCKED here would break that invariant by
+     * forcing every retry onto a different Worker instead of giving the original one another attempt.
+     * An unknown workerId is treated as accepting work: it will be lazily created IDLE on first use,
+     * matching ensureActor's existing behavior elsewhere in this class.
+     */
+    public synchronized boolean acceptsNewWork(String workerId) {
+        WorkerActorSnapshot actor = actors.get(require(workerId, "workerId"));
+        if (actor == null) return true;
+        return switch (actor.state()) {
+            case PAUSED, OFFLINE, WORKING, RECOVERING -> false;
+            default -> true;
+        };
+    }
+
     public synchronized WorkerActorSnapshot pause(String workerId) {
         WorkerActorSnapshot actor = ensureActor(workerId);
         if (actor.state() == WorkerActorState.WORKING) {
