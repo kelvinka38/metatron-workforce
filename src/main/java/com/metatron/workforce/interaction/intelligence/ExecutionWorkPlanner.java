@@ -22,7 +22,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     private static final String CROSS_REPOSITORY_AUDIT_ANALYSIS = "cross-repository-audit-analysis";
     private static final String GENERAL_WORKSPACE = "execution.general.workspace";
     private static final String HOST_COMMANDER = "host.commander.execute";
+    private static final String COGNITION_RUNTIME_ASSURANCE = "worker.cognition.assure";
     private static final String GATEWAY_DIRECTOR_APPOINTMENT = "workforce.staffing.gateway-director";
+    private static final java.util.regex.Pattern COGNITION_MODEL_TARGET =
+            java.util.regex.Pattern.compile("(?i)(?<![A-Za-z0-9._/-])(llama[A-Za-z0-9._/-]*:[A-Za-z0-9._-]+)(?![A-Za-z0-9._-])");
     private static final java.util.regex.Pattern EXACT_GIT_SHA =
             java.util.regex.Pattern.compile("(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])");
     private static final java.util.regex.Pattern WORKSPACE_FILE_PATH =
@@ -137,6 +140,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         if (!deterministicGatewayDirectorAppointment.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
             validate(deterministicGatewayDirectorAppointment);
             return deterministicGatewayDirectorAppointment;
+        }
+
+        List<ExecutionWorkSpec> deterministicCognitionAssurancePlan = deterministicCognitionRuntimeAssurance(
+                normalized, availableExecutionCapabilities);
+        if (!deterministicCognitionAssurancePlan.isEmpty() && normalized.explicitlyRequestedProvider() == null) {
+            validate(deterministicCognitionAssurancePlan);
+            return deterministicCognitionAssurancePlan;
         }
 
         List<ExecutionWorkSpec> deterministicHostCommanderPlan = deterministicHostCommanderWork(
@@ -617,6 +627,44 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         return List.copyOf(plan);
     }
 
+
+    private static List<ExecutionWorkSpec> deterministicCognitionRuntimeAssurance(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, COGNITION_RUNTIME_ASSURANCE)) return List.of();
+        if (!requestedRepositoryTargets(normalized.target()).isEmpty()) return List.of();
+
+        String original = normalized.objective() + " " + normalized.target() + " "
+                + normalized.constraints() + " " + normalized.explicitProhibitions() + " "
+                + normalized.requestedOutput();
+        String semantic = original.toLowerCase(Locale.ROOT);
+        boolean cognitionIntent = semantic.contains("worker cognition")
+                || semantic.contains("metatron-owned cognition")
+                || semantic.contains("metatron owned cognition")
+                || semantic.contains("cognition path")
+                || semantic.contains("cognition runtime");
+        boolean assuranceIntent = semantic.contains("verify") || semantic.contains("prove")
+                || semantic.contains("reconcile") || semantic.contains("assure");
+        java.util.regex.Matcher model = COGNITION_MODEL_TARGET.matcher(original);
+        if (!cognitionIntent || !assuranceIntent || !model.find()) return List.of();
+
+        String expectedModel = model.group(1);
+        return List.of(new ExecutionWorkSpec(
+                "cognition-runtime-assurance",
+                normalized.objective(),
+                expectedModel,
+                COGNITION_RUNTIME_ASSURANCE,
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of(
+                        "A real Worker cognition request completes through the Metatron-owned cognition endpoint",
+                        "The observed cognition model identity equals " + expectedModel,
+                        "No external paid provider is used for the Worker cognition request"),
+                List.of(
+                        "metatron-cognition-endpoint evidence from the Worker cognition request",
+                        "metatron-cognition-model:" + expectedModel,
+                        "worker-intelligence-request evidence and durable Assignment/ExecutionAttempt attribution")));
+    }
 
     private static List<ExecutionWorkSpec> deterministicHostCommanderWork(
             NormalizedRequest normalized,
