@@ -72,6 +72,7 @@ COMPLETION_OWNERS = {
 }
 
 ASSIGNMENT_OWNERS = {
+    "AutonomousManagementRunner.java": "ObservationClosureService->Workforce Core lifecycle",
     "GovernedAutonomousExecutionCapability.java": "Assignment/Authorization/Execution admission",
     "WorkforceCoreService.java": "Workforce Core lifecycle",
     "WorkforceCoreController.java": "Workforce Core authorized ingress",
@@ -80,6 +81,17 @@ ASSIGNMENT_OWNERS = {
 
 def rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
+
+
+def has_github_proposal_publish_call(text: str) -> bool:
+    # Avoid treating comments such as `GitHubWorkspaceProposalPublisher.publish()` as effects.
+    # Extract concrete variables/parameters typed as the publisher, then require an invocation on
+    # one of those identifiers. This stays fail-closed for real publisher calls without lexical
+    # false positives from documentation/comments.
+    code = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    names = set(re.findall(r"\bGitHubWorkspaceProposalPublisher\s+([A-Za-z_$][A-Za-z0-9_$]*)", code))
+    return any(re.search(rf"\b{re.escape(name)}\.publish\s*\(", code) for name in names)
 
 
 def row(kind: str, path: Path, symbol: str, owner: str, gate_required: bool, known: bool = True) -> dict:
@@ -123,7 +135,7 @@ def classify(path: Path, text: str) -> list[dict]:
     if PROCESS_EFFECT.search(text):
         if path.name in {"WorkerExecutionSandboxService.java", "WorkerRuntime.java"}:
             rows.append(row("LOCAL_PROCESS_EFFECT", path, "ProcessBuilder(", "isolated Worker sandbox/runtime", False))
-        elif path.name == "HostCommanderAutonomousCapability.java":
+        elif path.name in {"HostCommanderAutonomousCapability.java", "WorkerHousekeepingCapability.java"}:
             rows.append(row("GOVERNED_HOST_COMMANDER_TRANSPORT", path, "ProcessBuilder(",
                             "GovernedAutonomousExecutionCapability->ExecutionGate->Host Commander privileged broker", True))
         else:
@@ -144,7 +156,7 @@ def classify(path: Path, text: str) -> list[dict]:
             rows.append(row("ASSIGNMENT_LIFECYCLE_TRANSITION", path, token, owner or "UNDECLARED", True, owner is not None))
 
     # Explicit external publication is a governed effect even though implementation is delegated to a publisher service.
-    if "GitHubWorkspaceProposalPublisher" in text and ".publish(" in text:
+    if has_github_proposal_publish_call(text):
         owner = "ExecutionGate->ActionFabric" if path.name == "GeneralWorkspaceActionCatalog.java" else "UNDECLARED"
         rows.append(row("GITHUB_PUBLICATION_EFFECT", path, "GitHubWorkspaceProposalPublisher.publish(", owner, True,
                         owner != "UNDECLARED"))
