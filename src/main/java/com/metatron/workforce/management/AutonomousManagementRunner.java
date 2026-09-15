@@ -3,6 +3,7 @@ package com.metatron.workforce.management;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.observation.ObservationClosureService;
+import com.metatron.workforce.core.WorkforceCoreService;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -53,6 +54,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
     private volatile AutonomySchedulingService scheduling;
+    /** Optional production bridge used to close canonical Assignments only after Observation PASS. */
+    private volatile WorkforceCoreService workforceCore;
 
     public AutonomousManagementRunner(ManagementAutonomyService management,
                                       ExecutionPlanProposalService planner,
@@ -168,6 +171,13 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     public AutonomousManagementRunner configureScheduling(AutonomySchedulingService scheduling) {
         if (started.get()) throw new IllegalStateException("scheduling must be configured before runner start");
         this.scheduling = Objects.requireNonNull(scheduling, "scheduling");
+        return this;
+    }
+
+    /** Binds the canonical Assignment lifecycle to this runner's independent Observation boundary. */
+    public AutonomousManagementRunner configureAssignmentLifecycle(WorkforceCoreService core) {
+        if (started.get()) throw new IllegalStateException("assignment lifecycle must be configured before runner start");
+        this.workforceCore = Objects.requireNonNull(core, "core");
         return this;
     }
 
@@ -345,7 +355,20 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             }
         }
         coordination.completeGraph(objectiveId, graph.graphVersion(), clock.instant());
+        completeAssignmentsAfterObservation(objectiveId);
         management.completeAutonomousObjective(objectiveId, runnerId, lease.token(), clock.instant());
+    }
+
+    private void completeAssignmentsAfterObservation(String objectiveId) {
+        WorkforceCoreService core = workforceCore;
+        if (core == null) return;
+        for (WorkforceCoreService.Assignment assignment : core.allAssignments()) {
+            if (!objectiveId.equals(assignment.objectiveRef())) continue;
+            if (assignment.status() == WorkforceCoreService.AssignmentStatus.ACTIVE
+                    || assignment.status() == WorkforceCoreService.AssignmentStatus.PLANNED) {
+                core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+            }
+        }
     }
 
     private void handleCapabilityPlanGap(String objectiveId, String stepId, String requiredCapability,
