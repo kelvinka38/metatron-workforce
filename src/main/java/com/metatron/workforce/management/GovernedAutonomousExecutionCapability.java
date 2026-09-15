@@ -209,6 +209,47 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         return this;
     }
 
+    /** Durable management phase: create the canonical Assignment before any capability effect. */
+    public WorkforceCoreService.Assignment prepareAssignment(CapabilityRequest request) {
+        Objects.requireNonNull(request, "request");
+        WorkforceCoreService.Worker worker = awaitEligibleWorker(request.workSpec());
+        WorkforceCoreService.Participation participation = core.participations(worker.workerId()).stream()
+                .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
+                .sorted(Comparator.comparing(WorkforceCoreService.Participation::participationId))
+                .findFirst().orElseThrow(() -> new IllegalStateException("staffing-gap:no-active-participation:" + worker.workerId()));
+        String key = allocationKey(request);
+        String reservationId = "capacity-reservation:" + key;
+        String assignmentId = "assignment:" + key;
+        core.reserveCapacity(reservationId, assignmentId, request.objectiveId(), worker.workerId(), delegate.requiredCapacity());
+        return core.assignReserved(reservationId, participation.participationId(),
+                requireReference(delegate.authorityReference(), "authority-reference-missing"),
+                requireReference(delegate.authorizationReference(), "authorization-reference-missing"), request.workSpec().objective());
+    }
+
+    /** WorkerActor consumer entry point for an already-created durable Assignment. */
+    public CapabilityResult executeAssigned(CapabilityRequest request, WorkforceCoreService.Assignment assignment) {
+        Objects.requireNonNull(request, "request"); Objects.requireNonNull(assignment, "assignment");
+        if (assignment.status() != WorkforceCoreService.AssignmentStatus.ACTIVE
+                && assignment.status() != WorkforceCoreService.AssignmentStatus.PLANNED) {
+            throw new IllegalStateException("assignment-not-executable:" + assignment.status());
+        }
+        CapabilityRequest allocated = request.withAllocation(assignment.workerId(), assignment.assignmentId(), assignment.authorizationRef());
+        ExecutionRequest executionRequest = new ExecutionRequest(
+                "execution:" + assignment.assignmentId(), new Assignment(assignment.assignmentId(), assignment.workerId()),
+                new Authorization(assignment.authorizationRef(), assignment.workerId()), request.workSpec(), clock.instant());
+        ExecutionState admitted = admission.admit(executionRequest);
+        if (admitted != ExecutionState.ADMITTED) throw new SecurityException("execution-not-admitted:" + admitted);
+        CapabilityResult result = executionAttempts == null ? delegate.execute(allocated)
+                : executeWithRecovery(allocated, assignment, null);
+        verifyAttribution(result, assignment);
+        if (!result.success()) core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.CANCELLED);
+        else if (!assignmentCompletionDeferred) core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+        List<String> evidence = new ArrayList<>(result.evidenceReferences());
+        evidence.add("assignment-consumer:worker=" + assignment.workerId() + ":assignment=" + assignment.assignmentId());
+        evidence.add("assignment-effect-terminal=" + (result.success() ? (assignmentCompletionDeferred ? "awaiting-observation" : "completed") : "cancelled"));
+        return new CapabilityResult(result.success(), result.workerId(), result.assignmentReference(), result.workReference(), evidence, result.summary());
+    }
+
     @Override
     public CapabilityResult execute(CapabilityRequest request) {
         Objects.requireNonNull(request, "request");
