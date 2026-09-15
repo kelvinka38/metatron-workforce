@@ -221,15 +221,19 @@ public class LiveManagementConfiguration {
         List<AutonomousExecutionCapability> governedCapabilities = capabilities.stream()
                 .map(capability -> (AutonomousExecutionCapability) new ResourceScheduledAutonomousExecutionCapability(
                         capability, resourceScheduling, clock))
-                .map(capability -> (AutonomousExecutionCapability) new GovernedAutonomousExecutionCapability(
-                        capability, core, admission, clock, staffing, attempts, runtimeCapacity,
-                        governancePlans, governanceAttempts, executionGate))
+                .map(capability -> {
+                    GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
+                            capability, core, admission, clock, staffing, attempts, runtimeCapacity,
+                            governancePlans, governanceAttempts, executionGate);
+                    return (AutonomousExecutionCapability) governed.deferAssignmentCompletionUntilObservation();
+                })
                 .map(capability -> (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
                         capability, safety, clock))
                 .toList();
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
                 management, planner, governedCapabilities, coordination, observationClosure, safety, clock);
         runner.configureScheduling(scheduling);
+        runner.configureAssignmentLifecycle(core);
         runner.start();
         return runner;
     }
