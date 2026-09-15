@@ -214,5 +214,56 @@ class ElasticWorkerActorRuntimeAcceptanceTest {
             }
         }
     }
+
+    @Test
+    void concurrentConsumeAssignmentCallsExecuteTheRealEffectExactlyOnce() throws Exception {
+        // CAS fix (2026-09-15): two callers racing WorkerActorRuntime.consumeAssignment() for the SAME
+        // still-PENDING Assignment (e.g. AutonomousManagementRunner's own dispatch and
+        // WorkerActorAssignmentSupervisor's restart-reconciliation scan hitting the same Assignment in
+        // the same window) previously could both pass the pre-submit not-terminal/not-claimed check and
+        // both get an executeMessage task queued. The second task's snapshot of the message, captured
+        // before it reached the front of the executor queue, still read PENDING even after the first had
+        // already completed it -- so it re-claimed and ran the real effect a second time. This proves
+        // exactly that race, at the actual public API surface real callers use, and asserts the effect
+        // ran once.
+        try (WorkerActorRuntime runtime = new WorkerActorRuntime(new InMemoryWorkerActorStateStore(), 4)) {
+            runtime.ensureActor("WORKER-CAS");
+            com.metatron.workforce.core.WorkforceCoreService.Assignment assignment =
+                    new com.metatron.workforce.core.WorkforceCoreService.Assignment(
+                            "assignment:cas-race", "OBJ-CAS", "WORKER-CAS", "participation:cas",
+                            "authority:test", "authorization:test", "do the real effect",
+                            com.metatron.workforce.core.WorkforceCoreService.AssignmentStatus.ACTIVE,
+                            Instant.parse("2026-09-15T00:00:00Z"));
+
+            AtomicInteger effects = new AtomicInteger();
+            CountDownLatch release = new CountDownLatch(1);
+            java.util.concurrent.Callable<String> work = () -> {
+                assertTrue(release.await(2, TimeUnit.SECONDS));
+                effects.incrementAndGet();
+                return "real-effect";
+            };
+
+            var callers = Executors.newFixedThreadPool(2);
+            try {
+                // Both callers race consumeAssignment() for the identical Assignment before either
+                // task has had a chance to run, matching the actual race window in production between
+                // two independent dispatch paths hitting the same still-PENDING Assignment.
+                var first = callers.submit(() -> runtime.consumeAssignment(assignment, work));
+                var second = callers.submit(() -> runtime.consumeAssignment(assignment, work));
+                var firstFuture = first.get(2, TimeUnit.SECONDS);
+                var secondFuture = second.get(2, TimeUnit.SECONDS);
+
+                Thread.sleep(150);
+                release.countDown();
+
+                if (firstFuture != null) firstFuture.get(2, TimeUnit.SECONDS);
+                if (secondFuture != null) secondFuture.get(2, TimeUnit.SECONDS);
+                assertEquals(1, effects.get(), "the real effect must run exactly once despite the race");
+            } finally {
+                callers.shutdownNow();
+            }
+        }
+    }
 }
+
 
