@@ -46,6 +46,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
         List<ExecutionWorkSpec> plan = delegate.propose(caseId, request, availableCapabilities);
         if (plan == null || plan.isEmpty()) return plan;
         plan = collapseExplicitRecoveryComposite(request, availableCapabilities, plan);
+        plan = normalizeRecoveryProbeTargets(plan);
         plan = collapseExplicitGeneralWorkspaceObjective(request, availableCapabilities, plan);
         plan = removeInvalidCrossRepositoryAuditJoins(plan);
         if (plan.isEmpty()) return plan;
@@ -312,7 +313,41 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
         visiting.remove(dependency);
     }
 
+    /**
+     * Root-cause fix (2026-09-15): AutonomyRecoveryProbeCapability requires an exact
+     * "p10-recovery://{transient-timeout|restart-window|observation-retry}/..." target, but nothing
+     * upstream forces the frontier planner to produce that exact machine-parseable URI when a Human's
+     * free-text request only vaguely asks to "verify autonomy/self-healing" -- observed live: a real
+     * Objective got stuck permanently BLOCKED because the planner picked this capability with a target
+     * that failed the format check only at execution time, with no path to ever recover on its own.
+     * Rather than let a malformed target reach execution and fail loudly forever, normalize it here at
+     * plan time to the safest of the three modes (observation-retry: verifies the retry path only, does
+     * not inject a real timeout or sleep-then-crash like the other two), keyed by stepId so it stays
+     * traceable to the original planned step.
+     */
+    static List<ExecutionWorkSpec> normalizeRecoveryProbeTargets(List<ExecutionWorkSpec> plan) {
+        if (plan == null || plan.isEmpty()) return plan;
+        boolean needsNormalization = plan.stream().anyMatch(step ->
+                RECOVERY_PROBE_READ.equals(step.requiredCapability())
+                        && (step.target() == null || !step.target().startsWith("p10-recovery://")));
+        if (!needsNormalization) return plan;
+        List<ExecutionWorkSpec> normalized = new ArrayList<>(plan.size());
+        for (ExecutionWorkSpec step : plan) {
+            if (!RECOVERY_PROBE_READ.equals(step.requiredCapability())
+                    || (step.target() != null && step.target().startsWith("p10-recovery://"))) {
+                normalized.add(step);
+                continue;
+            }
+            normalized.add(new ExecutionWorkSpec(
+                    step.stepId(), step.objective(), "p10-recovery://observation-retry/" + step.stepId(),
+                    step.requiredCapability(), step.dependsOn(), step.consequence(),
+                    step.acceptanceCriteria(), step.evidenceRequirements()));
+        }
+        return List.copyOf(normalized);
+    }
+
     private static ExecutionWorkSpec markDirectGeneral(ExecutionWorkSpec step) {
+
         List<String> evidence = new ArrayList<>(step.evidenceRequirements());
         addDistinct(evidence, GENERAL_RUNTIME_MARKER);
         return new ExecutionWorkSpec(
