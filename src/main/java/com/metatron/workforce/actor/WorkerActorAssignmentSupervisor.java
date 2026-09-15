@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
  * intended WorkerActor claim the existing Assignment mailbox message.
  */
 public final class WorkerActorAssignmentSupervisor implements AutoCloseable {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(WorkerActorAssignmentSupervisor.class);
     private final WorkforceCoreService core;
     private final ManagementAutonomyService management;
     private final AutonomyCoordinationService coordination;
@@ -67,12 +68,66 @@ public final class WorkerActorAssignmentSupervisor implements AutoCloseable {
                         work.organizationContextId(), assignment.objectiveRef(), node.spec())
                         .withDispatch(dispatchId, attempt);
         actors.consumeAssignment(assignment, () -> governed.executeAssigned(request, assignment))
-                .whenCompleteAsync((r,e) -> { if (e != null) reconcileFailure(assignment, e); }, executions);
+                .whenCompleteAsync((r,e) -> reconcileOutcome(assignment, dispatchId, r, e), executions);
     }
 
-    private void reconcileFailure(WorkforceCoreService.Assignment a, Throwable failure) {
-        if (a.status()==WorkforceCoreService.AssignmentStatus.ACTIVE
-                && failure != null && failure.getCause() instanceof CancellationException) return;
+    /**
+     * Root-cause fix (2026-09-15, founder-requested closure): restart-driven execution via this
+     * Supervisor previously stopped reconciliation at Assignment terminal -- the canonical
+     * AutonomyCoordinationService DurableDispatch/Work-Graph-node record, which
+     * AutonomousManagementRunner.executeNode() always completes on its own dispatch path, was never
+     * touched here. A step the Supervisor picked up after a restart could run its real effect and
+     * reach Assignment COMPLETED while its DurableWorkGraph node stayed DISPATCHED forever -- the
+     * Objective's own progress tracking (which only advances via
+     * AutonomousManagementRunner.reconcileSucceededNodes() noticing a node reach SUCCEEDED) would
+     * never learn the step ever happened, leaving the Objective stuck permanently even though the work
+     * genuinely completed. This closes that gap using the exact same coordination.completeDispatch()/
+     * failDispatch() calls the Runner's own dispatch path already makes -- no new completion
+     * semantics, just the same canonical ones, reached from the second entry point. Once the dispatch
+     * is marked SUCCEEDED/FAILED here, the Runner's existing reconcileSucceededNodes() picks it up
+     * under its own real management lease on its next normal poll tick; this method does not touch
+     * ManagementAutonomyService or lease state directly.
+     *
+     * Also fixes the prior silent swallow: any reconciliation failure (not just the original
+     * CancellationException special case) is now logged with its root cause instead of vanishing with
+     * no trace, matching the "never swallow supervisor exceptions" requirement.
+     */
+    private void reconcileOutcome(WorkforceCoreService.Assignment assignment, String dispatchId,
+                                  AutonomousExecutionCapability.CapabilityResult result, Throwable failure) {
+        Instant now = clock.instant();
+        try {
+            if (failure != null) {
+                if (assignment.status()==WorkforceCoreService.AssignmentStatus.ACTIVE
+                        && failure.getCause() instanceof CancellationException) return;
+                String reason = "supervisor-dispatch-failed:" + rootCause(failure);
+                coordination.failDispatch(dispatchId, reason, now);
+                LOG.error("worker_actor_supervisor_dispatch_failed assignment_id={} dispatch_id={} reason={}",
+                        assignment.assignmentId(), dispatchId, reason, failure);
+                return;
+            }
+            if (result == null) return; // race already resolved by the winning claimant; nothing new to reconcile
+            List<String> evidence = new ArrayList<>(result.evidenceReferences());
+            evidence.add("worker-actor-supervisor:assignment=" + assignment.assignmentId() + ":dispatch=" + dispatchId);
+            if (result.success()) {
+                coordination.completeDispatch(dispatchId, evidence, now);
+            } else {
+                coordination.failDispatch(dispatchId, nonBlank(result.summary(), "capability-unsuccessful"), now);
+            }
+        } catch (RuntimeException reconciliationFailure) {
+            LOG.error("worker_actor_supervisor_reconciliation_failed assignment_id={} dispatch_id={} error={}",
+                    assignment.assignmentId(), dispatchId, reconciliationFailure.getMessage(), reconciliationFailure);
+        }
+    }
+
+    private static String rootCause(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+        String message = cause.getMessage();
+        return (message == null || message.isBlank() ? cause.getClass().getSimpleName() : message);
+    }
+
+    private static String nonBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     private boolean isCancelledObjective(String objectiveId) {
