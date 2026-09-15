@@ -29,14 +29,25 @@ final class DeploymentAuthoritySeparationContractTest {
         String mcp = Files.readString(Path.of(".github/workflows/mcp-host-commander-release.yml"));
 
         assertTrue(workforce.contains("'scripts/**'"));
-        assertTrue(workforce.contains("'!scripts/mcp/**'"));
+        assertTrue(workforce.contains("if [[ \"$path\" == scripts/mcp/* ]]"));
+        assertTrue(workforce.contains("mcp_release=true"));
+        assertTrue(workforce.contains("workforce_release=true"));
         assertFalse(workforce.contains("release-host-commander-g19.sh"));
         assertTrue(workforce.contains("--kind workforce-build"));
         assertTrue(workforce.contains("--kind workforce-deploy"));
+        assertTrue(workforce.contains("--kind mcp-host-commander-release"));
 
-        assertTrue(mcp.contains("'scripts/mcp/**'"));
-        assertTrue(mcp.contains("release-host-commander-g19.sh"));
+        String registry = Files.readString(Path.of("highway/task-registry.json"));
+        String highwayTask = Files.readString(Path.of("scripts/highway-tasks/mcp-host-commander-release.sh"));
+
+        assertTrue(mcp.contains("workflow_dispatch"));
+        assertTrue(mcp.contains("--kind mcp-host-commander-release"));
         assertTrue(mcp.contains("$GITHUB_SHA"));
-        assertFalse(mcp.contains("workforce-deploy"));
+        assertFalse(mcp.contains("release-host-commander-g19.sh"));
+
+        assertTrue(registry.contains("\"mcp-host-commander-release\""));
+        assertTrue(registry.contains("scripts/highway-tasks/mcp-host-commander-release.sh"));
+        assertTrue(highwayTask.contains("scripts/mcp/release-host-commander-g19.sh"));
+        assertTrue(highwayTask.contains("$HIGHWAY_SOURCE_SHA"));
     }
 }

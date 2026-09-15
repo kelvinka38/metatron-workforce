@@ -2,47 +2,40 @@ name: Production Host Disk Cleanup
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */6 * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: production-host-disk-cleanup
+  group: production-host-disk-cleanup-manual
   cancel-in-progress: false
 
 jobs:
-  cleanup:
-    # Highway Conformance CI and the deploy pipeline both build on this same self-hosted
-    # runner for every autonomous-system PR, which leaves BuildKit cache and dangling images
-    # behind continuously. Without a recurring sweep, disk usage climbs unbounded between
-    # manual interventions. Never removes containers or named volumes.
+  enqueue-cleanup:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Disk usage before
-        shell: bash
-        run: df -h / || true
-
-      - name: apt cache clean
-        shell: bash
-        run: sudo apt-get clean || true
-
-      - name: Vacuum journal logs (cap 500MB)
-        shell: bash
-        run: sudo journalctl --vacuum-size=500M || true
-
-      - name: Prune dangling Docker images
-        shell: bash
-        run: docker image prune -f
-
-      - name: Prune BuildKit cache older than 24h
-        shell: bash
-        run: docker builder prune -f --filter until=24h
-
-      - name: Disk usage after
+      - uses: actions/checkout@v7
+      - name: Submit bounded cleanup to persistent Highway
         shell: bash
         run: |
-          df -h /
-          echo 'HOST_DISK_CLEANUP_SCHEDULED=PASS'
+          set -euo pipefail
+          bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+          test -r "$ENV_FILE"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$ENV_FILE"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit \
+            --kind host-disk-cleanup \
+            --source-sha "$GITHUB_SHA" \
+            --dedupe-key "host-disk-cleanup:manual:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            --priority 20 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_HOST_CLEANUP_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 600 --poll 2
+          echo 'HOST_DISK_CLEANUP_MANUAL_HIGHWAY=PASS'
