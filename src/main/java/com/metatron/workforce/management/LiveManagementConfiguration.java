@@ -39,6 +39,8 @@ import java.util.Locale;
 /** Production composition for persistent management, governed resources, execution/runtime and Observation closure. */
 @Configuration
 public class LiveManagementConfiguration {
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(LiveManagementConfiguration.class);
     @Bean
     ManagementStateStore managementStateStore(
             @Value("${METATRON_MANAGEMENT_STATE_PATH:/var/lib/metatron-workforce/management-state.json}") String configured) {
@@ -144,18 +146,30 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
+    GatewayDirectorBootstrapStatus gatewayDirectorBootstrapStatus() {
+        return new GatewayDirectorBootstrapStatus();
+    }
+
+    @Bean
     ApplicationRunner canonicalGatewayDirectorReconciliation(
             AutonomousStaffingService staffing,
             GatewayDirectorAppointmentCapability capability,
             WorkforceCoreService core,
             RuntimeCapacityCoordinator runtimeCapacity,
             WorkerConstitutionRuntimeMaterializer constitutionRuntime,
-            @Value("${METATRON_BOOTSTRAP_GATEWAY_HEAD:true}") boolean enabled) {
+            GatewayDirectorBootstrapStatus bootstrapStatus,
+            @Value("${METATRON_BOOTSTRAP_GATEWAY_HEAD:true}") boolean enabled,
+            @Value("${METATRON_CAPACITY_RESERVATION_ORPHAN_GRACE_SECONDS:300}") long orphanGraceSeconds) {
         return args -> {
-            if (!enabled) return;
             var now = Clock.systemUTC().instant();
-            staffing.ensureStaffed(capability, now);
-            runtimeCapacity.ensureRunning(GatewayDirectorAppointmentCapability.WORKER_ID);
+            if (!enabled) {
+                bootstrapStatus.disabled(now);
+                return;
+            }
+            try {
+                core.reconcileStaleCapacityReservations(now, Duration.ofSeconds(orphanGraceSeconds));
+                staffing.ensureStaffed(capability, now);
+                runtimeCapacity.ensureRunning(GatewayDirectorAppointmentCapability.WORKER_ID);
             WorkforceCoreService.Participation canonicalParticipation = core.participations(
                             GatewayDirectorAppointmentCapability.WORKER_ID).stream()
                     .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
@@ -184,6 +198,12 @@ public class LiveManagementConfiguration {
                         try { core.setWorkerStatus(legacy.workerId(), WorkforceCoreService.WorkerStatus.RETIRED); }
                         catch (RuntimeException ignored) { }
                     });
+                bootstrapStatus.ready(now);
+            } catch (RuntimeException failure) {
+                bootstrapStatus.degraded(now, failure);
+                LOG.error("Gateway Director boot reconciliation failed; application remains available with Gateway Director DEGRADED",
+                        failure);
+            }
         };
     }
 

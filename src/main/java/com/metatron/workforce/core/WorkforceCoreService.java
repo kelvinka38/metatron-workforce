@@ -1,11 +1,14 @@
 package com.metatron.workforce.core;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Canonical Workforce-owned identity/participation/work relationships. External domains remain references. */
 public class WorkforceCoreService {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(WorkforceCoreService.class);
     public enum ParticipantType { HUMAN, AI, HYBRID, EXTERNAL }
     public enum WorkerStatus { ACTIVE, SUSPENDED, RETIRED }
     public enum ParticipationStatus { ACTIVE, SUSPENDED, ENDED }
@@ -24,7 +27,7 @@ public class WorkforceCoreService {
                              AssignmentStatus status, Instant createdAt) {}
     public record CapacityReservation(String reservationId, String assignmentId, String objectiveRef,
                                       String workerId, double capacity, ReservationStatus status,
-                                      Instant createdAt, Instant releasedAt) {}
+                                      Instant createdAt, Instant releasedAt, String releaseReason) {}
 
     private final Map<String, Participant> participants = new ConcurrentHashMap<>();
     private final Map<String, Worker> workers = new ConcurrentHashMap<>();
@@ -35,11 +38,15 @@ public class WorkforceCoreService {
     private final Map<String, Assignment> assignments = new ConcurrentHashMap<>();
     private final Map<String, CapacityReservation> capacityReservations = new ConcurrentHashMap<>();
     private final WorkforceCoreStateStore stateStore;
+    private final Clock clock;
 
-    public WorkforceCoreService() { this(new InMemoryWorkforceCoreStateStore()); }
+    public WorkforceCoreService() { this(new InMemoryWorkforceCoreStateStore(), Clock.systemUTC()); }
 
-    public WorkforceCoreService(WorkforceCoreStateStore stateStore) {
+    public WorkforceCoreService(WorkforceCoreStateStore stateStore) { this(stateStore, Clock.systemUTC()); }
+
+    WorkforceCoreService(WorkforceCoreStateStore stateStore, Clock clock) {
         this.stateStore = Objects.requireNonNull(stateStore);
+        this.clock = Objects.requireNonNull(clock);
         WorkforceCoreStateStore.Snapshot s = stateStore.load();
         participants.putAll(s.participants());
         workers.putAll(s.workers());
@@ -136,16 +143,45 @@ public class WorkforceCoreService {
         if (a == null || !a.available()) throw new IllegalStateException("worker availability required before reservation");
         if (remainingCapacity(workerId) + 1e-9 < capacity) throw new IllegalStateException("insufficient worker capacity");
         CapacityReservation created = new CapacityReservation(reservationId, assignmentId, objectiveRef,
-                workerId, capacity, ReservationStatus.ACTIVE, Instant.now(), null);
+                workerId, capacity, ReservationStatus.ACTIVE, clock.instant(), null, null);
         capacityReservations.put(reservationId, created); persist(); return created;
     }
 
     public synchronized CapacityReservation releaseCapacity(String reservationId) {
+        return releaseCapacity(reservationId, "explicit-release", clock.instant());
+    }
+
+    private CapacityReservation releaseCapacity(String reservationId, String reason, Instant releasedAt) {
         CapacityReservation old = requireReservation(reservationId);
         if (old.status() == ReservationStatus.RELEASED) return old;
         CapacityReservation next = new CapacityReservation(old.reservationId(), old.assignmentId(), old.objectiveRef(),
-                old.workerId(), old.capacity(), ReservationStatus.RELEASED, old.createdAt(), Instant.now());
+                old.workerId(), old.capacity(), ReservationStatus.RELEASED, old.createdAt(), releasedAt, reason);
         capacityReservations.put(reservationId, next); persist(); return next;
+    }
+
+    /** Releases only terminal-assignment reservations and aged reservations with no assignment. */
+    public synchronized List<CapacityReservation> reconcileStaleCapacityReservations(Instant at, Duration orphanGrace) {
+        Objects.requireNonNull(at, "at"); Objects.requireNonNull(orphanGrace, "orphanGrace");
+        if (orphanGrace.isNegative()) throw new IllegalArgumentException("orphanGrace must not be negative");
+        List<CapacityReservation> released = new ArrayList<>();
+        for (CapacityReservation reservation : new ArrayList<>(capacityReservations.values())) {
+            if (reservation.status() != ReservationStatus.ACTIVE) continue;
+            Assignment assignment = assignments.get(reservation.assignmentId());
+            String reason = null;
+            if (assignment == null && !reservation.createdAt().plus(orphanGrace).isAfter(at)) {
+                reason = "orphaned-reservation-age-exceeded";
+            } else if (assignment != null && (assignment.status() == AssignmentStatus.COMPLETED
+                    || assignment.status() == AssignmentStatus.CANCELLED)) {
+                reason = "terminal-assignment:" + assignment.status();
+            }
+            if (reason == null) continue;
+            CapacityReservation reconciled = releaseCapacity(reservation.reservationId(), reason, at);
+            released.add(reconciled);
+            LOG.warn("capacity reservation reconciled worker_id={} reservation_id={} age_seconds={} reason={}",
+                    reservation.workerId(), reservation.reservationId(),
+                    Math.max(0, Duration.between(reservation.createdAt(), at).toSeconds()), reason);
+        }
+        return List.copyOf(released);
     }
 
     public synchronized Assignment assignReserved(String reservationId, String participationId,
@@ -187,7 +223,8 @@ public class WorkforceCoreService {
         if (status == AssignmentStatus.COMPLETED || status == AssignmentStatus.CANCELLED) {
             capacityReservations.values().stream()
                     .filter(r -> r.assignmentId().equals(assignmentId) && r.status() == ReservationStatus.ACTIVE)
-                    .map(CapacityReservation::reservationId).toList().forEach(this::releaseCapacity);
+                    .map(CapacityReservation::reservationId).toList()
+                    .forEach(id -> releaseCapacity(id, "terminal-assignment:" + status, clock.instant()));
         }
         persist(); return next;
     }
