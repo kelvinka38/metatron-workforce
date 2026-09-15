@@ -400,6 +400,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         if (runtimeCapacity == null || runtimeCapacity.actors() == null || request.allocatedWorkerId().isBlank()) {
             return delegate.execute(request);
         }
+        com.metatron.workforce.execution.ExecutionAttemptContext.Binding binding =
+                com.metatron.workforce.execution.ExecutionAttemptContext.current().orElse(null);
         return runtimeCapacity.actors().runTurn(
                 request.allocatedWorkerId(),
                 com.metatron.workforce.actor.WorkerActorMessage.Type.ASSIGNMENT,
@@ -409,7 +411,15 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                 request.workSpec().stepId(),
                 "assignment-dispatch:" + request.workSpec().requiredCapability(),
                 request.workSpec().objective(),
-                () -> delegate.execute(request));
+                () -> {
+                    if (binding == null) return delegate.execute(request);
+                    com.metatron.workforce.execution.ExecutionAttemptContext.bind(binding);
+                    try {
+                        return delegate.execute(request);
+                    } finally {
+                        com.metatron.workforce.execution.ExecutionAttemptContext.clearIf(binding.attemptId());
+                    }
+                });
     }
 
     private ExecutionPermit authorizeCapabilityEffectIfRequired(CapabilityRequest request,

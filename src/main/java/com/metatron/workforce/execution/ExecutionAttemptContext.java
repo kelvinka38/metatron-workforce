@@ -13,7 +13,13 @@ public final class ExecutionAttemptContext {
 
     public static void bind(ExecutionAttempt attempt) {
         if (attempt == null) throw new IllegalArgumentException("attempt required");
-        CURRENT.set(new Binding(attempt.attemptId(), attempt.fencingToken(), attempt.objectiveId(), attempt.stepId(), attempt.workerId()));
+        bind(new Binding(attempt.attemptId(), attempt.fencingToken(), attempt.objectiveId(), attempt.stepId(), attempt.workerId()));
+    }
+
+    /** Propagate an already-authorized attempt binding into a Worker actor lane. */
+    public static void bind(Binding binding) {
+        if (binding == null) throw new IllegalArgumentException("binding required");
+        CURRENT.set(binding);
     }
 
     public static Optional<Binding> current() { return Optional.ofNullable(CURRENT.get()); }
