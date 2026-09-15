@@ -54,4 +54,40 @@ class GeneralActionComposingExecutionPlanProposalServiceRecoveryTest {
                 GeneralActionComposingExecutionPlanProposalService.collapseExplicitRecoveryComposite(
                         ordinary, List.of("autonomy.recovery.probe.read"), plan));
     }
+
+    @Test
+    void normalizeRecoveryProbeTargetsFixesMalformedPlannerTarget() {
+        // Root cause reproduced: the frontier planner produced a step for autonomy.recovery.probe.read
+        // whose target is free text, not a "p10-recovery://..." URI -- this used to reach execution and
+        // fail permanently with "recovery probe target must start with p10-recovery://", leaving the
+        // Objective stuck BLOCKED forever with no self-recovery path.
+        ExecutionWorkSpec malformed = new ExecutionWorkSpec(
+                "probe-production-autonomy", "probe production autonomy health",
+                "Probe the current autonomy and control health of Metatron production",
+                "autonomy.recovery.probe.read", List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("accepted"), List.of("evidence"));
+
+        List<ExecutionWorkSpec> normalized = GeneralActionComposingExecutionPlanProposalService
+                .normalizeRecoveryProbeTargets(List.of(malformed));
+
+        assertEquals(1, normalized.size());
+        assertEquals("p10-recovery://observation-retry/probe-production-autonomy",
+                normalized.getFirst().target());
+        assertEquals("autonomy.recovery.probe.read", normalized.getFirst().requiredCapability());
+    }
+
+    @Test
+    void normalizeRecoveryProbeTargetsLeavesConformingTargetsUntouched() {
+        List<ExecutionWorkSpec> plan = List.of(step("recovery", "autonomy.recovery.probe.read", List.of()));
+        assertEquals(plan, GeneralActionComposingExecutionPlanProposalService.normalizeRecoveryProbeTargets(plan));
+    }
+
+    @Test
+    void normalizeRecoveryProbeTargetsIgnoresOtherCapabilities() {
+        List<ExecutionWorkSpec> plan = List.of(new ExecutionWorkSpec(
+                "audit", "audit repository", "not-a-recovery-uri", "repository.audit.read", List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("accepted"), List.of("evidence")));
+        assertEquals(plan, GeneralActionComposingExecutionPlanProposalService.normalizeRecoveryProbeTargets(plan));
+    }
 }
+
