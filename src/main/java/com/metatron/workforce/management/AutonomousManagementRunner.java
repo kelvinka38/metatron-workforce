@@ -4,6 +4,7 @@ import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalServ
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.observation.ObservationClosureService;
 import com.metatron.workforce.core.WorkforceCoreService;
+import com.metatron.workforce.actor.WorkerActorAssignmentConsumer;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -56,6 +57,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private volatile AutonomySchedulingService scheduling;
     /** Optional production bridge used to close canonical Assignments only after Observation PASS. */
     private volatile WorkforceCoreService workforceCore;
+    private volatile WorkerActorAssignmentConsumer assignmentConsumer;
 
     public AutonomousManagementRunner(ManagementAutonomyService management,
                                       ExecutionPlanProposalService planner,
@@ -175,6 +177,12 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     }
 
     /** Binds the canonical Assignment lifecycle to this runner's independent Observation boundary. */
+    public AutonomousManagementRunner configureAssignmentConsumer(WorkerActorAssignmentConsumer consumer) {
+        if (started.get()) throw new IllegalStateException("assignment consumer must be configured before runner start");
+        this.assignmentConsumer = Objects.requireNonNull(consumer, "consumer");
+        return this;
+    }
+
     public AutonomousManagementRunner configureAssignmentLifecycle(WorkforceCoreService core) {
         if (started.get()) throw new IllegalStateException("assignment lifecycle must be configured before runner start");
         this.workforceCore = Objects.requireNonNull(core, "core");
@@ -477,10 +485,27 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             throw new IllegalStateException("dispatch identity changed after safety reservation");
         }
         try {
-            AutonomousExecutionCapability.CapabilityResult result = capability.execute(
+            AutonomousExecutionCapability.CapabilityRequest capabilityRequest =
                     new AutonomousExecutionCapability.CapabilityRequest(
                             work.humanId(), work.organizationContextId(), objectiveId, step)
-                            .withDispatch(dispatch.dispatchId(), dispatch.attempt()));
+                            .withDispatch(dispatch.dispatchId(), dispatch.attempt());
+            AutonomousExecutionCapability.CapabilityResult result;
+            if (capability instanceof GovernedAutonomousExecutionCapability governed && assignmentConsumer != null) {
+                WorkforceCoreService.Assignment durableAssignment = governed.prepareAssignment(capabilityRequest);
+                try {
+                    result = assignmentConsumer.submit(durableAssignment,
+                            assignment -> governed.executeAssigned(capabilityRequest, assignment)).get();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("worker assignment consumer interrupted", interrupted);
+                } catch (java.util.concurrent.ExecutionException failed) {
+                    Throwable cause = failed.getCause();
+                    if (cause instanceof RuntimeException runtime) throw runtime;
+                    throw new IllegalStateException("worker assignment consumer failed", cause);
+                }
+            } else {
+                result = capability.execute(capabilityRequest);
+            }
             if (!result.success()) {
                 String failure = "capability-unsuccessful:" + nonBlank(result.summary(), "unspecified");
                 if (recoverableReadOnly(step, failure, plannedAttempt)) {

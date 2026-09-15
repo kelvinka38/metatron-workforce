@@ -27,7 +27,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
             "repository", "repo", "file", "filesystem", "workspace", "shell", "process",
             "git", "build", "test", "code", "source", "patch", "artifact", "compile",
             "research", "web", "internet", "search", "evidence", "publication", "paper",
-            "report", "standard", "regulator", "regulatory");
+            "report", "standard", "regulator", "regulatory", "recovery");
 
     private final ExecutionPlanProposalService delegate;
 
@@ -364,6 +364,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
         if (capability.startsWith(UNAVAILABLE_PREFIX)) {
             capability = capability.substring(UNAVAILABLE_PREFIX.length()).trim();
         }
+        if (capability.contains("recovery") || capability.contains("autonomous-recovery")) return true;
         for (String token : COMPOSABLE_TOKENS) {
             if (capability.equals(token)
                     || capability.startsWith(token + ".")
