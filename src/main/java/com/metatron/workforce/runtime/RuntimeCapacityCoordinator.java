@@ -55,6 +55,16 @@ public final class RuntimeCapacityCoordinator {
 
     public RuntimeInstance get(String runtimeId) { return registry.get(runtimeId); }
 
+    /**
+     * Root-cause fix (WORKFORCE RUNTIME RE-FOUNDATION, part 2 of 2): exposes the actor runtime so the
+     * governed execution boundary can (a) filter worker selection by actual actor readiness and
+     * (b) route capability effects through the actor's claim/complete lifecycle, not just cognition
+     * calls. Returns null when this coordinator was constructed without an actor runtime (tests,
+     * legacy single-arg constructor) -- callers must treat that as "no actor integration available"
+     * and fall back to prior behavior, not fail.
+     */
+    public WorkerActorRuntime actors() { return actors; }
+
     private static String require(String workerId) {
         if (workerId == null || workerId.isBlank()) throw new IllegalArgumentException("workerId required");
         return workerId.trim();

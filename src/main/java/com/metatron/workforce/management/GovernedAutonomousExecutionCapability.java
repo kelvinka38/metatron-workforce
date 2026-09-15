@@ -456,7 +456,9 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         while (true) {
             List<WorkforceCoreService.Worker> eligible = core.eligibleWorkers(
                             capabilityRef(), minimumCapabilityLevel(), requiredCapacity(), clock.instant()).stream()
-                    .filter(w -> supportsWorker(w.workerId(), workSpec)).toList();
+                    .filter(w -> supportsWorker(w.workerId(), workSpec))
+                    .filter(this::actorAcceptsWork)
+                    .toList();
             if (!eligible.isEmpty()) return eligible.getFirst();
             if (!hasQualifiedParticipant(workSpec) && !staffingAttempted) {
                 staffingAttempted = true;
@@ -472,7 +474,13 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         }
     }
 
+    private boolean actorAcceptsWork(WorkforceCoreService.Worker worker) {
+        com.metatron.workforce.actor.WorkerActorRuntime actors = runtimeCapacity == null ? null : runtimeCapacity.actors();
+        return actors == null || actors.acceptsNewWork(worker.workerId());
+    }
+
     private boolean hasQualifiedParticipant(ExecutionWorkSpec workSpec) {
+
         return core.allWorkers().stream()
                 .filter(w -> w.status() == WorkforceCoreService.WorkerStatus.ACTIVE)
                 .filter(w -> supportsWorker(w.workerId(), workSpec))

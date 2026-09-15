@@ -160,4 +160,59 @@ class ElasticWorkerActorRuntimeAcceptanceTest {
                     restarted.mailbox("WORKER-RECOVER").getFirst().status());
         }
     }
+
+    @Test
+    void acceptsNewWorkReflectsActualActorReadiness() throws Exception {
+        // Root-cause fix (WORKFORCE RUNTIME RE-FOUNDATION, part 2 of 2): worker selection previously had
+        // zero awareness of actor state and could hand new work to a PAUSED or already-WORKING actor.
+        try (WorkerActorRuntime runtime = new WorkerActorRuntime(new InMemoryWorkerActorStateStore(), 2)) {
+            assertTrue(runtime.acceptsNewWork("WORKER-UNKNOWN"),
+                    "an unseen worker will be lazily created IDLE, so it currently accepts work");
+
+            runtime.ensureActor("WORKER-IDLE");
+            assertTrue(runtime.acceptsNewWork("WORKER-IDLE"));
+
+            runtime.ensureActor("WORKER-PAUSED");
+            runtime.pause("WORKER-PAUSED");
+            assertFalse(runtime.acceptsNewWork("WORKER-PAUSED"));
+
+            runtime.ensureActor("WORKER-OFFLINE");
+            runtime.offline("WORKER-OFFLINE");
+            assertFalse(runtime.acceptsNewWork("WORKER-OFFLINE"));
+
+            // BLOCKED must remain eligible: it is the state a Worker ends up in after a failed turn,
+            // and bounded recovery re-dispatches to the SAME Worker, not a different one.
+            assertTrue(runtime.acceptsNewWork("WORKER-UNKNOWN-2"));
+            runtime.ensureActor("WORKER-BLOCKED");
+            try {
+                runtime.runTurn("WORKER-BLOCKED", WorkerActorMessage.Type.SYSTEM, "test", "OBJ", "ASG", "S1",
+                        "worker.cognition", "work", () -> { throw new IllegalStateException("simulated turn failure"); });
+            } catch (IllegalStateException expected) { /* actor is now BLOCKED */ }
+            assertEquals(WorkerActorState.BLOCKED, runtime.requireActor("WORKER-BLOCKED").state());
+            assertTrue(runtime.acceptsNewWork("WORKER-BLOCKED"),
+                    "a BLOCKED actor must remain eligible so recovery can retry the same Worker");
+
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            var callers = Executors.newSingleThreadExecutor();
+            try {
+                runtime.ensureActor("WORKER-BUSY");
+                var future = callers.submit(() -> runtime.runTurn(
+                        "WORKER-BUSY", WorkerActorMessage.Type.SYSTEM, "test", "OBJ", "ASG", "S1",
+                        "worker.cognition", "work", () -> {
+                            started.countDown();
+                            assertTrue(release.await(2, TimeUnit.SECONDS));
+                            return "done";
+                        }));
+                assertTrue(started.await(2, TimeUnit.SECONDS));
+                assertFalse(runtime.acceptsNewWork("WORKER-BUSY"), "a WORKING actor must not accept a second turn");
+                release.countDown();
+                assertEquals("done", future.get(2, TimeUnit.SECONDS));
+                assertTrue(runtime.acceptsNewWork("WORKER-BUSY"), "actor is free again once its turn completes");
+            } finally {
+                callers.shutdownNow();
+            }
+        }
+    }
 }
+
