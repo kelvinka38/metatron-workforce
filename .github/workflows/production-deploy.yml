@@ -17,8 +17,9 @@ on:
       - 'gradle.properties'
       - 'highway/**'
       - 'scripts/**'
-      - '!scripts/mcp/**'
       - '.github/workflows/production-deploy.yml'
+  schedule:
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,11 +27,69 @@ permissions:
   statuses: write
 
 concurrency:
-  group: highway-release-ingress-main
+  group: highway-release-ingress-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
+  classify-ingress:
+    runs-on: ubuntu-latest
+    outputs:
+      workforce_release: ${{ steps.scope.outputs.workforce_release }}
+      mcp_release: ${{ steps.scope.outputs.mcp_release }}
+      host_cleanup: ${{ steps.scope.outputs.host_cleanup }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: Classify automatic Highway work
+        shell: bash
+        run: |
+          set -euo pipefail
+          workforce_release=false
+          mcp_release=false
+          host_cleanup=false
+
+          case "$GITHUB_EVENT_NAME" in
+            schedule)
+              host_cleanup=true
+              ;;
+            workflow_dispatch)
+              workforce_release=true
+              ;;
+            push)
+              BEFORE='${{ github.event.before }}'
+              if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]]; then
+                mapfile -t changed < <(git show --pretty='' --name-only "$GITHUB_SHA" | sed '/^$/d' | sort -u)
+              else
+                mapfile -t changed < <(git diff --name-only "$BEFORE" "$GITHUB_SHA" | sed '/^$/d' | sort -u)
+              fi
+              printf 'CHANGED %s\n' "${changed[@]}"
+              for path in "${changed[@]}"; do
+                if [[ "$path" == scripts/mcp/* ]]; then
+                  # G19 promotion binds its immutable image identity to the exact running
+                  # Workforce SHA, so MCP source changes must first release that same SHA.
+                  mcp_release=true
+                  workforce_release=true
+                else
+                  workforce_release=true
+                fi
+              done
+              ;;
+            *)
+              echo "unsupported event: $GITHUB_EVENT_NAME" >&2
+              exit 2
+              ;;
+          esac
+
+          echo "workforce_release=$workforce_release" >> "$GITHUB_OUTPUT"
+          echo "mcp_release=$mcp_release" >> "$GITHUB_OUTPUT"
+          echo "host_cleanup=$host_cleanup" >> "$GITHUB_OUTPUT"
+          echo "HIGHWAY_INGRESS_CLASSIFIED workforce=$workforce_release mcp=$mcp_release cleanup=$host_cleanup"
+
   enqueue-release:
+    needs: classify-ingress
+    if: needs.classify-ingress.outputs.workforce_release == 'true'
     runs-on: [self-hosted, linux, x64, metatron-prod]
     timeout-minutes: 35
     steps:
@@ -82,8 +141,70 @@ jobs:
           $CTL get "$DEPLOY"
           echo 'HIGHWAY_GITHUB_EXECUTION_PLANE=BYPASSED'
           echo 'HIGHWAY_RELEASE_INGRESS=PASS'
-
-          # Workforce mutation remains owned by the persistent Highway.
           $CTL wait "$DEPLOY" --timeout 1200 --poll 2
           echo "PRODUCTION_RELEASE_SHA=$GITHUB_SHA"
           echo 'WORKFORCE_EXACT_SHA_RELEASE=PASS'
+
+  enqueue-mcp-release:
+    needs: [classify-ingress, enqueue-release]
+    if: needs.classify-ingress.outputs.mcp_release == 'true' && needs.enqueue-release.result == 'success'
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Submit MCP Host Commander release to Highway
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+          test -r "$ENV_FILE"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$ENV_FILE"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          TASK=$($CTL submit \
+            --kind mcp-host-commander-release \
+            --source-sha "$GITHUB_SHA" \
+            --dedupe-key "mcp-host-commander-release:$GITHUB_SHA" \
+            --priority 95 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_MCP_RELEASE_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 900 --poll 2
+          echo "MCP_RELEASE_SHA=$GITHUB_SHA"
+          echo 'MCP_HOST_COMMANDER_RELEASE_INGRESS=PASS'
+
+  enqueue-host-cleanup:
+    needs: classify-ingress
+    if: needs.classify-ingress.outputs.host_cleanup == 'true'
+    runs-on: [self-hosted, linux, x64, metatron-prod]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Submit bounded host cleanup to Highway
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+          test -r "$ENV_FILE"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$ENV_FILE"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+          SLOT="$(date -u +%Y%m%dT%H)"
+          TASK=$($CTL submit \
+            --kind host-disk-cleanup \
+            --source-sha "$GITHUB_SHA" \
+            --dedupe-key "host-disk-cleanup:$SLOT" \
+            --priority 20 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_HOST_CLEANUP_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 600 --poll 2
+          echo 'HOST_DISK_CLEANUP_INGRESS=PASS'

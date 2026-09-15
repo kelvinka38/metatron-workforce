@@ -1,37 +1,61 @@
 name: MCP Host Commander Release
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/mcp/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: mcp-host-commander-release-main
+  group: mcp-host-commander-release-manual
   cancel-in-progress: true
 
 jobs:
-  release:
+  enqueue-release:
     runs-on: [self-hosted, linux, x64, metatron-prod]
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
-
-      - name: Validate and promote MCP G19 Host Commander through fenced broker
+      - name: Align exact Workforce SHA then submit MCP release to persistent Highway
         shell: bash
         run: |
           set -euo pipefail
-          bash -n scripts/mcp/release-host-commander-g19.sh
-          node --check scripts/mcp/patch-host-commander-runtime-g19.mjs
-          python3 -m py_compile \
-            scripts/mcp/patch-host-commander-broker-g19.py \
-            scripts/mcp/commander-supervisor-g18.py \
-            scripts/mcp/test-host-commander-g19.py
-          python3 scripts/mcp/test-host-commander-g19.py
-          bash scripts/mcp/release-host-commander-g19.sh "$GITHUB_SHA"
+          bash highway/install.sh "$GITHUB_WORKSPACE" "$GITHUB_SHA"
+          ENV_FILE="${METATRON_PRODUCTION_ENV_FILE:-$HOME/.metatron/config/workforce.env}"
+          test -r "$ENV_FILE"
+          test -r "$HOME/.metatron/highway/highway.env"
+          set -a
+          source "$ENV_FILE"
+          source "$HOME/.metatron/highway/highway.env"
+          set +a
+          bash "$HOME/.metatron/highway/current/ensure-running.sh"
+          CTL="python3 $HOME/.metatron/highway/current/highwayctl.py"
+
+          BUILD=$($CTL submit \
+            --kind workforce-build \
+            --source-sha "$GITHUB_SHA" \
+            --dedupe-key "workforce-build:$GITHUB_SHA" \
+            --priority 90 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          DEPLOY=$($CTL submit \
+            --kind workforce-deploy \
+            --source-sha "$GITHUB_SHA" \
+            --dependency "$BUILD" \
+            --dedupe-key "workforce-deploy:$GITHUB_SHA" \
+            --priority 100 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_MCP_PREREQ_BUILD=$BUILD"
+          echo "HIGHWAY_MCP_PREREQ_DEPLOY=$DEPLOY"
+          $CTL wait "$DEPLOY" --timeout 1200 --poll 2
+
+          TASK=$($CTL submit \
+            --kind mcp-host-commander-release \
+            --source-sha "$GITHUB_SHA" \
+            --dependency "$DEPLOY" \
+            --dedupe-key "mcp-host-commander-release:manual:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            --priority 95 \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+          echo "HIGHWAY_MCP_RELEASE_TASK=$TASK"
+          $CTL wait "$TASK" --timeout 900 --poll 2
           echo "MCP_RELEASE_SHA=$GITHUB_SHA"
-          echo 'MCP_HOST_COMMANDER_G19_RELEASE=PASS'
+          echo 'MCP_HOST_COMMANDER_G19_RELEASE_HIGHWAY=PASS'

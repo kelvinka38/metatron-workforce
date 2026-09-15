@@ -1,6 +1,46 @@
 {
   "version": 1,
   "tasks": {
+    "host-disk-cleanup": {
+      "name": "Bounded production host disk cleanup",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/host-disk-cleanup.sh"
+      ],
+      "resources": [
+        {
+          "name": "source-release:{source_sha}",
+          "mode": "READ"
+        },
+        {
+          "name": "host:storage",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 600,
+      "max_attempts": 1,
+      "priority": 20
+    },
+    "mcp-host-commander-release": {
+      "name": "MCP Host Commander governed release",
+      "command": [
+        "bash",
+        "scripts/highway-tasks/mcp-host-commander-release.sh"
+      ],
+      "resources": [
+        {
+          "name": "source-release:{source_sha}",
+          "mode": "READ"
+        },
+        {
+          "name": "prod:mcp",
+          "mode": "WRITE"
+        }
+      ],
+      "timeout_seconds": 900,
+      "max_attempts": 1,
+      "priority": 95
+    },
     "fabric-probe-read": {
       "name": "Highway parallel READ probe",
       "command": [
