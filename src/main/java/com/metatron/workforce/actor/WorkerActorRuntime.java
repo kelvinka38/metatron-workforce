@@ -337,19 +337,34 @@ public final class WorkerActorRuntime implements AutoCloseable {
             active.add(workerId);
             permit = true;
             synchronized (this) {
+                // CAS fix (2026-09-15): re-read the message fresh here, inside the per-Worker lane
+                // lock, instead of trusting the `envelope` snapshot captured before this task even
+                // reached the front of the executor queue. Two callers racing consumeAssignment() for
+                // the same still-PENDING Assignment can both pass its pre-submit check and both get an
+                // executeMessage task queued; whichever acquires the lane lock first legitimately claims
+                // and executes it, but the second task's stale pre-lock `envelope` still reads PENDING
+                // even after the first has completed the message -- without this re-read it would
+                // re-claim and call work.call() a second time, duplicating the real effect. If the
+                // current state is already terminal or already CLAIMED by someone else, this is exactly
+                // that race: stop here and resolve as already-handled, matching the same
+                // CompletableFuture.completedFuture(null) semantics consumeAssignment() itself uses for
+                // an assignment it finds already terminal/claimed before ever submitting.
+                WorkerActorMessage current = findMessageById(messageId).orElse(envelope);
+                if (current.terminal() || current.status() == WorkerActorMessage.Status.CLAIMED) {
+                    result.complete(null);
+                    return;
+                }
                 WorkerActorSnapshot actor = ensureActor(workerId);
                 if (actor.state() == WorkerActorState.PAUSED || actor.state() == WorkerActorState.OFFLINE) {
-                    replaceMessage(envelope.fail("actor-not-runnable:" + actor.state(), clock.instant()));
+                    replaceMessage(current.fail("actor-not-runnable:" + actor.state(), clock.instant()));
                     result.completeExceptionally(new IllegalStateException(
                             "worker actor not runnable: " + workerId + ":" + actor.state()));
                     return;
                 }
-                WorkerActorMessage claimed = envelope.status() == WorkerActorMessage.Status.PENDING
-                        ? replaceMessage(envelope.claim(clock.instant())) : envelope;
-                envelope = claimed;
+                envelope = replaceMessage(current.claim(clock.instant()));
                 update(actor.withState(WorkerActorState.WORKING,
-                        claimed.objectiveId(), claimed.assignmentId(), claimed.stepId(),
-                        "claimed " + claimed.type() + " " + claimed.messageId(),
+                        envelope.objectiveId(), envelope.assignmentId(), envelope.stepId(),
+                        "claimed " + envelope.type() + " " + envelope.messageId(),
                         "complete current actor turn", mailboxDepthUnsafe(workerId), clock.instant()));
             }
 
