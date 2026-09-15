@@ -665,16 +665,20 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 && (semantic.contains("uptime") || semantic.contains("docker") || semantic.contains("container")
                 || semantic.contains("/tmp/metatron-commander/") || semantic.contains("runtime identity"));
         if (hostOperation) return List.of();
+        // External research requires an affirmative research/source-retrieval intent. Generic words
+        // such as "evidence" are institutional verification language and must not by themselves
+        // redirect an internal runtime/cognition Objective into web research. Likewise, a bare
+        // mention of "external" may be a prohibition (for example "without external provider
+        // credits"), not a request to consult external reality.
         boolean researchIntent = semantic.contains("research")
                 || semantic.contains("paper") || semantic.contains("publication")
                 || semantic.contains("report") || semantic.contains("standard")
                 || semantic.contains("regulator") || semantic.contains("regulatory")
-                || semantic.contains("evidence") || semantic.contains("source");
+                || semantic.contains("source");
         boolean externalReality = normalized.freshExternalDataRequired()
                 || semantic.contains("new ") || semantic.contains("recent")
-                || semantic.contains("current") || semantic.contains("external")
-                || semantic.contains("web") || semantic.contains("internet")
-                || semantic.contains("source");
+                || semantic.contains("current") || semantic.contains("web")
+                || semantic.contains("internet") || semantic.contains("source");
         if (!researchIntent || !externalReality) return List.of();
 
         List<String> acceptance = new ArrayList<>();

@@ -1,5 +1,6 @@
 package com.metatron.workforce.interaction;
 
+import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthContract;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
@@ -123,10 +124,31 @@ public final class MetatronConversationRuntime {
                 interaction.conversationId(), interaction.text(), maxTurns,
                 Math.max(4, maxTurns / 4), maxChars);
 
+        IntelligenceDepthContract contract = depthControl == null
+                ? IntelligenceDepthContract.automatic()
+                : depthControl.contract(interaction.conversationId());
+
         // Product hierarchy: Chat and Work are top-level surfaces. Meeting lives inside Work.
         ConversationSurfaceMode selectedSurface = surfaceMode == null
                 ? ConversationSurfaceMode.CHAT
                 : surfaceMode.mode(interaction.conversationId());
+        boolean workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
+                || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
+
+        // Explicit durable Work control is an institutional command, not Meeting conversation.
+        // It must preempt an active Meeting and reach the same authorized Work ingress used from
+        // the normal Work surface. Otherwise WORK_MEETING can swallow canonical Objectives before
+        // CanonicalObjectiveControlInterpreter/ExecutionObjectiveHandoff ever run.
+        if (workSurfaceSelected && CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(interaction.text())) {
+            String rawAnswer = intelligence.respond(
+                    interaction.human().actorId(), interaction.text(), interaction.externalMessageReference(),
+                    channel, interaction.conversationId(), interaction.organizationContextId(), history, contract, true);
+            String answer = stripInternalDepthBanner(rawAnswer);
+            memory.appendTurn(interaction.conversationId(), interaction.text(), answer);
+            return new MetatronInteractionOrchestrator.InteractionResponse(
+                    interaction.conversationId(), answer,
+                    "work:interaction:" + interaction.externalMessageReference());
+        }
 
         // A natural Meeting request made from Work must enter the Meeting module and process
         // the same utterance through Meeting. Never fall through to generic Intelligence and ask
@@ -139,7 +161,7 @@ public final class MetatronConversationRuntime {
             selectedSurface = ConversationSurfaceMode.WORK_MEETING;
         }
 
-        boolean workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
+        workSurfaceSelected = selectedSurface == ConversationSurfaceMode.WORK
                 || selectedSurface == ConversationSurfaceMode.WORK_MEETING;
         boolean meetingModuleSelected = selectedSurface == ConversationSurfaceMode.WORK_MEETING;
 
@@ -208,10 +230,6 @@ public final class MetatronConversationRuntime {
                     reference.map(MeetingRoomReference::meetingId)
                             .orElse("work:meeting-no-room:" + interaction.externalMessageReference()));
         }
-
-        IntelligenceDepthContract contract = depthControl == null
-                ? IntelligenceDepthContract.automatic()
-                : depthControl.contract(interaction.conversationId());
 
         if (selectedSurface == ConversationSurfaceMode.WORK) {
             String rawAnswer = intelligence.respond(

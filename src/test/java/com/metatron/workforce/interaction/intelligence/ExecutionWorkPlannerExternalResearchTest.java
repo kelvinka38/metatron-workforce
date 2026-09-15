@@ -54,4 +54,41 @@ class ExecutionWorkPlannerExternalResearchTest {
         assertTrue(step.evidenceRequirements().contains("research-action:research.web.search"));
         assertTrue(step.evidenceRequirements().stream().anyMatch(value -> value.contains("source URLs")));
     }
+
+    @Test
+    void internalCognitionObjectiveIsNotHijackedByExternalProviderProhibitionAndEvidenceLanguage() {
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of()),
+                provider -> "unused",
+                List.of(),
+                new ObjectMapper());
+
+        NormalizedRequest request = new NormalizedRequest(
+                "Verify and, if necessary, reconcile Worker cognition to use llama3.1:8b-instruct-q4_K_M through the Metatron-owned cognition path without requiring external provider credits",
+                "Metatron Worker cognition runtime",
+                List.of("Do not require external provider credits"),
+                IntelligenceDepth.ANALYZE,
+                "Prove the resulting Worker assignment, governed capability path, and final evidence",
+                List.of(),
+                List.of("No external provider dependency"),
+                "",
+                "",
+                IntelligenceMode.EXECUTION,
+                CollaborationMode.SINGLE,
+                List.of(),
+                DeterministicCapability.NONE,
+                List.of(),
+                List.of(),
+                false,
+                null,
+                LlmProvider.OPENAI,
+                "");
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> planner.propose(
+                "case:internal-cognition-runtime",
+                request,
+                List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY)));
+
+        assertEquals("execution_planning_provider_required", failure.getMessage());
+    }
 }
