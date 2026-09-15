@@ -15,6 +15,7 @@ import java.util.Set;
 /** Compact conversation projection of durable Objective/Work state. */
 @Component
 public final class WorkCardRenderer {
+    private static final Duration MONITOR_RECENT_WINDOW = Duration.ofMinutes(10);
     private final ManagementAutonomyService management;
 
     public WorkCardRenderer(ManagementAutonomyService management) { this.management = management; }
@@ -23,7 +24,9 @@ public final class WorkCardRenderer {
         String normalized = normalizeHuman(humanId);
         return management.allObjectives().stream()
                 .filter(o -> management.findAutonomousWork(o.objectiveId()).map(w -> w.humanId().equals(normalized)).orElse(false))
-                .max(Comparator.comparing(ManagementObjective::updatedAt)).map(ManagementObjective::objectiveId);
+                .max(Comparator.comparingInt(this::monitorPriority)
+                        .thenComparing(ManagementObjective::updatedAt))
+                .map(ManagementObjective::objectiveId);
     }
 
     public String latestForHuman(String humanId) {
@@ -36,6 +39,17 @@ public final class WorkCardRenderer {
     public boolean terminal(String objectiveId) {
         return management.findAutonomousWork(objectiveId).map(AutonomousObjectiveWork::terminal)
                 .orElseGet(() -> management.get(objectiveId).terminal());
+    }
+
+    private int monitorPriority(ManagementObjective objective) {
+        boolean terminal = management.findAutonomousWork(objective.objectiveId())
+                .map(AutonomousObjectiveWork::terminal)
+                .orElseGet(objective::terminal);
+        boolean recent = Duration.between(objective.updatedAt(), Instant.now()).compareTo(MONITOR_RECENT_WINDOW) <= 0;
+        if (!terminal && recent) return 3;
+        if (recent) return 2;
+        if (!terminal) return 1;
+        return 0;
     }
 
     private String render(ManagementObjective objective) {
@@ -61,6 +75,10 @@ public final class WorkCardRenderer {
 
         StringBuilder out = new StringBuilder();
         out.append("📋 METATRON · WORK ORDER\n\n");
+        if (!fresh) {
+            out.append("VIEW       ⚠️ HISTORICAL / STALE OBJECTIVE — last durable activity ")
+                    .append(last).append("\n\n");
+        }
         out.append("OBJECTIVE\n").append(compact(objective.description())).append("\n\n");
         out.append("STATUS     ").append(icon(status)).append(' ').append(status).append('\n');
         out.append("PROGRESS   ").append(progressBar(percent)).append(' ').append(percent).append("% ("+done+"/"+total+")\n");
