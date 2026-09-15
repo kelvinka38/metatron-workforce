@@ -293,6 +293,24 @@ public final class WorkerActorRuntime implements AutoCloseable {
                 mailboxDepthUnsafe(workerId), clock.instant()));
     }
 
+    /** Atomically claim and execute the canonical projected Assignment mailbox message. */
+    public <T> CompletableFuture<T> consumeAssignment(
+            WorkforceCoreService.Assignment assignment, Callable<T> work) {
+        Objects.requireNonNull(assignment, "assignment");
+        Objects.requireNonNull(work, "work");
+        String messageId = "actor-message:assignment:" + assignment.assignmentId();
+        synchronized (this) {
+            WorkerActorMessage message = findMessage(assignment.workerId(), messageId).orElse(null);
+            if (message == null) message = projectAssignment(assignment);
+            if (message.terminal() || message.status() == WorkerActorMessage.Status.CLAIMED) {
+                return CompletableFuture.completedFuture(null);
+            }
+        }
+        CompletableFuture<T> result = new CompletableFuture<>();
+        executor.submit(() -> executeMessage(messageId, work, result));
+        return result;
+    }
+
     public synchronized RuntimeStats stats() {
         long working = actors.values().stream().filter(a -> a.state() == WorkerActorState.WORKING).count();
         long ready = actors.values().stream().filter(a -> a.state() == WorkerActorState.READY).count();
