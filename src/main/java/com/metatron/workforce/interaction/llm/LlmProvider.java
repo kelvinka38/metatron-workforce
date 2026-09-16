@@ -4,5 +4,7 @@ package com.metatron.workforce.interaction.llm;
 public enum LlmProvider {
     OPENAI,
     ANTHROPIC,
-    GOOGLE
+    GOOGLE,
+    OLLAMA
 }
+
