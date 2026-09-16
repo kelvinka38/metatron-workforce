@@ -48,6 +48,8 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${OPENAI_MODEL:}") String openAiModel,
             @Value("${GEMINI_MODEL:}") String googleModel,
             @Value("${ANTHROPIC_MODEL:}") String anthropicModel,
+            @Value("${METATRON_PLANNING_OLLAMA_URL:http://metatron-ollama:11434}") String ollamaUrl,
+            @Value("${OLLAMA_MODEL:}") String ollamaModel,
             @Value("${METATRON_COGNITION_URL:}") String cognitionUrl,
             @Value("${METATRON_COGNITION_AUTH:}") String cognitionAuth,
             @Value("${METATRON_COGNITION_MAX_CONCURRENT:4}") int cognitionMaxConcurrent,
@@ -71,9 +73,11 @@ public class IntelligenceRuntimeConfiguration {
         }
         return new InstitutionalIntelligenceRuntime(
                 openAiApiKey, googleApiKey, anthropicApiKey,
-                openAiModel, googleModel, anthropicModel, objectMapper, artifactStore,
+                openAiModel, googleModel, anthropicModel,
+                ollamaUrl, ollamaModel, objectMapper, artifactStore,
                 cognitionClient, inferenceLedger);
     }
+
 
     @Bean
     IntelligenceFabric intelligenceFabric(InstitutionalIntelligenceRuntime runtime) {

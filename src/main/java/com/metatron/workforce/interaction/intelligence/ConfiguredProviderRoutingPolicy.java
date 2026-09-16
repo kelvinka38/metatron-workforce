@@ -52,6 +52,8 @@ public final class ConfiguredProviderRoutingPolicy implements IntelligenceRoutin
             case GOOGLE -> 0;
             case ANTHROPIC -> 1;
             case OPENAI -> 2;
+            case OLLAMA -> 3;
         };
     }
+
 }

@@ -139,6 +139,8 @@ public final class AdaptiveProviderRoutingPolicy implements IntelligenceRoutingP
             case GOOGLE -> 0;
             case ANTHROPIC -> 1;
             case OPENAI -> 2;
+            case OLLAMA -> 3;
         };
     }
+
 }

@@ -96,8 +96,10 @@ public final class AdaptiveModelRoutingPolicy implements IntelligenceModelRoutin
             case OPENAI -> "OPENAI";
             case GOOGLE -> "GEMINI";
             case ANTHROPIC -> "ANTHROPIC";
+            case OLLAMA -> "OLLAMA";
         };
     }
+
 
     private static String modelEnv(String name, String fallback) {
         String value = System.getenv(name);
