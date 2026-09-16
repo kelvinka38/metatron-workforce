@@ -233,7 +233,8 @@ class ElasticWorkerActorRuntimeAcceptanceTest {
                             "assignment:cas-race", "OBJ-CAS", "WORKER-CAS", "participation:cas",
                             "authority:test", "authorization:test", "do the real effect",
                             com.metatron.workforce.core.WorkforceCoreService.AssignmentStatus.ACTIVE,
-                            Instant.parse("2026-09-15T00:00:00Z"));
+                            Instant.parse("2026-09-15T00:00:00Z"),
+                            com.metatron.workforce.core.CompletionPolicy.EXECUTION_REQUIRED);
 
             AtomicInteger effects = new AtomicInteger();
             CountDownLatch release = new CountDownLatch(1);

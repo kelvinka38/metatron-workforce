@@ -24,7 +24,7 @@ public class WorkforceCoreService {
     public record Availability(String workerId, boolean available, double capacity, Instant observedAt) {}
     public record Assignment(String assignmentId, String objectiveRef, String workerId, String participationId,
                              String authorityRef, String authorizationRef, String description,
-                             AssignmentStatus status, Instant createdAt) {}
+                             AssignmentStatus status, Instant createdAt, CompletionPolicy completionPolicy) {}
     public record CapacityReservation(String reservationId, String assignmentId, String objectiveRef,
                                       String workerId, double capacity, ReservationStatus status,
                                       Instant createdAt, Instant releasedAt, String releaseReason) {}
@@ -39,14 +39,25 @@ public class WorkforceCoreService {
     private final Map<String, CapacityReservation> capacityReservations = new ConcurrentHashMap<>();
     private final WorkforceCoreStateStore stateStore;
     private final Clock clock;
+    private final CompletionEvidenceGate completionGate;
 
     public WorkforceCoreService() { this(new InMemoryWorkforceCoreStateStore(), Clock.systemUTC()); }
 
     public WorkforceCoreService(WorkforceCoreStateStore stateStore) { this(stateStore, Clock.systemUTC()); }
 
+    /** Wires an authoritative CompletionEvidenceGate (e.g. ReleaseEvidenceCompletionGate) at the transition chokepoint. */
+    public WorkforceCoreService(WorkforceCoreStateStore stateStore, CompletionEvidenceGate completionGate) {
+        this(stateStore, Clock.systemUTC(), completionGate);
+    }
+
     WorkforceCoreService(WorkforceCoreStateStore stateStore, Clock clock) {
+        this(stateStore, clock, CompletionEvidenceGate.DENY_NON_EXECUTION);
+    }
+
+    WorkforceCoreService(WorkforceCoreStateStore stateStore, Clock clock, CompletionEvidenceGate completionGate) {
         this.stateStore = Objects.requireNonNull(stateStore);
         this.clock = Objects.requireNonNull(clock);
+        this.completionGate = Objects.requireNonNull(completionGate);
         WorkforceCoreStateStore.Snapshot s = stateStore.load();
         participants.putAll(s.participants());
         workers.putAll(s.workers());
@@ -186,6 +197,12 @@ public class WorkforceCoreService {
 
     public synchronized Assignment assignReserved(String reservationId, String participationId,
             String authorityRef, String authorizationRef, String description) {
+        return assignReserved(reservationId, participationId, authorityRef, authorizationRef, description,
+                CompletionPolicy.EXECUTION_REQUIRED);
+    }
+
+    public synchronized Assignment assignReserved(String reservationId, String participationId,
+            String authorityRef, String authorizationRef, String description, CompletionPolicy completionPolicy) {
         CapacityReservation reservation = requireReservation(reservationId);
         if (reservation.status() != ReservationStatus.ACTIVE) throw new IllegalStateException("active capacity reservation required");
         Assignment existing = assignments.get(reservation.assignmentId());
@@ -195,19 +212,33 @@ public class WorkforceCoreService {
             return existing;
         }
         return assign(reservation.assignmentId(), reservation.objectiveRef(), reservation.workerId(), participationId,
-                authorityRef, authorizationRef, description);
+                authorityRef, authorizationRef, description, completionPolicy);
     }
 
     public synchronized Assignment assign(String assignmentId, String objectiveRef, String workerId, String participationId,
                              String authorityRef, String authorizationRef, String description) {
+        return assign(assignmentId, objectiveRef, workerId, participationId, authorityRef, authorizationRef, description,
+                CompletionPolicy.EXECUTION_REQUIRED);
+    }
+
+    /**
+     * Establishes the Assignment's CompletionPolicy at creation time. The policy is immutable for the
+     * life of the Assignment: there is no setter, and transitionAssignment() is the only way status can
+     * change, so nothing after this call -- Worker-initiated or otherwise -- can downgrade it. The
+     * completionPolicy field is carried on the persisted Assignment record itself, so it survives the
+     * existing state-store persistence/reload path with no separate storage needed.
+     */
+    public synchronized Assignment assign(String assignmentId, String objectiveRef, String workerId, String participationId,
+                             String authorityRef, String authorizationRef, String description, CompletionPolicy completionPolicy) {
         activeWorker(workerId); require(assignmentId, "assignmentId"); require(objectiveRef, "objectiveRef"); require(description, "description");
+        Objects.requireNonNull(completionPolicy, "completionPolicy");
         Participation p = requireParticipation(participationId);
         if (!p.workerId().equals(workerId) || p.status() != ParticipationStatus.ACTIVE) throw new IllegalStateException("active participation required");
         require(authorityRef, "authorityRef"); require(authorizationRef, "authorizationRef");
         Availability a = availability.get(workerId);
         if (a != null && (!a.available() || a.capacity() <= 0)) throw new IllegalStateException("worker has no available capacity");
         Assignment assignment = new Assignment(assignmentId, objectiveRef, workerId, participationId, authorityRef,
-                authorizationRef, description, AssignmentStatus.ACTIVE, Instant.now());
+                authorizationRef, description, AssignmentStatus.ACTIVE, Instant.now(), completionPolicy);
         Assignment prior = assignments.putIfAbsent(assignmentId, assignment);
         if (prior != null) throw new IllegalStateException("assignment already exists");
         persist(); return assignment;
@@ -217,8 +248,16 @@ public class WorkforceCoreService {
         Assignment old = requireAssignment(assignmentId); Objects.requireNonNull(status);
         if (old.status() == AssignmentStatus.COMPLETED || old.status() == AssignmentStatus.CANCELLED)
             throw new IllegalStateException("terminal assignment cannot transition");
+        if (status == AssignmentStatus.COMPLETED && !completionGate.satisfiesCompletion(old, old.completionPolicy())) {
+            // Authoritative chokepoint: every known path to COMPLETED (normal execution success,
+            // GovernedAutonomousExecutionCapability.reconcileTerminalExecutionCapacity(), and the
+            // WorkforceCoreController HTTP status-transition endpoint) calls this method, and nothing
+            // else in this codebase constructs a COMPLETED Assignment -- so this check cannot be
+            // bypassed by any caller, privileged or not, without changing this method itself.
+            throw new IllegalStateException("completion-evidence-required:" + old.completionPolicy() + ":" + assignmentId);
+        }
         Assignment next = new Assignment(old.assignmentId(), old.objectiveRef(), old.workerId(), old.participationId(),
-                old.authorityRef(), old.authorizationRef(), old.description(), status, old.createdAt());
+                old.authorityRef(), old.authorizationRef(), old.description(), status, old.createdAt(), old.completionPolicy());
         assignments.put(assignmentId, next);
         if (status == AssignmentStatus.COMPLETED || status == AssignmentStatus.CANCELLED) {
             capacityReservations.values().stream()
