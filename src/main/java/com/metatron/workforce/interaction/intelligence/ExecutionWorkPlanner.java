@@ -431,11 +431,13 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
      * signal the deterministic composer itself requires to treat Gateway Director as in-scope (the
      * normalized Human Objective actually mentions Gateway Director/Gateway Head by name). If the
      * Objective never said so, a gateway-director step the frontier planner invented anyway is stripped
-     * from the plan entirely -- not corrected, not kept -- so it can never reach execution. Any step that
-     * depended on the stripped step is then correctly rejected by validate() for depending on a step
-     * that no longer exists, exposing the planner defect truthfully rather than silently continuing a
-     * plan built on unauthorized organizational mutation. When the Objective does explicitly reference
-     * Gateway Director, the step is admitted and its target is still normalized as before.
+     * from the plan entirely -- not corrected, not kept -- so it can never reach execution. Dependency
+     * edges to that rejected step are stripped with it: rejected organizational work cannot remain as a
+     * prerequisite that blocks otherwise-admissible Human work. This does not create replacement work or
+     * evidence; it only removes references to a step that failed semantic admission. Dependencies on every
+     * still-admitted step remain untouched and validate() still rejects every other malformed graph. When
+     * the Objective does explicitly reference Gateway Director, the step is admitted and its target is
+     * still normalized as before.
      */
     private static List<ExecutionWorkSpec> normalizeGatewayDirectorAppointmentTargets(
             NormalizedRequest normalized, List<ExecutionWorkSpec> plan) {
@@ -452,7 +454,16 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             List<ExecutionWorkSpec> admitted = new ArrayList<>();
             for (ExecutionWorkSpec step : plan) {
                 if (stripped.contains(step.stepId())) continue;
-                admitted.add(step);
+                List<String> admittedDependencies = step.dependsOn().stream()
+                        .filter(dependency -> !stripped.contains(dependency))
+                        .toList();
+                if (admittedDependencies.equals(step.dependsOn())) {
+                    admitted.add(step);
+                } else {
+                    admitted.add(new ExecutionWorkSpec(
+                            step.stepId(), step.objective(), step.target(), step.requiredCapability(),
+                            admittedDependencies, step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
+                }
             }
             return List.copyOf(admitted);
         }

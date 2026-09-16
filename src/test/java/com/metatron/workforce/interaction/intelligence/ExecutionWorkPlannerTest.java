@@ -449,22 +449,20 @@ final class ExecutionWorkPlannerTest {
     }
 
     @Test
-    void plannerRejectsUnsolicitedGatewayDirectorStaffingStepAndExposesTheDependencyDefect() {
-        // Semantic admission gate (2026-09-16, superseding the target-normalization-only fix): a
-        // frontier planner independently deciding to insert workforce.staffing.gateway-director as a
-        // staffing prerequisite -- exactly as happened live in production -- must not have that
-        // invented organizational-mutation step legitimized merely by correcting its target string. The
-        // Human Objective here never mentions Gateway Director at all, so the step must be stripped
-        // entirely, not admitted-and-corrected. Because step-2 depends on the stripped step-1, planning
-        // must fail loudly (exposing the planner's defect) rather than silently continuing a plan built
-        // on an unauthorized step.
+    void plannerRejectsUnsolicitedGatewayDirectorAndPrunesOnlyItsDependencyEdges() {
+        // Exact production Proof 4 shape: frontier planning invented Gateway Director staffing as a
+        // prerequisite for legitimate cognition, then cognition assurance depended on the cognition step.
+        // Semantic admission must remove the unauthorized organizational mutation and its dependency edge
+        // without poisoning the independently admissible cognition graph. Cognition assurance target
+        // normalization must still blank the synthetic model identity.
         LlmProviderClient google = new LlmProviderClient() {
             @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
             @Override public LlmResponse complete(LlmRequest request) {
                 return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
                         {"execution_work_plan":[
-                          {"step_id":"step-1","objective":"staff the workforce","target":"workforce","required_capability":"workforce.staffing.gateway-director","depends_on":[],"consequence":"MUTATING","acceptance_criteria":["staffed"],"evidence_requirements":["observation-capability:workforce.staffing.gateway-director"]},
-                          {"step_id":"step-2","objective":"perform worker cognition","target":"","required_capability":"worker.cognitive.work","depends_on":["step-1"],"consequence":"READ_ONLY","acceptance_criteria":["cognition completes"],"evidence_requirements":["worker cognition evidence"]}
+                          {"step_id":"step-1","objective":"staff the workforce","target":"workforce/gateway-director","required_capability":"workforce.staffing.gateway-director","depends_on":[],"consequence":"MUTATING","acceptance_criteria":["staffed"],"evidence_requirements":["observation-capability:workforce.staffing.gateway-director"]},
+                          {"step_id":"step-2","objective":"perform worker cognition","target":"workforce/worker","required_capability":"worker.cognitive.work","depends_on":["step-1"],"consequence":"READ_ONLY","acceptance_criteria":["cognition completes"],"evidence_requirements":["worker cognition evidence"]},
+                          {"step_id":"step-3","objective":"assure cognition evidence","target":"workforce/cognition-assurance","required_capability":"worker.cognition.assure","depends_on":["step-2"],"consequence":"READ_ONLY","acceptance_criteria":["cognition evidence assured"],"evidence_requirements":["assurance evidence"]}
                         ]}
                         """, "planner-ref");
             }
@@ -474,14 +472,22 @@ final class ExecutionWorkPlannerTest {
                 List.of(LlmProvider.GOOGLE), new ObjectMapper());
         NormalizedRequest normalized = new NormalizedRequest(
                 "Take ownership of one Objective: use Worker cognition to summarize in one sentence that the "
-                        + "Workforce system is healthy.",
+                        + "Workforce system is healthy. Report the Worker assignment and cognition evidence.",
                 "", List.of(), IntelligenceDepth.ANALYZE, "one sentence summary", List.of(), List.of(),
                 "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
                 List.of(), DeterministicCapability.NONE, List.of(), List.of(),
                 false, null, LlmProvider.GOOGLE, "");
 
-        assertThrows(IllegalStateException.class, () -> planner.plan("case-production-incident", normalized,
-                List.of("workforce.staffing.gateway-director", "worker.cognitive.work")));
+        List<ExecutionWorkSpec> plan = planner.plan("case-production-incident", normalized,
+                List.of("workforce.staffing.gateway-director", "worker.cognitive.work", "worker.cognition.assure"));
+
+        assertEquals(2, plan.size());
+        assertEquals(List.of("step-2", "step-3"), plan.stream().map(ExecutionWorkSpec::stepId).toList());
+        assertTrue(plan.stream().noneMatch(step ->
+                step.requiredCapability().equals("workforce.staffing.gateway-director")));
+        assertEquals(List.of(), plan.get(0).dependsOn());
+        assertEquals(List.of("step-2"), plan.get(1).dependsOn());
+        assertEquals("", plan.get(1).target());
     }
 
     @Test
