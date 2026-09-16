@@ -818,3 +818,74 @@ CURRENT_WHOLE_SYSTEM_COMPLETE
 The correct current interpretation is:
 
 > Metatron Workforce contains substantial real production-composed autonomy, Worker and execution substrate. Natural-language Work can already become durable governed Work. Canonical Workers are real institutional actors rather than provider personas. However, critical product closure remains incomplete where Human instructions to a selected Worker do not yet form a proven execution loop, where the existing Direct Coding backend is not exposed through the current ChatGPT tool surface, and where semantic-provider availability currently makes natural-language operation unreliable. These conditions must be reported precisely rather than collapsed into either “nothing works” or “the system is complete.”
+
+---
+
+## 22. Direct MCP client (Claude) repository write-path audit — 2026-09-16
+
+Audited from an external Claude client connected via the Metatron v5 MCP server (`direct-mcp` ingress).
+
+```text
+repository_open / repository_list / repository_search / repository_read (inspect)
+= AVAILABLE, CONFIRMED WORKING
+
+repository_shell (raw governed shell inside isolated session)
+= BLOCKED, sandbox execution HTTP 403
+
+repository_process with executable="git", args=["status"]/["remote","-v"]
+= AVAILABLE, runs, but session has no git remote configured
+  (git push --dry-run origin master -> exit 128,
+   "'origin' does not appear to be a git repository")
+
+repository_patch (occurrence-checked file patch)
+= AVAILABLE, CONFIRMED WORKING (this section was written via it)
+
+repository_pr_publish (governed unmerged PR publish)
+= AVAILABLE, confirmed working end-to-end
+
+repository_pr_merge / any direct merge or deploy tool
+= NOT PART OF DirectCodingIngressService.ACTIONS (the coding-ingress allowlist)
+```
+
+This distinction matters and must not be collapsed into a blanket "no deploy tool reachable" claim:
+
+```text
+A. Direct Coding ingress (DirectCodingIngressService.ACTIONS)
+   repository inspect/patch/test/git-run/PR-publish
+   = AVAILABLE
+
+   merge / release / deploy actions
+   = NOT PART OF THIS ALLOWLIST -- validateAction() throws SecurityException for them,
+     enforced by a hardcoded compile-time Set.of(), covered by
+     DirectCodingIngressValidationTest.
+
+B. Separate MCP broker/Commander surface (NOT the same ingress, NOT governed by the
+   allowlist above)
+   workforce_deploy_local_sha
+   workforce_verify_production
+   production_identity
+   = EXIST INDEPENDENTLY as live, callable tools
+
+   workforce_deploy_local_sha specifically
+   = CURRENTLY VISIBLE AND CALLABLE BY A DIRECT-MCP CLIENT, confirmed live during the
+     2026-09-16 audit -- this is NOT protected by the coding-ingress allowlist in (A),
+     because it is a different ingress entirely.
+
+   Authorization source for surface B
+   = PACKED/ENCRYPTED (broker.gz.b64, seal.gz.b64, .runtime-auth-security.enc in the
+     ssh_mcp workspace) -- no readable registration source found. UNRESOLVED.
+```
+
+Conclusion: merge is genuinely not exposed anywhere in this codebase, consistent with the
+invariant `workerReleaseSelfGrant=false` in coding-capability-v1.json. Deploy IS directly
+reachable today by a Direct-MCP client, through surface B, and that exposure is the live,
+open, unresolved security defect -- not a documentation gap to be waved away as "no
+deploy tool exists." Separately, and independently of surface B: the intentional design
+of surface A already matches the target architecture for coding -- raw shell/git push is
+deliberately unwired (`rawRootShellCanonical=false`, `repositoryCredentialsRemainInWorkforce=true`),
+and the only sanctioned Worker/direct-MCP coding write path is `repository_patch` →
+`repository_pr_publish`, which does not require a local git remote because credentials
+and push logic stay server-side in Workforce. No new capability was required to satisfy
+that coding path for an external Claude MCP client; it already existed and is
+contract-tested. Surface B's exposure is a separate, unresolved defect layered on top of
+an otherwise correctly-designed surface A.

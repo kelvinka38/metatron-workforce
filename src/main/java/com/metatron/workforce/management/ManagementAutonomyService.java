@@ -175,6 +175,12 @@ public final class ManagementAutonomyService {
         List<ExecutionWorkSpec> normalized = List.copyOf(Objects.requireNonNull(plan, "plan"));
         if (normalized.isEmpty()) throw new IllegalArgumentException("plan must not be empty");
         validateWorkGraph(normalized);
+        // Authoritative floor: reuses NormalizedRequest's own ceiling enforcement (its compact constructor)
+        // so whatever the planner actually produced is raised to at least the Objective's completion
+        // requirement, established once at acceptHumanObjective(...) time and immutable since. This is the
+        // one place a plan is actually recorded as the work that will execute, so it cannot be bypassed by
+        // a planner that omits or weakens completion policy on individual steps.
+        normalized = current.normalizedRequest().withExecutionWorkPlan(normalized).executionWorkPlan();
         AutonomousObjectiveWork updated = copyWork(current, normalized, current.completedStepIds(),
                 current.evidenceReferences(), AutonomousObjectiveWork.Status.READY, "", at);
         objectiveWork.put(objectiveId, updated);
