@@ -366,7 +366,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             }
         }
         coordination.completeGraph(objectiveId, graph.graphVersion(), clock.instant());
-        completeAssignmentsAfterObservation(objectiveId, work.evidenceReferences());
+        boolean assignmentsClosed = completeAssignmentsAfterObservation(objectiveId, work.evidenceReferences());
+        if (!assignmentsClosed) {
+            LOG.info("autonomy_objective_awaiting_release_evidence objective_id={}", objectiveId);
+            return;
+        }
         management.completeAutonomousObjective(objectiveId, runnerId, lease.token(), clock.instant());
         AutonomousObjectiveWork completed = management.findAutonomousWork(objectiveId).orElseThrow();
         LOG.info("autonomy_objective_completed objective_id={} completed_steps={} planned_steps={} evidence_count={}",
@@ -374,11 +378,12 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 completed.evidenceReferences().size());
     }
 
-    private void completeAssignmentsAfterObservation(String objectiveId, List<String> evidenceReferences) {
+    private boolean completeAssignmentsAfterObservation(String objectiveId, List<String> evidenceReferences) {
         WorkforceCoreService core = workforceCore;
-        if (core == null) return;
+        if (core == null) return true;
         boolean hasEvidence = evidenceReferences != null && evidenceReferences.stream()
                 .filter(Objects::nonNull).map(String::trim).anyMatch(value -> !value.isBlank());
+        boolean allClosed = true;
         for (WorkforceCoreService.Assignment assignment : core.allAssignments()) {
             if (!objectiveId.equals(assignment.objectiveRef())) continue;
             if (assignment.status() == WorkforceCoreService.AssignmentStatus.ACTIVE
@@ -387,10 +392,21 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.BLOCKED);
                     throw new IllegalStateException("reason=evidence_missing");
                 }
-                core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+                try {
+                    core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+                } catch (com.metatron.workforce.core.CompletionEvidenceRequiredException awaitingReleaseEvidence) {
+                    // Execution succeeded; this Assignment's declared CompletionPolicy requires release
+                    // evidence (PR/merge/deploy/verify) that does not exist yet. This is NOT an execution
+                    // failure: the Assignment correctly stays ACTIVE/PLANNED, and Objective completion is
+                    // deferred rather than blocked. A later management pass (normal poll, or an explicit
+                    // wake() once release evidence is recorded) retries this same idempotent path.
+                    allClosed = false;
+                }
             }
         }
+        return allClosed;
     }
+
 
     private void handleCapabilityPlanGap(String objectiveId, String stepId, String requiredCapability,
                                          ManagementLease lease) {
