@@ -131,7 +131,7 @@ class WorkforceHeadRuntimeConformanceTest {
     }
 
     @Test
-    void invalidCapabilityPlanReplansAgainstCatalogInsteadOfPretendingStaffingIsMissing() {
+    void invalidCapabilityPlanBlocksWithTruthfulRegistryFailure() {
         WorkforceCoreService core = new WorkforceCoreService();
         ManagementAutonomyService management = new ManagementAutonomyService();
         AutonomyCoordinationService coordination = new AutonomyCoordinationService();
@@ -162,18 +162,20 @@ class WorkforceHeadRuntimeConformanceTest {
                 "message-point3-replan", "chat", validRequest());
 
         runner.runOnce();
-        assertEquals(ManagementObjective.Status.REPLANNING, management.get(receipt.objectiveId()).status());
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
         assertTrue(management.history(receipt.objectiveId()).stream().anyMatch(e ->
-                e.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED
-                        && e.detail().contains("execution-capability-unavailable")));
+                e.type() == ManagementAutonomyService.ManagementEvent.Type.BLOCKED
+                        && e.detail().contains("missing_capability_id=tool.that.does.not.exist")
+                        && e.detail().contains("registry_result=NOT_REGISTERED")
+                        && e.detail().contains("planner_contract_defect=true")));
         assertFalse(management.history(receipt.objectiveId()).stream().anyMatch(e ->
                 e.type() == ManagementAutonomyService.ManagementEvent.Type.STAFFING_NEED_DETECTED));
 
         runner.runOnce();
 
-        assertEquals(2, plannerCalls.get());
-        assertEquals(ManagementObjective.Status.COMPLETED, management.get(receipt.objectiveId()).status());
-        assertEquals(1, effect.effects.get());
+        assertEquals(1, plannerCalls.get());
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertEquals(0, effect.effects.get());
         assertFalse(management.history(receipt.objectiveId()).stream().anyMatch(e ->
                 e.detail().contains("staffing-required:tool.that.does.not.exist")));
     }

@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,6 +55,27 @@ class GovernedAutonomousExecutionCapabilityTest {
         assertEquals(WorkforceCoreService.ReservationStatus.RELEASED,
                 core.allCapacityReservations().getFirst().status());
         assertEquals(1.0, core.remainingCapacity("worker-a"), 0.000001);
+    }
+
+    @Test
+    void successfulEffectWithoutEvidenceBlocksAssignmentCompletion() {
+        WorkforceCoreService core = seededCore("worker-a", 1.0);
+        AutonomousExecutionCapability delegate = new TestCapability("worker-a") {
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, request.allocatedWorkerId(), request.assignmentReference(),
+                        "work-without-evidence", List.of(), "PASS");
+            }
+        };
+        GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
+                delegate, core, new ExecutionAdmissionService(), CLOCK, Duration.ZERO);
+
+        var result = governed.execute(request("objective-no-evidence", "step-no-evidence"));
+
+        assertFalse(result.success());
+        assertEquals("reason=evidence_missing", result.summary());
+        assertEquals(List.of("reason=evidence_missing"), result.evidenceReferences());
+        assertEquals(WorkforceCoreService.AssignmentStatus.BLOCKED,
+                core.allAssignments().getFirst().status());
     }
 
     @Test

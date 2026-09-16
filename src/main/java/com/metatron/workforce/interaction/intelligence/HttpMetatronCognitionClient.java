@@ -9,7 +9,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -79,7 +81,13 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
             String requestRef = root.path("requestReference").asText(root.path("requestId").asText(request.requestId()));
             long inputTokens = nonNegative(root.path("usage").path("inputTokens").asLong(0));
             long outputTokens = nonNegative(root.path("usage").path("outputTokens").asLong(0));
-            return new Response(text, endpointId, model, inputTokens, outputTokens, requestRef);
+            String provider = root.path("providerUsed").asText(root.path("provider").asText(""));
+            long latencyMillis = nonNegative(root.path("latencyMs").asLong(0));
+            boolean fallbackOccurred = root.path("fallbackOccurred").asBoolean(false);
+            List<String> providerAttempts = new ArrayList<>();
+            root.path("providerAttempts").forEach(attempt -> providerAttempts.add(attempt.asText()));
+            return new Response(text, endpointId, model, inputTokens, outputTokens, requestRef,
+                    provider, latencyMillis, fallbackOccurred, providerAttempts);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("metatron cognition interrupted", interrupted);
