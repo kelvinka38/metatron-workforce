@@ -83,6 +83,26 @@ def rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
+JAVA_COMMENT_OR_LITERAL = re.compile(
+    r'(?P<text_block>""".*?""")'
+    r'|(?P<string>"(?:\\.|[^"\\])*")'
+    r"|(?P<char>'(?:\\.|[^'\\])*')"
+    r'|(?P<line>//[^\r\n]*)'
+    r'|(?P<block>/\*.*?\*/)',
+    re.DOTALL,
+)
+
+
+def strip_java_comments(text: str) -> str:
+    """Strip Java line/block/Javadoc comments without treating comment markers in literals as comments."""
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if match.lastgroup not in {"line", "block"}:
+            return token
+        return "".join(char if char in "\r\n" else " " for char in token)
+
+    return JAVA_COMMENT_OR_LITERAL.sub(replace, text)
+
 def has_github_proposal_publish_call(text: str) -> bool:
     # Avoid treating comments such as `GitHubWorkspaceProposalPublisher.publish()` as effects.
     # Extract concrete variables/parameters typed as the publisher, then require an invocation on
@@ -142,8 +162,11 @@ def classify(path: Path, text: str) -> list[dict]:
             rows.append(row("UNKNOWN_HIGH_RISK_PROCESS_EFFECT", path, "ProcessBuilder(", "UNDECLARED", True, False))
 
     # Institutional terminal/lifecycle surfaces are tracked separately from raw persistence.
+    # Scan executable Java text only: lifecycle method names in comments/Javadocs are documentation,
+    # not mutation surfaces. Real code remains fail-closed through the same owner classification below.
+    lifecycle_text = strip_java_comments(text)
     for token in LIFECYCLE_EFFECTS:
-        if token not in text:
+        if token not in lifecycle_text:
             continue
         if token == "completeAutonomousObjective(":
             owner = COMPLETION_OWNERS.get(path.name)

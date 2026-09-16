@@ -2,11 +2,13 @@ package com.metatron.workforce.architecture;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Static regression guard for the SoT execution choke points. */
@@ -48,4 +50,52 @@ class SotEnforcementArchitectureTest {
         assertTrue(config.contains("new ExecutionAdmissionService(governance)"));
         assertTrue(config.contains("governancePlans, governanceAttempts"));
     }
+    @Test
+    void lifecycleInventoryIgnoresCommentsButStillFailsClosedForRealCode() throws Exception {
+        String probe = """
+                import importlib.util
+                import sys
+                from pathlib import Path
+
+                sys.dont_write_bytecode = True
+                root = Path.cwd()
+                spec = importlib.util.spec_from_file_location("inventory", root / "scripts/sot_enforcement/inventory.py")
+                inventory = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(inventory)
+
+                def classify(name, text):
+                    return inventory.classify(root / "src/main/java/com/example" / name, text)
+
+                comment_only = classify("CommentOnly.java", '''
+                    /** completeAutonomousObjective( and completeGraph( are documentation only. */
+                    class CommentOnly {
+                        // transitionAssignment( is also comment-only.
+                        String url = "https://example.test/path";
+                    }
+                ''')
+                assert not [row for row in comment_only if row["kind"].endswith("_TRANSITION")], comment_only
+
+                actual_known = classify("ManagementAutonomyService.java",
+                    "class Known { void run() { completeAutonomousObjective(); } }")
+                assert len(actual_known) == 1, actual_known
+                assert actual_known[0]["kind"] == "OBJECTIVE_COMPLETION_TRANSITION", actual_known
+                assert actual_known[0]["known"] is True, actual_known
+
+                actual_unknown = classify("UnownedCompletion.java",
+                    "class Unknown { void run() { completeAutonomousObjective(); } }")
+                assert len(actual_unknown) == 1, actual_unknown
+                assert actual_unknown[0]["kind"] == "OBJECTIVE_COMPLETION_TRANSITION", actual_unknown
+                assert actual_unknown[0]["known"] is False, actual_unknown
+                assert actual_unknown[0]["owner"] == "UNDECLARED", actual_unknown
+
+                assert "ObjectiveCompletionGate.java" not in inventory.COMPLETION_OWNERS
+                """;
+
+        Process process = new ProcessBuilder("python3", "-c", probe)
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertEquals(0, process.waitFor(), output);
+    }
+
 }
