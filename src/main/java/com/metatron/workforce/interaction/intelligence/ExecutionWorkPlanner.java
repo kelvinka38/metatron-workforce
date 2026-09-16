@@ -240,6 +240,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
             plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
             plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
+            plan = admitGatewayDirectorAppointmentSteps(normalized, plan);
             plan = normalizeGatewayDirectorAppointmentTargets(plan);
             plan = normalizeCognitionAssuranceTargets(plan);
             validate(plan);
@@ -294,6 +295,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
+                plan = admitGatewayDirectorAppointmentSteps(normalized, plan);
                 plan = normalizeGatewayDirectorAppointmentTargets(plan);
                 plan = normalizeCognitionAssuranceTargets(plan);
                 validate(plan);
@@ -408,18 +410,35 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
     }
 
     /**
-     * Root-cause fix (2026-09-16): the deterministic composer above sets target=ROLE-HEAD-OF-GATEWAY
-     * correctly, but only fires when the objective text explicitly mentions "gateway director"/"gateway
-     * head"/etc. When the general LLM planner independently decides -- on its own, e.g. as an inferred
-     * staffing prerequisite for a worker-cognition step -- to emit a workforce.staffing.gateway-director
-     * step without that explicit phrasing, it has no way to know the exact literal target string the
-     * capability's underlying AuthorityManifestCatalog entry actually requires (ROLE-HEAD-OF-GATEWAY or
-     * position:gateway-director) and guesses something plausible-sounding instead (observed in
-     * production: target="workforce"), which AuthorityManifestCatalog.resolve() then rejects with
-     * AUTHORITY_UNRESOLVED, permanently blocking the Objective. There is exactly one Gateway Director
-     * role -- this capability's target is never legitimately parameterized -- so any step requiring it
-     * is unconditionally normalized to the correct target, the same class of fix as the existing
-     * recovery-probe target normalizer.
+     * Planner output is a proposal, not authorization. A frontier planner may only retain the
+     * Gateway Director staffing capability when the normalized Human request itself explicitly asks
+     * for that appointment. Removing an unsolicited staffing step also removes its dependency edge
+     * from retained work so an invented organizational mutation cannot become a hidden prerequisite.
+     */
+    private static List<ExecutionWorkSpec> admitGatewayDirectorAppointmentSteps(
+            NormalizedRequest normalized,
+            List<ExecutionWorkSpec> plan) {
+        if (plan.isEmpty() || requestsGatewayDirectorAppointment(normalized)) return plan;
+
+        Set<String> rejectedStepIds = plan.stream()
+                .filter(step -> GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability()))
+                .map(ExecutionWorkSpec::stepId)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (rejectedStepIds.isEmpty()) return plan;
+
+        return plan.stream()
+                .filter(step -> !rejectedStepIds.contains(step.stepId()))
+                .map(step -> new ExecutionWorkSpec(
+                        step.stepId(), step.objective(), step.target(), step.requiredCapability(),
+                        step.dependsOn().stream().filter(dependency -> !rejectedStepIds.contains(dependency)).toList(),
+                        step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()))
+                .toList();
+    }
+
+    /**
+     * Target canonicalization is deliberately downstream of semantic admission. It may repair the
+     * fixed target of an authorized Gateway Director staffing step, but it cannot make an
+     * unauthorized planner-generated staffing step legitimate.
      */
     private static List<ExecutionWorkSpec> normalizeGatewayDirectorAppointmentTargets(List<ExecutionWorkSpec> plan) {
         if (plan.isEmpty()) return plan;
@@ -628,10 +647,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
 
 
 
-    private static List<ExecutionWorkSpec> deterministicGatewayDirectorAppointment(
-            NormalizedRequest normalized,
-            List<String> availableExecutionCapabilities) {
-        if (!hasCapability(availableExecutionCapabilities, GATEWAY_DIRECTOR_APPOINTMENT)) return List.of();
+    private static boolean requestsGatewayDirectorAppointment(NormalizedRequest normalized) {
         String semantic = (normalized.objective() + " " + normalized.target() + " "
                 + normalized.constraints() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
         boolean gatewayDirector = semantic.contains("gateway director")
@@ -640,7 +656,14 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 || semantic.contains("role-head-of-gateway");
         boolean appointment = semantic.contains("appoint") || semantic.contains("create")
                 || semantic.contains("form") || semantic.contains("staff");
-        if (!gatewayDirector || !appointment) return List.of();
+        return gatewayDirector && appointment;
+    }
+
+    private static List<ExecutionWorkSpec> deterministicGatewayDirectorAppointment(
+            NormalizedRequest normalized,
+            List<String> availableExecutionCapabilities) {
+        if (!hasCapability(availableExecutionCapabilities, GATEWAY_DIRECTOR_APPOINTMENT)
+                || !requestsGatewayDirectorAppointment(normalized)) return List.of();
 
         return List.of(new ExecutionWorkSpec(
                 "appoint-gateway-director",
