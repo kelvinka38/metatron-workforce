@@ -169,6 +169,13 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
         final String admittedExternalMessageReference = requireText(externalMessageReference, "externalMessageReference");
         final String admittedChannel = requireText(channel, "channel");
         Objects.requireNonNull(request, "request");
+        // Authoritative Objective-level completion requirement, resolved once here from already-normalized
+        // structured fields -- never from Worker/planner output -- before any planning or execution occurs.
+        // NormalizedRequest's own compact constructor then floors every ExecutionWorkSpec in the plan to at
+        // least this policy, and ManagementAutonomyService.recordPlan() re-applies that same floor to
+        // whatever the planner actually records, so neither can weaken it afterward.
+        request = request.withCompletionPolicy(ObjectiveCompletionPolicyResolver.resolve(request));
+
 
         String objectiveId = objectiveId(admittedCaseId, admittedExternalMessageReference);
         String requestAdmissionReference = "workplace-request-admission:" + admittedHumanId + ":" + admittedOwnerWorkerId;

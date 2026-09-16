@@ -223,7 +223,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         core.reserveCapacity(reservationId, assignmentId, request.objectiveId(), worker.workerId(), delegate.requiredCapacity());
         return core.assignReserved(reservationId, participation.participationId(),
                 requireReference(delegate.authorityReference(), "authority-reference-missing"),
-                requireReference(delegate.authorizationReference(), "authorization-reference-missing"), request.workSpec().objective());
+                requireReference(delegate.authorizationReference(), "authorization-reference-missing"),
+                request.workSpec().objective(), request.workSpec().completionPolicy());
     }
 
     /** WorkerActor consumer entry point for an already-created durable Assignment. */
@@ -247,12 +248,23 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
             return new CapabilityResult(false, result.workerId(), result.assignmentReference(),
                     result.workReference(), List.of("reason=evidence_missing"), "reason=evidence_missing");
         }
-        if (!result.success()) core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.CANCELLED);
-        else if (!assignmentCompletionDeferred) core.transitionAssignment(
-                assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+        boolean completed = false;
+        if (!result.success()) {
+            core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.CANCELLED);
+        } else if (!assignmentCompletionDeferred) {
+            try {
+                core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+                completed = true;
+            } catch (com.metatron.workforce.core.CompletionEvidenceRequiredException awaitingEvidence) {
+                // Execution itself succeeded; the Assignment correctly stays ACTIVE until its declared
+                // CompletionPolicy's evidence exists. This is not an execution failure.
+            }
+        }
         List<String> evidence = new ArrayList<>(result.evidenceReferences());
         evidence.add("assignment-consumer:worker=" + assignment.workerId() + ":assignment=" + assignment.assignmentId());
-        evidence.add("assignment-effect-terminal=" + (result.success() ? (assignmentCompletionDeferred ? "awaiting-observation" : "completed") : "cancelled"));
+        evidence.add("assignment-effect-terminal=" + (result.success()
+                ? (assignmentCompletionDeferred ? "awaiting-observation" : (completed ? "completed" : "awaiting-release-evidence"))
+                : "cancelled"));
         return new CapabilityResult(result.success(), result.workerId(), result.assignmentReference(), result.workReference(), evidence, result.summary());
     }
 
@@ -291,7 +303,8 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         try {
             core.reserveCapacity(reservationId, assignmentId, request.objectiveId(), worker.workerId(), delegate.requiredCapacity());
             WorkforceCoreService.Assignment coreAssignment = core.assignReserved(
-                    reservationId, participation.participationId(), authorityRef, authorizationRef, request.workSpec().objective());
+                    reservationId, participation.participationId(), authorityRef, authorizationRef,
+                    request.workSpec().objective(), request.workSpec().completionPolicy());
             assignmentCreated = true;
 
             ExecutionRequest executionRequest = new ExecutionRequest(
@@ -325,15 +338,22 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
             // Production execution with durable attempts defers Assignment completion to the independent
             // Observation boundary. Compatibility adapters without durable attempts retain the legacy
             // terminal projection because they have no later Observation lifecycle to own it.
+            boolean completed = false;
             if (!result.success()) {
                 core.transitionAssignment(coreAssignment.assignmentId(), WorkforceCoreService.AssignmentStatus.CANCELLED);
             } else if (!assignmentCompletionDeferred) {
-                core.transitionAssignment(coreAssignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+                try {
+                    core.transitionAssignment(coreAssignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+                    completed = true;
+                } catch (com.metatron.workforce.core.CompletionEvidenceRequiredException awaitingEvidence) {
+                    // Execution itself succeeded; the Assignment correctly stays ACTIVE until its
+                    // declared CompletionPolicy's evidence exists. This is not an execution failure.
+                }
             }
 
             List<String> evidence = new ArrayList<>(staffingEvidence.get());
             evidence.add("assignment-effect-terminal=" + (result.success()
-                    ? (assignmentCompletionDeferred ? "awaiting-observation" : "completed-compatibility")
+                    ? (assignmentCompletionDeferred ? "awaiting-observation" : (completed ? "completed-compatibility" : "awaiting-release-evidence"))
                     : "cancelled"));
             evidence.addAll(result.evidenceReferences());
             evidence.add("allocation:worker=" + coreAssignment.workerId()
