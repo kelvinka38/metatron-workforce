@@ -20,7 +20,8 @@ public record ExecutionWorkSpec(
         List<String> dependsOn,
         Consequence consequence,
         List<String> acceptanceCriteria,
-        List<String> evidenceRequirements) {
+        List<String> evidenceRequirements,
+        com.metatron.workforce.core.CompletionPolicy completionPolicy) {
 
     public enum Consequence { READ_ONLY, MUTATING }
 
@@ -33,16 +34,32 @@ public record ExecutionWorkSpec(
         Objects.requireNonNull(consequence, "consequence");
         acceptanceCriteria = normalize(acceptanceCriteria);
         evidenceRequirements = normalize(evidenceRequirements);
+        completionPolicy = completionPolicy == null ? com.metatron.workforce.core.CompletionPolicy.EXECUTION_REQUIRED : completionPolicy;
         if (stepId.isBlank()) throw new IllegalArgumentException("stepId must not be blank");
         if (objective.isBlank()) throw new IllegalArgumentException("objective must not be blank");
         if (requiredCapability.isBlank()) throw new IllegalArgumentException("requiredCapability must not be blank");
         rejectRepositoryCredentialWorkStep(objective, target, requiredCapability);
     }
 
+    /**
+     * Backward-compatible shape for existing persisted plans and bounded callers that don't yet
+     * declare a completion policy. Defaults to CompletionPolicy.EXECUTION_REQUIRED -- today's behavior,
+     * unchanged, for every existing caller of this constructor. A caller that knows the Objective's
+     * requested completion semantics (PR-only deliverable, production deployment required) should use
+     * the canonical constructor above and pass an explicit CompletionPolicy instead.
+     */
+    public ExecutionWorkSpec(String stepId, String objective, String target, String requiredCapability,
+                             List<String> dependsOn, Consequence consequence, List<String> acceptanceCriteria,
+                             List<String> evidenceRequirements) {
+        this(stepId, objective, target, requiredCapability, dependsOn, consequence, acceptanceCriteria,
+                evidenceRequirements, com.metatron.workforce.core.CompletionPolicy.EXECUTION_REQUIRED);
+    }
+
     /** Backward-compatible shape for existing persisted plans and bounded callers. */
     public ExecutionWorkSpec(String stepId, String objective, String target, String requiredCapability,
                              List<String> dependsOn, Consequence consequence) {
-        this(stepId, objective, target, requiredCapability, dependsOn, consequence, List.of(), List.of());
+        this(stepId, objective, target, requiredCapability, dependsOn, consequence, List.of(), List.of(),
+                com.metatron.workforce.core.CompletionPolicy.EXECUTION_REQUIRED);
     }
 
     public boolean verifiable() {
