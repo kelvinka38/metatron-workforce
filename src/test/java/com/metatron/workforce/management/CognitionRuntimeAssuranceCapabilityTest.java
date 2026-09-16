@@ -67,6 +67,45 @@ class CognitionRuntimeAssuranceCapabilityTest {
         assertTrue(result.summary().contains("EXTERNAL_PAID_PROVIDER_OBSERVED"));
     }
 
+    @Test
+    void blankTargetSucceedsAsObservationOnlyWithoutModelEqualityCheck() {
+        // Root-cause fix (2026-09-16, found live in production): an Objective that never specified a
+        // required model (target blank) must not be forced to invent one, and must not fail merely
+        // because the actually-observed model differs from nothing in particular. This proves a blank
+        // target degrades to "confirm real Metatron-owned cognition, report whatever model actually
+        // answered" rather than either throwing (the old behavior) or failing a fabricated equality
+        // check (the incident's actual behavior once the planner started inventing "workforce/assurance").
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "worker-cognition-request-4",
+                "probe-ok",
+                List.of(
+                        "metatron-cognition-endpoint:metatron-cognition-node-v7",
+                        "metatron-cognition-model:qwen3:8b"));
+        CognitionRuntimeAssuranceCapability capability = new CognitionRuntimeAssuranceCapability(intelligence);
+
+        AutonomousExecutionCapability.CapabilityResult result = capability.execute(request(""));
+
+        assertTrue(result.success());
+        assertTrue(result.summary().contains("COGNITION RUNTIME ASSURANCE PASS"));
+        assertTrue(result.summary().contains("no specific model required"));
+        assertTrue(result.evidenceReferences().contains("cognition-assurance:observed-model=qwen3:8b"));
+        assertTrue(result.evidenceReferences().contains("cognition-assurance:model-check-required=false"));
+    }
+
+    @Test
+    void blankTargetStillFailsClosedWithoutMetatronOwnedEndpointEvidence() {
+        // A blank target relaxes the model-equality check, not the METATRON_OWNED-endpoint requirement --
+        // this is still an assurance capability, not a no-op.
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "worker-cognition-request-5", "probe-ok", List.of());
+        CognitionRuntimeAssuranceCapability capability = new CognitionRuntimeAssuranceCapability(intelligence);
+
+        AutonomousExecutionCapability.CapabilityResult result = capability.execute(request(""));
+
+        assertFalse(result.success());
+        assertTrue(result.summary().contains("METATRON_OWNED_ENDPOINT_EVIDENCE_MISSING"));
+    }
+
     private static AutonomousExecutionCapability.CapabilityRequest request(String model) {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
                 "cognition-runtime-assurance",

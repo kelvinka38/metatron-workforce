@@ -490,7 +490,79 @@ final class ExecutionWorkPlannerTest {
         assertEquals("worker.cognitive.work", plan.get(1).requiredCapability());
     }
 
+    @Test
+    void plannerNormalizesCognitionAssuranceTargetWhenFrontierInventsSyntheticModel() {
+        // Reproduces the second half of the same production incident: after the gateway-director target
+        // fix, step-3 (worker.cognition.assure) truthfully failed with MODEL_MISMATCH
+        // expected=workforce/assurance -- the frontier planner invented a plausible-looking but
+        // nonexistent model identity because the objective never actually specified one. The capability
+        // itself now treats a blank target as "no specific model required"; this proves the planner
+        // normalizer blanks a fabricated, unrecognized target rather than letting it through to needlessly
+        // fail a real, successful cognition call.
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
+                        {"execution_work_plan":[
+                          {"step_id":"step-1","objective":"perform worker cognition","target":"","required_capability":"worker.cognitive.work","depends_on":[],"consequence":"READ_ONLY","acceptance_criteria":["cognition completes"],"evidence_requirements":["worker cognition evidence"]},
+                          {"step_id":"step-2","objective":"assure cognition ran through metatron owned path","target":"workforce/assurance","required_capability":"worker.cognition.assure","depends_on":["step-1"],"consequence":"READ_ONLY","acceptance_criteria":["assured"],"evidence_requirements":["cognition assurance evidence"]}
+                        ]}
+                        """, "planner-ref");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Take ownership of one Objective: use Worker cognition to summarize in one sentence that the "
+                        + "Workforce system is healthy. Report the Worker assignment and cognition evidence.",
+                "", List.of(), IntelligenceDepth.ANALYZE, "one sentence summary", List.of(), List.of(),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(), DeterministicCapability.NONE, List.of(), List.of(),
+                false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan("case-production-incident-2", normalized,
+                List.of("worker.cognitive.work", "worker.cognition.assure"));
+
+        assertEquals(2, plan.size());
+        assertEquals("worker.cognition.assure", plan.get(1).requiredCapability());
+        assertEquals("", plan.get(1).target(),
+                "fabricated non-model target must be blanked, not passed through to needlessly fail assurance");
+    }
+
+    @Test
+    void plannerPreservesARealCognitionAssuranceTarget() {
+        // A genuine, recognizable model identity must survive normalization unchanged -- this is not a
+        // blanket wipe of the target field, only a filter against fabricated non-model values.
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
+                        {"execution_work_plan":[
+                          {"step_id":"step-1","objective":"assure qwen3 is serving cognition","target":"qwen3:8b","required_capability":"worker.cognition.assure","depends_on":[],"consequence":"READ_ONLY","acceptance_criteria":["assured"],"evidence_requirements":["cognition assurance evidence"]}
+                        ]}
+                        """, "planner-ref");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Verify Worker cognition uses qwen3:8b through the Metatron-owned path.",
+                "", List.of(), IntelligenceDepth.ANALYZE, "assurance result", List.of(), List.of(),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(), DeterministicCapability.NONE, List.of(), List.of(),
+                false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan("case-real-model-target", normalized,
+                List.of("worker.cognition.assure"));
+
+        assertEquals(1, plan.size());
+        assertEquals("qwen3:8b", plan.get(0).target());
+    }
+
     private static LlmResponse planResponse(LlmProvider provider) {
+
 
         return new LlmResponse(provider, "planner-test", """
                 {"execution_work_plan":[{
