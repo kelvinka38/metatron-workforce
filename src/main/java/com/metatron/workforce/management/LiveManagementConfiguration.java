@@ -48,8 +48,10 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
-    ManagementAutonomyService managementAutonomyService(ManagementStateStore store) {
-        return new ManagementAutonomyService(store);
+    ManagementAutonomyService managementAutonomyService(
+            ManagementStateStore store,
+            ObjectiveCompletionGate objectiveCompletionGate) {
+        return new ManagementAutonomyService(store, objectiveCompletionGate);
     }
 
     @Bean
