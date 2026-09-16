@@ -12,9 +12,20 @@ function send(res, status, body) {
 async function callOllama(prompt) {
   const base = process.env.OLLAMA_URL || 'http://metatron-ollama:11434';
   const model = process.env.OLLAMA_MODEL || 'llama3.2:1b';
+  // Root-cause fix (2026-09-16, found live in Phase 3 production acceptance): 45s was tuned against a
+  // trivial 2-word test prompt. Real Worker-cognition prompts carry full Position-constitution context
+  // and can legitimately need much longer on this CPU-only host, especially with qwen3's "thinking"
+  // mode and under memory pressure -- observed aborting repeatedly at 45s while Ollama was still
+  // actively computing (confirmed via `ollama ps` showing 100% CPU), cascading into a full outage
+  // because Gemini/OpenAI/Anthropic each happened to be degraded/exhausted at the same moment. Raised
+  // to comfortably exceed HttpMetatronCognitionClient's own 120s Java-side timeout is wrong -- Ollama
+  // must resolve (success or real failure) before that caller gives up, not race it. Bounded below the
+  // caller's timeout with headroom for the fallback chain that follows.
+  const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS || 100000);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+
     const r = await fetch(base + '/api/generate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
