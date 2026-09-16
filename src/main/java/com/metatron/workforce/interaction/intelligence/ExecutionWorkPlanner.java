@@ -240,9 +240,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
             plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
             plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
-            plan = normalizeGatewayDirectorAppointmentTargets(plan);
+            plan = normalizeGatewayDirectorAppointmentTargets(normalized, plan);
             plan = normalizeCognitionAssuranceTargets(plan);
             validate(plan);
+
 
 
             if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
@@ -294,9 +295,10 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
-                plan = normalizeGatewayDirectorAppointmentTargets(plan);
+                plan = normalizeGatewayDirectorAppointmentTargets(normalized, plan);
                 plan = normalizeCognitionAssuranceTargets(plan);
                 validate(plan);
+
 
 
                 if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
@@ -420,26 +422,68 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
      * role -- this capability's target is never legitimately parameterized -- so any step requiring it
      * is unconditionally normalized to the correct target, the same class of fix as the existing
      * recovery-probe target normalizer.
+     *
+     * Semantic admission gate (2026-09-16, follow-up): fixing the target string alone let a planner
+     * that invents Gateway staffing intent the Human never asked for have that invented step silently
+     * legitimized -- target normalization corrected the step's shape without ever asking whether the
+     * step should exist at all. A planner may decompose authorized work; it must not invent
+     * organizational staffing authority. So before any target correction, this checks the same semantic
+     * signal the deterministic composer itself requires to treat Gateway Director as in-scope (the
+     * normalized Human Objective actually mentions Gateway Director/Gateway Head by name). If the
+     * Objective never said so, a gateway-director step the frontier planner invented anyway is stripped
+     * from the plan entirely -- not corrected, not kept -- so it can never reach execution. Any step that
+     * depended on the stripped step is then correctly rejected by validate() for depending on a step
+     * that no longer exists, exposing the planner defect truthfully rather than silently continuing a
+     * plan built on unauthorized organizational mutation. When the Objective does explicitly reference
+     * Gateway Director, the step is admitted and its target is still normalized as before.
      */
-    private static List<ExecutionWorkSpec> normalizeGatewayDirectorAppointmentTargets(List<ExecutionWorkSpec> plan) {
+    private static List<ExecutionWorkSpec> normalizeGatewayDirectorAppointmentTargets(
+            NormalizedRequest normalized, List<ExecutionWorkSpec> plan) {
         if (plan.isEmpty()) return plan;
-        boolean needsNormalization = plan.stream().anyMatch(step ->
+        boolean hasGatewayDirectorStep = plan.stream()
+                .anyMatch(step -> GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability()));
+        if (!hasGatewayDirectorStep) return plan;
+
+        if (!humanObjectiveReferencesGatewayDirector(normalized)) {
+            Set<String> stripped = plan.stream()
+                    .filter(step -> GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability()))
+                    .map(ExecutionWorkSpec::stepId)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            List<ExecutionWorkSpec> admitted = new ArrayList<>();
+            for (ExecutionWorkSpec step : plan) {
+                if (stripped.contains(step.stepId())) continue;
+                admitted.add(step);
+            }
+            return List.copyOf(admitted);
+        }
+
+        boolean needsTargetNormalization = plan.stream().anyMatch(step ->
                 GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability())
                         && !"ROLE-HEAD-OF-GATEWAY".equals(step.target()));
-        if (!needsNormalization) return plan;
-        List<ExecutionWorkSpec> normalized = new ArrayList<>();
+        if (!needsTargetNormalization) return plan;
+        List<ExecutionWorkSpec> normalized2 = new ArrayList<>();
         for (ExecutionWorkSpec step : plan) {
             if (GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability())
                     && !"ROLE-HEAD-OF-GATEWAY".equals(step.target())) {
-                normalized.add(new ExecutionWorkSpec(
+                normalized2.add(new ExecutionWorkSpec(
                         step.stepId(), step.objective(), "ROLE-HEAD-OF-GATEWAY", step.requiredCapability(),
                         step.dependsOn(), step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
             } else {
-                normalized.add(step);
+                normalized2.add(step);
             }
         }
-        return List.copyOf(normalized);
+        return List.copyOf(normalized2);
     }
+
+    private static boolean humanObjectiveReferencesGatewayDirector(NormalizedRequest normalized) {
+        String semantic = (normalized.objective() + " " + normalized.target() + " "
+                + normalized.constraints() + " " + normalized.requestedOutput()).toLowerCase(Locale.ROOT);
+        return semantic.contains("gateway director")
+                || semantic.contains("gateway head")
+                || semantic.contains("head of gateway")
+                || semantic.contains("role-head-of-gateway");
+    }
+
 
     /**
      * Root-cause fix (2026-09-16, found live in production): CognitionRuntimeAssuranceCapability now
