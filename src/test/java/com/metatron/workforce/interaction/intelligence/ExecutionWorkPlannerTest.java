@@ -448,7 +448,50 @@ final class ExecutionWorkPlannerTest {
         assertEquals("execution_planning_provider_required", failure.getMessage());
     }
 
+    @Test
+    void plannerNormalizesGatewayDirectorAppointmentTargetWhenFrontierGuessesWrongTarget() {
+        // Reproduces a real production incident (2026-09-16): the deterministic composer above only
+        // fires when the objective text explicitly says "gateway director"/"gateway head"/etc. Here the
+        // objective never mentions Gateway Director at all -- it asks for worker cognition -- but the
+        // frontier planner independently decided to insert a workforce.staffing.gateway-director
+        // prerequisite step and guessed target="workforce" (a plausible-sounding but wrong value; the
+        // capability's AuthorityManifestCatalog entry only matches ROLE-HEAD-OF-GATEWAY/
+        // position:gateway-director). Before this fix, AuthorityManifestCatalog.resolve("workforce")
+        // threw AUTHORITY_UNRESOLVED and permanently blocked the Objective in production.
+        LlmProviderClient google = new LlmProviderClient() {
+            @Override public LlmProvider provider() { return LlmProvider.GOOGLE; }
+            @Override public LlmResponse complete(LlmRequest request) {
+                return new LlmResponse(LlmProvider.GOOGLE, "planner-test", """
+                        {"execution_work_plan":[
+                          {"step_id":"step-1","objective":"staff the workforce","target":"workforce","required_capability":"workforce.staffing.gateway-director","depends_on":[],"consequence":"MUTATING","acceptance_criteria":["staffed"],"evidence_requirements":["observation-capability:workforce.staffing.gateway-director"]},
+                          {"step_id":"step-2","objective":"perform worker cognition","target":"","required_capability":"worker.cognitive.work","depends_on":["step-1"],"consequence":"READ_ONLY","acceptance_criteria":["cognition completes"],"evidence_requirements":["worker cognition evidence"]}
+                        ]}
+                        """, "planner-ref");
+            }
+        };
+        ExecutionWorkPlanner planner = new ExecutionWorkPlanner(
+                new LlmProviderRouter(List.of(google)), provider -> "planner-test",
+                List.of(LlmProvider.GOOGLE), new ObjectMapper());
+        NormalizedRequest normalized = new NormalizedRequest(
+                "Take ownership of one Objective: use Worker cognition to summarize in one sentence that the "
+                        + "Workforce system is healthy.",
+                "", List.of(), IntelligenceDepth.ANALYZE, "one sentence summary", List.of(), List.of(),
+                "", "", IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.of(), DeterministicCapability.NONE, List.of(), List.of(),
+                false, null, LlmProvider.GOOGLE, "");
+
+        List<ExecutionWorkSpec> plan = planner.plan("case-production-incident", normalized,
+                List.of("workforce.staffing.gateway-director", "worker.cognitive.work"));
+
+        assertEquals(2, plan.size());
+        assertEquals("workforce.staffing.gateway-director", plan.get(0).requiredCapability());
+        assertEquals("ROLE-HEAD-OF-GATEWAY", plan.get(0).target(),
+                "frontier-guessed target must be normalized to the exact authority manifest pattern");
+        assertEquals("worker.cognitive.work", plan.get(1).requiredCapability());
+    }
+
     private static LlmResponse planResponse(LlmProvider provider) {
+
         return new LlmResponse(provider, "planner-test", """
                 {"execution_work_plan":[{
                   "step_id":"audit-repo",
