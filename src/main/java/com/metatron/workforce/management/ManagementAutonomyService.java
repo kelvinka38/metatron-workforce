@@ -24,13 +24,20 @@ public final class ManagementAutonomyService {
     private final Map<String, ManagementLease> leases = new LinkedHashMap<>();
     private final List<ManagementOutboxMessage> outbox = new ArrayList<>();
     private final ManagementStateStore stateStore;
+    private final ObjectiveCompletionGate objectiveCompletionGate;
 
     public ManagementAutonomyService() {
         this(new InMemoryManagementStateStore());
     }
 
     public ManagementAutonomyService(ManagementStateStore stateStore) {
+        this(stateStore, ObjectiveCompletionGate.ALWAYS_SATISFIED);
+    }
+
+    /** Wires an authoritative ObjectiveCompletionGate at the Objective-completion transition boundary. */
+    public ManagementAutonomyService(ManagementStateStore stateStore, ObjectiveCompletionGate objectiveCompletionGate) {
         this.stateStore = Objects.requireNonNull(stateStore, "stateStore");
+        this.objectiveCompletionGate = Objects.requireNonNull(objectiveCompletionGate, "objectiveCompletionGate");
         ManagementStateStore.Snapshot snapshot = stateStore.load();
         objectives.putAll(snapshot.objectives());
         snapshot.events().forEach((key, value) -> events.put(key, new ArrayList<>(value)));
@@ -38,6 +45,7 @@ public final class ManagementAutonomyService {
         leases.putAll(snapshot.leases());
         outbox.addAll(snapshot.outbox());
     }
+
 
     public synchronized ManagementObjective acceptObjective(String objectiveId, String ownerWorkerId,
             String organizationContextId, String description, Instant at) {
@@ -175,6 +183,12 @@ public final class ManagementAutonomyService {
         List<ExecutionWorkSpec> normalized = List.copyOf(Objects.requireNonNull(plan, "plan"));
         if (normalized.isEmpty()) throw new IllegalArgumentException("plan must not be empty");
         validateWorkGraph(normalized);
+        // Authoritative floor: reuses NormalizedRequest's own ceiling enforcement (its compact constructor)
+        // so whatever the planner actually produced is raised to at least the Objective's completion
+        // requirement, established once at acceptHumanObjective(...) time and immutable since. This is the
+        // one place a plan is actually recorded as the work that will execute, so it cannot be bypassed by
+        // a planner that omits or weakens completion policy on individual steps.
+        normalized = current.normalizedRequest().withExecutionWorkPlan(normalized).executionWorkPlan();
         AutonomousObjectiveWork updated = copyWork(current, normalized, current.completedStepIds(),
                 current.evidenceReferences(), AutonomousObjectiveWork.Status.READY, "", at);
         objectiveWork.put(objectiveId, updated);
@@ -251,6 +265,14 @@ public final class ManagementAutonomyService {
         }
         if (current.completedStepIds().size() != current.plannedWork().size()) {
             throw new IllegalStateException("not all planned Work is complete: " + objectiveId);
+        }
+        if (!objectiveCompletionGate.satisfiesCompletion(objectiveId, current.normalizedRequest().completionPolicy(), current)) {
+            // Authoritative Objective-level chokepoint: distinct from and in addition to the per-Assignment
+            // CompletionEvidenceGate in WorkforceCoreService. Not routed through blockAutonomousObjective()
+            // -- missing release evidence after otherwise-successful execution is not a failure, so the
+            // Objective must remain nonterminal/reconcilable, not BLOCKED.
+            throw new IllegalStateException("objective-completion-evidence-required:"
+                    + current.normalizedRequest().completionPolicy() + ":" + objectiveId);
         }
         AutonomousObjectiveWork completed = copyWork(current, current.plannedWork(), current.completedStepIds(),
                 current.evidenceReferences(), AutonomousObjectiveWork.Status.COMPLETED, "", at);
