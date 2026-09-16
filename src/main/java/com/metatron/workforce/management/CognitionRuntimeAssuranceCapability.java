@@ -56,17 +56,31 @@ public final class CognitionRuntimeAssuranceCapability implements AutonomousExec
             throw new SecurityException("cognition assurance is read-only");
         }
 
+        // Root-cause fix (2026-09-16, found live in production during Phase 3 acceptance): this used to
+        // hard-require a non-blank target and always enforce exact model equality. When an Objective
+        // never actually asked for a specific model, the frontier planner -- having no real value to
+        // put here and no way to leave it meaningfully blank under the old contract -- invented a
+        // plausible-looking but nonexistent model identity ("workforce/assurance" was observed live),
+        // which then failed a genuine-looking MODEL_MISMATCH against whatever model was really serving
+        // requests. That fail-closed behavior was itself correct given a fabricated expectation, but the
+        // expectation should never have existed: nothing about the Objective required a specific model.
+        // Now: a blank target means "no specific model required" -- this step becomes a pure observation
+        // that real Metatron-owned cognition (not an external paid provider) actually served the request,
+        // with whatever model is truly running reported as evidence, and no equality check at all. When a
+        // target IS supplied (a real Objective requirement, or the deterministic composer's own
+        // regex-verified value), exact-match fail-closed behavior is unchanged -- a genuine mismatch still
+        // fails.
         String expectedModel = request.workSpec().target() == null ? "" : request.workSpec().target().trim();
-        if (expectedModel.isBlank()) throw new IllegalArgumentException("cognition assurance expected model missing");
+        boolean modelCheckRequired = !expectedModel.isBlank();
 
         List<String> seedEvidence = List.of(
-                "cognition-assurance:expected-model=" + expectedModel,
+                "cognition-assurance:expected-model=" + (modelCheckRequired ? expectedModel : "none-required"),
                 "cognition-assurance:required-compute-owner=METATRON_OWNED");
         WorkerIntelligenceService.Response response = intelligence.reason(new WorkerIntelligenceService.Request(
                 request.allocatedWorkerId(),
                 COGNITION_REQUEST_CAPABILITY,
                 "Perform one bounded cognition probe. Return a short acknowledgement only. Do not request web research or any external paid provider.",
-                "COGNITION RUNTIME ASSURANCE\nexpected_model=" + expectedModel
+                "COGNITION RUNTIME ASSURANCE\nexpected_model=" + (modelCheckRequired ? expectedModel : "none-required")
                         + "\nobjective_id=" + request.objectiveId()
                         + "\nassignment=" + request.assignmentReference()
                         + "\nstep=" + request.workSpec().stepId(),
@@ -83,19 +97,23 @@ public final class CognitionRuntimeAssuranceCapability implements AutonomousExec
         boolean externalPaidProviderObserved = evidence.stream()
                 .anyMatch(ref -> ref != null && ref.startsWith("worker-intelligence-provider:"));
         boolean endpointObserved = !endpoint.isBlank();
-        boolean exactModel = expectedModel.equals(observedModel);
+        boolean exactModel = !modelCheckRequired || expectedModel.equals(observedModel);
         boolean success = endpointObserved && exactModel && !externalPaidProviderObserved;
 
         evidence.add("cognition-assurance:observed-endpoint=" + nonBlank(endpoint, "missing"));
         evidence.add("cognition-assurance:observed-model=" + nonBlank(observedModel, "missing"));
+        evidence.add("cognition-assurance:model-check-required=" + modelCheckRequired);
         evidence.add("cognition-assurance:external-paid-provider-observed=" + externalPaidProviderObserved);
         evidence.add("cognition-assurance:result=" + (success ? "PASS" : "FAIL"));
 
         String summary;
         if (success) {
             summary = "COGNITION RUNTIME ASSURANCE PASS endpoint=" + endpoint
-                    + " model=" + observedModel + " external_paid_provider=false";
+                    + " model=" + nonBlank(observedModel, "unknown")
+                    + (modelCheckRequired ? "" : " (no specific model required)")
+                    + " external_paid_provider=false";
         } else if (!endpointObserved) {
+
             summary = "COGNITION RUNTIME ASSURANCE BLOCKED reason=METATRON_OWNED_ENDPOINT_EVIDENCE_MISSING";
         } else if (!exactModel) {
             summary = "COGNITION RUNTIME ASSURANCE BLOCKED reason=MODEL_MISMATCH expected="

@@ -241,7 +241,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
             plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
             plan = normalizeGatewayDirectorAppointmentTargets(plan);
+            plan = normalizeCognitionAssuranceTargets(plan);
             validate(plan);
+
 
             if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
             return plan;
@@ -293,7 +295,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
                 plan = normalizeGatewayDirectorAppointmentTargets(plan);
+                plan = normalizeCognitionAssuranceTargets(plan);
                 validate(plan);
+
 
                 if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
                 return plan;
@@ -437,7 +441,48 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         return List.copyOf(normalized);
     }
 
+    /**
+     * Root-cause fix (2026-09-16, found live in production): CognitionRuntimeAssuranceCapability now
+     * treats a blank target as "no specific model required" (an observation-only check), rather than
+     * requiring a value. Without this normalizer, the frontier planner would keep inventing a
+     * plausible-looking synthetic model identity to fill the target field even when the Objective
+     * genuinely never specified one (observed live: "workforce/assurance", a string that resembles a
+     * model:tag/org shape but names no real model) -- causing a truthful-but-unnecessary
+     * MODEL_MISMATCH against whatever model is actually running. Only a target that looks like a real
+     * model identity from a known family is preserved; anything else is blanked so the capability
+     * degrades to observation-only rather than failing against a fabricated expectation. A genuine,
+     * real target survives unchanged, and a genuine mismatch against a real target still fails closed.
+     */
+    private static final java.util.regex.Pattern RECOGNIZED_MODEL_IDENTITY = java.util.regex.Pattern.compile(
+            "(?i)^(llama|qwen|gemini|gemma|gpt|claude|mixtral|mistral|deepseek|phi)[A-Za-z0-9._-]*[:/][A-Za-z0-9._-]+$");
+
+    private static final String COGNITION_ASSURANCE_CAPABILITY = "worker.cognition.assure";
+
+    private static List<ExecutionWorkSpec> normalizeCognitionAssuranceTargets(List<ExecutionWorkSpec> plan) {
+        if (plan.isEmpty()) return plan;
+        boolean needsNormalization = plan.stream().anyMatch(step ->
+                COGNITION_ASSURANCE_CAPABILITY.equals(step.requiredCapability())
+                        && !step.target().isBlank()
+                        && !RECOGNIZED_MODEL_IDENTITY.matcher(step.target()).matches());
+        if (!needsNormalization) return plan;
+        List<ExecutionWorkSpec> normalized = new ArrayList<>();
+        for (ExecutionWorkSpec step : plan) {
+            if (COGNITION_ASSURANCE_CAPABILITY.equals(step.requiredCapability())
+                    && !step.target().isBlank()
+                    && !RECOGNIZED_MODEL_IDENTITY.matcher(step.target()).matches()) {
+
+                normalized.add(new ExecutionWorkSpec(
+                        step.stepId(), step.objective(), "", step.requiredCapability(),
+                        step.dependsOn(), step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
+            } else {
+                normalized.add(step);
+            }
+        }
+        return List.copyOf(normalized);
+    }
+
     private static List<ExecutionWorkSpec> reconcileCompositeCapabilities(
+
 
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities,
