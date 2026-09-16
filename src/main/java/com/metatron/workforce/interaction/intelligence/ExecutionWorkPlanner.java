@@ -240,7 +240,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
             plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
             plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
+            plan = normalizeGatewayDirectorAppointmentTargets(plan);
             validate(plan);
+
             if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
             return plan;
         } catch (RuntimeException failure) {
@@ -290,7 +292,9 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 plan = reconcileCompositeCapabilities(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileCrossRepositoryAuditJoin(normalized, availableExecutionCapabilities, plan);
                 plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
+                plan = normalizeGatewayDirectorAppointmentTargets(plan);
                 validate(plan);
+
                 if (plan.isEmpty()) throw new IllegalStateException("execution planner returned empty plan");
                 return plan;
             } catch (RuntimeException failure) {
@@ -399,7 +403,42 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
         }
     }
 
+    /**
+     * Root-cause fix (2026-09-16): the deterministic composer above sets target=ROLE-HEAD-OF-GATEWAY
+     * correctly, but only fires when the objective text explicitly mentions "gateway director"/"gateway
+     * head"/etc. When the general LLM planner independently decides -- on its own, e.g. as an inferred
+     * staffing prerequisite for a worker-cognition step -- to emit a workforce.staffing.gateway-director
+     * step without that explicit phrasing, it has no way to know the exact literal target string the
+     * capability's underlying AuthorityManifestCatalog entry actually requires (ROLE-HEAD-OF-GATEWAY or
+     * position:gateway-director) and guesses something plausible-sounding instead (observed in
+     * production: target="workforce"), which AuthorityManifestCatalog.resolve() then rejects with
+     * AUTHORITY_UNRESOLVED, permanently blocking the Objective. There is exactly one Gateway Director
+     * role -- this capability's target is never legitimately parameterized -- so any step requiring it
+     * is unconditionally normalized to the correct target, the same class of fix as the existing
+     * recovery-probe target normalizer.
+     */
+    private static List<ExecutionWorkSpec> normalizeGatewayDirectorAppointmentTargets(List<ExecutionWorkSpec> plan) {
+        if (plan.isEmpty()) return plan;
+        boolean needsNormalization = plan.stream().anyMatch(step ->
+                GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability())
+                        && !"ROLE-HEAD-OF-GATEWAY".equals(step.target()));
+        if (!needsNormalization) return plan;
+        List<ExecutionWorkSpec> normalized = new ArrayList<>();
+        for (ExecutionWorkSpec step : plan) {
+            if (GATEWAY_DIRECTOR_APPOINTMENT.equals(step.requiredCapability())
+                    && !"ROLE-HEAD-OF-GATEWAY".equals(step.target())) {
+                normalized.add(new ExecutionWorkSpec(
+                        step.stepId(), step.objective(), "ROLE-HEAD-OF-GATEWAY", step.requiredCapability(),
+                        step.dependsOn(), step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
+            } else {
+                normalized.add(step);
+            }
+        }
+        return List.copyOf(normalized);
+    }
+
     private static List<ExecutionWorkSpec> reconcileCompositeCapabilities(
+
             NormalizedRequest normalized,
             List<String> availableExecutionCapabilities,
             List<ExecutionWorkSpec> plan) {
