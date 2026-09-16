@@ -4,7 +4,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -34,6 +37,46 @@ class WorkforceCapacityReservationTest {
         assertEquals(1.0, replacement.remainingCapacity("worker-a"), 0.000001);
         assertEquals(WorkforceCoreService.ReservationStatus.RELEASED,
                 replacement.allCapacityReservations().getFirst().status());
+    }
+
+    @Test
+    void staleOrphanReservationIsReleasedWithEvidenceAndRestoresCapacity() {
+        Instant createdAt = Instant.parse("2026-09-15T15:00:00Z");
+        WorkforceCoreService core = new WorkforceCoreService(
+                new InMemoryWorkforceCoreStateStore(), Clock.fixed(createdAt, ZoneOffset.UTC));
+        seed(core, "WORKER-GATEWAY-DIRECTOR", 1.0);
+
+        core.reserveCapacity("reservation-leaked", "assignment-never-created", "objective-a",
+                "WORKER-GATEWAY-DIRECTOR", 1.0);
+        assertEquals(0.0, core.remainingCapacity("WORKER-GATEWAY-DIRECTOR"), 0.000001);
+
+        Instant reconciledAt = createdAt.plus(Duration.ofMinutes(10));
+        var released = core.reconcileStaleCapacityReservations(reconciledAt, Duration.ofMinutes(5));
+
+        assertEquals(1, released.size());
+        assertEquals(1.0, core.remainingCapacity("WORKER-GATEWAY-DIRECTOR"), 0.000001);
+        assertEquals(WorkforceCoreService.ReservationStatus.RELEASED, released.getFirst().status());
+        assertEquals(reconciledAt, released.getFirst().releasedAt());
+        assertEquals("orphaned-reservation-age-exceeded", released.getFirst().releaseReason());
+    }
+
+    @Test
+    void reconciliationDoesNotReleaseReservationForLiveAssignment() {
+        Instant createdAt = Instant.parse("2026-09-15T15:00:00Z");
+        WorkforceCoreService core = new WorkforceCoreService(
+                new InMemoryWorkforceCoreStateStore(), Clock.fixed(createdAt, ZoneOffset.UTC));
+        seed(core, "worker-a", 1.0);
+        core.reserveCapacity("reservation-live", "assignment-live", "objective-a", "worker-a", 1.0);
+        core.assignReserved("reservation-live", "participation-worker-a",
+                "authority:a", "authorization:a", "running work");
+
+        var released = core.reconcileStaleCapacityReservations(
+                createdAt.plus(Duration.ofDays(1)), Duration.ofMinutes(5));
+
+        assertTrue(released.isEmpty());
+        assertEquals(0.0, core.remainingCapacity("worker-a"), 0.000001);
+        assertEquals(WorkforceCoreService.ReservationStatus.ACTIVE,
+                core.allCapacityReservations().getFirst().status());
     }
 
     @Test
