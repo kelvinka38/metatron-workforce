@@ -19,7 +19,8 @@ class WorkerIntelligenceServiceProvenanceTest {
         AtomicInteger externalCalls = new AtomicInteger();
         MetatronCognitionClient cognition = request -> new MetatronCognitionClient.Response(
                 "{\"actionRef\":\"workspace.file.search\",\"inputs\":{\"query\":\"slugify\"},\"rationale\":\"inspect\"}",
-                "metatron-node-test", "open-weight-test", 10, 5, "internal-request-1");
+                "metatron-node-test", "gemini-2.5-flash", 10, 5, "internal-request-1",
+                "gemini", 37L, true, List.of("ollama=timeout"));
         IntelligenceFabric fabric = fabric(cognition, externalCalls);
 
         WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(fabric, 1);
@@ -38,8 +39,13 @@ class WorkerIntelligenceServiceProvenanceTest {
         assertTrue(response.evidenceReferences().stream()
                 .anyMatch(v -> v.startsWith("worker-intelligence-request:worker-cognition-")));
         assertTrue(response.evidenceReferences().contains("metatron-cognition-endpoint:metatron-node-test"));
-        assertTrue(response.evidenceReferences().contains("metatron-cognition-model:open-weight-test"));
+        assertTrue(response.evidenceReferences().contains("metatron-cognition-model:gemini-2.5-flash"));
         assertTrue(response.evidenceReferences().contains("metatron-cognition-request:internal-request-1"));
+        assertTrue(response.evidenceReferences().contains(
+                "worker-cognition-evidence;provider=gemini;model=gemini-2.5-flash;latency_ms=37"
+                        + ";fallbackOccurred=true;providerAttempts=[ollama=timeout]"
+                        + ";objective_id=objective-1;assignment_id=assignment-1"
+                        + ";worker_id=WORKER-GENERAL-ENGINEERING"));
     }
 
     @Test

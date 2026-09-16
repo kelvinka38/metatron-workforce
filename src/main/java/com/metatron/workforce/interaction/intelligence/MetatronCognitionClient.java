@@ -33,13 +33,28 @@ public interface MetatronCognitionClient {
             String modelIdentity,
             long inputTokens,
             long outputTokens,
-            String requestReference) {
+            String requestReference,
+            String provider,
+            long latencyMillis,
+            boolean fallbackOccurred,
+            List<String> providerAttempts) {
+        /** Compatibility constructor for cognition transports without Phase 3 execution evidence. */
+        public Response(String text, String endpointId, String modelIdentity,
+                        long inputTokens, long outputTokens, String requestReference) {
+            this(text, endpointId, modelIdentity, inputTokens, outputTokens, requestReference,
+                    endpointId, 0L, false, List.of());
+        }
+
         public Response {
             text = require(text, "text");
             endpointId = require(endpointId, "endpointId");
             modelIdentity = modelIdentity == null ? "" : modelIdentity.trim();
             requestReference = requestReference == null ? "" : requestReference.trim();
-            if (inputTokens < 0 || outputTokens < 0) throw new IllegalArgumentException("token usage must be non-negative");
+            provider = provider == null ? "" : provider.trim();
+            providerAttempts = providerAttempts == null ? List.of() : List.copyOf(providerAttempts);
+            if (inputTokens < 0 || outputTokens < 0 || latencyMillis < 0) {
+                throw new IllegalArgumentException("cognition usage values must be non-negative");
+            }
         }
     }
 

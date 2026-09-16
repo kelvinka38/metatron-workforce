@@ -242,8 +242,14 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         CapabilityResult result = executionAttempts == null ? delegate.execute(allocated)
                 : executeWithRecovery(allocated, assignment, null);
         verifyAttribution(result, assignment);
+        if (result.success() && !hasEvidence(result.evidenceReferences())) {
+            core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.BLOCKED);
+            return new CapabilityResult(false, result.workerId(), result.assignmentReference(),
+                    result.workReference(), List.of("reason=evidence_missing"), "reason=evidence_missing");
+        }
         if (!result.success()) core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.CANCELLED);
-        else if (!assignmentCompletionDeferred) core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
+        else if (!assignmentCompletionDeferred) core.transitionAssignment(
+                assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
         List<String> evidence = new ArrayList<>(result.evidenceReferences());
         evidence.add("assignment-consumer:worker=" + assignment.workerId() + ":assignment=" + assignment.assignmentId());
         evidence.add("assignment-effect-terminal=" + (result.success() ? (assignmentCompletionDeferred ? "awaiting-observation" : "completed") : "cancelled"));
@@ -310,6 +316,11 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     ? delegate.execute(allocated)
                     : executeWithRecovery(allocated, coreAssignment, boundPlan);
             verifyAttribution(result, coreAssignment);
+            if (result.success() && !hasEvidence(result.evidenceReferences())) {
+                core.transitionAssignment(coreAssignment.assignmentId(), WorkforceCoreService.AssignmentStatus.BLOCKED);
+                return new CapabilityResult(false, result.workerId(), result.assignmentReference(),
+                        result.workReference(), List.of("reason=evidence_missing"), "reason=evidence_missing");
+            }
 
             // Production execution with durable attempts defers Assignment completion to the independent
             // Observation boundary. Compatibility adapters without durable attempts retain the legacy
@@ -573,6 +584,11 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                         c.capabilityRef().equals(capabilityRef()) && c.level() >= minimumCapabilityLevel()))
                 .anyMatch(w -> core.participations(w.workerId()).stream()
                         .anyMatch(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE));
+    }
+
+    private static boolean hasEvidence(List<String> evidenceReferences) {
+        return evidenceReferences != null && evidenceReferences.stream()
+                .filter(Objects::nonNull).map(String::trim).anyMatch(value -> !value.isBlank());
     }
 
     private void verifyAttribution(CapabilityResult result, WorkforceCoreService.Assignment assignment) {

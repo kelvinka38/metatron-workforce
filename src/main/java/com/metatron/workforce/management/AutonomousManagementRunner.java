@@ -366,7 +366,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             }
         }
         coordination.completeGraph(objectiveId, graph.graphVersion(), clock.instant());
-        completeAssignmentsAfterObservation(objectiveId);
+        completeAssignmentsAfterObservation(objectiveId, work.evidenceReferences());
         management.completeAutonomousObjective(objectiveId, runnerId, lease.token(), clock.instant());
         AutonomousObjectiveWork completed = management.findAutonomousWork(objectiveId).orElseThrow();
         LOG.info("autonomy_objective_completed objective_id={} completed_steps={} planned_steps={} evidence_count={}",
@@ -374,13 +374,19 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 completed.evidenceReferences().size());
     }
 
-    private void completeAssignmentsAfterObservation(String objectiveId) {
+    private void completeAssignmentsAfterObservation(String objectiveId, List<String> evidenceReferences) {
         WorkforceCoreService core = workforceCore;
         if (core == null) return;
+        boolean hasEvidence = evidenceReferences != null && evidenceReferences.stream()
+                .filter(Objects::nonNull).map(String::trim).anyMatch(value -> !value.isBlank());
         for (WorkforceCoreService.Assignment assignment : core.allAssignments()) {
             if (!objectiveId.equals(assignment.objectiveRef())) continue;
             if (assignment.status() == WorkforceCoreService.AssignmentStatus.ACTIVE
                     || assignment.status() == WorkforceCoreService.AssignmentStatus.PLANNED) {
+                if (!hasEvidence) {
+                    core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.BLOCKED);
+                    throw new IllegalStateException("reason=evidence_missing");
+                }
                 core.transitionAssignment(assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.COMPLETED);
             }
         }
@@ -388,28 +394,14 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     private void handleCapabilityPlanGap(String objectiveId, String stepId, String requiredCapability,
                                          ManagementLease lease) {
-        long priorReplans = management.history(objectiveId).stream()
-                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
-                .count();
-        String failure = "execution-capability-unavailable:step=" + stepId
-                + ":capability=" + requiredCapability
-                + ":available=" + capabilityCatalog();
+        String failure = "missing_capability_id=" + requiredCapability
+                + ";registry_result=NOT_REGISTERED"
+                + ";planner_contract_defect=true"
+                + ";step_id=" + stepId
+                + ";registered_capabilities=" + capabilityCatalog();
         management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), failure, clock.instant());
-        String owner = management.get(objectiveId).ownerWorkerId();
-        if (priorReplans < MAX_AUTONOMOUS_REPLANS) {
-            management.requestReplan(objectiveId, owner, failure, clock.instant());
-            LOG.warn("autonomy_capability_replan_requested objective_id={} step_id={} capability={} prior_replans={} available_capabilities={}",
-                    objectiveId, stepId, requiredCapability, priorReplans, capabilityCatalog());
-            return;
-        }
-        management.escalate(objectiveId, owner,
-                "bounded-autonomous-capability-recovery-exhausted:replans=" + priorReplans
-                        + ":step=" + stepId
-                        + ":capability=" + requiredCapability
-                        + ":available=" + capabilityCatalog(),
-                clock.instant());
-        LOG.error("autonomy_capability_recovery_escalated objective_id={} step_id={} capability={} replans={} available_capabilities={}",
-                objectiveId, stepId, requiredCapability, priorReplans, capabilityCatalog());
+        LOG.error("autonomy_capability_registry_defect objective_id={} step_id={} missing_capability_id={} registry_result=NOT_REGISTERED planner_contract_defect=true registered_capabilities={}",
+                objectiveId, stepId, requiredCapability, capabilityCatalog());
     }
 
     private void handleAutonomousReplan(String objectiveId, NodeExecutionOutcome outcome,
@@ -513,6 +505,22 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             } else {
                 result = capability.execute(capabilityRequest);
             }
+            if (result.success() && result.evidenceReferences().stream()
+                    .filter(Objects::nonNull).map(String::trim).noneMatch(value -> !value.isBlank())) {
+                String failure = "reason=evidence_missing";
+                WorkforceCoreService core = workforceCore;
+                if (core != null && result.assignmentReference() != null && !result.assignmentReference().isBlank()) {
+                    core.allAssignments().stream()
+                            .filter(assignment -> assignment.assignmentId().equals(result.assignmentReference()))
+                            .filter(assignment -> assignment.status() == WorkforceCoreService.AssignmentStatus.ACTIVE
+                                    || assignment.status() == WorkforceCoreService.AssignmentStatus.PLANNED)
+                            .findFirst()
+                            .ifPresent(assignment -> core.transitionAssignment(
+                                    assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.BLOCKED));
+                }
+                coordination.failDispatch(dispatch.dispatchId(), failure, clock.instant());
+                return NodeExecutionOutcome.failed(step.stepId(), failure, plannedAttempt, false);
+            }
             if (!result.success()) {
                 String failure = "capability-unsuccessful:" + nonBlank(result.summary(), "unspecified");
                 LOG.warn("autonomy_step_execution_failed objective_id={} step_id={} capability={} worker={} assignment={} dispatch={} attempt={} failure={}",
@@ -581,6 +589,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     private void blockIfLeaseActive(String objectiveId, ManagementLease lease, String reason) {
         try {
+            if (management.get(objectiveId).status() == ManagementObjective.Status.BLOCKED) return;
             management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), reason, clock.instant());
         } catch (RuntimeException staleOrTerminal) {
             LOG.warn("Could not persist autonomous blocker for {}: {}", objectiveId, staleOrTerminal.getMessage());

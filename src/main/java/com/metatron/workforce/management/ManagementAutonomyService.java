@@ -219,12 +219,16 @@ public final class ManagementAutonomyService {
             throw new IllegalStateException("Work dependencies are not complete: " + stepId);
         }
         if (current.completedStepIds().contains(stepId)) return current;
+        List<String> stepEvidence = Objects.requireNonNull(evidenceRefs, "evidenceRefs").stream()
+                .filter(Objects::nonNull).map(String::trim).filter(value -> !value.isBlank()).toList();
+        if (stepEvidence.isEmpty()) {
+            blockAutonomousObjective(objectiveId, runnerId, token, "reason=evidence_missing", at);
+            throw new IllegalStateException("reason=evidence_missing");
+        }
         List<String> completed = new ArrayList<>(current.completedStepIds());
         completed.add(stepId);
         List<String> evidence = new ArrayList<>(current.evidenceReferences());
-        Objects.requireNonNull(evidenceRefs, "evidenceRefs").stream()
-                .filter(Objects::nonNull).map(String::trim).filter(value -> !value.isBlank())
-                .filter(value -> !evidence.contains(value)).forEach(evidence::add);
+        stepEvidence.stream().filter(value -> !evidence.contains(value)).forEach(evidence::add);
         AutonomousObjectiveWork updated = copyWork(current, current.plannedWork(), completed, evidence,
                 AutonomousObjectiveWork.Status.EXECUTING, "", at);
         objectiveWork.put(objectiveId, updated);
@@ -241,7 +245,10 @@ public final class ManagementAutonomyService {
         if (current.status() != AutonomousObjectiveWork.Status.EXECUTING) {
             throw new IllegalStateException("autonomous work is not executing: " + objectiveId);
         }
-        if (current.evidenceReferences().isEmpty()) throw new IllegalArgumentException("completion requires evidence");
+        if (current.evidenceReferences().isEmpty()) {
+            blockAutonomousObjective(objectiveId, runnerId, token, "reason=evidence_missing", at);
+            throw new IllegalStateException("reason=evidence_missing");
+        }
         if (current.completedStepIds().size() != current.plannedWork().size()) {
             throw new IllegalStateException("not all planned Work is complete: " + objectiveId);
         }

@@ -329,6 +329,17 @@ public final class IntelligenceFabric {
             if (!response.requestReference().isBlank()) {
                 internalEvidence.add("metatron-cognition-request:" + response.requestReference());
             }
+            IntelligenceOriginContext origin = enrichedRequest.originContext();
+            internalEvidence.add("worker-cognition-evidence"
+                    + ";provider=" + evidenceValue(response.provider())
+                    + ";model=" + evidenceValue(response.modelIdentity())
+                    + ";latency_ms=" + response.latencyMillis()
+                    + ";fallbackOccurred=" + response.fallbackOccurred()
+                    + ";providerAttempts=[" + response.providerAttempts().stream()
+                            .map(IntelligenceFabric::evidenceValue).reduce((left, right) -> left + "|" + right).orElse("") + "]"
+                    + ";objective_id=" + evidenceValue(origin.objectiveId())
+                    + ";assignment_id=" + evidenceValue(origin.assignmentId())
+                    + ";worker_id=" + evidenceValue(origin.workerId()));
             return new IntelligenceResult(
                     enrichedRequest.requestId(), response.text(), List.of(), List.copyOf(internalEvidence));
         } catch (RuntimeException failure) {
@@ -339,6 +350,11 @@ public final class IntelligenceFabric {
                     "FAILED:" + failure.getClass().getSimpleName(), ""));
             throw failure;
         }
+    }
+
+    private static String evidenceValue(String value) {
+        if (value == null || value.isBlank()) return "unknown";
+        return value.replace(';', '_').replace('\n', ' ').replace('\r', ' ').trim();
     }
 
     public InferenceConsumptionLedger inferenceLedger() { return inferenceLedger; }

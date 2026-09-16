@@ -69,6 +69,33 @@ class AutonomousManagementRunnerTest {
     }
 
     @Test
+    void successfulCapabilityWithoutEvidenceBlocksObjectiveCompletion() {
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T00:00:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomousExecutionCapability capability = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.audit.read"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, "worker-auditor", "assignment-no-evidence",
+                        "work-no-evidence", List.of(), "PASS");
+            }
+        };
+        AutonomousManagementRunner runner = runner(management, capability, clock, "runner-evidence-gate");
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(capability), runner, "worker-head", clock);
+
+        var receipt = ingress.submit("human-primary", "org-metatron", "case-no-evidence",
+                "conversation-no-evidence", "message-no-evidence", "chat", request());
+        runner.runOnce();
+
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertTrue(management.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.BLOCKED
+                        && event.detail().contains("reason=evidence_missing")));
+        assertFalse(management.outbox().stream()
+                .anyMatch(message -> message.messageType().equals("ObjectiveCompleted")));
+    }
+
+    @Test
     void expiredLeaseCanBeReclaimedAndStaleRunnerIsFenced() {
         Instant acceptedAt = Instant.parse("2026-08-31T00:00:00Z");
         ManagementAutonomyService management = new ManagementAutonomyService();
