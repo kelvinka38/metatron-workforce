@@ -55,6 +55,20 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
      * that owns execution.general.workspace semantics, so a genuinely read-only General Engineering
      * inspection request (inspect/review/analyze/explain) stays READ_ONLY instead of being forced into
      * MUTATING governance it does not need.
+     *
+     * Authority target semantics (2026-09-17, found live in production): the resulting WorkSpec's
+     * target() is a governed SoT resource -- GovernancePlanService.bindAuthorizedWork() feeds it
+     * straight into SotDiscoveryService.discover() to resolve an authority manifest -- never the
+     * performer identity. Performer identity (who executes) already flows entirely separately, through
+     * GeneralWorkspaceAutonomousCapability.supportsWorker() and AutonomousStaffingService; it never reads
+     * ExecutionWorkSpec.target(). Binding target() to the literal Worker id therefore both abuses the
+     * field and can never resolve, since no authority manifest is (or should be) keyed by a Worker
+     * identity. governedRepositoryTarget() resolves the real governed resource instead: a bare
+     * "owner/repo" Founder repository, exactly the shape GeneralCognitiveWorkerBrain already parses out
+     * of target() to materialize its workspace baseline, and exactly the shape already carrying real,
+     * Founder-ratified authority in sot-enforcement-authority-manifests.json -- an explicitly named
+     * repository in the Objective when there is one, otherwise the canonical Workforce repository itself
+     * for a brand-new app Objective that names no repository yet.
      */
     static List<ExecutionWorkSpec> explicitCanonicalGeneralEngineeringWork(
             NormalizedRequest request,
@@ -72,10 +86,11 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
 
         String objective = request.objective().trim();
         if (objective.isBlank()) return List.of();
+        String governedTarget = governedRepositoryTarget(objective);
         return List.of(new ExecutionWorkSpec(
                 "general-engineering-workspace-execution",
                 objective,
-                workerId,
+                governedTarget,
                 GeneralWorkspaceAutonomousCapability.CAPABILITY,
                 List.of(),
                 GeneralWorkspaceAutonomousCapability.classifyConsequence(objective),
@@ -86,6 +101,17 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
                 List.of(
                         "general-workspace-execution durable work product/evidence",
                         "worker-assignment evidence attributed to " + workerId)));
+    }
+
+    /**
+     * Governed repository target for General Workspace work: an explicit repository named in the
+     * Objective text, or -- for an Objective that names none, such as a brand-new app with nothing to
+     * check out yet -- the canonical Workforce repository. Never the Worker identity.
+     */
+    static String governedRepositoryTarget(String objective) {
+        String repositories = CanonicalObjectiveControlInterpreter.repositoryTargets(objective);
+        String first = repositories.isBlank() ? "" : repositories.split(",")[0].trim();
+        return first.isBlank() ? GeneralWorkspaceAutonomousCapability.DEFAULT_GOVERNED_REPOSITORY : first;
     }
 
     static List<ExecutionWorkSpec> explicitFounderWorkerWork(

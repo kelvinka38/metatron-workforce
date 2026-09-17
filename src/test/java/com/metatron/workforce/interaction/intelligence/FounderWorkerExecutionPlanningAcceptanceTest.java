@@ -84,7 +84,14 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
         assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
         assertNotEquals(FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY, work.requiredCapability(),
                 "General Engineering implementation work must not be downgraded to the cognitive-work shortcut");
-        assertEquals("WORKER-GENERAL-ENGINEERING", work.target());
+        // Authority target semantics fix: target() is the governed SoT resource authority discovery
+        // resolves, never the performer identity -- it must not be the literal Worker id (no authority
+        // manifest is or should be keyed by a Worker), and for this brand-new-app Objective that names
+        // no repository, it must fall back to the canonical Workforce repository, which already carries
+        // real authority in sot-enforcement-authority-manifests.json.
+        assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, work.target(),
+                "governed execution target must never be the performer's own Worker identity");
+        assertEquals(GeneralWorkspaceAutonomousCapability.DEFAULT_GOVERNED_REPOSITORY, work.target());
         assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
         assertFalse(work.acceptanceCriteria().isEmpty());
         assertFalse(work.evidenceRequirements().isEmpty());
@@ -120,7 +127,9 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
         assertEquals(1, plan.size());
         ExecutionWorkSpec work = plan.getFirst();
         assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
-        assertEquals("WORKER-GENERAL-ENGINEERING", work.target());
+        assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, work.target(),
+                "governed execution target must never be the performer's own Worker identity");
+        assertEquals(GeneralWorkspaceAutonomousCapability.DEFAULT_GOVERNED_REPOSITORY, work.target());
         assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, work.consequence());
     }
 

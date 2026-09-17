@@ -35,6 +35,14 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     public static final String WORKER_ID = "WORKER-GENERAL-ENGINEERING";
     public static final String AUTHORITY_REFERENCE = "policy:founder-general-engineering-workspace:v1";
     public static final String AUTHORIZATION_REFERENCE = "authorization:founder-general-engineering-workspace:v1";
+    /**
+     * Governed fallback repository target for General Workspace work whose Objective names no
+     * repository (e.g. a brand-new app with nothing to check out yet). One of the four canonical
+     * Founder repositories already carrying real, Founder-ratified authority in
+     * sot-enforcement-authority-manifests.json -- never the Worker identity, and never a fabricated
+     * authority scope invented just to satisfy discovery.
+     */
+    public static final String DEFAULT_GOVERNED_REPOSITORY = "kelvinka38/metatron-workforce";
     private static final int MAX_COGNITIVE_CYCLES = 48;
     private static final int MAX_RESEARCH_QUERY_CHARS = 20_000;
     static final String MEMORY_WORKSPACE_MATERIALIZED = "workspaceMaterialized";
