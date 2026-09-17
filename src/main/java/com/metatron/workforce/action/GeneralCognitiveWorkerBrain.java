@@ -663,7 +663,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static String governedStagePath(String target) {
-        String path = target == null ? "" : target.trim();
+        String path = stripRepositoryTargetPrefix(target);
         if (path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("..")
                 || OWNER_REPOSITORY.matcher(path).matches()) return "";
         return path;
@@ -700,10 +700,22 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static String repositoryFromTarget(String target) {
-        String repository = target == null ? "" : target.trim();
+        String repository = stripRepositoryTargetPrefix(target);
         int at = repository.indexOf('@');
         if (at > 0) repository = repository.substring(0, at);
         return OWNER_REPOSITORY.matcher(repository).matches() ? repository : "";
+    }
+
+    /**
+     * The governed target for General Workspace work is the canonical "repository:owner/repo" shape
+     * SotDiscoveryService/AuthorityManifestCatalog resolve (matching its repository:* authority
+     * wildcard); this recovers the bare "owner/repo" repository locator the brain itself operates on.
+     * A bare "owner/repo" target (still produced by some deterministic planning paths) passes through
+     * unchanged.
+     */
+    private static String stripRepositoryTargetPrefix(String target) {
+        String value = target == null ? "" : target.trim();
+        return value.startsWith("repository:") ? value.substring("repository:".length()) : value;
     }
 
     private static boolean exactSourceMaterializationWork(CognitiveWorkerRuntime.CognitiveContext context) {

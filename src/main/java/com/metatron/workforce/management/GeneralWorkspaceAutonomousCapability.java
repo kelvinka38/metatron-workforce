@@ -36,13 +36,17 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     public static final String AUTHORITY_REFERENCE = "policy:founder-general-engineering-workspace:v1";
     public static final String AUTHORIZATION_REFERENCE = "authorization:founder-general-engineering-workspace:v1";
     /**
-     * Governed fallback repository target for General Workspace work whose Objective names no
-     * repository (e.g. a brand-new app with nothing to check out yet). One of the four canonical
-     * Founder repositories already carrying real, Founder-ratified authority in
-     * sot-enforcement-authority-manifests.json -- never the Worker identity, and never a fabricated
-     * authority scope invented just to satisfy discovery.
+     * The single GitHub owner every Founder-authorized repository -- canonical or newly created --
+     * lives under (kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce,
+     * kelvinka38/bios, and any future repository). None of the canonical SoT documents
+     * (WORKFORCE_SOT.md, 14_EXECUTION/SOT.md, SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md,
+     * WORKFORCE_AUTHORIZATION_EXECUTION_ATTRIBUTION_ARCHITECTURE.md) establish a policy of routing a
+     * brand-new, unrelated app Objective at an existing canonical repository merely because that
+     * repository already resolves authority -- so this owner is used only to derive a governed target
+     * for a brand-new app's own (not-yet-existing) repository, never to silently point unrelated new
+     * work at kelvinka38/metatron-workforce itself.
      */
-    public static final String DEFAULT_GOVERNED_REPOSITORY = "kelvinka38/metatron-workforce";
+    public static final String FOUNDER_GITHUB_OWNER = "kelvinka38";
     private static final int MAX_COGNITIVE_CYCLES = 48;
     private static final int MAX_RESEARCH_QUERY_CHARS = 20_000;
     static final String MEMORY_WORKSPACE_MATERIALIZED = "workspaceMaterialized";

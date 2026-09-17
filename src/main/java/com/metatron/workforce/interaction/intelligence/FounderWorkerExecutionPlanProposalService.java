@@ -63,12 +63,29 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
      * GeneralWorkspaceAutonomousCapability.supportsWorker() and AutonomousStaffingService; it never reads
      * ExecutionWorkSpec.target(). Binding target() to the literal Worker id therefore both abuses the
      * field and can never resolve, since no authority manifest is (or should be) keyed by a Worker
-     * identity. governedRepositoryTarget() resolves the real governed resource instead: a bare
-     * "owner/repo" Founder repository, exactly the shape GeneralCognitiveWorkerBrain already parses out
-     * of target() to materialize its workspace baseline, and exactly the shape already carrying real,
-     * Founder-ratified authority in sot-enforcement-authority-manifests.json -- an explicitly named
-     * repository in the Objective when there is one, otherwise the canonical Workforce repository itself
-     * for a brand-new app Objective that names no repository yet.
+     * identity.
+     *
+     * Target shape (2026-09-17, follow-up): governedRepositoryTarget() always emits the canonical
+     * "repository:owner/repo" shape -- the exact shape AuthorityManifestCatalog's repository:* authority
+     * wildcard matches by prefix -- rather than a bare "owner/repo". A bare repository string only
+     * resolves for the four canonical repositories that happen to also be listed as literal patterns;
+     * an arbitrary explicitly-named repository (e.g. kelvinka38/new-app) would not match the wildcard at
+     * all, silently working only by coincidence for the canonical four. GeneralCognitiveWorkerBrain's
+     * repositoryFromTarget()/governedStagePath() strip this prefix before recovering the bare repository
+     * locator, so materialization is unaffected. No new authority manifest is added: this only makes the
+     * existing wildcard reachable for any repository, canonical or not.
+     *
+     * No-repository policy: none of the canonical SoT documents (WORKFORCE_SOT.md, 14_EXECUTION/SOT.md,
+     * SOT_ENFORCEMENT_DETAILED_GAP_CLOSURE.md, WORKFORCE_AUTHORIZATION_EXECUTION_ATTRIBUTION_ARCHITECTURE.md)
+     * establish a policy of routing a brand-new, unrelated app Objective at an existing repository merely
+     * because that repository already resolves authority. So an Objective naming no repository is never
+     * defaulted onto kelvinka38/metatron-workforce (or any other existing repository unrelated to the
+     * work). Instead the target repository is derived deterministically from the application the
+     * Objective itself says it is building ("... called/named X"), under the single Founder GitHub owner
+     * every canonical and future repository already lives under. If neither an explicit repository nor an
+     * application name can be determined, this special case declines entirely (empty list) rather than
+     * inventing a target -- the request falls through to the generic Founder-worker path and, failing
+     * that, frontier replanning, exactly as it already does when its own capability is unavailable.
      */
     static List<ExecutionWorkSpec> explicitCanonicalGeneralEngineeringWork(
             NormalizedRequest request,
@@ -86,11 +103,12 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
 
         String objective = request.objective().trim();
         if (objective.isBlank()) return List.of();
-        String governedTarget = governedRepositoryTarget(objective);
+        String repository = governedRepositoryTarget(objective);
+        if (repository.isBlank()) return List.of();
         return List.of(new ExecutionWorkSpec(
                 "general-engineering-workspace-execution",
                 objective,
-                governedTarget,
+                "repository:" + repository,
                 GeneralWorkspaceAutonomousCapability.CAPABILITY,
                 List.of(),
                 GeneralWorkspaceAutonomousCapability.classifyConsequence(objective),
@@ -103,15 +121,29 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
                         "worker-assignment evidence attributed to " + workerId)));
     }
 
+    private static final Pattern APPLICATION_NAME = Pattern.compile(
+            "(?i)\\b(?:called|named)\\s+([A-Za-z][A-Za-z0-9' -]{1,60}?)(?=[.,;:]|\\s+(?:and|to|for)\\b|$)");
+
     /**
-     * Governed repository target for General Workspace work: an explicit repository named in the
-     * Objective text, or -- for an Objective that names none, such as a brand-new app with nothing to
-     * check out yet -- the canonical Workforce repository. Never the Worker identity.
+     * Bare "owner/repo" governed target for General Workspace work: an explicit repository named in the
+     * Objective text, or -- for an Objective that names none -- a repository derived from the
+     * application the Objective says it is building, under the single Founder GitHub owner. Blank when
+     * neither can be determined. Never the Worker identity, and never an unrelated existing repository.
      */
     static String governedRepositoryTarget(String objective) {
         String repositories = CanonicalObjectiveControlInterpreter.repositoryTargets(objective);
-        String first = repositories.isBlank() ? "" : repositories.split(",")[0].trim();
-        return first.isBlank() ? GeneralWorkspaceAutonomousCapability.DEFAULT_GOVERNED_REPOSITORY : first;
+        String explicit = repositories.isBlank() ? "" : repositories.split(",")[0].trim();
+        if (!explicit.isBlank()) return explicit;
+
+        Matcher name = APPLICATION_NAME.matcher(objective);
+        if (!name.find()) return "";
+        String slug = slug(name.group(1));
+        return slug.isBlank() ? "" : GeneralWorkspaceAutonomousCapability.FOUNDER_GITHUB_OWNER + "/" + slug;
+    }
+
+    private static String slug(String value) {
+        String folded = value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        return folded.length() <= 60 ? folded : folded.substring(0, 60).replaceAll("-+$", "");
     }
 
     static List<ExecutionWorkSpec> explicitFounderWorkerWork(

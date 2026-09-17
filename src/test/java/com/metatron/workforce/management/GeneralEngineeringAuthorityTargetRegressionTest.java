@@ -62,6 +62,10 @@ class GeneralEngineeringAuthorityTargetRegressionTest {
         assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, routed.requiredCapability());
         assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, routed.target(),
                 "governed execution target must never be the performer's own Worker identity");
+        // No-repository policy: this Objective names no repository, so the target is derived from the
+        // application it says it is building -- never silently defaulted onto the unrelated existing
+        // kelvinka38/metatron-workforce repository merely because that repository already has authority.
+        assertEquals("repository:kelvinka38/metatron-workforce-control-center", routed.target());
         assertEquals(ExecutionWorkSpec.Consequence.MUTATING, routed.consequence());
 
         // 2. GOVERNANCE: authority discovery/binding against the REAL production authority manifest
@@ -113,5 +117,45 @@ class GeneralEngineeringAuthorityTargetRegressionTest {
         assertTrue(core.capabilities(GeneralWorkspaceAutonomousCapability.WORKER_ID).stream()
                         .noneMatch(c -> FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY.equals(c.capabilityRef())),
                 "no worker.cognitive.work capability must be required for General Engineering");
+    }
+
+    @Test
+    void explicitNoncanonicalRepositoryResolvesThroughTheGenericRepositoryAuthorityWildcard() {
+        // Target shape gap: a bare "owner/repo" target only resolves for the four canonical
+        // repositories, which happen to also be listed as literal manifest patterns. An explicitly
+        // named repository that is NOT one of those four must still resolve authority through the real
+        // production AuthorityManifestCatalog's repository:* wildcard, proving the fix is a genuine
+        // shape correction and not one that only works by coincidence for the canonical four.
+        NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(
+                        "Giao WORKER-GENERAL-ENGINEERING việc này: implement the feature and commit it "
+                                + "against kelvinka38/new-app.")
+                .orElseThrow();
+
+        ExecutionPlanProposalService failIfDelegated = (caseId, normalized, available) -> {
+            throw new AssertionError("explicit canonical Worker assignment must not require frontier replanning");
+        };
+        FounderWorkerExecutionPlanProposalService planner =
+                new FounderWorkerExecutionPlanProposalService(failIfDelegated);
+        List<ExecutionWorkSpec> plan = planner.propose(
+                "case:general-engineering-noncanonical-authority",
+                request,
+                List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                        FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
+        assertEquals(1, plan.size());
+        ExecutionWorkSpec routed = plan.getFirst();
+        assertEquals("repository:kelvinka38/new-app", routed.target());
+
+        GovernanceTestHarness harness = new GovernanceTestHarness(CLOCK);
+        GovernancePlanService.BoundPlan bound;
+        try {
+            bound = harness.plans.bindAuthorizedWork(
+                    "objective:general-engineering-noncanonical-authority", "founder", routed,
+                    "FOUNDER", "authorization:general-engineering-noncanonical-authority", Map.of());
+        } catch (GovernanceDeniedException denied) {
+            throw new AssertionError("governance binding must succeed for an explicitly named, "
+                    + "non-canonical repository through the generic repository:* authority wildcard, "
+                    + "but was denied: " + denied.code() + " -- " + denied.getMessage(), denied);
+        }
+        assertEquals("repository:metatron-canonical-four", bound.snapshot().targetScope());
     }
 }
