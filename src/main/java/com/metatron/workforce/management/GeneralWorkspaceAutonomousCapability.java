@@ -10,6 +10,7 @@ import com.metatron.workforce.action.GeneralWebResearchAction;
 import com.metatron.workforce.execution.governance.ExecutionGate;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
+import com.metatron.workforce.operating.WorkerCognitionContextProjector;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -134,7 +135,8 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                     request.allocatedWorkerId(), request.assignmentReference(), Instant.now());
             objectiveMemory.put("workerConstitutionSnapshotRef", constitutionSnapshot.snapshotId());
             objectiveMemory.put("workerConstitutionMaterializedAt", constitutionSnapshot.materializedAt().toString());
-            objectiveMemory.put("workerConstitution", constitutionSnapshot.renderedContext());
+            objectiveMemory.put("workerConstitution", WorkerCognitionContextProjector.forAssignment(
+                    constitutionSnapshot, request.assignmentReference()));
         }
         List<ActionFabric.Action> governedActions = actionsForWork(
                 actions.actions(request.allocatedWorkerId(), request.authorizationReference(), request.objectiveId()),
