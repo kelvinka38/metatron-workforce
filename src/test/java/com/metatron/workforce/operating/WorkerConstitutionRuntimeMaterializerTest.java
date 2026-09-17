@@ -166,5 +166,34 @@ class WorkerConstitutionRuntimeMaterializerTest {
         assertEquals(snapshot.assignments(), durable.assignments());
         assertEquals(snapshot.executionAttribution(), durable.executionAttribution());
         assertEquals(snapshot.positionContract().mission(), durable.positionContract().mission());
+
+        // Regression: durable institutional history may grow without being dumped into cognition.
+        // The current Assignment remains fully represented while unrelated historical Assignment/
+        // reservation relationships stay in the durable source snapshot only.
+        core.setAvailability(workerId, true, 500.0);
+        for (int i = 0; i < 150; i++) {
+            String historicalAssignment = "assignment:history:" + i;
+            String historicalReservation = "reservation:history:" + i;
+            core.reserveCapacity(historicalReservation, historicalAssignment, "objective:history:" + i, workerId, 1.0);
+            core.assignReserved(
+                    historicalReservation,
+                    participationId,
+                    GatewayDirectorAppointmentCapability.AUTHORITY_REFERENCE,
+                    GatewayDirectorAppointmentCapability.AUTHORIZATION_REFERENCE,
+                    "Historical governed assignment " + i);
+        }
+
+        var expanded = materializer.materializeForAssignment(workerId, assignmentId, now.plusSeconds(2));
+        String cognitiveContext = WorkerCognitionContextProjector.forAssignment(expanded, assignmentId);
+
+        assertEquals(151, expanded.assignments().size());
+        assertEquals(151, expanded.capacityReservations().size());
+        assertTrue(expanded.renderedContext().contains("assignment:history:149"));
+        assertTrue(cognitiveContext.contains("assignment=" + assignmentId));
+        assertTrue(cognitiveContext.contains("objective=objective:test"));
+        assertFalse(cognitiveContext.contains("assignment:history:149"));
+        assertFalse(cognitiveContext.contains("objective:history:149"));
+        assertTrue(cognitiveContext.length() <= WorkerCognitionContextProjector.MAX_CONTEXT_CHARS);
+        assertTrue(cognitiveContext.length() < expanded.renderedContext().length());
     }
 }
