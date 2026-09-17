@@ -272,9 +272,10 @@ class GeneralCognitiveWorkerBrainClosureTest {
     void actionSelectionReceivesMaterializedWorkerConstitutionFromRuntimeMemory() {
         WorkerIntelligenceService intelligence = request -> {
             assertTrue(request.instructions().contains("workerConstitution"));
+            assertTrue(request.instructions().contains("assignment-scoped cognitive projection"));
             assertTrue(request.instructions().contains("Role or runtime profile never self-grants authority"));
             assertTrue(request.context().contains("\"workerConstitution\""));
-            assertTrue(request.context().contains("MATERIALIZED WORKER CONSTITUTION — RUNTIME"));
+            assertTrue(request.context().contains("WORKER_COGNITION_CONTEXT_V1"));
             assertTrue(request.context().contains("authority=policy:bounded:test"));
             return new WorkerIntelligenceService.Response(
                     "intelligence-constitution-grounded",
@@ -290,12 +291,67 @@ class GeneralCognitiveWorkerBrainClosureTest {
                 "worker-1", "assignment-1", "authorization-1", "objective-1", work, "idem-1",
                 List.of("workspace.file.read"), List.of(),
                 Map.of("workerConstitution",
-                        "MATERIALIZED WORKER CONSTITUTION — RUNTIME\nauthority=policy:bounded:test"));
+                        "WORKER_COGNITION_CONTEXT_V1=assignment-scoped bounded projection\n"
+                                + "source_snapshot_ref=worker-constitution-runtime:test\n"
+                                + "assignment=assignment-1:authority=policy:bounded:test"));
 
         CognitiveWorkerRuntime.Thought thought = brain.think(context);
 
         assertEquals("workspace.file.read", thought.actionRef());
         assertEquals("README.md", thought.inputs().get("path"));
+    }
+
+    @Test
+    void oversizedCognitiveContextFailsClosedBeforeCallingIntelligence() {
+        AtomicInteger calls = new AtomicInteger();
+        WorkerIntelligenceService intelligence = request -> {
+            calls.incrementAndGet();
+            throw new AssertionError("oversized context must be rejected before Intelligence/provider invocation");
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-budget", "repair defect", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("defect repaired"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(),
+                Map.of("workerConstitution", "x".repeat(GeneralCognitiveWorkerBrain.MAX_CONTEXT_PROMPT_CHARS + 1)));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> brain.think(context));
+
+        assertTrue(failure.getMessage().startsWith("worker-cognition-request-context-budget-exceeded:"));
+        assertEquals(0, calls.get());
+    }
+
+    @Test
+    void recentCycleOutputsAreExplicitlyCompactedInsidePromptBudget() {
+        WorkerIntelligenceService intelligence = request -> {
+            assertTrue(request.context().contains("EXPLICITLY_COMPACTED"));
+            assertTrue(request.context().length() <= GeneralCognitiveWorkerBrain.MAX_CONTEXT_PROMPT_CHARS);
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-compacted-history",
+                    "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"README.md\"},\"rationale\":\"inspect current state\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-history", "inspect after large observation", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("source inspected"), List.of("read evidence"));
+        CognitiveWorkerRuntime.Cycle prior = new CognitiveWorkerRuntime.Cycle(
+                1,
+                new CognitiveWorkerRuntime.Thought("workspace.file.read", Map.of("path", "large.txt"), "inspect"),
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.read", "large observation", Map.of("content", "y".repeat(25_000)), List.of("read:evidence")),
+                CognitiveWorkerRuntime.Reflection.continueWith("inspect more"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(prior), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
     }
 
 }
