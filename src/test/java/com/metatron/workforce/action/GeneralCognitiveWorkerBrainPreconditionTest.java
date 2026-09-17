@@ -30,6 +30,33 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
+    void canonicalRepositoryTargetPrefixIsStrippedForMaterialization() {
+        // Authority target shape fix: the governed target now carries the canonical
+        // "repository:owner/repo" shape SotDiscoveryService/AuthorityManifestCatalog resolve (matching
+        // its repository:* authority wildcard by prefix) instead of a bare "owner/repo". Materialization
+        // must still recover the bare repository locator from that canonical representation.
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "checkout_target_snapshot",
+                "Materialize repository snapshot at specific commit " + SHA,
+                "repository:kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("Workspace contains source tree for commit " + SHA),
+                List.of("git rev-parse HEAD matches " + SHA));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.git.run"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context);
+
+        assertEquals("workspace.repository.materialize", thought.actionRef());
+        assertEquals("kelvinka38/metatron-workforce", thought.inputs().get("repository"));
+        assertEquals(SHA, thought.inputs().get("ref"));
+    }
+
+    @Test
     void readOnlyGitIdentityRequirementUsesGovernedStatusInspectionAfterMaterialization() {
         ExecutionWorkSpec work = exactSnapshotWork();
         CognitiveWorkerRuntime.Cycle materialized = new CognitiveWorkerRuntime.Cycle(

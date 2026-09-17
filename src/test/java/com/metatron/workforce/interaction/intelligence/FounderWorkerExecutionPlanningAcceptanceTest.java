@@ -84,7 +84,16 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
         assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
         assertNotEquals(FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY, work.requiredCapability(),
                 "General Engineering implementation work must not be downgraded to the cognitive-work shortcut");
-        assertEquals("WORKER-GENERAL-ENGINEERING", work.target());
+        // Authority target semantics fix: target() is the governed SoT resource authority discovery
+        // resolves, never the performer identity -- it must not be the literal Worker id (no authority
+        // manifest is or should be keyed by a Worker). This brand-new-app Objective names no repository,
+        // so the target is derived from the application it says it is building ("called Metatron
+        // Workforce Control Center") under the Founder GitHub owner -- never silently defaulted onto the
+        // unrelated existing kelvinka38/metatron-workforce repository merely because that repository
+        // already resolves authority.
+        assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, work.target(),
+                "governed execution target must never be the performer's own Worker identity");
+        assertEquals("repository:kelvinka38/metatron-workforce-control-center", work.target());
         assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
         assertFalse(work.acceptanceCriteria().isEmpty());
         assertFalse(work.evidenceRequirements().isEmpty());
@@ -97,9 +106,9 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
         // -- inspect the repository, review existing code, analyze the build configuration, explain a test
         // failure -- must stay READ_ONLY even though it incidentally mentions "build" in passing.
         NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(
-                        "Giao WORKER-GENERAL-ENGINEERING việc này: inspect the repository, review the existing "
-                                + "code, analyze the build configuration, and explain why the test suite is "
-                                + "failing. Do not modify any files.")
+                        "Giao WORKER-GENERAL-ENGINEERING việc này: inspect repository kelvinka38/metatron-workforce, "
+                                + "review the existing code, analyze the build configuration, and explain why the "
+                                + "test suite is failing. Do not modify any files.")
                 .orElseThrow();
 
         assertEquals(IntelligenceMode.EXECUTION, request.mode());
@@ -120,7 +129,9 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
         assertEquals(1, plan.size());
         ExecutionWorkSpec work = plan.getFirst();
         assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
-        assertEquals("WORKER-GENERAL-ENGINEERING", work.target());
+        assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, work.target(),
+                "governed execution target must never be the performer's own Worker identity");
+        assertEquals("repository:kelvinka38/metatron-workforce", work.target());
         assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, work.consequence());
     }
 
@@ -165,6 +176,86 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
 
         List<ExecutionWorkSpec> plan = FounderWorkerExecutionPlanProposalService
                 .explicitCanonicalGeneralEngineeringWork(request, List.of());
+
+        assertTrue(plan.isEmpty());
+    }
+
+    @Test
+    void explicitNoncanonicalRepositoryResolvesThroughTheGenericRepositoryTargetShape() {
+        // Target shape gap: repositoryTargets() returns a bare "owner/repo", but
+        // AuthorityManifestCatalog's repository:* wildcard only prefix-matches "repository:...". An
+        // explicitly named repository that is NOT one of the four canonical repositories (which also
+        // happen to be listed as literal bare patterns) must still resolve -- proving the target is the
+        // canonical "repository:owner/repo" shape, not a bare repository string.
+        NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(
+                        "Giao WORKER-GENERAL-ENGINEERING việc này: implement the feature and commit it "
+                                + "against kelvinka38/new-app.")
+                .orElseThrow();
+
+        ExecutionPlanProposalService failIfDelegated = (caseId, normalized, available) -> {
+            throw new AssertionError("explicit canonical Worker assignment must not require frontier replanning");
+        };
+        FounderWorkerExecutionPlanProposalService planner =
+                new FounderWorkerExecutionPlanProposalService(failIfDelegated);
+
+        List<ExecutionWorkSpec> plan = planner.propose(
+                "case:general-engineering-noncanonical-repository",
+                request,
+                List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                        FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
+
+        assertEquals(1, plan.size());
+        ExecutionWorkSpec work = plan.getFirst();
+        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
+        assertEquals("repository:kelvinka38/new-app", work.target());
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
+    }
+
+    @Test
+    void noRepositoryMutatingObjectiveNeverDefaultsOntoAnUnrelatedExistingRepository() {
+        // No-repository policy gap: an Objective naming no repository must never be silently pointed at
+        // an unrelated existing repository (e.g. kelvinka38/metatron-workforce) merely because that
+        // repository already resolves authority. The target must instead be derived from the
+        // application the Objective itself says it is building, which is self-evidently unrelated to
+        // Workforce here.
+        NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(
+                        "Take ownership of one governed Objective: build and deliver a complete runnable "
+                                + "recipe-sharing mobile app called Kitchen Companion. Assign the implementation "
+                                + "to WORKER-GENERAL-ENGINEERING and continue autonomously through coding, build, "
+                                + "tests, and terminal completion.")
+                .orElseThrow();
+
+        ExecutionPlanProposalService failIfDelegated = (caseId, normalized, available) -> {
+            throw new AssertionError("explicit canonical Worker assignment must not require frontier replanning");
+        };
+        FounderWorkerExecutionPlanProposalService planner =
+                new FounderWorkerExecutionPlanProposalService(failIfDelegated);
+
+        List<ExecutionWorkSpec> plan = planner.propose(
+                "case:general-engineering-unrelated-app",
+                request,
+                List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                        FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
+
+        assertEquals(1, plan.size());
+        ExecutionWorkSpec work = plan.getFirst();
+        assertEquals("repository:kelvinka38/kitchen-companion", work.target());
+        assertNotEquals("repository:kelvinka38/metatron-workforce", work.target(),
+                "an unrelated new app must never be silently pointed at the existing Workforce repository");
+        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
+    }
+
+    @Test
+    void generalEngineeringSpecialCaseDeclinesWhenNeitherRepositoryNorApplicationNameIsDeterminable() {
+        // If the governed target genuinely cannot be determined -- no explicit repository and no named
+        // application -- the special case must decline entirely rather than invent a target. The request
+        // then falls through to the generic Founder-worker path and, failing that, frontier replanning.
+        NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(
+                        "Giao WORKER-GENERAL-ENGINEERING việc này: do some engineering work.")
+                .orElseThrow();
+
+        List<ExecutionWorkSpec> plan = FounderWorkerExecutionPlanProposalService.explicitCanonicalGeneralEngineeringWork(
+                request, List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY));
 
         assertTrue(plan.isEmpty());
     }
