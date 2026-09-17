@@ -16,10 +16,10 @@ import java.util.function.Function;
  * into every model prompt.
  */
 public final class WorkerCognitionContextProjector {
-    public static final int MAX_CONTEXT_CHARS = 6_000;
-    private static final int MAX_RECENT_ATTEMPTS = 6;
-    private static final int MAX_RECENT_EXPERIENCE = 2;
-    private static final int MAX_RECENT_LEARNING = 2;
+    public static final int MAX_CONTEXT_CHARS = 3_500;
+    private static final int MAX_RECENT_ATTEMPTS = 2;
+    private static final int MAX_RECENT_EXPERIENCE = 1;
+    private static final int MAX_RECENT_LEARNING = 1;
 
     private WorkerCognitionContextProjector() {}
 
@@ -70,19 +70,14 @@ public final class WorkerCognitionContextProjector {
                 + ":position=" + snapshot.participation().positionRef()
                 + ":role=" + snapshot.participation().roleRef());
         line(out, "contract", contract.contractId());
-        line(out, "mission", bounded(contract.mission(), 500));
-        line(out, "responsibilities", compact(contract.responsibilities(), 8, 220, Function.identity()));
-        line(out, "reporting", compact(contract.reportingLines(), 6, 220, value ->
-                value.relationshipType() + "->" + value.targetRef() + ":" + value.scope()));
-        line(out, "capability_requirements", compact(contract.capabilityRequirements(), 10, 180, Function.identity()));
-        line(out, "authority_scopes", compact(contract.authorityScopes(), 8, 180, Function.identity()));
-        line(out, "resource_scopes", compact(contract.resourceScopes(), 8, 180, value ->
+        line(out, "mission", bounded(contract.mission(), 280));
+        // The durable snapshot retains full responsibilities/reporting/escalation/success-measure text.
+        // Cognition only needs the compact operating boundary; ActionFabric remains the authority gate.
+        line(out, "capability_requirements", compact(contract.capabilityRequirements(), 8, 120, Function.identity()));
+        line(out, "authority_scopes", compact(contract.authorityScopes(), 6, 120, Function.identity()));
+        line(out, "resource_scopes", compact(contract.resourceScopes(), 6, 120, value ->
                 value.resourceRef() + ":" + value.limitRef()));
-        line(out, "escalation_routes", compact(contract.escalationRoutes(), 6, 220, value ->
-                value.category() + "->" + value.targetRef() + ":" + value.trigger()));
-        line(out, "success_measures", compact(contract.successMeasures(), 6, 180, value ->
-                value.measureRef() + ":target=" + value.target()));
-        line(out, "decision_rights", compact(contract.decisionRights(), 8, 180, Function.identity()));
+        line(out, "decision_rights", compact(contract.decisionRights(), 4, 120, Function.identity()));
         line(out, "coverage", bounded(contract.operatingCoverage(), 220)
                 + ":tz=" + contract.workingTimeZone()
                 + ":max_concurrent=" + contract.maxConcurrentAssignments());
@@ -99,26 +94,23 @@ public final class WorkerCognitionContextProjector {
                 + ":status=" + assignment.status()
                 + ":authority=" + assignment.authorityRef()
                 + ":authorization=" + assignment.authorizationRef());
-        line(out, "assignment_reservations", compact(reservations, 4, 180, value ->
-                value.reservationId() + ":" + value.status() + ":capacity=" + value.capacity()));
-        line(out, "assignment_schedules", compact(schedules, 4, 220, value ->
-                value.scheduleId() + ":" + value.status() + ":" + value.start() + ".." + value.end()));
+        line(out, "assignment_reservations", compact(reservations, 2, 100, value ->
+                value.status() + ":capacity=" + value.capacity()));
+        line(out, "assignment_schedules", compact(schedules, 2, 160, value ->
+                value.status() + ":" + value.start() + ".." + value.end()));
         line(out, "runtime", snapshot.runtime().profileRef()
                 + ":binding_capability=" + snapshot.runtime().bindingCapabilityRef()
-                + ":id=" + blankAsNone(snapshot.runtime().runtimeId())
                 + ":state=" + snapshot.runtime().runtimeState());
-        line(out, "assignment_attempts", compact(attempts, MAX_RECENT_ATTEMPTS, 220, value ->
-                value.attemptId() + ":step=" + value.stepId() + ":status=" + value.status()
-                        + ":n=" + value.attemptNumber()));
-        line(out, "performance", performance == null ? "none" : "evaluation=" + performance.evaluationId()
-                + ":objective_completion_ratio=" + performance.objectiveCompletionRatio()
-                + ":action_success_ratio=" + performance.actionSuccessRatio()
-                + ":evaluated_at=" + performance.evaluatedAt());
-        line(out, "recent_experience", compact(experience, MAX_RECENT_EXPERIENCE, 420, value ->
-                value.experienceId() + ":action=" + value.actionRef() + ":outcome=" + value.outcome()
+        line(out, "assignment_attempts", compact(attempts, MAX_RECENT_ATTEMPTS, 160, value ->
+                "step=" + value.stepId() + ":status=" + value.status() + ":n=" + value.attemptNumber()));
+        line(out, "performance", performance == null ? "none"
+                : "objective_completion_ratio=" + performance.objectiveCompletionRatio()
+                + ":action_success_ratio=" + performance.actionSuccessRatio());
+        line(out, "recent_experience", compact(experience, MAX_RECENT_EXPERIENCE, 220, value ->
+                "action=" + value.actionRef() + ":outcome=" + value.outcome()
                         + ":statement=" + value.statement()));
-        line(out, "recent_learning", compact(learning, MAX_RECENT_LEARNING, 420, value ->
-                value.learningId() + ":type=" + value.type() + ":lesson=" + value.lesson()));
+        line(out, "recent_learning", compact(learning, MAX_RECENT_LEARNING, 220, value ->
+                "type=" + value.type() + ":lesson=" + value.lesson()));
 
         String rendered = out.toString();
         if (rendered.length() > MAX_CONTEXT_CHARS) {
@@ -152,9 +144,6 @@ public final class WorkerCognitionContextProjector {
         out.append(key).append('=').append(value).append('\n');
     }
 
-    private static String blankAsNone(String value) {
-        return value == null || value.isBlank() ? "none" : value;
-    }
 
     private static void require(String value, String field) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " required");
