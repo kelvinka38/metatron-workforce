@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import org.springframework.stereotype.Component;
 
@@ -17,8 +18,29 @@ import java.util.Set;
 public final class WorkCardRenderer {
     private static final Duration MONITOR_RECENT_WINDOW = Duration.ofMinutes(10);
     private final ManagementAutonomyService management;
+    private final WorkforceCoreService core;
 
-    public WorkCardRenderer(ManagementAutonomyService management) { this.management = management; }
+    public WorkCardRenderer(ManagementAutonomyService management, WorkforceCoreService core) {
+        this.management = management;
+        this.core = core;
+    }
+
+    /**
+     * Truthful performer attribution, resolved from durable Assignment/execution attribution -- never
+     * inferred from requested capability or Worker name in the Objective. A real Assignment already
+     * referenced on the Management Objective (linked as soon as it exists, before execution outcome is
+     * known -- see AutonomousManagementRunner.executeNode()) is real historical truth even if execution
+     * later fails/is cancelled; the objective must never be rendered as UNASSIGNED while it exists.
+     */
+    static List<String> durableAssignmentPerformers(WorkforceCoreService core, ManagementObjective objective) {
+        if (core == null || objective.assignmentRefs().isEmpty()) return List.of();
+        Set<String> refs = Set.copyOf(objective.assignmentRefs());
+        return core.allAssignments().stream()
+                .filter(assignment -> refs.contains(assignment.assignmentId()))
+                .map(WorkforceCoreService.Assignment::workerId)
+                .distinct()
+                .toList();
+    }
 
     public Optional<String> latestObjectiveIdForHuman(String humanId) {
         String normalized = normalizeHuman(humanId);
@@ -64,14 +86,22 @@ public final class WorkCardRenderer {
         boolean fresh = Duration.between(last, Instant.now()).compareTo(Duration.ofSeconds(90)) <= 0;
         Set<String> completed = Set.copyOf(work.completedStepIds());
         Map<String, String> performers = performersByStep(work.evidenceReferences());
+        List<String> durablePerformers = durableAssignmentPerformers(core, objective);
         int total = work.plannedWork().size();
         int done = completed.size();
         int percent = total == 0 ? (work.terminal() ? 100 : 0) : (int)Math.floor(done * 100.0 / total);
         String status = humanStatus(work, history, fresh);
         String reportsTo = "human:" + work.humanId();
-        String staffing = performers.isEmpty()
-                ? (objective.assignmentRefs().isEmpty() ? "UNASSIGNED / staffing not evidenced" : objective.assignmentRefs().size() + " assignment ref(s), performer pending execution evidence")
-                : performers.values().stream().distinct().count() + " evidenced worker(s)";
+        String staffing;
+        if (!performers.isEmpty()) {
+            staffing = performers.values().stream().distinct().count() + " evidenced worker(s)";
+        } else if (!durablePerformers.isEmpty()) {
+            staffing = String.join(", ", durablePerformers) + " (real Assignment; step execution evidence pending)";
+        } else if (!objective.assignmentRefs().isEmpty()) {
+            staffing = objective.assignmentRefs().size() + " assignment ref(s), performer pending execution evidence";
+        } else {
+            staffing = "UNASSIGNED / staffing not evidenced";
+        }
 
         StringBuilder out = new StringBuilder();
         out.append("📋 METATRON · WORK ORDER\n\n");
@@ -103,7 +133,11 @@ public final class WorkCardRenderer {
                 else state = "○";
                 out.append(' ').append(n++).append(". ").append(state).append(' ').append(compactStep(step.objective())).append('\n');
                 out.append("    Role: ").append(step.requiredCapability()).append('\n');
-                out.append("    Performer: ").append(performers.getOrDefault(step.stepId(), "UNASSIGNED / not yet evidenced")).append('\n');
+                String stepPerformer = performers.get(step.stepId());
+                if (stepPerformer == null && !durablePerformers.isEmpty()) {
+                    stepPerformer = String.join(", ", durablePerformers) + " (real Assignment; step execution evidence pending)";
+                }
+                out.append("    Performer: ").append(stepPerformer == null ? "UNASSIGNED / not yet evidenced" : stepPerformer).append('\n');
                 out.append("    Depends: ").append(step.dependsOn().isEmpty() ? "none" : String.join(", ", step.dependsOn())).append('\n');
                 out.append("    DoD: ").append(step.acceptanceCriteria().isEmpty() ? "NOT DEFINED" : compactList(step.acceptanceCriteria())).append('\n');
             }

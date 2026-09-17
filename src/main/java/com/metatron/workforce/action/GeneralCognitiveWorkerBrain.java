@@ -172,9 +172,22 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         inputs.put("repository", repository);
         String exactRef = exactRef(context);
         if (!exactRef.isBlank()) inputs.put("ref", exactRef);
+        Map<String, String> finalInputs = Map.copyOf(inputs);
+
+        // Anti-livelock: a deterministic required-action precondition must not blindly force the exact
+        // same action+inputs again after it has already failed once with nothing intervening to change
+        // state. Forcing it every cycle regardless of outcome is what turned one real 404 into 48
+        // identical cycles in production. Back off after the first identical failure and let cognition
+        // (and, ultimately, the reflection-side anti-livelock backstop below) decide/terminate instead.
+        boolean alreadyFailedIdentically = context.history().stream().anyMatch(cycle ->
+                "workspace.repository.materialize".equals(cycle.thought().actionRef())
+                        && !cycle.observation().success()
+                        && cycle.thought().inputs().equals(finalInputs));
+        if (alreadyFailedIdentically) return null;
+
         return new CognitiveWorkerRuntime.Thought(
                 "workspace.repository.materialize",
-                Map.copyOf(inputs),
+                finalInputs,
                 "Repository-backed Work requires a local immutable baseline before Git/build/test actions");
     }
 
@@ -426,17 +439,45 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "Publish the clean tested committed Objective-workspace delta through the governed credential-isolated proposal action");
     }
 
+    /**
+     * A governed repository-shaped target() is a governance/authority-discovery resource identity, not
+     * automatic proof that an existing GitHub source repository must be checked out: after the #465
+     * authority-target fix, target() is always repository-shaped, including for a brand-new application
+     * that has no existing source yet. Explicit materialize/snapshot/checkout/exact-SHA intent in the
+     * Work text always requires real materialization and fails closed if the source cannot be obtained
+     * -- that governs regardless of repository-shape. Absent that explicit intent, a Work the planner has
+     * marked as fresh new-application work (NEW_APPLICATION_WORKSPACE_EVIDENCE) starts from an empty
+     * isolated Objective workspace instead of requiring checkout of a repository that was only just
+     * derived as a destination, not an existing source. This is a deterministic planning-time signal, not
+     * an inference from a runtime 404: a genuinely required existing repository still materializes and
+     * fails closed exactly as before.
+     */
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
         if (context.memory().getOrDefault("workspaceMaterialized", "false").equalsIgnoreCase("true")) return false;
-        String repository = repositoryFromTarget(context.workSpec().target());
-        if (!repository.isBlank()) return true;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
-        return text.contains("materializ")
+        boolean explicitMaterializationIntent = text.contains("materializ")
                 || text.contains("snapshot")
                 || text.contains("checkout")
                 || text.contains("source tree")
                 || text.contains("git rev-parse")
                 || EXACT_GIT_SHA.matcher(text).find();
+        if (explicitMaterializationIntent) return true;
+        if (isFreshNewApplicationWork(context)) return false;
+        return !repositoryFromTarget(context.workSpec().target()).isBlank();
+    }
+
+    /**
+     * Sentinel evidence-requirement token the planner attaches (see
+     * FounderWorkerExecutionPlanProposalService) when it derived a brand-new application's repository
+     * target itself, rather than the Objective naming an existing repository. Mirrors the existing
+     * research-action:research.web.search evidenceRequirements convention: a structured planner-to-brain
+     * signal carried through the existing contract, not a new ExecutionWorkSpec field.
+     */
+    static final String NEW_APPLICATION_WORKSPACE_EVIDENCE = "workspace-source:fresh-new-application";
+
+    private static boolean isFreshNewApplicationWork(CognitiveWorkerRuntime.CognitiveContext context) {
+        return context.workSpec().evidenceRequirements().stream()
+                .anyMatch(NEW_APPLICATION_WORKSPACE_EVIDENCE::equalsIgnoreCase);
     }
 
     private static boolean materializationSatisfied(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -589,12 +630,36 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("execute test")
                 || text.contains("tests pass")
                 || text.contains("test action")
+                || text.contains("tests,")
                 || text.contains("workspace.test.run");
+    }
+
+    /** Mirrors the existing "build"/"compile" phrase convention already used by explicitlyRequiresAction(). */
+    private static boolean requiresGovernedBuild(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("build") || text.contains("compile") || text.contains("workspace.build.run");
+    }
+
+    private static boolean requiresRuntimeVerification(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (context.workSpec().consequence()
+                != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
+        String text = workText(context).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("runtime verification")
+                || text.contains("verify the runtime")
+                || text.contains("runtime observation")
+                || text.contains("workspace.process.run");
     }
 
     private static boolean successfulAction(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
         return context.history().stream().anyMatch(cycle ->
                 actionRef.equals(cycle.thought().actionRef()) && cycle.observation().success());
+    }
+
+    private static boolean failedBefore(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
+        return context.history().stream().anyMatch(cycle ->
+                actionRef.equals(cycle.thought().actionRef()) && !cycle.observation().success());
     }
 
     private static boolean requiresGitAdd(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -616,7 +681,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("create a commit")
                 || text.contains("commit exists")
                 || text.contains("commit the ")
-                || text.contains("commit message");
+                || text.contains("commit message")
+                || text.contains("git evidence");
     }
 
     private static boolean requiresGitVerification(CognitiveWorkerRuntime.CognitiveContext context) {
@@ -896,6 +962,20 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(observation, "observation");
 
         if (!observation.success()) {
+            // Anti-livelock backstop: workspace.repository.materialize is a deterministic required
+            // action (see repositoryMaterializationPrecondition) that always produces the same inputs
+            // for the same Work state, so a second failure of it is not a recoverable diagnostic
+            // opportunity like a failed test/build/patch can be -- it is the same immutable-baseline
+            // request failing again. Rather than let cognition keep proposing the identical action for
+            // the entire cycle budget, terminate truthfully with the actual failure once it has already
+            // failed before, exactly as required by a genuinely required-but-unobtainable source.
+            if ("workspace.repository.materialize".equals(observation.actionRef())
+                    && failedBefore(context, observation.actionRef())) {
+                return CognitiveWorkerRuntime.Reflection.failed(
+                        "Governed action " + observation.actionRef()
+                                + " failed again with no intervening state change; bounded recovery is not possible: "
+                                + clean(observation.summary()));
+            }
             return CognitiveWorkerRuntime.Reflection.continueWith(
                     "Governed action " + observation.actionRef()
                             + " failed; inspect the observed failure, change or diagnose state, then retry only when justified: "
@@ -982,6 +1062,15 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !materializationSatisfied(context)) {
             missing.add("successful workspace.repository.materialize");
         }
+        if (isFreshNewApplicationWork(context) && !hasWorkspaceSourceMutation(context)) {
+            missing.add("workspace source/work-product for the new application (workspace.file.write/patch)");
+        }
+        boolean latestBuildPassed = "workspace.build.run".equals(observation.actionRef()) && observation.success();
+        if (requiresGovernedBuild(context)
+                && !latestBuildPassed
+                && !successfulAction(context, "workspace.build.run")) {
+            missing.add("successful workspace.build.run");
+        }
         boolean latestTestPassed = "workspace.test.run".equals(observation.actionRef()) && observation.success();
         if (requiresGovernedTest(context)
                 && !latestTestPassed
@@ -1012,6 +1101,13 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !latestRemoteProposalPassed
                 && !successfulAction(context, "workspace.github.pr.publish")) {
             missing.add("successful workspace.github.pr.publish");
+        }
+        boolean latestRuntimeVerificationPassed =
+                "workspace.process.run".equals(observation.actionRef()) && observation.success();
+        if (requiresRuntimeVerification(context)
+                && !latestRuntimeVerificationPassed
+                && !successfulAction(context, "workspace.process.run")) {
+            missing.add("successful workspace.process.run runtime verification");
         }
         if (missing.isEmpty()) return proposed;
         return CognitiveWorkerRuntime.Reflection.continueWith(

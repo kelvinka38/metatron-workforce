@@ -248,6 +248,10 @@ public class LiveManagementConfiguration {
                     GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
                             capability, core, admission, clock, staffing, attempts, runtimeCapacity,
                             governancePlans, governanceAttempts, executionGate);
+                    // Truthful assignment observability: link the real durable Assignment to its
+                    // Management Objective the instant it exists, before execution outcome is known.
+                    governed.onAssignmentCreated((objectiveId, assignmentId) -> management.addAssignmentReference(
+                            objectiveId, management.get(objectiveId).ownerWorkerId(), assignmentId, clock.instant()));
                     return (AutonomousExecutionCapability) governed.deferAssignmentCompletionUntilObservation();
                 })
                 .map(capability -> (AutonomousExecutionCapability) new SafetyGovernedAutonomousExecutionCapability(
