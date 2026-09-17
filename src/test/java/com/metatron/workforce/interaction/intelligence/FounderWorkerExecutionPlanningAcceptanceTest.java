@@ -91,6 +91,40 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
     }
 
     @Test
+    void explicitGeneralEngineeringReadOnlyInspectionRequestStaysReadOnly() {
+        // Consequence semantics gap: explicitCanonicalGeneralEngineeringWork() must not hardcode MUTATING
+        // for every explicit WORKER-GENERAL-ENGINEERING request. A genuinely read-only inspection request
+        // -- inspect the repository, review existing code, analyze the build configuration, explain a test
+        // failure -- must stay READ_ONLY even though it incidentally mentions "build" in passing.
+        NormalizedRequest request = CanonicalObjectiveControlInterpreter.interpret(
+                        "Giao WORKER-GENERAL-ENGINEERING việc này: inspect the repository, review the existing "
+                                + "code, analyze the build configuration, and explain why the test suite is "
+                                + "failing. Do not modify any files.")
+                .orElseThrow();
+
+        assertEquals(IntelligenceMode.EXECUTION, request.mode());
+        assertEquals("WORKER-GENERAL-ENGINEERING", request.target());
+
+        ExecutionPlanProposalService failIfDelegated = (caseId, normalized, available) -> {
+            throw new AssertionError("explicit canonical Worker assignment must not require frontier replanning");
+        };
+        FounderWorkerExecutionPlanProposalService planner =
+                new FounderWorkerExecutionPlanProposalService(failIfDelegated);
+
+        List<ExecutionWorkSpec> plan = planner.propose(
+                "case:general-engineering-read-only",
+                request,
+                List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                        FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
+
+        assertEquals(1, plan.size());
+        ExecutionWorkSpec work = plan.getFirst();
+        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
+        assertEquals("WORKER-GENERAL-ENGINEERING", work.target());
+        assertEquals(ExecutionWorkSpec.Consequence.READ_ONLY, work.consequence());
+    }
+
+    @Test
     void arbitraryFounderDefinedWorkerWithATechnicalSoundingNameStillUsesCognitiveWorkOnly() {
         // Preserve authority boundary: only the literal canonical WORKER-GENERAL-ENGINEERING identity is
         // special-cased. A different, arbitrary Founder-defined Worker explicitly named in a

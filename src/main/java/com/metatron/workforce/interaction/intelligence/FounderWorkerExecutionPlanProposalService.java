@@ -49,6 +49,12 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
      * GeneralWorkspaceAutonomousCapability.WORKER_ID is special-cased, resolved against its own real
      * capability constant, not a role-name pattern -- an arbitrary Founder-defined Worker whose name
      * merely sounds technical still falls through to the unchanged generic path below.
+     *
+     * Consequence is not hardcoded MUTATING: it is classified from the objective text by
+     * GeneralWorkspaceAutonomousCapability.classifyConsequence(), the same General Workspace capability
+     * that owns execution.general.workspace semantics, so a genuinely read-only General Engineering
+     * inspection request (inspect/review/analyze/explain) stays READ_ONLY instead of being forced into
+     * MUTATING governance it does not need.
      */
     static List<ExecutionWorkSpec> explicitCanonicalGeneralEngineeringWork(
             NormalizedRequest request,
@@ -72,7 +78,7 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
                 workerId,
                 GeneralWorkspaceAutonomousCapability.CAPABILITY,
                 List.of(),
-                ExecutionWorkSpec.Consequence.MUTATING,
+                GeneralWorkspaceAutonomousCapability.classifyConsequence(objective),
                 List.of(
                         "canonical Worker " + workerId + " performs the requested workspace execution",
                         "the work is executed under a real Workforce Assignment attributed to " + workerId
