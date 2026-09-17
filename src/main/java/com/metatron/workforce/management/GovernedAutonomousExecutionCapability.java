@@ -63,7 +63,30 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     private final GovernanceAttemptBindingService governanceAttempts;
     private final ExecutionGate executionGate;
     private volatile boolean assignmentCompletionDeferred;
+    private volatile AssignmentReferenceListener assignmentReferenceListener;
     private final ThreadLocal<List<String>> staffingEvidence = ThreadLocal.withInitial(ArrayList::new);
+
+    /**
+     * Notified the moment a real durable Assignment exists for an Objective, before the delegate
+     * capability effect (and therefore before success/failure) is known. Truthful assignment
+     * observability requires the Management Objective to reference a real Assignment as soon as it is
+     * created -- a later failure/cancellation is real historical attribution, never a reason the
+     * Assignment should have been invisible in the first place.
+     */
+    public interface AssignmentReferenceListener {
+        void onAssignmentCreated(String objectiveId, String assignmentId);
+    }
+
+    /** Production composition links durable Assignment creation to Management as soon as it happens. */
+    public GovernedAutonomousExecutionCapability onAssignmentCreated(AssignmentReferenceListener listener) {
+        this.assignmentReferenceListener = listener;
+        return this;
+    }
+
+    private void notifyAssignmentCreated(String objectiveId, String assignmentId) {
+        AssignmentReferenceListener listener = assignmentReferenceListener;
+        if (listener != null) listener.onAssignmentCreated(objectiveId, assignmentId);
+    }
 
     public GovernedAutonomousExecutionCapability(AutonomousExecutionCapability delegate,
                                                   WorkforceCoreService core,
@@ -221,10 +244,12 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
         String reservationId = "capacity-reservation:" + key;
         String assignmentId = "assignment:" + key;
         core.reserveCapacity(reservationId, assignmentId, request.objectiveId(), worker.workerId(), delegate.requiredCapacity());
-        return core.assignReserved(reservationId, participation.participationId(),
+        WorkforceCoreService.Assignment assignment = core.assignReserved(reservationId, participation.participationId(),
                 requireReference(delegate.authorityReference(), "authority-reference-missing"),
                 requireReference(delegate.authorizationReference(), "authorization-reference-missing"),
                 request.workSpec().objective(), request.workSpec().completionPolicy());
+        notifyAssignmentCreated(request.objectiveId(), assignment.assignmentId());
+        return assignment;
     }
 
     /** WorkerActor consumer entry point for an already-created durable Assignment. */
@@ -306,6 +331,12 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                     reservationId, participation.participationId(), authorityRef, authorizationRef,
                     request.workSpec().objective(), request.workSpec().completionPolicy());
             assignmentCreated = true;
+            // Truthful assignment observability: this real Assignment must be linked to the Management
+            // Objective now, before the delegate capability effect below runs and before success/failure
+            // is known -- a later failure/cancellation is real historical attribution, not a reason it
+            // should have been invisible. This is the composition production actually dispatches through
+            // (see AutonomousManagementRunner.executeNode()'s SafetyGoverned-wrapped else branch).
+            notifyAssignmentCreated(request.objectiveId(), coreAssignment.assignmentId());
 
             ExecutionRequest executionRequest = new ExecutionRequest(
                     executionId,

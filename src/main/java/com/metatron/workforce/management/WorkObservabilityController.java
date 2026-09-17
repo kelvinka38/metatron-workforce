@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -28,8 +29,12 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public final class WorkObservabilityController {
     private static final Duration LIVE_ACTIVITY_WINDOW = Duration.ofSeconds(90);
     private final ManagementAutonomyService management;
+    private final WorkforceCoreService core;
 
-    public WorkObservabilityController(ManagementAutonomyService management) { this.management = management; }
+    public WorkObservabilityController(ManagementAutonomyService management, WorkforceCoreService core) {
+        this.management = management;
+        this.core = core;
+    }
 
     @GetMapping(value = "", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> dashboard() { return ResponseEntity.ok().contentType(MediaType.TEXT_HTML).body(DASHBOARD_HTML); }
@@ -62,6 +67,11 @@ public final class WorkObservabilityController {
                 .max(Comparator.naturalOrder()).orElse(objective.updatedAt());
         boolean recentActivity = Duration.between(lastActivity, Instant.now()).compareTo(LIVE_ACTIVITY_WINDOW) <= 0;
         boolean staffed = !objective.assignmentRefs().isEmpty();
+        // Truthful attribution from durable Assignment/execution attribution -- never inferred from
+        // requested capability or Worker name in the Objective. Real even before/without step-level
+        // execution evidence, and remains real historical truth after failure/cancellation.
+        List<String> durablePerformers = WorkCardRenderer.durableAssignmentPerformers(core, objective);
+        String durablePerformerLabel = String.join(", ", durablePerformers);
 
         List<WorkItemView> items = new ArrayList<>(); int completed = 0; int total = 0;
         if (work != null) {
@@ -73,8 +83,10 @@ public final class WorkObservabilityController {
                 else if (work.status() == AutonomousObjectiveWork.Status.EXECUTING) state = "READY_OR_RUNNING";
                 else if (work.status() == AutonomousObjectiveWork.Status.BLOCKED) state = "BLOCKED";
                 else state = "READY";
+                String performer = !durablePerformers.isEmpty() ? durablePerformerLabel
+                        : staffed ? "SEE_ASSIGNMENT_EVIDENCE" : "UNASSIGNED";
                 items.add(new WorkItemView(step.stepId(), step.objective(), step.target(), step.requiredCapability(),
-                        staffed ? "SEE_ASSIGNMENT_EVIDENCE" : "UNASSIGNED", step.dependsOn(), state,
+                        performer, step.dependsOn(), state,
                         step.acceptanceCriteria(), step.evidenceRequirements()));
             }
         }
@@ -89,7 +101,10 @@ public final class WorkObservabilityController {
         String reportsTo = work == null ? "NOT_MATERIALIZED" : "human:" + work.humanId();
         String workload = total == 0 ? "PLANNING_PENDING" : total + "_WORK_ITEMS";
         String eta = work != null && work.terminal() ? "COMPLETED" : "NOT_COMMITTED";
-        String staffing = staffed ? "ASSIGNMENT_EVIDENCE_PRESENT" : "UNASSIGNED";
+        // Never claim UNASSIGNED while a real Assignment is referenced, even if step-level execution
+        // evidence has not landed yet (execution running, or failed/cancelled and left as historical
+        // attribution).
+        String staffing = !staffed ? "UNASSIGNED" : !durablePerformers.isEmpty() ? "ASSIGNED:" + durablePerformerLabel : "ASSIGNMENT_EVIDENCE_PRESENT";
 
         Map<String,String> proof = new LinkedHashMap<>(); proof.put("state",executionProof); proof.put("last_activity_at",lastActivity.toString());
         proof.put("activity_fresh",Boolean.toString(recentActivity)); proof.put("work_version",work==null?"0":Integer.toString(work.version())); proof.put("evidence_count",Integer.toString(evidence.size()));
@@ -97,7 +112,7 @@ public final class WorkObservabilityController {
         return new ObjectiveMonitorView(objective.objectiveId(), concise(objective.description()), objective.ownerWorkerId(), reportsTo,
                 workload, eta, staffing, objective.status().name(), work==null?"NONE":work.status().name(), humanStatus,
                 progress, completed, total, blocker, lastActivity, work==null?objective.createdAt():work.createdAt(),
-                objective.assignmentRefs(), evidence, items, recentEvents, proof);
+                objective.assignmentRefs(), evidence, items, recentEvents, proof, durablePerformers);
     }
 
     private static String executionProof(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean recentActivity) {
@@ -125,7 +140,8 @@ public final class WorkObservabilityController {
     public record ObjectiveMonitorView(String objectiveId,String summary,String ownerWorker,String reportsTo,String workload,
             String etaCommitment,String staffingState,String objectiveStatus,String workStatus,String humanStatus,int progressPercent,
             int completedWork,int totalWork,String blocker,Instant lastActivityAt,Instant startedAt,List<String> assignmentReferences,
-            List<String> evidenceReferences,List<WorkItemView> workItems,List<EventView> recentEvents,Map<String,String> executionProof) {}
+            List<String> evidenceReferences,List<WorkItemView> workItems,List<EventView> recentEvents,Map<String,String> executionProof,
+            List<String> durablePerformerWorkerIds) {}
 
     private static final String DASHBOARD_HTML = """
 <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Metatron Workforce · Live Work</title>

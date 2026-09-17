@@ -507,6 +507,14 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             AutonomousExecutionCapability.CapabilityResult result;
             if (capability instanceof GovernedAutonomousExecutionCapability governed && assignmentConsumer != null) {
                 WorkforceCoreService.Assignment durableAssignment = governed.prepareAssignment(capabilityRequest);
+                // Truthful assignment observability: link the real durable Assignment to the Management
+                // Objective as soon as it exists on this path too, before execution outcome is known (see
+                // GovernedAutonomousExecutionCapability.onAssignmentCreated() for the equivalent fix on the
+                // direct execute() path, which is what production's SafetyGoverned-wrapped composition
+                // actually dispatches through). addAssignmentReference is idempotent, so this is safe even
+                // when the listener also fires for the same Assignment.
+                String owner = management.get(objectiveId).ownerWorkerId();
+                management.addAssignmentReference(objectiveId, owner, durableAssignment.assignmentId(), clock.instant());
                 try {
                     result = assignmentConsumer.submit(durableAssignment,
                             assignment -> governed.executeAssigned(capabilityRequest, assignment)).get();

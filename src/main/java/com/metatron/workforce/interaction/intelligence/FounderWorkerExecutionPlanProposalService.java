@@ -103,12 +103,26 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
 
         String objective = request.objective().trim();
         if (objective.isBlank()) return List.of();
-        String repository = governedRepositoryTarget(objective);
-        if (repository.isBlank()) return List.of();
+        GovernedRepository governed = governedRepositoryTarget(objective);
+        if (governed.repository().isBlank()) return List.of();
+        List<String> evidenceRequirements = governed.existingSourceExpected()
+                ? List.of(
+                        "general-workspace-execution durable work product/evidence",
+                        "worker-assignment evidence attributed to " + workerId)
+                : List.of(
+                        "general-workspace-execution durable work product/evidence",
+                        "worker-assignment evidence attributed to " + workerId,
+                        // Sentinel planner-to-brain signal (mirrors the existing
+                        // research-action:research.web.search evidenceRequirements convention):
+                        // this repository target was derived as a NEW destination, not an existing
+                        // source repository, so GeneralCognitiveWorkerBrain must not require checkout
+                        // of a repository that does not exist yet. Must match
+                        // GeneralCognitiveWorkerBrain.NEW_APPLICATION_WORKSPACE_EVIDENCE exactly.
+                        "workspace-source:fresh-new-application");
         return List.of(new ExecutionWorkSpec(
                 "general-engineering-workspace-execution",
                 objective,
-                "repository:" + repository,
+                "repository:" + governed.repository(),
                 GeneralWorkspaceAutonomousCapability.CAPABILITY,
                 List.of(),
                 GeneralWorkspaceAutonomousCapability.classifyConsequence(objective),
@@ -116,29 +130,37 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
                         "canonical Worker " + workerId + " performs the requested workspace execution",
                         "the work is executed under a real Workforce Assignment attributed to " + workerId
                                 + " through its governed general workspace capability"),
-                List.of(
-                        "general-workspace-execution durable work product/evidence",
-                        "worker-assignment evidence attributed to " + workerId)));
+                evidenceRequirements));
     }
 
     private static final Pattern APPLICATION_NAME = Pattern.compile(
             "(?i)\\b(?:called|named)\\s+([A-Za-z][A-Za-z0-9' -]{1,60}?)(?=[.,;:]|\\s+(?:and|to|for)\\b|$)");
 
     /**
-     * Bare "owner/repo" governed target for General Workspace work: an explicit repository named in the
-     * Objective text, or -- for an Objective that names none -- a repository derived from the
-     * application the Objective says it is building, under the single Founder GitHub owner. Blank when
-     * neither can be determined. Never the Worker identity, and never an unrelated existing repository.
+     * The governed repository target and whether an existing GitHub source repository is genuinely
+     * expected to be materialized (an explicitly named repository), or whether this is a governance/
+     * authority-discovery destination the planner derived for a brand-new application that has no
+     * existing source yet.
      */
-    static String governedRepositoryTarget(String objective) {
+    private record GovernedRepository(String repository, boolean existingSourceExpected) {}
+
+    /**
+     * Governed repository target for General Workspace work: an explicit repository named in the
+     * Objective text, or -- for an Objective that names none -- a repository derived from the
+     * application the Objective says it is building, under the single Founder GitHub owner. Blank
+     * repository when neither can be determined. Never the Worker identity, and never an unrelated
+     * existing repository.
+     */
+    private static GovernedRepository governedRepositoryTarget(String objective) {
         String repositories = CanonicalObjectiveControlInterpreter.repositoryTargets(objective);
         String explicit = repositories.isBlank() ? "" : repositories.split(",")[0].trim();
-        if (!explicit.isBlank()) return explicit;
+        if (!explicit.isBlank()) return new GovernedRepository(explicit, true);
 
         Matcher name = APPLICATION_NAME.matcher(objective);
-        if (!name.find()) return "";
+        if (!name.find()) return new GovernedRepository("", false);
         String slug = slug(name.group(1));
-        return slug.isBlank() ? "" : GeneralWorkspaceAutonomousCapability.FOUNDER_GITHUB_OWNER + "/" + slug;
+        if (slug.isBlank()) return new GovernedRepository("", false);
+        return new GovernedRepository(GeneralWorkspaceAutonomousCapability.FOUNDER_GITHUB_OWNER + "/" + slug, false);
     }
 
     private static String slug(String value) {

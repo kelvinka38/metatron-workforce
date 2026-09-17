@@ -36,7 +36,7 @@ class WorkCardRendererTest {
     @Test
     void monitorPrefersRecentNonTerminalObjectiveOverRecentTerminalOrStaleWork() {
         ManagementAutonomyService management = mock(ManagementAutonomyService.class);
-        WorkCardRenderer renderer = new WorkCardRenderer(management);
+        WorkCardRenderer renderer = new WorkCardRenderer(management, null);
         Instant now = Instant.now();
 
         ManagementObjective staleActive = objective("stale-active", ManagementObjective.Status.BLOCKED, now.minusSeconds(3600));
@@ -58,7 +58,7 @@ class WorkCardRendererTest {
     @Test
     void staleMonitorCardIsExplicitlyLabeledHistorical() {
         ManagementAutonomyService management = mock(ManagementAutonomyService.class);
-        WorkCardRenderer renderer = new WorkCardRenderer(management);
+        WorkCardRenderer renderer = new WorkCardRenderer(management, null);
         Instant old = Instant.now().minusSeconds(600);
         ManagementObjective objective = objective("stale-objective", ManagementObjective.Status.BLOCKED, old);
         AutonomousObjectiveWork work = mock(AutonomousObjectiveWork.class);
