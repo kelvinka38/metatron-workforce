@@ -1,6 +1,7 @@
 package com.metatron.workforce.interaction.intelligence;
 
 import com.metatron.workforce.interaction.FounderDefinedWorkerFormationService;
+import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
 
 import java.util.List;
 import java.util.Locale;
@@ -26,9 +27,59 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
             String caseId,
             NormalizedRequest request,
             List<String> availableExecutionCapabilities) {
-        List<ExecutionWorkSpec> deterministic = explicitFounderWorkerWork(request, availableExecutionCapabilities);
+        List<ExecutionWorkSpec> deterministic = explicitCanonicalGeneralEngineeringWork(request, availableExecutionCapabilities);
+        if (deterministic.isEmpty()) deterministic = explicitFounderWorkerWork(request, availableExecutionCapabilities);
         if (!deterministic.isEmpty() && request.explicitlyRequestedProvider() == null) return deterministic;
         return delegate.propose(caseId, request, availableExecutionCapabilities);
+    }
+
+    /**
+     * Root-cause fix (2026-09-16, found live in production): explicitFounderWorkerWork() below binds
+     * ANY explicit "WORKER-*" text reference to the generic Founder-defined cognitive-work shortcut
+     * (worker.cognition.work, READ_ONLY) -- correct for a generic Founder-defined cognitive-only Worker
+     * like WORKER-COMPOSER-ARTIST, but WRONG for the canonical WORKER-GENERAL-ENGINEERING, which already
+     * has its own governed execution capability (execution.general.workspace) and staffing policy
+     * (GeneralEngineeringStaffingPolicy). Routing a real engineering-implementation Objective through
+     * the cognitive shortcut downgraded it to a READ_ONLY cognitive-work step and then blocked with
+     * capacity-unavailable:worker.cognitive.work -- a capability General Engineering was never staffed
+     * for and should never need, since it already has its own real execution path.
+     *
+     * This checks for that one specific, already-governed canonical identity before the generic
+     * shortcut ever runs. It is deliberately not a broad heuristic: only the literal
+     * GeneralWorkspaceAutonomousCapability.WORKER_ID is special-cased, resolved against its own real
+     * capability constant, not a role-name pattern -- an arbitrary Founder-defined Worker whose name
+     * merely sounds technical still falls through to the unchanged generic path below.
+     */
+    static List<ExecutionWorkSpec> explicitCanonicalGeneralEngineeringWork(
+            NormalizedRequest request,
+            List<String> availableExecutionCapabilities) {
+        if (request == null || request.mode() != IntelligenceMode.EXECUTION) return List.of();
+        boolean available = availableExecutionCapabilities != null && availableExecutionCapabilities.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .anyMatch(GeneralWorkspaceAutonomousCapability.CAPABILITY::equals);
+        if (!available) return List.of();
+
+        String workerId = workerRef(request.target());
+        if (workerId.isBlank()) workerId = workerRef(request.objective());
+        if (!GeneralWorkspaceAutonomousCapability.WORKER_ID.equals(workerId)) return List.of();
+
+        String objective = request.objective().trim();
+        if (objective.isBlank()) return List.of();
+        return List.of(new ExecutionWorkSpec(
+                "general-engineering-workspace-execution",
+                objective,
+                workerId,
+                GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of(
+                        "canonical Worker " + workerId + " performs the requested workspace execution",
+                        "the work is executed under a real Workforce Assignment attributed to " + workerId
+                                + " through its governed general workspace capability"),
+                List.of(
+                        "general-workspace-execution durable work product/evidence",
+                        "worker-assignment evidence attributed to " + workerId)));
     }
 
     static List<ExecutionWorkSpec> explicitFounderWorkerWork(
@@ -44,6 +95,7 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
         String workerId = workerRef(request.target());
         if (workerId.isBlank()) workerId = workerRef(request.objective());
         if (workerId.isBlank()) return List.of();
+        if (GeneralWorkspaceAutonomousCapability.WORKER_ID.equals(workerId)) return List.of();
 
         String objective = request.objective().trim();
         if (objective.isBlank()) return List.of();
