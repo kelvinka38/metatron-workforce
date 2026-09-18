@@ -2,6 +2,7 @@ package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 
 import java.util.ArrayList;
@@ -84,7 +85,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (!isFreshNewApplicationWork(context)) return context;
 
         List<String> providerActions;
-        if (!hasWorkspaceSourceMutation(context)
+        if (!(hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                        ? hasWorkspaceWorkProductMutation(context)
+                        : hasWorkspaceSourceMutation(context))
                 && context.availableActions().contains("workspace.file.write")) {
             // A planner-marked fresh application starts from an empty workspace. Force the first
             // provider-selected action to create actual source/work-product; Git/build/test/runtime
@@ -124,6 +127,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private static boolean requiresProjectManifestBeforeLifecycle(
             CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                    && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST);
+        }
         return requiresGovernedBuild(context)
                 || requiresGovernedTest(context)
                 || requiresRuntimeVerification(context)
@@ -135,19 +142,22 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             if (!cycle.observation().success()) return false;
             String action = cycle.thought().actionRef();
             if (!"workspace.file.write".equals(action) && !"workspace.file.patch".equals(action)) return false;
-            String path = cycle.thought().inputs().getOrDefault("path", "")
-                    .replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
-            return path.endsWith("/package.json") || "package.json".equals(path)
-                    || path.endsWith("/pyproject.toml") || "pyproject.toml".equals(path)
-                    || path.endsWith("/requirements.txt") || "requirements.txt".equals(path)
-                    || path.endsWith("/pom.xml") || "pom.xml".equals(path)
-                    || path.endsWith("/build.gradle") || "build.gradle".equals(path)
-                    || path.endsWith("/build.gradle.kts") || "build.gradle.kts".equals(path)
-                    || path.endsWith("/cargo.toml") || "cargo.toml".equals(path)
-                    || path.endsWith("/go.mod") || "go.mod".equals(path)
-                    || path.endsWith("/composer.json") || "composer.json".equals(path)
-                    || path.endsWith("/gemfile") || "gemfile".equals(path);
+            return isProjectManifestPath(cycle.thought().inputs().getOrDefault("path", ""));
         });
+    }
+
+    private static boolean isProjectManifestPath(String rawPath) {
+        String path = rawPath == null ? "" : rawPath.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+        return path.endsWith("/package.json") || "package.json".equals(path)
+                || path.endsWith("/pyproject.toml") || "pyproject.toml".equals(path)
+                || path.endsWith("/requirements.txt") || "requirements.txt".equals(path)
+                || path.endsWith("/pom.xml") || "pom.xml".equals(path)
+                || path.endsWith("/build.gradle") || "build.gradle".equals(path)
+                || path.endsWith("/build.gradle.kts") || "build.gradle.kts".equals(path)
+                || path.endsWith("/cargo.toml") || "cargo.toml".equals(path)
+                || path.endsWith("/go.mod") || "go.mod".equals(path)
+                || path.endsWith("/composer.json") || "composer.json".equals(path)
+                || path.endsWith("/gemfile") || "gemfile".equals(path);
     }
 
     static CognitiveWorkerRuntime.Thought researchSearchPrecondition(
@@ -402,9 +412,16 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             CognitiveWorkerRuntime.CognitiveContext context) {
         Objects.requireNonNull(context, "context");
         if (!context.availableActions().contains("workspace.git.run")) return null;
+        if (requiresGitInitialization(context)) {
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.git.run",
+                    Map.of("argsJson", writeActionArgs(List.of("init"))),
+                    "Initialize local Git deterministically before staging a carried fresh workspace");
+        }
         if (requiresGitAdd(context) && !successfulGitSubcommand(context, "add")) {
             String path = governedMutationPath(context);
-            if (!hasWorkspaceSourceMutation(context) && path.isBlank()) return null;
+            if (!hasWorkspaceSourceMutation(context) && path.isBlank()
+                    && !hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER)) return null;
             if (requiresGovernedTest(context) && !governedTestSatisfied(context)) return null;
             List<String> args = path.isBlank() ? List.of("add", "-A") : List.of("add", path);
             return new CognitiveWorkerRuntime.Thought(
@@ -467,6 +484,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
      * fails closed exactly as before.
      */
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)
+                && !hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)) return false;
         if (context.memory().getOrDefault("workspaceMaterialized", "false").equalsIgnoreCase("true")) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         boolean explicitMaterializationIntent = text.contains("materializ")
@@ -508,6 +527,16 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || "workspace.process.run".equals(cycle.thought().actionRef())));
     }
 
+    private static boolean hasWorkspaceWorkProductMutation(CognitiveWorkerRuntime.CognitiveContext context) {
+        return context.history().stream().anyMatch(cycle -> {
+            if (!cycle.observation().success()) return false;
+            String action = cycle.thought().actionRef();
+            if ("workspace.shell.run".equals(action) || "workspace.process.run".equals(action)) return true;
+            if (!"workspace.file.write".equals(action) && !"workspace.file.patch".equals(action)) return false;
+            return !isProjectManifestPath(cycle.thought().inputs().getOrDefault("path", ""));
+        });
+    }
+
     private static boolean governedTestSatisfied(CognitiveWorkerRuntime.CognitiveContext context) {
         if (!requiresGovernedTest(context)) return true;
         int latestMutation = -1;
@@ -522,6 +551,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     || "workspace.process.run".equals(action)) latestMutation = i;
             if ("workspace.test.run".equals(action)) latestTest = i;
         }
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)) {
+            return latestTest >= 0;
+        }
         if (context.workSpec().consequence()
                 == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) {
             return latestMutation >= 0 && latestTest > latestMutation;
@@ -530,6 +562,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static boolean requiresRemoteProposal(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER)
+                    && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR);
+        }
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
@@ -637,7 +673,21 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 + String.join(" ", context.workSpec().evidenceRequirements());
     }
 
+    private static boolean hasMarker(CognitiveWorkerRuntime.CognitiveContext context, String marker) {
+        return context.workSpec().evidenceRequirements().stream().anyMatch(marker::equalsIgnoreCase);
+    }
+
+    private static boolean phased(CognitiveWorkerRuntime.CognitiveContext context) {
+        return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                || hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                || hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER);
+    }
+
     private static boolean requiresGovernedTest(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                    && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_TEST);
+        }
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("test suite")
                 || text.contains("run test")
@@ -650,6 +700,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     /** Mirrors the existing "build"/"compile" phrase convention already used by explicitlyRequiresAction(). */
     private static boolean requiresGovernedBuild(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                    && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_BUILD);
+        }
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
@@ -657,6 +711,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static boolean requiresRuntimeVerification(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                    && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME);
+        }
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
@@ -676,7 +734,19 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 actionRef.equals(cycle.thought().actionRef()) && !cycle.observation().success());
     }
 
+    private static boolean requiresGitInitialization(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER)) return false;
+        if (!requiresGitCommit(context) && !requiresRemoteProposal(context)) return false;
+        if ("true".equalsIgnoreCase(context.memory().getOrDefault("workspaceGitInitialized", "false"))) return false;
+        return !successfulGitSubcommand(context, "init");
+    }
+
     private static boolean requiresGitAdd(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER)
+                    && (hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT)
+                    || hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR));
+        }
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
@@ -685,6 +755,11 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static boolean requiresGitCommit(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER)
+                    && (hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT)
+                    || hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR));
+        }
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         if (requiresRemoteProposal(context)) return true;
@@ -700,6 +775,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static boolean requiresGitVerification(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER)
+                    && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_GIT_VERIFY);
+        }
         if (!requiresGitCommit(context)) return false;
         String text = workText(context).toLowerCase(java.util.Locale.ROOT);
         return text.contains("git show")
@@ -727,6 +806,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private static boolean requiresWorkspaceSourceMutation(CognitiveWorkerRuntime.CognitiveContext context) {
+        if (phased(context)) {
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE);
+        }
         if (context.workSpec().consequence()
                 != com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING) return false;
         if (exactTextReplacement(context) != null) return true;
@@ -1016,6 +1098,21 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(observation, "observation");
         if (!observation.success()) return null;
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                && ("workspace.file.write".equals(observation.actionRef())
+                || "workspace.file.patch".equals(observation.actionRef())
+                || "workspace.shell.run".equals(observation.actionRef())
+                || "workspace.process.run".equals(observation.actionRef()))) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Production phase emitted governed workspace work-product evidence");
+        }
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                && ("workspace.build.run".equals(observation.actionRef())
+                || "workspace.test.run".equals(observation.actionRef())
+                || "workspace.process.run".equals(observation.actionRef()))) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Verification phase emitted governed verification evidence");
+        }
         if (requiresExactShaFileWrite(context) && "workspace.file.write".equals(observation.actionRef())) {
             return CognitiveWorkerRuntime.Reflection.complete(
                     "Governed workspace file write succeeded with the explicit exact-SHA proof content");
@@ -1076,8 +1173,34 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && !materializationSatisfied(context)) {
             missing.add("successful workspace.repository.materialize");
         }
-        if (isFreshNewApplicationWork(context) && !hasWorkspaceSourceMutation(context)) {
-            missing.add("workspace source/work-product for the new application (workspace.file.write/patch)");
+        boolean latestSourceMutation = observation.success()
+                && ("workspace.shell.run".equals(observation.actionRef())
+                || "workspace.process.run".equals(observation.actionRef())
+                || (("workspace.file.write".equals(observation.actionRef())
+                || "workspace.file.patch".equals(observation.actionRef()))
+                && (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                || !isProjectManifestPath(observation.outputs().getOrDefault("path", "")))));
+        boolean priorSourceMutation = hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                ? hasWorkspaceWorkProductMutation(context)
+                : hasWorkspaceSourceMutation(context);
+        boolean sourceWorkProductRequired = requiresWorkspaceSourceMutation(context)
+                || (isFreshNewApplicationWork(context) && !phased(context));
+        if (sourceWorkProductRequired
+                && !latestSourceMutation
+                && !priorSourceMutation) {
+            missing.add(isFreshNewApplicationWork(context)
+                    ? "workspace source/work-product for the new application (workspace.file.write/patch)"
+                    : "workspace source/work-product mutation");
+        }
+        boolean latestManifestMutation = observation.success()
+                && ("workspace.file.write".equals(observation.actionRef())
+                || "workspace.file.patch".equals(observation.actionRef()))
+                && isProjectManifestPath(observation.outputs().getOrDefault("path", ""));
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST)
+                && !latestManifestMutation
+                && !hasProjectManifestMutation(context)) {
+            missing.add("project/dependency manifest for governed verification");
         }
         boolean latestBuildPassed = "workspace.build.run".equals(observation.actionRef()) && observation.success();
         if (requiresGovernedBuild(context)
