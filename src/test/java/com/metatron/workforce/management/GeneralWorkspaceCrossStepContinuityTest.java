@@ -82,6 +82,25 @@ class GeneralWorkspaceCrossStepContinuityTest {
         assertEquals("workspace.file.write", contextual.think(freshStep).actionRef());
     }
 
+
+    @Test
+    void carriedWorkspaceProjectsBoundedInventorySourcePreviewAndProjectMetadata() {
+        ObjectiveWorkspaceService workspaces = new ObjectiveWorkspaceService(tempDir.resolve("snapshot-workspaces"));
+        ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision("objective-snapshot", "worker");
+        workspaces.write(workspace, "src/App.js", "import React from 'react';\nexport default function App(){return <h1>Control Center</h1>;}\n");
+        workspaces.write(workspace, "package.json", "{\"scripts\":{\"build\":\"vite build\"},\"dependencies\":{\"react\":\"^18.3.1\"},\"devDependencies\":{\"vite\":\"^5.4.0\"}}\n");
+
+        Map<String, String> memory = GeneralWorkspaceAutonomousCapability.objectiveWorkspaceMemory(workspaces, workspace);
+
+        assertTrue(memory.get("workspaceFileInventory").contains("src/App.js"));
+        assertTrue(memory.get("workspaceFileInventory").contains("package.json"));
+        assertEquals("src/App.js", memory.get("workspacePrimarySourcePath"));
+        assertTrue(memory.get("workspacePrimarySourcePreview").contains("React"));
+        assertEquals("package.json", memory.get("workspaceProjectManifest"));
+        assertEquals("node-react", memory.get("workspaceProjectKind"));
+        assertEquals("true", memory.get("workspaceDependencyInstallRequired"));
+    }
+
     @Test
     void freshNewApplicationRemovesMaterializeActionBeforeFirstCognitionTurn() {
         ExecutionWorkSpec fresh = new ExecutionWorkSpec(
@@ -141,6 +160,21 @@ class GeneralWorkspaceCrossStepContinuityTest {
         assertFalse(produceRefs.contains("workspace.test.run"));
         assertFalse(produceRefs.contains("workspace.git.run"));
         assertFalse(produceRefs.contains("workspace.github.pr.publish"));
+
+        ExecutionWorkSpec prepare = new ExecutionWorkSpec(
+                "prepare", "prepare carried source", "repository:kelvinka38/example",
+                GeneralWorkspaceAutonomousCapability.CAPABILITY, List.of("produce"),
+                ExecutionWorkSpec.Consequence.MUTATING, List.of("manifest exists"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_PREPARE,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        List<String> prepareRefs = GeneralWorkspaceAutonomousCapability.actionsForWork(
+                candidates, prepare, Map.of()).stream().map(ActionFabric.Action::actionRef).toList();
+        assertTrue(prepareRefs.contains("workspace.file.write"));
+        assertTrue(prepareRefs.contains("workspace.file.read"));
+        assertFalse(prepareRefs.contains("workspace.dependencies.install"));
+        assertFalse(prepareRefs.contains("workspace.build.run"));
+        assertFalse(prepareRefs.contains("workspace.git.run"));
 
         ExecutionWorkSpec verify = new ExecutionWorkSpec(
                 "verify", "verify carried source", "repository:kelvinka38/example",

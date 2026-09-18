@@ -49,8 +49,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (exactTextReplacement != null) return exactTextReplacement;
         CognitiveWorkerRuntime.Thought requiredFileWrite = governedExactShaFileWritePrecondition(context);
         if (requiredFileWrite != null) return requiredFileWrite;
+        CognitiveWorkerRuntime.Thought requiredDependencies = governedDependencyPrecondition(context);
+        if (requiredDependencies != null) return requiredDependencies;
+        CognitiveWorkerRuntime.Thought requiredBuild = governedBuildPrecondition(context);
+        if (requiredBuild != null) return requiredBuild;
         CognitiveWorkerRuntime.Thought requiredTest = governedTestPrecondition(context);
         if (requiredTest != null) return requiredTest;
+        CognitiveWorkerRuntime.Thought requiredRuntime = governedRuntimePrecondition(context);
+        if (requiredRuntime != null) return requiredRuntime;
         CognitiveWorkerRuntime.Thought requiredGit = governedGitPrecondition(context);
         if (requiredGit != null) return requiredGit;
         CognitiveWorkerRuntime.Thought remoteProposal = governedRemoteProposalPrecondition(context);
@@ -82,6 +88,15 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     static CognitiveWorkerRuntime.CognitiveContext providerActionSelectionContext(
             CognitiveWorkerRuntime.CognitiveContext context) {
         Objects.requireNonNull(context, "context");
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
+                && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST)
+                && !hasProjectManifestMutation(context)
+                && context.availableActions().contains("workspace.file.write")) {
+            return new CognitiveWorkerRuntime.CognitiveContext(
+                    context.workerId(), context.assignmentReference(), context.authorizationReference(),
+                    context.objectiveId(), context.workSpec(), context.idempotencyKey(),
+                    List.of("workspace.file.write"), context.history(), context.memory());
+        }
         if (!isFreshNewApplicationWork(context)) return context;
 
         List<String> providerActions;
@@ -128,7 +143,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static boolean requiresProjectManifestBeforeLifecycle(
             CognitiveWorkerRuntime.CognitiveContext context) {
         if (phased(context)) {
-            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+            return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
                     && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST);
         }
         return requiresGovernedBuild(context)
@@ -359,13 +374,80 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && text.contains("source_sha=");
     }
 
+    static CognitiveWorkerRuntime.Thought governedDependencyPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                || !context.availableActions().contains("workspace.dependencies.install")
+                || !"true".equalsIgnoreCase(context.memory().getOrDefault("workspaceDependencyInstallRequired", "false"))) {
+            return null;
+        }
+        if (successfulAction(context, "workspace.dependencies.install")
+                || failedAction(context, "workspace.dependencies.install")) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.dependencies.install", Map.of(),
+                "Install dependencies from the carried project manifest before governed verification");
+    }
+
+    static CognitiveWorkerRuntime.Thought governedBuildPrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                || !requiresGovernedBuild(context)
+                || !context.availableActions().contains("workspace.build.run")) return null;
+        if ("true".equalsIgnoreCase(context.memory().getOrDefault("workspaceDependencyInstallRequired", "false"))
+                && !successfulAction(context, "workspace.dependencies.install")) return null;
+        if (successfulAction(context, "workspace.build.run") || failedAction(context, "workspace.build.run")) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.build.run", Map.of(),
+                "Run the governed project build after dependencies are ready");
+    }
+
+    static CognitiveWorkerRuntime.Thought governedRuntimePrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                || !requiresRuntimeVerification(context)
+                || !context.availableActions().contains("workspace.process.run")) return null;
+        if (requiresGovernedBuild(context) && !successfulAction(context, "workspace.build.run")) return null;
+        if (requiresGovernedTest(context) && !successfulAction(context, "workspace.test.run")) return null;
+        if (successfulAction(context, "workspace.process.run") || failedAction(context, "workspace.process.run")) return null;
+
+        String kind = context.memory().getOrDefault("workspaceProjectKind", "");
+        if ("node-react".equals(kind)) {
+            String script = "const http=require('http'),fs=require('fs');"
+                    + "const body=fs.readFileSync('dist/index.html');"
+                    + "const s=http.createServer((q,r)=>{r.statusCode=200;r.end(body)});"
+                    + "s.listen(0,'127.0.0.1',()=>{const p=s.address().port;"
+                    + "http.get({host:'127.0.0.1',port:p,path:'/'},res=>{let d='';"
+                    + "res.on('data',c=>d+=c);res.on('end',()=>{if(res.statusCode!==200||!d.includes('root'))process.exitCode=1;s.close();});"
+                    + "}).on('error',e=>{console.error(e);process.exitCode=1;s.close();});});";
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.process.run",
+                    Map.of("executable", "node", "argsJson", writeActionArgs(List.of("-e", script))),
+                    "Run a bounded localhost HTTP probe against the built web artifact");
+        }
+        return null;
+    }
+
+    private static boolean failedAction(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
+        return context.history().stream().anyMatch(cycle -> actionRef.equals(cycle.thought().actionRef())
+                && !cycle.observation().success());
+    }
+
     static CognitiveWorkerRuntime.Thought governedTestPrecondition(
             CognitiveWorkerRuntime.CognitiveContext context) {
         Objects.requireNonNull(context, "context");
         if (!context.availableActions().contains("workspace.test.run")) return null;
         if (!requiresGovernedTest(context)) return null;
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)) {
+            if ("true".equalsIgnoreCase(context.memory().getOrDefault("workspaceDependencyInstallRequired", "false"))
+                    && !successfulAction(context, "workspace.dependencies.install")) return null;
+            if (requiresGovernedBuild(context) && !successfulAction(context, "workspace.build.run")) return null;
+        }
         if (!materializationSatisfied(context)) return null;
-        if (context.workSpec().consequence()
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                && context.workSpec().consequence()
                 == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING
                 && !hasWorkspaceSourceMutation(context)) return null;
         if (governedTestSatisfied(context)) return null;
@@ -381,7 +463,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             // inspect the failure and modify the work product instead of looping the same test forever.
             return null;
         }
-        if (context.workSpec().consequence()
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
+                && context.workSpec().consequence()
                 == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING
                 && governedMutationPath(context).isBlank()) {
             // Vague/unknown engineering work may live in a nested project. Completion still requires a
@@ -679,6 +762,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private static boolean phased(CognitiveWorkerRuntime.CognitiveContext context) {
         return hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+                || hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
                 || hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
                 || hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_DELIVER);
     }
@@ -1106,6 +1190,12 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             return CognitiveWorkerRuntime.Reflection.complete(
                     "Production phase emitted governed workspace work-product evidence");
         }
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
+                && ("workspace.file.write".equals(observation.actionRef())
+                || "workspace.file.patch".equals(observation.actionRef()))) {
+            return CognitiveWorkerRuntime.Reflection.complete(
+                    "Preparation phase emitted governed project scaffold evidence");
+        }
         if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
                 && ("workspace.build.run".equals(observation.actionRef())
                 || "workspace.test.run".equals(observation.actionRef())
@@ -1196,7 +1286,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && ("workspace.file.write".equals(observation.actionRef())
                 || "workspace.file.patch".equals(observation.actionRef()))
                 && isProjectManifestPath(observation.outputs().getOrDefault("path", ""));
-        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PRODUCE)
+        if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
                 && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST)
                 && !latestManifestMutation
                 && !hasProjectManifestMutation(context)) {

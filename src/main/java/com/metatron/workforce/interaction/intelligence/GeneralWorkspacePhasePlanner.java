@@ -15,6 +15,7 @@ import java.util.Locale;
  */
 public final class GeneralWorkspacePhasePlanner {
     public static final String PHASE_PRODUCE = "workspace-phase:produce";
+    public static final String PHASE_PREPARE = "workspace-phase:prepare";
     public static final String PHASE_VERIFY = "workspace-phase:verify";
     public static final String PHASE_DELIVER = "workspace-phase:deliver";
 
@@ -91,13 +92,26 @@ public final class GeneralWorkspacePhasePlanner {
                 base.requiredCapability(),
                 base.dependsOn(),
                 ExecutionWorkSpec.Consequence.MUTATING,
-                fresh && (build || test || runtime)
-                        ? List.of("requested source/work product exists in the Objective workspace",
-                                "a project/dependency manifest exists for later governed verification")
-                        : List.of("requested source/work product exists in the Objective workspace"),
+                List.of("requested source/work product exists in the Objective workspace"),
                 evidence(base.evidenceRequirements(), PHASE_PRODUCE, sharedRequirements)));
 
         String predecessor = produceId;
+        if (fresh && (build || test || runtime)) {
+            String prepareId = base.stepId() + "-prepare";
+            phased.add(new ExecutionWorkSpec(
+                    prepareId,
+                    "PREPARE PHASE. Inspect the carried source/work product and create the minimal project/dependency "
+                            + "manifest and support configuration required for governed build, tests, and runtime verification. "
+                            + "Do not replace the requested work product and do not perform Git delivery. "
+                            + "Original Objective: " + base.objective(),
+                    base.target(),
+                    base.requiredCapability(),
+                    List.of(produceId),
+                    ExecutionWorkSpec.Consequence.MUTATING,
+                    List.of("a project/dependency manifest exists for the carried work product"),
+                    evidence(base.evidenceRequirements(), PHASE_PREPARE, sharedRequirements)));
+            predecessor = prepareId;
+        }
         if (build || test || runtime) {
             String verifyId = base.stepId() + "-verify";
             List<String> acceptance = new ArrayList<>();
@@ -110,7 +124,7 @@ public final class GeneralWorkspacePhasePlanner {
                             + "Do not change source or perform Git delivery. Original Objective: " + base.objective(),
                     base.target(),
                     base.requiredCapability(),
-                    List.of(produceId),
+                    List.of(predecessor),
                     runtime ? ExecutionWorkSpec.Consequence.MUTATING : ExecutionWorkSpec.Consequence.READ_ONLY,
                     acceptance,
                     evidence(base.evidenceRequirements(), PHASE_VERIFY, sharedRequirements)));

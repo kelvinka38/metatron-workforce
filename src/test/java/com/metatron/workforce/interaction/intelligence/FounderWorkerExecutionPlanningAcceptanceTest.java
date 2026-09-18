@@ -79,8 +79,8 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(3, plan.size(),
-                "lifecycle-heavy General Engineering must use durable produce/verify/deliver Work phases");
+        assertEquals(4, plan.size(),
+                "fresh lifecycle-heavy General Engineering must use durable produce/prepare/verify/deliver Work phases");
         assertTrue(plan.stream().allMatch(work ->
                 GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(work.requiredCapability())));
         assertTrue(plan.stream().noneMatch(work ->
@@ -95,6 +95,7 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
         assertEquals(List.of(), plan.get(0).dependsOn());
         assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
         assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertEquals(List.of(plan.get(2).stepId()), plan.get(3).dependsOn());
         assertTrue(plan.stream().allMatch(work -> !work.acceptanceCriteria().isEmpty()));
         assertTrue(plan.stream().allMatch(work -> !work.evidenceRequirements().isEmpty()));
     }
@@ -211,7 +212,7 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 "repository:kelvinka38/new-app".equals(work.target())));
         assertTrue(plan.stream().allMatch(work ->
                 work.consequence() == ExecutionWorkSpec.Consequence.MUTATING));
-        assertEquals(List.of(plan.getFirst().stepId()), plan.getLast().dependsOn());
+        assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
     }
 
     @Test
@@ -240,13 +241,14 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(2, plan.size());
+        assertEquals(3, plan.size());
         assertTrue(plan.stream().allMatch(work ->
                 "repository:kelvinka38/kitchen-companion".equals(work.target())));
         assertTrue(plan.stream().noneMatch(work ->
                 "repository:kelvinka38/metatron-workforce".equals(work.target())),
                 "an unrelated new app must never be silently pointed at the existing Workforce repository");
-        assertEquals(List.of(plan.getFirst().stepId()), plan.getLast().dependsOn());
+        assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
+        assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
     }
 
     @Test
