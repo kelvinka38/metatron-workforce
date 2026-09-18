@@ -9,6 +9,7 @@ import com.metatron.workforce.action.GeneralWorkspaceActionCatalog;
 import com.metatron.workforce.action.GeneralWebResearchAction;
 import com.metatron.workforce.execution.governance.ExecutionGate;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner;
 import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
 import com.metatron.workforce.operating.WorkerCognitionContextProjector;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
@@ -204,6 +205,9 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         Map<String, String> memory = new LinkedHashMap<>();
         memory.put("workspaceRef", workspace.workspaceRef()); memory.put("workspaceKey", workspace.workspaceKey());
         memory.put(MEMORY_WORKSPACE_MATERIALIZED, "false");
+        Path gitDirectory = workspaces.resolve(workspace, ".git");
+        memory.put("workspaceGitInitialized",
+                Boolean.toString(Files.isDirectory(gitDirectory, LinkOption.NOFOLLOW_LINKS)));
         Path provenance = workspaces.resolve(workspace, ".metatron-repository");
         if (!Files.exists(provenance, LinkOption.NOFOLLOW_LINKS)) return Map.copyOf(memory);
         if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS)) throw new IllegalStateException("objective workspace repository provenance is not a regular file");
@@ -232,16 +236,58 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         if (requiresExternalResearch(workSpec)) {
             return candidates.stream().filter(action -> GeneralWebResearchAction.ACTION_REF.equals(action.actionRef())).toList();
         }
+        List<ActionFabric.Action> phaseScoped = phaseScopedActions(candidates, workSpec);
         boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
         boolean freshNewApplication = workSpec.evidenceRequirements().stream()
                 .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase);
         if (freshNewApplication && !requiresRepositoryMaterialization(workSpec)) {
-            return candidates.stream()
+            return phaseScoped.stream()
                     .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
                     .toList();
         }
-        if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(candidates);
-        return candidates.stream().filter(action -> !"workspace.repository.materialize".equals(action.actionRef())).toList();
+        if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(phaseScoped);
+        return phaseScoped.stream()
+                .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
+                .toList();
+    }
+
+    private static List<ActionFabric.Action> phaseScopedActions(
+            List<ActionFabric.Action> candidates,
+            ExecutionWorkSpec workSpec) {
+        boolean produce = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PRODUCE);
+        boolean verify = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_VERIFY);
+        boolean deliver = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_DELIVER);
+        if (!produce && !verify && !deliver) return List.copyOf(candidates);
+
+        return candidates.stream().filter(action -> {
+            String ref = action.actionRef();
+            if (produce) {
+                return ref.equals("workspace.repository.materialize")
+                        || ref.equals("workspace.file.read")
+                        || ref.equals("workspace.file.list")
+                        || ref.equals("workspace.file.search")
+                        || ref.equals("workspace.file.patch")
+                        || ref.equals("workspace.file.write")
+                        || ref.equals("workspace.process.run")
+                        || ref.equals("workspace.shell.run");
+            }
+            if (verify) {
+                return ref.equals("workspace.file.read")
+                        || ref.equals("workspace.file.list")
+                        || ref.equals("workspace.file.search")
+                        || ref.equals("workspace.dependencies.install")
+                        || ref.equals("workspace.build.run")
+                        || ref.equals("workspace.test.run")
+                        || ref.equals("workspace.process.run");
+            }
+            return ref.equals("workspace.file.read")
+                    || ref.equals("workspace.file.list")
+                    || ref.equals("workspace.file.search")
+                    || ref.equals("workspace.git.status")
+                    || ref.equals("workspace.git.diff")
+                    || ref.equals("workspace.git.run")
+                    || ref.equals("workspace.github.pr.publish");
+        }).toList();
     }
 
     static boolean requiresExternalResearch(ExecutionWorkSpec workSpec) {
