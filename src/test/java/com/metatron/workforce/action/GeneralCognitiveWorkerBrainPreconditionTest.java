@@ -252,44 +252,97 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
-    void producePhaseRequiresWorkProductAndManifestButCountsCurrentObservationImmediately() {
+    void preparePhaseRequiresManifestAndCountsCurrentObservationImmediately() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
-                "produce",
-                "PRODUCE PHASE. Create a runnable application and its project manifest.",
+                "prepare",
+                "PREPARE PHASE. Create a project manifest for the carried application source.",
                 "repository:kelvinka38/example",
                 "execution.general.workspace",
-                List.of(),
+                List.of("produce"),
                 ExecutionWorkSpec.Consequence.MUTATING,
-                List.of("source exists", "manifest exists"),
+                List.of("manifest exists"),
                 List.of(
-                        "workspace-source:fresh-new-application",
-                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_PRODUCE,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_PREPARE,
                         com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.write"), List.of(),
+                Map.of(
+                        "workspacePrimarySourcePath", "src/App.js",
+                        "workspacePrimarySourcePreview", "import React from 'react';"));
+
+        CognitiveWorkerRuntime.Reflection wrongFile = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                context,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "written", Map.of("path", "README.md"), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("prepared"));
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, wrongFile.decision());
+
+        CognitiveWorkerRuntime.Reflection manifest = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                context,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "written", Map.of("path", "package.json"), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("prepared"));
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, manifest.decision());
+
+        CognitiveWorkerRuntime.CognitiveContext providerContext =
+                GeneralCognitiveWorkerBrain.providerActionSelectionContext(context);
+        assertEquals(List.of("workspace.file.write"), providerContext.availableActions());
+    }
+
+    @Test
+    void verifyPhaseOrdersDependenciesBuildTestAndBoundedRuntimeProbe() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "verify",
+                "VERIFY PHASE. Run governed build, tests, and runtime verification.",
+                "repository:kelvinka38/example",
+                "execution.general.workspace",
+                List.of("prepare"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("build passes", "tests pass", "runtime passes"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_VERIFY,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_BUILD,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_TEST,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
+        List<String> actions = List.of(
+                "workspace.dependencies.install", "workspace.build.run",
+                "workspace.test.run", "workspace.process.run");
+        Map<String, String> memory = Map.of(
+                "workspaceDependencyInstallRequired", "true",
+                "workspaceProjectKind", "node-react");
 
         CognitiveWorkerRuntime.CognitiveContext empty = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
-                List.of("workspace.file.write"), List.of(), Map.of());
+                actions, List.of(), memory);
+        assertEquals("workspace.dependencies.install",
+                GeneralCognitiveWorkerBrain.governedDependencyPrecondition(empty).actionRef());
+        assertNull(GeneralCognitiveWorkerBrain.governedBuildPrecondition(empty));
+        assertNull(GeneralCognitiveWorkerBrain.governedTestPrecondition(empty));
+        assertNull(GeneralCognitiveWorkerBrain.governedRuntimePrecondition(empty));
 
-        CognitiveWorkerRuntime.Reflection onlyManifest = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
-                empty,
-                ActionFabric.ActionObservation.success(
-                        "workspace.file.write", "written", Map.of("path", "package.json"), List.of()),
-                CognitiveWorkerRuntime.Reflection.complete("manifest written"));
-        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, onlyManifest.decision());
-
-        CognitiveWorkerRuntime.Cycle source = successfulCycle(
-                1, "workspace.file.write", Map.of("path", "src/index.js", "content", "console.log('ok')"));
-        CognitiveWorkerRuntime.CognitiveContext afterSource = new CognitiveWorkerRuntime.CognitiveContext(
+        CognitiveWorkerRuntime.Cycle deps = successfulCycle(1, "workspace.dependencies.install", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext afterDeps = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
-                List.of("workspace.file.write"), List.of(source), Map.of());
+                actions, List.of(deps), memory);
+        assertEquals("workspace.build.run",
+                GeneralCognitiveWorkerBrain.governedBuildPrecondition(afterDeps).actionRef());
 
-        CognitiveWorkerRuntime.Reflection complete = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
-                afterSource,
-                ActionFabric.ActionObservation.success(
-                        "workspace.file.write", "written", Map.of("path", "package.json"), List.of()),
-                CognitiveWorkerRuntime.Reflection.complete("manifest written"));
+        CognitiveWorkerRuntime.Cycle build = successfulCycle(2, "workspace.build.run", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext afterBuild = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                actions, List.of(deps, build), memory);
+        assertEquals("workspace.test.run",
+                GeneralCognitiveWorkerBrain.governedTestPrecondition(afterBuild).actionRef());
 
-        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, complete.decision());
+        CognitiveWorkerRuntime.Cycle test = successfulCycle(3, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext afterTest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                actions, List.of(deps, build, test), memory);
+        CognitiveWorkerRuntime.Thought runtime = GeneralCognitiveWorkerBrain.governedRuntimePrecondition(afterTest);
+        assertEquals("workspace.process.run", runtime.actionRef());
+        assertEquals("node", runtime.inputs().get("executable"));
+        assertTrue(runtime.inputs().get("argsJson").contains("dist/index.html"));
     }
 
     @Test
