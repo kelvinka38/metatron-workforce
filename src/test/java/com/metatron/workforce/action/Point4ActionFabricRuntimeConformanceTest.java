@@ -33,7 +33,7 @@ class Point4ActionFabricRuntimeConformanceTest {
                             Map.of("revision", "abc123"), List.of("evidence:inspect"), CLOCK.instant());
                 }),
                 action("workspace.file.patch", ActionFabric.Consequence.MUTATING, request -> {
-                    invoked.add("apply:" + request.inputs().get("revision"));
+                    invoked.add("apply:" + request.inputs().get("oldText"));
                     return new ActionFabric.ActionObservation("workspace.file.patch", true, "effect applied",
                             Map.of("effect", "done"), List.of("evidence:apply"), CLOCK.instant());
                 }),
@@ -59,7 +59,9 @@ class Point4ActionFabricRuntimeConformanceTest {
                         }
                         if (!context.memory().containsKey("effect")) {
                             return new CognitiveWorkerRuntime.Thought("workspace.file.patch",
-                                    Map.of("revision", context.memory().get("revision")),
+                                    Map.of("path", "README.md",
+                                            "oldText", context.memory().get("revision"),
+                                            "newText", "done"),
                                     "inspection identified revision to change");
                         }
                         return new CognitiveWorkerRuntime.Thought("tool.verify",

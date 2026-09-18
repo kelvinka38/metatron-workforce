@@ -47,7 +47,8 @@ class SotEnforcementRuntimeTest {
         ActionFabric fabric = new ActionFabric(List.of(action(calls)), f.gate);
         ActionFabric.ActionRequest request = new ActionFabric.ActionRequest(
                 "workspace.file.patch", "worker-1", "assignment-1", "auth-1", "objective-1", "step-1",
-                "idempotency-1", true, Map.of("path", "README.md"));
+                "idempotency-1", true, Map.of(
+                        "path", "README.md", "oldText", "before", "newText", "after"));
         assertThrows(GovernanceDeniedException.class, () -> fabric.execute(request));
         assertEquals(0, calls.get());
         assertTrue(fabric.execute(request, permit).success());
