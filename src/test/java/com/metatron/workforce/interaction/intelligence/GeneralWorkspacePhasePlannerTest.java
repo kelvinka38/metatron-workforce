@@ -33,24 +33,38 @@ class GeneralWorkspacePhasePlannerTest {
         assertEquals("general-engineering-workspace-execution-produce", produce.stepId());
         assertTrue(produce.dependsOn().isEmpty());
         assertTrue(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PRODUCE));
-        assertTrue(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        assertFalse(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        assertFalse(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_BUILD));
+        assertFalse(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
+        assertFalse(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
+        assertFalse(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
 
         assertEquals("general-engineering-workspace-execution-prepare", prepare.stepId());
         assertEquals(List.of(produce.stepId()), prepare.dependsOn());
         assertTrue(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PREPARE));
         assertTrue(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        assertFalse(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_BUILD));
+        assertFalse(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
+        assertFalse(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
+        assertFalse(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
 
         assertEquals(List.of(prepare.stepId()), verify.dependsOn());
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_VERIFY));
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_BUILD));
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
+        assertFalse(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        assertFalse(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
 
         assertEquals(List.of(verify.stepId()), deliver.dependsOn());
         assertTrue(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_DELIVER));
         assertTrue(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
         assertTrue(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_VERIFY));
         assertTrue(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR));
+        assertFalse(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+        assertFalse(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_BUILD));
+        assertFalse(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
+        assertFalse(deliver.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
     }
 
     @Test
