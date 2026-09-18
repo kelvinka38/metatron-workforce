@@ -24,9 +24,13 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
     private final Duration timeout;
 
     public HttpMetatronCognitionClient(String baseUrl, String authToken, ObjectMapper mapper) {
+        this(baseUrl, authToken, mapper, Duration.ofMillis(240_000));
+    }
+
+    public HttpMetatronCognitionClient(String baseUrl, String authToken, ObjectMapper mapper, Duration timeout) {
         this(baseUrl, authToken, mapper,
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
-                Duration.ofSeconds(120));
+                timeout);
     }
 
     HttpMetatronCognitionClient(String baseUrl, String authToken, ObjectMapper mapper, HttpClient client, Duration timeout) {
@@ -71,7 +75,7 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
 
             HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("metatron_cognition_http_" + response.statusCode());
+                throw new MetatronCognitionHttpException(response.statusCode(), errorCode(response.body()));
             }
             JsonNode root = mapper.readTree(response.body());
             String text = root.path("result").asText("").trim();
@@ -85,7 +89,16 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
             long latencyMillis = nonNegative(root.path("latencyMs").asLong(0));
             boolean fallbackOccurred = root.path("fallbackOccurred").asBoolean(false);
             List<String> providerAttempts = new ArrayList<>();
-            root.path("providerAttempts").forEach(attempt -> providerAttempts.add(attempt.asText()));
+            root.path("providerAttempts").forEach(attempt -> {
+                if (attempt.isTextual()) {
+                    providerAttempts.add(attempt.asText());
+                } else if (attempt.isObject()) {
+                    String attemptProvider = attempt.path("provider").asText("unknown");
+                    String failureClass = attempt.path("failureClass").asText("provider_error");
+                    long durationMillis = nonNegative(attempt.path("durationMs").asLong(0));
+                    providerAttempts.add(attemptProvider + "=" + failureClass + "@" + durationMillis + "ms");
+                }
+            });
             return new Response(text, endpointId, model, inputTokens, outputTokens, requestRef,
                     provider, latencyMillis, fallbackOccurred, providerAttempts);
         } catch (InterruptedException interrupted) {
@@ -96,6 +109,30 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
         } catch (Exception failure) {
             throw new IllegalStateException("metatron cognition request failed", failure);
         }
+    }
+
+    private String errorCode(String body) {
+        if (body == null || body.isBlank()) return "unknown";
+        try {
+            String value = mapper.readTree(body).path("error").asText("").trim();
+            return value.matches("[A-Za-z0-9_.-]{1,96}") ? value : "unknown";
+        } catch (Exception ignored) {
+            return "unknown";
+        }
+    }
+
+    public static final class MetatronCognitionHttpException extends IllegalStateException {
+        private final int statusCode;
+        private final String errorCode;
+
+        public MetatronCognitionHttpException(int statusCode, String errorCode) {
+            super("metatron_cognition_http_" + statusCode + ":" + (errorCode == null ? "unknown" : errorCode));
+            this.statusCode = statusCode;
+            this.errorCode = errorCode == null ? "unknown" : errorCode;
+        }
+
+        public int statusCode() { return statusCode; }
+        public String errorCode() { return errorCode; }
     }
 
     private static long nonNegative(long value) { return Math.max(0L, value); }

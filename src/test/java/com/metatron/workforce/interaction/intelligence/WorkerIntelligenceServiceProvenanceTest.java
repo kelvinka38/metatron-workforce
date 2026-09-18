@@ -5,6 +5,7 @@ import com.metatron.workforce.interaction.llm.LlmResponse;
 import com.metatron.workforce.interaction.tools.DefaultToolFabric;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -49,12 +50,13 @@ class WorkerIntelligenceServiceProvenanceTest {
     }
 
     @Test
-    void autonomousWorkerCognitionRetriesOneTransientInternalCapacityWindowThenSucceeds() {
+    void autonomousWorkerCognitionRetriesOneTransportResetThenSucceeds() {
         AtomicInteger calls = new AtomicInteger();
         AtomicInteger externalCalls = new AtomicInteger();
         MetatronCognitionClient cognition = request -> {
             if (calls.incrementAndGet() == 1) {
-                throw new IllegalStateException("metatron_cognition_429:capacity_exhausted");
+                throw new IllegalStateException("metatron cognition request failed",
+                        new IOException("Connection reset by peer"));
             }
             return new MetatronCognitionClient.Response(
                     "{\"actionRef\":\"workspace.file.search\",\"inputs\":{\"query\":\"slugify\"},\"rationale\":\"inspect\"}",
@@ -72,10 +74,20 @@ class WorkerIntelligenceServiceProvenanceTest {
 
         assertEquals(2, calls.get());
         assertEquals(0, externalCalls.get());
-        assertEquals(List.of(60_000L), sleeps);
+        assertEquals(List.of(5_000L), sleeps);
         assertTrue(response.evidenceReferences().stream()
-                .anyMatch(v -> v.contains("worker-intelligence-capacity-retry:") && v.contains("delay_ms=60000")));
+                .anyMatch(v -> v.contains("worker-intelligence-capacity-retry:") && v.contains("delay_ms=5000")));
         assertTrue(response.evidenceReferences().contains("metatron-cognition-request:internal-request-recovered"));
+    }
+
+    @Test
+    void autonomousWorkerCognitionDoesNotReplayCompletedNode502Chain() {
+        assertTerminalNodeFailureNotRetried(502, "all_providers_failed");
+    }
+
+    @Test
+    void autonomousWorkerCognitionDoesNotReplayExpiredNode504Chain() {
+        assertTerminalNodeFailureNotRetried(504, "cognition_deadline_exhausted");
     }
 
     @Test
@@ -104,6 +116,30 @@ class WorkerIntelligenceServiceProvenanceTest {
         assertEquals(0, externalCalls.get());
         assertTrue(sleeps.isEmpty());
         assertTrue(failure.getMessage().contains("capacity_exhausted"));
+    }
+
+    private static void assertTerminalNodeFailureNotRetried(int statusCode, String errorCode) {
+        AtomicInteger calls = new AtomicInteger();
+        AtomicInteger externalCalls = new AtomicInteger();
+        MetatronCognitionClient cognition = request -> {
+            calls.incrementAndGet();
+            throw new HttpMetatronCognitionClient.MetatronCognitionHttpException(statusCode, errorCode);
+        };
+        IntelligenceFabric fabric = fabric(cognition, externalCalls);
+        List<Long> sleeps = new ArrayList<>();
+        WorkerIntelligenceService service = WorkerIntelligenceService.backedBy(fabric, 1, sleeps::add);
+
+        HttpMetatronCognitionClient.MetatronCognitionHttpException failure = assertThrows(
+                HttpMetatronCognitionClient.MetatronCognitionHttpException.class,
+                () -> service.reason(new WorkerIntelligenceService.Request(
+                        "WORKER-GENERAL-ENGINEERING", "worker.cognition", "select one governed action", "context",
+                        List.of(), "WORKER-GENERAL-ENGINEERING", "objective-1", "assignment-1", "step-1", "attempt-1")));
+
+        assertEquals(statusCode, failure.statusCode());
+        assertEquals(errorCode, failure.errorCode());
+        assertEquals(1, calls.get());
+        assertEquals(0, externalCalls.get());
+        assertTrue(sleeps.isEmpty());
     }
 
     private static IntelligenceFabric fabric(MetatronCognitionClient cognition, AtomicInteger externalCalls) {

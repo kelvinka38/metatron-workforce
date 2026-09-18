@@ -52,9 +52,10 @@ public class IntelligenceRuntimeConfiguration {
             @Value("${OLLAMA_MODEL:}") String ollamaModel,
             @Value("${METATRON_COGNITION_URL:}") String cognitionUrl,
             @Value("${METATRON_COGNITION_AUTH:}") String cognitionAuth,
-            @Value("${METATRON_COGNITION_MAX_CONCURRENT:4}") int cognitionMaxConcurrent,
-            @Value("${METATRON_COGNITION_MAX_QUEUED:1024}") int cognitionMaxQueued,
-            @Value("${METATRON_COGNITION_QUEUE_WAIT_MS:60000}") long cognitionQueueWaitMillis,
+            @Value("${METATRON_COGNITION_HTTP_TIMEOUT_MS:240000}") long cognitionHttpTimeoutMillis,
+            @Value("${METATRON_COGNITION_MAX_CONCURRENT:1}") int cognitionMaxConcurrent,
+            @Value("${METATRON_COGNITION_MAX_QUEUED:2}") int cognitionMaxQueued,
+            @Value("${METATRON_COGNITION_QUEUE_WAIT_MS:180000}") long cognitionQueueWaitMillis,
             ObjectMapper objectMapper,
             CognitiveArtifactStore artifactStore,
             InferenceConsumptionLedger inferenceLedger,
@@ -63,7 +64,9 @@ public class IntelligenceRuntimeConfiguration {
                 ? "http://metatron-cognition-node:8091" : cognitionUrl;
         MetatronCognitionClient cognitionClient;
         {
-            MetatronCognitionClient transport = new HttpMetatronCognitionClient(ownedCognitionUrl, cognitionAuth, objectMapper);
+            MetatronCognitionClient transport = new HttpMetatronCognitionClient(
+                    ownedCognitionUrl, cognitionAuth, objectMapper,
+                    Duration.ofMillis(Math.max(1L, cognitionHttpTimeoutMillis)));
             cognitionClient = new CognitionCapacityCoordinator(
                     transport,
                     cognitionCapacityEvents,

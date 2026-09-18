@@ -1,60 +1,71 @@
 # Metatron Cognition Node
 
-Lightweight, dependency-free (Node.js built-in `fetch`/`http` only) Metatron-owned cognition
-front door. Bridges `METATRON_COGNITION_URL` (consumed by `HttpMetatronCognitionClient.java`) to a
-self-hosted Ollama model first, falling back to configured paid frontier providers only if Ollama is
-unavailable or fails.
+Dependency-free Node.js front door for Metatron-owned cognition. The provider order is intentionally:
 
-## Provider order (2026-09-16)
+1. Ollama / `qwen3:8b` (primary)
+2. Gemini
+3. OpenAI
+4. Anthropic
 
-1. **Ollama** (`OLLAMA_URL`, default `http://metatron-ollama:11434`; `OLLAMA_MODEL`, default
-   `llama3.2:1b` -- production currently runs `qwen3:8b`) -- the actual "METATRON_OWNED" compute this
-   node exists to provide.
-2. **Gemini** (`GEMINI_API_KEY`, `GEMINI_MODEL`) -- fallback only.
-3. **OpenAI** (`OPENAI_API_KEY`, `OPENAI_MODEL`) -- fallback only.
-4. **Anthropic** (`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`) -- fallback only.
+## Reliability envelope
 
-Every response includes `providerUsed`, `fallbackOccurred`, `latencyMs`, and (on total failure)
-`providerAttempts` -- the per-provider failure reasons in order tried.
+The node treats one cognition request as a single bounded transaction:
 
-## Known operational risk (2026-09-16)
+- `METATRON_COGNITION_TOTAL_TIMEOUT_MS=210000`
+- `OLLAMA_TIMEOUT_MS=150000`
+- `FRONTIER_PROVIDER_TIMEOUT_MS=18000`
+- `COGNITION_MAX_OUTPUT_TOKENS=256`
+- every provider attempt uses `min(provider timeout, remaining whole-request budget)`
+- every HTTP call is AbortController-bounded
+- completed provider chain failure returns `502 all_providers_failed`
+- exhausted whole-request budget returns `504 cognition_deadline_exhausted`
 
-OpenAI and Anthropic are currently out of credit. If Ollama and Gemini are both unavailable at the
-same time, no provider currently succeeds. This is a billing/credential state, not a code defect --
-tracked separately, not fixed by this change.
+For `worker.cognition`, qwen thinking defaults to `false` when `OLLAMA_THINK` is unset. A production-shaped
+256-token probe with native thinking consumed the entire generation budget as internal thinking and returned an empty
+action response. Other capabilities retain the model's native behavior unless `OLLAMA_THINK` is explicitly set.
 
-## Resource constraint
+Provider failure metadata is bounded to provider name, duration, and failure class; raw provider bodies
+and credentials are not returned.
 
-Host: 4 vCPU / 8 GB RAM / 160 GB disk. Only `qwen3:8b` is approved for this host -- do not switch to
-`qwen3:14b`/`30b`, Mixtral, or DeepSeek-large without re-verifying memory headroom (`qwen3:8b` alone
-pushed the host into swap during a single-request smoke test; see incident notes in chat history
-2026-09-16).
+## Immutable identity
 
-## Deploying a change
-
-This is deployed as a standalone Docker container (`metatron-cognition-node`), independent of the
-main Workforce app's Highway/Highway-deploy pipeline. There is currently no automated deploy path for
-this directory -- changes must be built and the container manually recreated:
+Build with the exact source SHA:
 
 ```bash
-docker build -f deploy/cognition-node/Dockerfile -t metatron-cognition-node:<tag> deploy/cognition-node
-docker stop metatron-cognition-node && docker rm metatron-cognition-node
-docker run -d \
-  --name metatron-cognition-node \
-  --network metatron-gateway-online \
-  --restart unless-stopped \
-  --env-file /opt/metatron/metatron-workforce/deploy/.env \
-  -e METATRON_COGNITION_AUTH=<value matching Workforce's METATRON_COGNITION_AUTH> \
-  -e OLLAMA_MODEL=qwen3:8b \
-  metatron-cognition-node:<tag>
+SHA="$(git rev-parse HEAD)"
+docker build \
+  --build-arg METATRON_COGNITION_REVISION="$SHA" \
+  -t "metatron-cognition-node:$SHA" \
+  -f deploy/cognition-node/Dockerfile deploy/cognition-node
 ```
 
-## Verifying a change
+The image carries `org.opencontainers.image.revision`, and `/healthz` reports the running revision,
+timeouts, output cap, model, and provider order.
+
+## Tests
+
+```bash
+node --test deploy/cognition-node/server.test.js
+./gradlew test --no-daemon
+```
+
+The Node suite covers provider order, output caps, whole-request deadline clamping, deterministic
+502/504 behavior, and explicit-vs-default Ollama thinking.
+
+## Safe smoke test
 
 ```bash
 ./deploy/cognition-node/smoke-test.sh "$METATRON_COGNITION_AUTH"
 ```
 
-Requires `metatron-cognition-node` and `metatron-ollama` already running on the
-`metatron-gateway-online` Docker network. Briefly stops and restarts `metatron-ollama` as part of the
-fallback test.
+The smoke test never stops or restarts the live Ollama container. It checks immutable health identity
+and the normal Ollama-primary path. Fallback behavior is covered by the Node test suite. A real
+fallback smoke may be run only against a separate canary Cognition Node by overriding `NODE_URL`.
+
+## Deployment ordering
+
+Deploy Workforce first with `METATRON_COGNITION_HTTP_TIMEOUT_MS=240000`, then deploy the Cognition
+Node. This ensures the Java caller remains alive longer than the Node's 210-second total deadline.
+
+For the current 4-vCPU / 8-GB host, start with one concurrent cognition request. Queue sizing and wait
+time must be based on the measured production-shaped qwen benchmark rather than increased blindly.
