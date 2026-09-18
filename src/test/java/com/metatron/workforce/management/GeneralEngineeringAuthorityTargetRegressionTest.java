@@ -57,30 +57,35 @@ class GeneralEngineeringAuthorityTargetRegressionTest {
                 request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
-        assertEquals(1, plan.size());
-        ExecutionWorkSpec routed = plan.getFirst();
-        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, routed.requiredCapability());
-        assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, routed.target(),
+        assertEquals(3, plan.size());
+        assertTrue(plan.stream().allMatch(routed ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(routed.requiredCapability())));
+        assertTrue(plan.stream().noneMatch(routed ->
+                GeneralWorkspaceAutonomousCapability.WORKER_ID.equals(routed.target())),
                 "governed execution target must never be the performer's own Worker identity");
-        // No-repository policy: this Objective names no repository, so the target is derived from the
-        // application it says it is building -- never silently defaulted onto the unrelated existing
-        // kelvinka38/metatron-workforce repository merely because that repository already has authority.
-        assertEquals("repository:kelvinka38/metatron-workforce-control-center", routed.target());
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, routed.consequence());
+        // No-repository policy: every durable phase must retain the same Objective-derived authority target.
+        assertTrue(plan.stream().allMatch(routed ->
+                "repository:kelvinka38/metatron-workforce-control-center".equals(routed.target())));
+        assertEquals(List.of(), plan.get(0).dependsOn());
+        assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
+        assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
 
-        // 2. GOVERNANCE: authority discovery/binding against the REAL production authority manifest
-        // catalog must succeed for the routed target -- this is exactly where the incident BLOCKED.
+        // 2. GOVERNANCE: every phase must bind independently against the same real production authority.
         GovernanceTestHarness harness = new GovernanceTestHarness(CLOCK);
-        GovernancePlanService.BoundPlan bound;
-        try {
-            bound = harness.plans.bindAuthorizedWork(
-                    "objective:general-engineering-authority-regression", "founder", routed,
-                    "FOUNDER", "authorization:general-engineering-authority-regression", Map.of());
-        } catch (GovernanceDeniedException denied) {
-            throw new AssertionError("governance binding must succeed for routed General Workspace work, "
-                    + "but was denied: " + denied.code() + " -- " + denied.getMessage(), denied);
+        for (ExecutionWorkSpec routedPhase : plan) {
+            GovernancePlanService.BoundPlan bound;
+            try {
+                bound = harness.plans.bindAuthorizedWork(
+                        "objective:general-engineering-authority-regression", "founder", routedPhase,
+                        "FOUNDER", "authorization:general-engineering-authority-regression", Map.of());
+            } catch (GovernanceDeniedException denied) {
+                throw new AssertionError("governance binding must succeed for routed General Workspace phase "
+                        + routedPhase.stepId() + ", but was denied: " + denied.code() + " -- "
+                        + denied.getMessage(), denied);
+            }
+            assertEquals("repository:metatron-canonical-four", bound.snapshot().targetScope());
         }
-        assertEquals("repository:metatron-canonical-four", bound.snapshot().targetScope());
+        ExecutionWorkSpec routed = plan.getFirst();
 
         // 3. STAFFING/ALLOCATION: an existing, already-staffed WORKER-GENERAL-ENGINEERING is reused for
         // the routed WorkSpec -- no second Worker formed, no worker.cognitive.work required.
@@ -141,21 +146,24 @@ class GeneralEngineeringAuthorityTargetRegressionTest {
                 request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
-        assertEquals(1, plan.size());
-        ExecutionWorkSpec routed = plan.getFirst();
-        assertEquals("repository:kelvinka38/new-app", routed.target());
+        assertEquals(2, plan.size());
+        assertTrue(plan.stream().allMatch(routed ->
+                "repository:kelvinka38/new-app".equals(routed.target())));
+        assertEquals(List.of(plan.getFirst().stepId()), plan.getLast().dependsOn());
 
         GovernanceTestHarness harness = new GovernanceTestHarness(CLOCK);
-        GovernancePlanService.BoundPlan bound;
-        try {
-            bound = harness.plans.bindAuthorizedWork(
-                    "objective:general-engineering-noncanonical-authority", "founder", routed,
-                    "FOUNDER", "authorization:general-engineering-noncanonical-authority", Map.of());
-        } catch (GovernanceDeniedException denied) {
-            throw new AssertionError("governance binding must succeed for an explicitly named, "
-                    + "non-canonical repository through the generic repository:* authority wildcard, "
-                    + "but was denied: " + denied.code() + " -- " + denied.getMessage(), denied);
+        for (ExecutionWorkSpec routed : plan) {
+            GovernancePlanService.BoundPlan bound;
+            try {
+                bound = harness.plans.bindAuthorizedWork(
+                        "objective:general-engineering-noncanonical-authority", "founder", routed,
+                        "FOUNDER", "authorization:general-engineering-noncanonical-authority", Map.of());
+            } catch (GovernanceDeniedException denied) {
+                throw new AssertionError("governance binding must succeed for an explicitly named, "
+                        + "non-canonical repository phase through the generic repository:* authority wildcard, "
+                        + "but was denied: " + denied.code() + " -- " + denied.getMessage(), denied);
+            }
+            assertEquals("repository:metatron-canonical-four", bound.snapshot().targetScope());
         }
-        assertEquals("repository:metatron-canonical-four", bound.snapshot().targetScope());
     }
 }
