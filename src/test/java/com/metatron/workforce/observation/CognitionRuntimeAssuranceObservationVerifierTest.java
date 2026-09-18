@@ -22,6 +22,38 @@ class CognitionRuntimeAssuranceObservationVerifierTest {
     }
 
     @Test
+    void supportsAndPassesEveryCriterionInCognitionAssuranceStep() {
+        List<String> criteria = List.of(
+                "A real Worker cognition request completes through the Metatron-owned cognition endpoint.",
+                "Observed model identity is strictly qwen3:8b.",
+                "No external paid provider is used.");
+        List<String> evidenceRequirements = List.of(
+                "metatron cognition endpoint evidence",
+                "metatron cognition model evidence",
+                "worker intelligence request and Assignment attribution");
+
+        for (int index = 0; index < criteria.size(); index++) {
+            ObservationRequirement requirement = new ObservationRequirement(
+                    "objective-test:observation:step-1:criterion:" + (index + 1),
+                    "objective-test", "step-1", "step-1:criterion:" + (index + 1), "qwen3:8b",
+                    criteria.get(index), evidenceRequirements, Instant.parse("2026-09-18T00:00:00Z"));
+            assertTrue(verifier.supports(requirement));
+            assertEquals(ObservationReport.CriterionResult.PASS,
+                    verifier.observe(requirement, evidence("qwen3:8b", "ollama"), Instant.now())
+                            .orElseThrow().criterionResult());
+        }
+    }
+
+    @Test
+    void requiresTheFullCognitionAssuranceEvidenceContract() {
+        ObservationRequirement partial = new ObservationRequirement(
+                "r-partial", "objective-test", "step-1", "step-1:criterion:2", "qwen3:8b",
+                "Observed model identity is strictly qwen3:8b.",
+                List.of("metatron cognition model evidence"), Instant.parse("2026-09-18T00:00:00Z"));
+        assertFalse(verifier.supports(partial));
+    }
+
+    @Test
     void passesCompleteMetatronOwnedWorkerCognitionEvidence() {
         ObservationReport report = verifier.observe(
                 requirement("qwen3:8b"), evidence("qwen3:8b", "ollama"),
