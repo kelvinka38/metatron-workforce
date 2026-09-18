@@ -274,7 +274,7 @@ class GeneralCognitiveWorkerBrainClosureTest {
             assertTrue(request.instructions().contains("workerConstitution"));
             assertTrue(request.instructions().contains("Role or runtime profile never self-grants authority"));
             assertTrue(request.context().contains("\"workerConstitution\""));
-            assertTrue(request.context().contains("MATERIALIZED WORKER CONSTITUTION — RUNTIME"));
+            assertTrue(request.context().contains("WORKER_COGNITION_CONTEXT_V1"));
             assertTrue(request.context().contains("authority=policy:bounded:test"));
             return new WorkerIntelligenceService.Response(
                     "intelligence-constitution-grounded",
@@ -290,12 +290,15 @@ class GeneralCognitiveWorkerBrainClosureTest {
                 "worker-1", "assignment-1", "authorization-1", "objective-1", work, "idem-1",
                 List.of("workspace.file.read"), List.of(),
                 Map.of("workerConstitution",
-                        "MATERIALIZED WORKER CONSTITUTION — RUNTIME\nauthority=policy:bounded:test"));
+                        "WORKER_COGNITION_CONTEXT_V1=assignment-scoped bounded projection\n"
+                                + "source_snapshot_ref=worker-constitution-runtime:test\n"
+                                + "assignment=assignment-1:authority=policy:bounded:test"));
 
         CognitiveWorkerRuntime.Thought thought = brain.think(context);
 
         assertEquals("workspace.file.read", thought.actionRef());
         assertEquals("README.md", thought.inputs().get("path"));
     }
+
 
 }
