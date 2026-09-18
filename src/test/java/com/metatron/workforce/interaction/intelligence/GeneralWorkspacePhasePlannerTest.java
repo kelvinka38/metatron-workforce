@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class GeneralWorkspacePhasePlannerTest {
 
     @Test
-    void lifecycleHeavyGeneralEngineeringBecomesDurableProduceVerifyDeliverGraph() {
+    void lifecycleHeavyGeneralEngineeringBecomesDurableProducePrepareVerifyDeliverGraph() {
         ExecutionWorkSpec base = new ExecutionWorkSpec(
                 "general-engineering-workspace-execution",
                 "Build and deliver a complete runnable web application, run build and tests, "
@@ -24,17 +24,23 @@ class GeneralWorkspacePhasePlannerTest {
 
         List<ExecutionWorkSpec> plan = GeneralWorkspacePhasePlanner.phase(base);
 
-        assertEquals(3, plan.size());
+        assertEquals(4, plan.size());
         ExecutionWorkSpec produce = plan.get(0);
-        ExecutionWorkSpec verify = plan.get(1);
-        ExecutionWorkSpec deliver = plan.get(2);
+        ExecutionWorkSpec prepare = plan.get(1);
+        ExecutionWorkSpec verify = plan.get(2);
+        ExecutionWorkSpec deliver = plan.get(3);
 
         assertEquals("general-engineering-workspace-execution-produce", produce.stepId());
         assertTrue(produce.dependsOn().isEmpty());
         assertTrue(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PRODUCE));
         assertTrue(produce.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
 
-        assertEquals(List.of(produce.stepId()), verify.dependsOn());
+        assertEquals("general-engineering-workspace-execution-prepare", prepare.stepId());
+        assertEquals(List.of(produce.stepId()), prepare.dependsOn());
+        assertTrue(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PREPARE));
+        assertTrue(prepare.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+
+        assertEquals(List.of(prepare.stepId()), verify.dependsOn());
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_VERIFY));
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_BUILD));
         assertTrue(verify.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
