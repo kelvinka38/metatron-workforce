@@ -119,7 +119,7 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
                         // of a repository that does not exist yet. Must match
                         // GeneralCognitiveWorkerBrain.NEW_APPLICATION_WORKSPACE_EVIDENCE exactly.
                         "workspace-source:fresh-new-application");
-        return List.of(new ExecutionWorkSpec(
+        ExecutionWorkSpec base = new ExecutionWorkSpec(
                 "general-engineering-workspace-execution",
                 objective,
                 "repository:" + governed.repository(),
@@ -130,7 +130,8 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
                         "canonical Worker " + workerId + " performs the requested workspace execution",
                         "the work is executed under a real Workforce Assignment attributed to " + workerId
                                 + " through its governed general workspace capability"),
-                evidenceRequirements));
+                evidenceRequirements);
+        return GeneralWorkspacePhasePlanner.phase(base);
     }
 
     private static final Pattern APPLICATION_NAME = Pattern.compile(

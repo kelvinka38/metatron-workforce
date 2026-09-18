@@ -111,6 +111,70 @@ class GeneralWorkspaceCrossStepContinuityTest {
     }
 
     @Test
+    void phaseContractsExposeOnlyActionsThatAreMeaningfulForThatPhase() {
+        List<ActionFabric.Action> candidates = List.of(
+                action("workspace.repository.materialize"),
+                action("workspace.file.read"),
+                action("workspace.file.list"),
+                action("workspace.file.search"),
+                action("workspace.file.patch"),
+                action("workspace.file.write"),
+                action("workspace.dependencies.install"),
+                action("workspace.process.run"),
+                action("workspace.shell.run"),
+                action("workspace.git.status"),
+                action("workspace.git.diff"),
+                action("workspace.git.run"),
+                action("workspace.github.pr.publish"),
+                action("workspace.build.run"),
+                action("workspace.test.run"));
+
+        ExecutionWorkSpec produce = new ExecutionWorkSpec(
+                "produce", "produce source", "repository:kelvinka38/example",
+                GeneralWorkspaceAutonomousCapability.CAPABILITY, List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING, List.of("source exists"),
+                List.of(com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_PRODUCE));
+        List<String> produceRefs = GeneralWorkspaceAutonomousCapability.actionsForWork(
+                candidates, produce, Map.of()).stream().map(ActionFabric.Action::actionRef).toList();
+        assertTrue(produceRefs.contains("workspace.file.write"));
+        assertFalse(produceRefs.contains("workspace.build.run"));
+        assertFalse(produceRefs.contains("workspace.test.run"));
+        assertFalse(produceRefs.contains("workspace.git.run"));
+        assertFalse(produceRefs.contains("workspace.github.pr.publish"));
+
+        ExecutionWorkSpec verify = new ExecutionWorkSpec(
+                "verify", "verify carried source", "repository:kelvinka38/example",
+                GeneralWorkspaceAutonomousCapability.CAPABILITY, List.of("produce"),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("tests pass"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_VERIFY,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_BUILD,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_TEST));
+        List<String> verifyRefs = GeneralWorkspaceAutonomousCapability.actionsForWork(
+                candidates, verify, Map.of()).stream().map(ActionFabric.Action::actionRef).toList();
+        assertTrue(verifyRefs.contains("workspace.dependencies.install"));
+        assertTrue(verifyRefs.contains("workspace.build.run"));
+        assertTrue(verifyRefs.contains("workspace.test.run"));
+        assertFalse(verifyRefs.contains("workspace.file.write"));
+        assertFalse(verifyRefs.contains("workspace.git.run"));
+
+        ExecutionWorkSpec deliver = new ExecutionWorkSpec(
+                "deliver", "deliver carried source", "repository:kelvinka38/example",
+                GeneralWorkspaceAutonomousCapability.CAPABILITY, List.of("verify"),
+                ExecutionWorkSpec.Consequence.MUTATING, List.of("commit exists"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_DELIVER,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
+        List<String> deliverRefs = GeneralWorkspaceAutonomousCapability.actionsForWork(
+                candidates, deliver, Map.of()).stream().map(ActionFabric.Action::actionRef).toList();
+        assertTrue(deliverRefs.contains("workspace.git.run"));
+        assertTrue(deliverRefs.contains("workspace.git.status"));
+        assertFalse(deliverRefs.contains("workspace.file.write"));
+        assertFalse(deliverRefs.contains("workspace.build.run"));
+        assertFalse(deliverRefs.contains("workspace.test.run"));
+    }
+
+    @Test
     void explicitMaterializationStepRetainsMaterializeActionEvenWhenWorkspaceAlreadyExists() {
         ExecutionWorkSpec materialize = new ExecutionWorkSpec(
                 "step-1",

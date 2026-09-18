@@ -136,7 +136,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
             addDistinct(evidence, "fresh authoritative GitHub API Observation");
         }
 
-        return List.of(new ExecutionWorkSpec(
+        ExecutionWorkSpec base = new ExecutionWorkSpec(
                 "explicit-general-workspace",
                 semantic,
                 request.target(),
@@ -144,7 +144,8 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                 List.of(),
                 consequence,
                 acceptance,
-                evidence));
+                evidence);
+        return GeneralWorkspacePhasePlanner.phase(base);
     }
 
     /**
@@ -209,7 +210,7 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                 .findFirst()
                 .orElse(plan.getFirst().stepId());
 
-        return List.of(new ExecutionWorkSpec(
+        ExecutionWorkSpec base = new ExecutionWorkSpec(
                 stepId,
                 semantic,
                 request.target(),
@@ -217,7 +218,8 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                 List.of(),
                 consequence,
                 acceptance,
-                evidence));
+                evidence);
+        return GeneralWorkspacePhasePlanner.phase(base);
     }
 
     private static String explicitRequestSemantic(NormalizedRequest request) {

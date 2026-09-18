@@ -216,6 +216,83 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
+    void freshDeliveryPhaseInitializesGitDeterministicallyBeforeAdd() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "deliver",
+                "DELIVER PHASE. Commit carried work product and verify Git state.",
+                "repository:kelvinka38/example",
+                "execution.general.workspace",
+                List.of("verify"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("commit exists"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_DELIVER,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_GIT_VERIFY));
+        CognitiveWorkerRuntime.CognitiveContext beforeInit = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.git.run", "workspace.git.status"), List.of(),
+                Map.of("workspaceGitInitialized", "false"));
+
+        CognitiveWorkerRuntime.Thought init = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeInit);
+
+        assertEquals("workspace.git.run", init.actionRef());
+        assertEquals("[\"init\"]", init.inputs().get("argsJson"));
+
+        CognitiveWorkerRuntime.Cycle initialized = successfulCycle(1, "workspace.git.run", init.inputs());
+        CognitiveWorkerRuntime.CognitiveContext beforeAdd = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.git.run", "workspace.git.status"), List.of(initialized),
+                Map.of("workspaceGitInitialized", "false"));
+
+        CognitiveWorkerRuntime.Thought add = GeneralCognitiveWorkerBrain.governedGitPrecondition(beforeAdd);
+
+        assertEquals("workspace.git.run", add.actionRef());
+        assertEquals("[\"add\",\"-A\"]", add.inputs().get("argsJson"));
+    }
+
+    @Test
+    void producePhaseRequiresWorkProductAndManifestButCountsCurrentObservationImmediately() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "produce",
+                "PRODUCE PHASE. Create a runnable application and its project manifest.",
+                "repository:kelvinka38/example",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("source exists", "manifest exists"),
+                List.of(
+                        "workspace-source:fresh-new-application",
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_PRODUCE,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
+
+        CognitiveWorkerRuntime.CognitiveContext empty = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.write"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Reflection onlyManifest = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                empty,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "written", Map.of("path", "package.json"), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("manifest written"));
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, onlyManifest.decision());
+
+        CognitiveWorkerRuntime.Cycle source = successfulCycle(
+                1, "workspace.file.write", Map.of("path", "src/index.js", "content", "console.log('ok')"));
+        CognitiveWorkerRuntime.CognitiveContext afterSource = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.file.write"), List.of(source), Map.of());
+
+        CognitiveWorkerRuntime.Reflection complete = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+                afterSource,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "written", Map.of("path", "package.json"), List.of()),
+                CognitiveWorkerRuntime.Reflection.complete("manifest written"));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, complete.decision());
+    }
+
+    @Test
     void dedicatedCommitStepStagesOnlyBoundedPathFromWorkWithoutStepLocalMutationHistory() {
         ExecutionWorkSpec work = stageAndCommitWork();
         CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(

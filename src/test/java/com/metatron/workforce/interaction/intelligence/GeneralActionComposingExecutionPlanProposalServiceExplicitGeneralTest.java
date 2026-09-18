@@ -76,17 +76,18 @@ class GeneralActionComposingExecutionPlanProposalServiceExplicitGeneralTest {
                         "repository.pr.propose",
                         "repository.audit.read"));
 
-        assertEquals(1, result.size());
-        ExecutionWorkSpec work = result.getFirst();
-        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
-        assertEquals(List.of(), work.dependsOn());
-        assertTrue(work.objective().contains("src/main/java/com/metatron/Fix.java"));
-        assertTrue(work.objective().contains("Do not merge"));
-        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("tests pass")));
-        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("pull request")));
-        assertTrue(work.evidenceRequirements().contains(
-                GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER));
+        assertEquals(3, result.size());
+        assertTrue(result.stream().allMatch(work ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(work.requiredCapability())));
+        assertEquals(List.of(), result.get(0).dependsOn());
+        assertEquals(List.of(result.get(0).stepId()), result.get(1).dependsOn());
+        assertEquals(List.of(result.get(1).stepId()), result.get(2).dependsOn());
+        assertTrue(result.stream().allMatch(work -> work.objective().contains("src/main/java/com/metatron/Fix.java")));
+        assertTrue(result.stream().allMatch(work -> work.objective().contains("Do not merge")));
+        assertTrue(result.get(1).evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
+        assertTrue(result.get(2).evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR));
+        assertTrue(result.stream().allMatch(work -> work.evidenceRequirements().contains(
+                GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER)));
         assertFalse(result.stream().anyMatch(step -> "repository.pr.propose".equals(step.requiredCapability())));
         assertFalse(result.stream().anyMatch(step -> "repository.audit.read".equals(step.requiredCapability())));
     }
@@ -127,16 +128,20 @@ class GeneralActionComposingExecutionPlanProposalServiceExplicitGeneralTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY));
 
         assertFalse(delegateCalled.get());
-        assertEquals(1, result.size());
-        ExecutionWorkSpec work = result.getFirst();
-        assertEquals("explicit-general-workspace", work.stepId());
-        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
-        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("tests pass")));
-        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("pull request")));
-        assertTrue(work.acceptanceCriteria().stream().anyMatch(value -> value.contains("unmerged")));
-        assertTrue(work.evidenceRequirements().contains(
-                GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER));
+        assertEquals(3, result.size());
+        assertEquals("explicit-general-workspace-produce", result.get(0).stepId());
+        assertEquals("explicit-general-workspace-verify", result.get(1).stepId());
+        assertEquals("explicit-general-workspace-deliver", result.get(2).stepId());
+        assertTrue(result.stream().allMatch(work ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(work.requiredCapability())));
+        assertEquals(List.of(), result.get(0).dependsOn());
+        assertEquals(List.of(result.get(0).stepId()), result.get(1).dependsOn());
+        assertEquals(List.of(result.get(1).stepId()), result.get(2).dependsOn());
+        assertTrue(result.get(1).evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_TEST));
+        assertTrue(result.get(2).evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
+        assertTrue(result.get(2).evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR));
+        assertTrue(result.stream().allMatch(work -> work.evidenceRequirements().contains(
+                GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER)));
     }
 
     @Test

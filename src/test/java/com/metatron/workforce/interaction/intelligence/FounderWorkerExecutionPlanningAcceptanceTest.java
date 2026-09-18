@@ -79,24 +79,24 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(1, plan.size());
-        ExecutionWorkSpec work = plan.getFirst();
-        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
-        assertNotEquals(FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY, work.requiredCapability(),
+        assertEquals(3, plan.size(),
+                "lifecycle-heavy General Engineering must use durable produce/verify/deliver Work phases");
+        assertTrue(plan.stream().allMatch(work ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(work.requiredCapability())));
+        assertTrue(plan.stream().noneMatch(work ->
+                FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY.equals(work.requiredCapability())),
                 "General Engineering implementation work must not be downgraded to the cognitive-work shortcut");
         // Authority target semantics fix: target() is the governed SoT resource authority discovery
-        // resolves, never the performer identity -- it must not be the literal Worker id (no authority
-        // manifest is or should be keyed by a Worker). This brand-new-app Objective names no repository,
-        // so the target is derived from the application it says it is building ("called Metatron
-        // Workforce Control Center") under the Founder GitHub owner -- never silently defaulted onto the
-        // unrelated existing kelvinka38/metatron-workforce repository merely because that repository
-        // already resolves authority.
-        assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, work.target(),
-                "governed execution target must never be the performer's own Worker identity");
-        assertEquals("repository:kelvinka38/metatron-workforce-control-center", work.target());
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
-        assertFalse(work.acceptanceCriteria().isEmpty());
-        assertFalse(work.evidenceRequirements().isEmpty());
+        // resolves, never the performer identity -- it must not be the literal Worker id.
+        assertTrue(plan.stream().noneMatch(work ->
+                GeneralWorkspaceAutonomousCapability.WORKER_ID.equals(work.target())));
+        assertTrue(plan.stream().allMatch(work ->
+                "repository:kelvinka38/metatron-workforce-control-center".equals(work.target())));
+        assertEquals(List.of(), plan.get(0).dependsOn());
+        assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
+        assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertTrue(plan.stream().allMatch(work -> !work.acceptanceCriteria().isEmpty()));
+        assertTrue(plan.stream().allMatch(work -> !work.evidenceRequirements().isEmpty()));
     }
 
     @Test
@@ -204,11 +204,14 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(1, plan.size());
-        ExecutionWorkSpec work = plan.getFirst();
-        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, work.requiredCapability());
-        assertEquals("repository:kelvinka38/new-app", work.target());
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
+        assertEquals(2, plan.size());
+        assertTrue(plan.stream().allMatch(work ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(work.requiredCapability())));
+        assertTrue(plan.stream().allMatch(work ->
+                "repository:kelvinka38/new-app".equals(work.target())));
+        assertTrue(plan.stream().allMatch(work ->
+                work.consequence() == ExecutionWorkSpec.Consequence.MUTATING));
+        assertEquals(List.of(plan.getFirst().stepId()), plan.getLast().dependsOn());
     }
 
     @Test
@@ -237,12 +240,13 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(1, plan.size());
-        ExecutionWorkSpec work = plan.getFirst();
-        assertEquals("repository:kelvinka38/kitchen-companion", work.target());
-        assertNotEquals("repository:kelvinka38/metatron-workforce", work.target(),
+        assertEquals(2, plan.size());
+        assertTrue(plan.stream().allMatch(work ->
+                "repository:kelvinka38/kitchen-companion".equals(work.target())));
+        assertTrue(plan.stream().noneMatch(work ->
+                "repository:kelvinka38/metatron-workforce".equals(work.target())),
                 "an unrelated new app must never be silently pointed at the existing Workforce repository");
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, work.consequence());
+        assertEquals(List.of(plan.getFirst().stepId()), plan.getLast().dependsOn());
     }
 
     @Test

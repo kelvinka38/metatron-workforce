@@ -64,6 +64,7 @@ public final class ExecutionWorkspaceManager {
             String workspaceId="execution-workspace:"+key;
             atomicWrite(path.resolve(".metatron-execution-workspace"),
                     "workspaceId="+workspaceId+"\nattemptId="+attemptId+"\nattemptFence="+attemptFence+"\nworkerId="+attempt.workerId()+"\nobjectiveId="+attempt.objectiveId()+"\nstepId="+attempt.stepId()+"\n");
+            carryForwardSuccessfulPrimaryWorkspace(attempt.objectiveId(), attempt.workerId(), path);
             List<ExecutionRepositoryComponent> carried = carryForwardCommittedComponents(attempt.objectiveId(), attempt.workerId(), path);
             ExecutionWorkspaceBinding binding = new ExecutionWorkspaceBinding(workspaceId,attemptId,attemptFence,
                     attempt.workerId(),attempt.objectiveId(),attempt.stepId(),path.toString(),1,
@@ -223,6 +224,48 @@ public final class ExecutionWorkspaceManager {
     private static void rejectExistingSymlinks(Path base,Path target){Path current=base;for(Path part:base.relativize(target)){current=current.resolve(part);if(Files.exists(current,LinkOption.NOFOLLOW_LINKS)&&Files.isSymbolicLink(current))throw new SecurityException("workspace symlink traversal denied");}}
     private static void deleteTree(Path path){try{if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS))return;if(Files.isSymbolicLink(path))throw new SecurityException("workspace root symlink denied");try(var stream=Files.walk(path)){for(Path p:stream.sorted(java.util.Comparator.reverseOrder()).toList()){if(Files.isSymbolicLink(p))Files.deleteIfExists(p);else Files.deleteIfExists(p);}}}catch(IOException e){throw new IllegalStateException("cannot dispose execution workspace",e);}}
     private void persist(){store.save(bindings);}
+
+    /**
+     * Carry the canonical primary workspace forward only from the most recent SUCCEEDED attempt for
+     * the same Objective and Worker. Execution roots remain attempt-scoped/fenced; failed, abandoned or
+     * fenced work is never a source. This is the durable handoff boundary that lets a Work graph split
+     * production, verification and delivery into separate governed attempts without losing files.
+     */
+    private void carryForwardSuccessfulPrimaryWorkspace(String objectiveId,String workerId,Path newRoot){
+        ExecutionWorkspaceBinding source=null;
+        for(ExecutionWorkspaceBinding candidate:bindings.values()){
+            if(!candidate.objectiveId().equals(objectiveId)||!candidate.workerId().equals(workerId)) continue;
+            if(candidate.status()==ExecutionWorkspaceBinding.Status.DISPOSED) continue;
+            ExecutionAttempt sourceAttempt=attempts.find(candidate.attemptId()).orElse(null);
+            if(sourceAttempt==null||sourceAttempt.status()!=ExecutionAttempt.Status.SUCCEEDED) continue;
+            if(source==null||candidate.updatedAt().isAfter(source.updatedAt())) source=candidate;
+        }
+        if(source==null) return;
+        Path sourceRoot;
+        try{sourceRoot=resolveRoot(source);}catch(SecurityException invalid){return;}
+        Path from=sourceRoot.resolve("repos").resolve("primary").normalize();
+        if(!from.startsWith(sourceRoot)||!Files.isDirectory(from,LinkOption.NOFOLLOW_LINKS)) return;
+        Path to=newRoot.resolve("repos").resolve("primary").normalize();
+        if(!to.startsWith(newRoot)) throw new SecurityException("carried primary workspace escaped execution root");
+        try{copyPrimaryTree(from,to);}
+        catch(IOException e){throw new IllegalStateException("cannot carry forward successful primary workspace",e);}
+    }
+
+    private static void copyPrimaryTree(Path from,Path to)throws IOException{
+        try(var stream=Files.walk(from)){
+            for(Path source:stream.sorted().toList()){
+                if(Files.isSymbolicLink(source)) throw new SecurityException("carry-forward source contains symlink: "+source);
+                Path relative=from.relativize(source);
+                if(relative.toString().equals(".metatron-workspace")) continue;
+                Path target=to.resolve(relative);
+                if(Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(target);
+                else{
+                    Files.createDirectories(target.getParent());
+                    Files.copy(source,target,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES);
+                }
+            }
+        }
+    }
 
     /**
      * Root-cause fix for GITHUB-PUBLISH-EMPTY-DELTA: workspace identity is intentionally attempt-scoped

@@ -126,10 +126,12 @@ class AutonomousStaffingServiceTest {
                 "case:general-engineering-staffing-reuse",
                 request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY));
-        assertEquals(1, plan.size());
+        assertEquals(3, plan.size());
+        assertTrue(plan.stream().allMatch(routed ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(routed.requiredCapability())));
+        assertTrue(plan.stream().noneMatch(routed ->
+                FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY.equals(routed.requiredCapability())));
         ExecutionWorkSpec routed = plan.getFirst();
-        assertEquals(GeneralWorkspaceAutonomousCapability.CAPABILITY, routed.requiredCapability());
-        assertNotEquals(FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY, routed.requiredCapability());
 
         AutonomousStaffingService staffing =
                 new AutonomousStaffingService(core, List.of(new GeneralEngineeringStaffingPolicy()));

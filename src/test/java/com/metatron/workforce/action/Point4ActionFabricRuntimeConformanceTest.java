@@ -103,6 +103,56 @@ class Point4ActionFabricRuntimeConformanceTest {
     }
 
     @Test
+    void identicalSuccessfulMutationIsNotExecutedTwiceBackToBack() {
+        java.util.concurrent.atomic.AtomicInteger invocations = new java.util.concurrent.atomic.AtomicInteger();
+        GovernanceTestHarness governance = new GovernanceTestHarness(CLOCK);
+        ActionFabric fabric = new ActionFabric(List.of(
+                action("workspace.file.write", ActionFabric.Consequence.MUTATING, request -> {
+                    invocations.incrementAndGet();
+                    return ActionFabric.ActionObservation.success(
+                            "workspace.file.write", "mutated", Map.of("path", request.inputs().get("path")),
+                            List.of("mutation-evidence"));
+                })), governance.gate);
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, ActionJournal.noop(), 3, governance.gate);
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "write one governed file exactly once", "kelvinka38/metatron-workforce",
+                "execution.general.workspace", List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("file write applied once"), List.of("file write evidence"));
+        GovernanceTestHarness.BoundMutation mutation = governance.bind(
+                OBJECTIVE, "founder-test", WORKER, ASSIGNMENT, AUTH, "runtime-duplicate", work);
+
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
+                WORKER, ASSIGNMENT, AUTH, OBJECTIVE, work, "idempotency-duplicate", mutation.context(),
+                new CognitiveWorkerRuntime.Brain() {
+                    @Override
+                    public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                        return new CognitiveWorkerRuntime.Thought(
+                                "workspace.file.write",
+                                Map.of("path", "docs/once.txt", "content", "same"),
+                                "same mutation");
+                    }
+
+                    @Override
+                    public CognitiveWorkerRuntime.Reflection reflect(
+                            CognitiveWorkerRuntime.CognitiveContext context,
+                            ActionFabric.ActionObservation observation) {
+                        return observation.success()
+                                ? CognitiveWorkerRuntime.Reflection.continueWith("attempt duplicate")
+                                : CognitiveWorkerRuntime.Reflection.failed(observation.summary());
+                    }
+                });
+
+        assertEquals(1, invocations.get());
+        assertFalse(outcome.success());
+        assertEquals(2, outcome.cycles().size());
+        assertFalse(outcome.cycles().getLast().observation().success());
+        assertTrue(outcome.cycles().getLast().observation().summary().contains(
+                "redundant identical successful mutation blocked"));
+        assertTrue(outcome.cycles().getLast().observation().evidenceReferences().contains(
+                "action-redundant-no-state-change:workspace.file.write"));
+    }
+
+    @Test
     void brainCannotEscapeTheGovernedActionCatalog() {
         ActionFabric fabric = new ActionFabric(List.of(
                 action("tool.allowed", ActionFabric.Consequence.READ_ONLY,
