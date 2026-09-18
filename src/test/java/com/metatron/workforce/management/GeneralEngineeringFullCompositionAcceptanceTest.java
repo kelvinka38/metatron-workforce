@@ -71,13 +71,14 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
                 "case:full-composition-acceptance", request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
-        assertEquals(3, plan.size());
+        assertEquals(4, plan.size());
         assertTrue(plan.stream().allMatch(routed -> CAPABILITY.equals(routed.requiredCapability())));
         assertTrue(plan.stream().allMatch(routed ->
                 "repository:kelvinka38/metatron-workforce-control-center".equals(routed.target())));
         assertEquals(List.of(), plan.get(0).dependsOn());
         assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
         assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertEquals(List.of(plan.get(2).stepId()), plan.get(3).dependsOn());
         assertTrue(plan.getFirst().evidenceRequirements().stream()
                 .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase),
                 "only the production phase must carry the fresh-new-application source marker");
@@ -131,6 +132,10 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
                 if (stepId.endsWith("-produce")) {
                     evidence = List.of(
                             "workspace-source:fresh-new-application:path=src/App.java",
+                            "worker-assignment evidence attributed to " + WORKER_ID);
+                } else if (stepId.endsWith("-prepare")) {
+                    evidence = List.of(
+                            "workspace-manifest:package.json",
                             "worker-assignment evidence attributed to " + WORKER_ID);
                 } else if (stepId.endsWith("-verify")) {
                     evidence = List.of(
