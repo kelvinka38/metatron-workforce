@@ -47,6 +47,74 @@ class GeneralEngineeringFreshApplicationMaterializationTest {
     }
 
     @Test
+    void freshApplicationProviderMustCreateSourceBeforeAnyGitActionIsVisible() {
+        ExecutionWorkSpec work = freshNewApplicationWork();
+        List<String> catalog = List.of(
+                "workspace.file.write",
+                "workspace.file.read",
+                "workspace.build.run",
+                "workspace.test.run",
+                "workspace.process.run",
+                "workspace.git.run",
+                "workspace.git.status",
+                "workspace.github.pr.publish");
+        CognitiveWorkerRuntime.CognitiveContext empty = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                catalog, List.of(), Map.of());
+
+        CognitiveWorkerRuntime.CognitiveContext bootstrap =
+                GeneralCognitiveWorkerBrain.providerActionSelectionContext(empty);
+
+        assertEquals(List.of("workspace.file.write"), bootstrap.availableActions(),
+                "an empty fresh-app workspace must expose only source creation to provider cognition");
+
+        CognitiveWorkerRuntime.Cycle wroteSource = new CognitiveWorkerRuntime.Cycle(
+                1,
+                new CognitiveWorkerRuntime.Thought(
+                        "workspace.file.write",
+                        Map.of("path", "index.html", "content", "<!doctype html><title>Control Center</title>"),
+                        "create initial application source"),
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "written", Map.of(), List.of("workspace-write:index.html")),
+                CognitiveWorkerRuntime.Reflection.continueWith("continue implementation"));
+        CognitiveWorkerRuntime.CognitiveContext afterWrite = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                catalog, List.of(wroteSource), Map.of());
+
+        List<String> providerActions = GeneralCognitiveWorkerBrain
+                .providerActionSelectionContext(afterWrite)
+                .availableActions();
+
+        assertTrue(providerActions.contains("workspace.file.write"));
+        assertTrue(providerActions.contains("workspace.build.run"));
+        assertTrue(providerActions.contains("workspace.test.run"));
+        assertTrue(providerActions.contains("workspace.process.run"));
+        assertFalse(providerActions.contains("workspace.git.run"),
+                "Git staging/commit is a deterministic governed postcondition, not a provider-selected fresh-app action");
+        assertFalse(providerActions.contains("workspace.git.status"));
+        assertFalse(providerActions.contains("workspace.github.pr.publish"));
+    }
+
+    @Test
+    void existingRepositoryProviderCatalogIsNotPhaseRestricted() {
+        ExecutionWorkSpec existing = new ExecutionWorkSpec(
+                "repair",
+                "Repair a defect in the existing repository, run tests, commit the change",
+                "repository:kelvinka38/metatron-workforce",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass"),
+                List.of("runtime evidence"));
+        List<String> catalog = List.of("workspace.file.write", "workspace.git.run", "workspace.git.status");
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", existing, "idempotency",
+                catalog, List.of(), Map.of());
+
+        assertEquals(catalog, GeneralCognitiveWorkerBrain.providerActionSelectionContext(context).availableActions());
+    }
+
+    @Test
     void freshNewApplicationCompletionRequiresRealWorkspaceSourceMutationInsteadOfMaterialization() {
         ExecutionWorkSpec work = freshNewApplicationWork();
         CognitiveWorkerRuntime.CognitiveContext noSourceYet = new CognitiveWorkerRuntime.CognitiveContext(
