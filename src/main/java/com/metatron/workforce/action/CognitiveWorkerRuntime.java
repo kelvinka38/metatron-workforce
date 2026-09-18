@@ -176,7 +176,18 @@ public final class CognitiveWorkerRuntime {
                     thought.actionRef(), workerId, assignmentReference, authorizationReference,
                     objectiveId, workSpec.stepId(), idempotencyKey, mutating, thought.inputs());
             ActionFabric.ActionObservation observation;
-            try {
+            Cycle previous = history.isEmpty() ? null : history.getLast();
+            boolean immediateRedundantMutation = previous != null
+                    && previous.observation().success()
+                    && previous.thought().actionRef().equals(thought.actionRef())
+                    && previous.thought().inputs().equals(thought.inputs())
+                    && fabric.consequenceOf(thought.actionRef()) == ActionFabric.Consequence.MUTATING;
+            if (immediateRedundantMutation) {
+                observation = ActionFabric.ActionObservation.failure(
+                        thought.actionRef(),
+                        "redundant identical successful mutation blocked; choose an action that changes or inspects state",
+                        List.of("action-redundant-no-state-change:" + thought.actionRef()));
+            } else try {
                 ExecutionPermit permit = authorizeMutationIfRequired(request, governanceContext, thought.inputs());
                 observation = permit == null ? fabric.execute(request) : fabric.execute(request, permit);
             } catch (GovernanceDeniedException denied) {
