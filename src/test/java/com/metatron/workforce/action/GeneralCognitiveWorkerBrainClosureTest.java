@@ -6,6 +6,7 @@ import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -324,6 +325,44 @@ class GeneralCognitiveWorkerBrainClosureTest {
 
         assertTrue(failure.getMessage().startsWith("worker-cognition-request-context-budget-exceeded:"));
         assertEquals(0, calls.get());
+    }
+
+    @Test
+    void repeatedLargeCycleInputsCompactToLatestCycleInsidePromptBudget() {
+        WorkerIntelligenceService intelligence = request -> {
+            assertTrue(request.context().length() <= GeneralCognitiveWorkerBrain.MAX_CONTEXT_PROMPT_CHARS);
+            assertTrue(request.context().contains("LATEST_CYCLE_MINIMAL")
+                            || request.context().contains("LATEST_CYCLE_IDENTITY_ONLY"),
+                    "oversized multi-cycle history should retain only bounded latest-cycle state");
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-latest-cycle-compaction",
+                    "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"README.md\"},\"rationale\":\"continue from latest state\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-history", "continue fresh application build", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("application complete"), List.of("workspace evidence"));
+        List<CognitiveWorkerRuntime.Cycle> cycles = new ArrayList<>();
+        for (int i = 1; i <= 10; i++) {
+            cycles.add(new CognitiveWorkerRuntime.Cycle(
+                    i,
+                    new CognitiveWorkerRuntime.Thought("workspace.file.write",
+                            Map.of("path", "src/file-" + i + ".txt", "content", "x".repeat(25_000)),
+                            "write source"),
+                    ActionFabric.ActionObservation.success(
+                            "workspace.file.write", "source written",
+                            Map.of("content", "y".repeat(25_000)), List.of("write:evidence:" + i)),
+                    CognitiveWorkerRuntime.Reflection.continueWith("continue implementation")));
+        }
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.write"), cycles, Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
     }
 
     @Test
