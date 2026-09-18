@@ -50,6 +50,44 @@ class ExecutionWorkspaceManagerTest {
         assertThrows(RuntimeException.class,()->manager.requireActive(a.attemptId(),a.fencingToken(),t.plusSeconds(3)));
     }
 
+    @Test void succeededStepCarriesPrimaryWorkspaceIntoNextAttemptButFailedStepDoesNot(){
+        Instant t=Instant.parse("2026-09-12T00:00:00Z");
+        ExecutionAttemptService attempts=new ExecutionAttemptService();
+        ExecutionWorkspaceManager manager=new ExecutionWorkspaceManager(temp,attempts,new InMemoryExecutionWorkspaceBindingStore());
+
+        ExecutionAttempt produce=attempts.begin("d-produce","objective:x","produce","worker","assignment:produce","auth","runtime:produce",1,Duration.ofHours(1),t);
+        ExecutionWorkspaceBinding produced=manager.allocate(produce.attemptId(),produce.fencingToken(),t.plusSeconds(1));
+        Path primary=Path.of(produced.rootPath()).resolve("repos").resolve("primary");
+        try{
+            java.nio.file.Files.createDirectories(primary.resolve(".git"));
+            java.nio.file.Files.writeString(primary.resolve("package.json"), "{\"scripts\":{\"test\":\"echo ok\"}}");
+            java.nio.file.Files.writeString(primary.resolve(".git").resolve("HEAD"), "ref: refs/heads/main\n");
+            java.nio.file.Files.writeString(primary.resolve(".metatron-workspace"), "attempt=old\n");
+        }catch(java.io.IOException e){throw new AssertionError(e);}
+        attempts.succeed(produce.attemptId(),produce.fencingToken(),t.plusSeconds(2));
+
+        ExecutionAttempt verify=attempts.begin("d-verify","objective:x","verify","worker","assignment:verify","auth","runtime:verify",1,Duration.ofHours(1),t.plusSeconds(3));
+        ExecutionWorkspaceBinding verified=manager.allocate(verify.attemptId(),verify.fencingToken(),t.plusSeconds(4));
+        Path carried=Path.of(verified.rootPath()).resolve("repos").resolve("primary");
+        assertTrue(java.nio.file.Files.isRegularFile(carried.resolve("package.json")));
+        assertTrue(java.nio.file.Files.isRegularFile(carried.resolve(".git").resolve("HEAD")));
+        assertFalse(java.nio.file.Files.exists(carried.resolve(".metatron-workspace")),
+                "per-attempt workspace identity must be regenerated, never carried forward");
+
+        ExecutionAttempt failed=attempts.begin("d-fail","objective:y","produce","worker","assignment:failed","auth","runtime:failed",1,Duration.ofHours(1),t);
+        ExecutionWorkspaceBinding failedBinding=manager.allocate(failed.attemptId(),failed.fencingToken(),t.plusSeconds(1));
+        Path failedPrimary=Path.of(failedBinding.rootPath()).resolve("repos").resolve("primary");
+        try{
+            java.nio.file.Files.createDirectories(failedPrimary);
+            java.nio.file.Files.writeString(failedPrimary.resolve("unsafe.txt"), "must-not-carry");
+        }catch(java.io.IOException e){throw new AssertionError(e);}
+        attempts.fail(failed.attemptId(),failed.fencingToken(),"synthetic failure",t.plusSeconds(2));
+
+        ExecutionAttempt afterFailure=attempts.begin("d-after-fail","objective:y","verify","worker","assignment:after","auth","runtime:after",1,Duration.ofHours(1),t.plusSeconds(3));
+        ExecutionWorkspaceBinding after=manager.allocate(afterFailure.attemptId(),afterFailure.fencingToken(),t.plusSeconds(4));
+        assertFalse(java.nio.file.Files.exists(Path.of(after.rootPath()).resolve("repos").resolve("primary").resolve("unsafe.txt")));
+    }
+
     @Test void reclaimOrphanedDisposesBindingWithNoBackingAttempt(){
         Instant t=Instant.parse("2026-09-12T00:00:00Z");
         ExecutionAttemptService attempts=new ExecutionAttemptService();
@@ -75,4 +113,3 @@ class ExecutionWorkspaceManagerTest {
         assertThrows(IllegalStateException.class,()->manager.reclaimOrphaned(a.attemptId(),binding.stateVersion(),t.plusSeconds(1)));
     }
 }
-
