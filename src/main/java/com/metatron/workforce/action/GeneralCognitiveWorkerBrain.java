@@ -29,61 +29,6 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     static final int MAX_CONTEXT_PROMPT_CHARS = 7_000;
     private static final int MAX_HISTORY_OUTPUT_VALUE_CHARS = 1_000;
     private static final int MAX_HISTORY_SUMMARY_CHARS = 500;
-    private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
-            Map.entry(GeneralWebResearchAction.ACTION_REF, Map.of(
-                    "inputs", Map.of("query", "required external research/search requirement"),
-                    "purpose", "retrieve current external evidence through the governed web search ToolFabric; read-only and source-attributed")),
-            Map.entry("workspace.repository.materialize", Map.of(
-                    "inputs", Map.of("repository", "required owner/name", "ref", "optional branch/tag/SHA; default main"),
-                    "purpose", "materialize an immutable private/public GitHub repository snapshot into this Objective workspace and create a local Git baseline; safe same-provenance retries reuse the existing materialization")),
-            Map.entry("workspace.file.read", Map.of(
-                    "inputs", Map.of("path", "required workspace-relative path"),
-                    "purpose", "read one UTF-8 workspace file")),
-            Map.entry("workspace.file.list", Map.of(
-                    "inputs", Map.of("path", "optional workspace-relative directory; empty means root"),
-                    "purpose", "list bounded workspace paths")),
-            Map.entry("workspace.file.search", Map.of(
-                    "inputs", Map.of("query", "required exact text fragment", "path", "optional workspace-relative directory",
-                            "maxMatches", "optional integer 1..500; default 100"),
-                    "purpose", "search source text across the bounded Objective workspace and return path/line/excerpt matches")),
-            Map.entry("workspace.file.patch", Map.of(
-                    "inputs", Map.of("path", "required workspace-relative file", "oldText", "required exact existing text",
-                            "newText", "replacement text; empty allowed", "expectedOccurrences", "optional integer; default 1"),
-                    "purpose", "apply one bounded exact patch after inspection; fails closed if occurrence count differs")),
-            Map.entry("workspace.file.write", Map.of(
-                    "inputs", Map.of("path", "required workspace-relative path", "content", "required file content; empty allowed"),
-                    "purpose", "create or replace one workspace file")),
-            Map.entry("workspace.dependencies.install", Map.of(
-                    "inputs", Map.of("workingDirectory", "optional workspace-relative project directory; empty means workspace root"),
-                    "purpose", "detect Node or Python dependency metadata and install dependencies inside the isolated Objective workspace")),
-            Map.entry("workspace.process.run", Map.of(
-                    "inputs", Map.of("executable", "required executable from runtime allowlist", "argsJson", "JSON string array of arguments",
-                            "workingDirectory", "optional workspace-relative working directory"),
-                    "purpose", "run one allowlisted process in the isolated Objective sandbox")),
-            Map.entry("workspace.shell.run", Map.of(
-                    "inputs", Map.of("command", "required constrained command; no pipes, redirects, chaining or substitution",
-                            "workingDirectory", "optional workspace-relative working directory"),
-                    "purpose", "run one constrained allowlisted command in the isolated Objective sandbox")),
-            Map.entry("workspace.git.status", Map.of(
-                    "inputs", Map.of(), "purpose", "read-only inspection of local Git status, immutable HEAD SHA and bounded recent commit log")),
-            Map.entry("workspace.git.diff", Map.of(
-                    "inputs", Map.of(), "purpose", "inspect uncommitted local Git diff")),
-            Map.entry("workspace.git.run", Map.of(
-                    "inputs", Map.of("argsJson", "required JSON string array of git arguments"),
-                    "purpose", "run a local Git operation; no remote credential is exposed to the sandbox")),
-            Map.entry("workspace.github.pr.publish", Map.of(
-                    "inputs", Map.of("title", "optional pull-request title", "body", "optional pull-request body"),
-                    "purpose", "publish the clean committed Objective-workspace delta as an Objective-scoped reviewable GitHub proposal branch and unmerged pull request; no merge authority")),
-            Map.entry("workspace.build.run", Map.of(
-                    "inputs", Map.of("tasksJson", "optional JSON string array of build tasks/scripts/paths",
-                            "workingDirectory", "optional workspace-relative project directory"),
-                    "purpose", "detect Gradle/Maven, Node package scripts, or Python workspace and run its build in the isolated sandbox")),
-            Map.entry("workspace.test.run", Map.of(
-                    "inputs", Map.of("tasksJson", "optional JSON string array of test tasks/scripts/pytest arguments",
-                            "workingDirectory", "optional workspace-relative project directory"),
-                    "purpose", "detect Gradle/Maven, Node package scripts, or Python workspace and run tests in the isolated sandbox"))
-    );
-
     private final WorkerIntelligenceService intelligence;
     private final ObjectMapper json;
     private final List<String> evidence = new ArrayList<>();
@@ -1218,8 +1163,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         List<String> catalog = context.availableActions();
         Map<String, List<String>> actionInputKeys = new LinkedHashMap<>();
         for (String action : catalog) {
-            Map<String, Object> contract = ACTION_CONTRACTS.get(action);
-            if (contract == null) continue;
+            Map<String, Object> contract = ActionContractCatalog.promptContract(action);
+            if (contract.isEmpty()) continue;
             Object rawInputs = contract.getOrDefault("inputs", Map.of());
             if (rawInputs instanceof Map<?, ?> inputs) {
                 actionInputKeys.put(action, inputs.keySet().stream()
