@@ -1,5 +1,3 @@
-[Reading 355 lines from start (total: 355 lines, 0 remaining)]
-
 package com.metatron.workforce.management;
 
 import com.metatron.workforce.action.ActionFabric;
@@ -355,5 +353,3 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                 context.availableActions(), context.history(), Map.copyOf(merged));
     }
 }
-
-[executed on device: ubuntu-4gb-sin-2 (794df3db-670a-4e18-ba4c-6d51d3c2f84f)]
