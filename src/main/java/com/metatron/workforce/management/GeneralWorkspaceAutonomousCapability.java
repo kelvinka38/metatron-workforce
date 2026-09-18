@@ -52,11 +52,6 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     private static final int MAX_RESEARCH_QUERY_CHARS = 20_000;
     static final String MEMORY_WORKSPACE_MATERIALIZED = "workspaceMaterialized";
 
-    // Explicit read-only inspection intent (inspect/review/analyze/explain) takes precedence over an
-    // incidental mutating-looking noun in the same objective (e.g. "analyze the build configuration" is
-    // read-only even though it contains "build"); anything else naming an implementation/effecting
-    // action (build/create/implement/write/modify/fix/patch/commit/publish/push/PR/deploy) defaults to
-    // MUTATING, the pre-existing, already-governed assumption for real workspace execution.
     private static final java.util.regex.Pattern READ_ONLY_INTENT = java.util.regex.Pattern.compile(
             "(?i)\\b(inspect\\w*|review\\w*|analy[sz]\\w*|explain\\w*)\\b");
 
@@ -233,6 +228,13 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
             return candidates.stream().filter(action -> GeneralWebResearchAction.ACTION_REF.equals(action.actionRef())).toList();
         }
         boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
+        boolean freshNewApplication = workSpec.evidenceRequirements().stream()
+                .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase);
+        if (freshNewApplication && !requiresRepositoryMaterialization(workSpec)) {
+            return candidates.stream()
+                    .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
+                    .toList();
+        }
         if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(candidates);
         return candidates.stream().filter(action -> !"workspace.repository.materialize".equals(action.actionRef())).toList();
     }
@@ -305,14 +307,6 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         return objective.contains("materializ") || objective.contains("snapshot") || objective.contains("checkout");
     }
 
-    /**
-     * Deterministic Consequence classification for an explicit General Workspace objective. A genuinely
-     * read-only inspection request (inspect/review/analyze/explain) stays READ_ONLY even if it mentions
-     * a mutating-sounding noun in passing (e.g. "analyze the build configuration"). Anything naming an
-     * implementation/effecting action (build/create/implement/write/modify/fix/patch/commit/publish/
-     * push/PR/deploy/code-generation) is MUTATING. Unclassified text defaults to MUTATING, the safer,
-     * already-governed assumption for real workspace execution.
-     */
     public static ExecutionWorkSpec.Consequence classifyConsequence(String objective) {
         String semantic = objective == null ? "" : objective.toLowerCase(Locale.ROOT);
         if (READ_ONLY_INTENT.matcher(semantic).find()) return ExecutionWorkSpec.Consequence.READ_ONLY;
