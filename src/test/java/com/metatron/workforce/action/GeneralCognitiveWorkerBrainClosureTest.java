@@ -277,6 +277,8 @@ class GeneralCognitiveWorkerBrainClosureTest {
             assertTrue(request.context().contains("\"workerConstitution\""));
             assertTrue(request.context().contains("WORKER_COGNITION_CONTEXT_V1"));
             assertTrue(request.context().contains("authority=policy:bounded:test"));
+            assertTrue(request.context().contains("actionInputKeys"));
+            assertFalse(request.context().contains("actionContracts"));
             return new WorkerIntelligenceService.Response(
                     "intelligence-constitution-grounded",
                     "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"README.md\"},\"rationale\":\"inspect within bound constitution\"}",
