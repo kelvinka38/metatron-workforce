@@ -9,6 +9,7 @@ public final class PlanEffectPolicy {
     public static final Set<String> GENERAL_WORKSPACE_MUTATIONS = Set.of(
             "workspace.file.patch",
             "workspace.file.write",
+            "workspace.project.prepare",
             "workspace.process.run",
             "workspace.shell.run",
             "workspace.git.run",
