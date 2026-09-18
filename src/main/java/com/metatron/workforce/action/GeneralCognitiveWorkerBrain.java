@@ -1157,7 +1157,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 .map(cycle -> Map.<String, Object>of(
                         "cycle", cycle.number(),
                         "actionRef", cycle.thought().actionRef(),
-                        "inputs", cycle.thought().inputs(),
+                        "inputs", boundedPromptMap(cycle.thought().inputs()),
                         "observationSuccess", cycle.observation().success(),
                         "observationSummary", boundedPromptText(
                                 cycle.observation().summary(), MAX_HISTORY_SUMMARY_CHARS),
@@ -1184,6 +1184,28 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         payload.put("memory", Map.copyOf(cognitionMemory));
         payload.put("recentCycles", history);
         String rendered = write(payload);
+        if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS && !context.history().isEmpty()) {
+            CognitiveWorkerRuntime.Cycle latest = context.history().getLast();
+            payload.put("recentCycles", List.of(Map.<String, Object>of(
+                    "cycle", latest.number(),
+                    "actionRef", latest.thought().actionRef(),
+                    "observationSuccess", latest.observation().success(),
+                    "observationSummary", boundedPromptText(latest.observation().summary(), 160),
+                    "reflection", latest.reflection().decision().name(),
+                    "reflectionSummary", boundedPromptText(latest.reflection().summary(), 160),
+                    "_contextCompaction", "LATEST_CYCLE_MINIMAL")));
+            rendered = write(payload);
+        }
+        if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS && !context.history().isEmpty()) {
+            CognitiveWorkerRuntime.Cycle latest = context.history().getLast();
+            payload.put("recentCycles", List.of(Map.<String, Object>of(
+                    "cycle", latest.number(),
+                    "actionRef", latest.thought().actionRef(),
+                    "observationSuccess", latest.observation().success(),
+                    "reflection", latest.reflection().decision().name(),
+                    "_contextCompaction", "LATEST_CYCLE_IDENTITY_ONLY")));
+            rendered = write(payload);
+        }
         if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
             throw new IllegalStateException("worker-cognition-request-context-budget-exceeded:chars="
                     + rendered.length() + ":limit=" + MAX_CONTEXT_PROMPT_CHARS
