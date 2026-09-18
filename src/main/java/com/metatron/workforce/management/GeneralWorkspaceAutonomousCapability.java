@@ -208,6 +208,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         Path gitDirectory = workspaces.resolve(workspace, ".git");
         memory.put("workspaceGitInitialized",
                 Boolean.toString(Files.isDirectory(gitDirectory, LinkOption.NOFOLLOW_LINKS)));
+        projectWorkspaceMemory(workspaces, workspace, memory);
         Path provenance = workspaces.resolve(workspace, ".metatron-repository");
         if (!Files.exists(provenance, LinkOption.NOFOLLOW_LINKS)) return Map.copyOf(memory);
         if (!Files.isRegularFile(provenance, LinkOption.NOFOLLOW_LINKS)) throw new IllegalStateException("objective workspace repository provenance is not a regular file");
@@ -226,6 +227,81 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         memory.put("requestedRef", requestedRef); memory.put("sourceCommitSha", sourceCommitSha.toLowerCase(Locale.ROOT));
         memory.put("localBaselineCommitSha", baselineSha);
         return Map.copyOf(memory);
+    }
+
+    private static void projectWorkspaceMemory(
+            ObjectiveWorkspaceService workspaces,
+            ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+            Map<String, String> memory) {
+        try {
+            List<Path> files;
+            try (var stream = Files.walk(workspace.path(), 4)) {
+                files = stream
+                        .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                        .filter(path -> !Files.isSymbolicLink(path))
+                        .filter(path -> {
+                            String rel = workspace.path().relativize(path).toString().replace('\\', '/');
+                            return !rel.startsWith(".git/")
+                                    && !rel.startsWith("node_modules/")
+                                    && !rel.startsWith("build/")
+                                    && !rel.startsWith("dist/")
+                                    && !rel.startsWith(".gradle/")
+                                    && !rel.equals(".metatron-workspace")
+                                    && !rel.equals(".metatron-repository");
+                        })
+                        .sorted()
+                        .limit(80)
+                        .toList();
+            }
+            List<String> relative = files.stream()
+                    .map(path -> workspace.path().relativize(path).toString().replace('\\', '/'))
+                    .toList();
+            if (!relative.isEmpty()) memory.put("workspaceFileInventory", String.join(";", relative));
+
+            String manifest = relative.stream().filter(path ->
+                    path.equals("package.json") || path.endsWith("/package.json")
+                            || path.equals("requirements.txt") || path.endsWith("/requirements.txt")
+                            || path.equals("pyproject.toml") || path.endsWith("/pyproject.toml")
+                            || path.equals("pom.xml") || path.endsWith("/pom.xml")
+                            || path.equals("build.gradle") || path.endsWith("/build.gradle")
+                            || path.equals("build.gradle.kts") || path.endsWith("/build.gradle.kts"))
+                    .findFirst().orElse("");
+            if (!manifest.isBlank()) {
+                memory.put("workspaceProjectManifest", manifest);
+                String body = workspaces.read(workspace, manifest);
+                if (body.length() > 1200) body = body.substring(0, 1200);
+                memory.put("workspaceProjectManifestPreview", body);
+                String lower = body.toLowerCase(Locale.ROOT);
+                if (manifest.endsWith("package.json")) {
+                    memory.put("workspaceProjectKind", lower.contains("react") || lower.contains("vite")
+                            ? "node-react" : "node");
+                    memory.put("workspaceDependencyInstallRequired", "true");
+                } else if (manifest.endsWith("requirements.txt") || manifest.endsWith("pyproject.toml")) {
+                    memory.put("workspaceProjectKind", "python");
+                    memory.put("workspaceDependencyInstallRequired", "true");
+                } else if (manifest.endsWith("pom.xml")) {
+                    memory.put("workspaceProjectKind", "maven");
+                    memory.put("workspaceDependencyInstallRequired", "false");
+                } else {
+                    memory.put("workspaceProjectKind", "gradle");
+                    memory.put("workspaceDependencyInstallRequired", "false");
+                }
+            }
+
+            String source = relative.stream().filter(path -> {
+                String lower = path.toLowerCase(Locale.ROOT);
+                return lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".ts")
+                        || lower.endsWith(".tsx") || lower.endsWith(".py") || lower.endsWith(".java");
+            }).findFirst().orElse("");
+            if (!source.isBlank()) {
+                memory.put("workspacePrimarySourcePath", source);
+                String preview = workspaces.read(workspace, source);
+                if (preview.length() > 1200) preview = preview.substring(0, 1200);
+                memory.put("workspacePrimarySourcePreview", preview);
+            }
+        } catch (RuntimeException | java.io.IOException ignored) {
+            memory.put("workspaceSnapshotStatus", "unavailable");
+        }
     }
 
     static List<ActionFabric.Action> actionsForWork(List<ActionFabric.Action> candidates,
@@ -255,9 +331,10 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
             List<ActionFabric.Action> candidates,
             ExecutionWorkSpec workSpec) {
         boolean produce = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PRODUCE);
+        boolean prepare = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_PREPARE);
         boolean verify = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_VERIFY);
         boolean deliver = workSpec.evidenceRequirements().contains(GeneralWorkspacePhasePlanner.PHASE_DELIVER);
-        if (!produce && !verify && !deliver) return List.copyOf(candidates);
+        if (!produce && !prepare && !verify && !deliver) return List.copyOf(candidates);
 
         return candidates.stream().filter(action -> {
             String ref = action.actionRef();
@@ -270,6 +347,13 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                         || ref.equals("workspace.file.write")
                         || ref.equals("workspace.process.run")
                         || ref.equals("workspace.shell.run");
+            }
+            if (prepare) {
+                return ref.equals("workspace.file.read")
+                        || ref.equals("workspace.file.list")
+                        || ref.equals("workspace.file.search")
+                        || ref.equals("workspace.file.patch")
+                        || ref.equals("workspace.file.write");
             }
             if (verify) {
                 return ref.equals("workspace.file.read")
