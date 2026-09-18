@@ -136,11 +136,15 @@ public final class ActionFabric {
                     request.actionRef());
         }
 
+        ActionContractCatalog.validate(request.actionRef(), request.inputs());
         ActionObservation observation = Objects.requireNonNull(action.invoke(request), "action observation");
         if (!request.actionRef().equals(observation.actionRef())) {
             throw new IllegalStateException("action observation attribution mismatch");
         }
         List<String> evidence = new ArrayList<>(observation.evidenceReferences());
+        if (ActionContractCatalog.contractFor(request.actionRef()).strictInputs()) {
+            evidence.add("action-contract:action=" + request.actionRef() + ":validated=true");
+        }
         evidence.add("action-fabric:action=" + request.actionRef()
                 + ":worker=" + request.workerId()
                 + ":assignment=" + request.assignmentReference()
