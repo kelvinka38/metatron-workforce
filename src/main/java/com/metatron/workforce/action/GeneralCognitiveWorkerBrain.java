@@ -26,6 +26,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
     private static final Pattern RESEARCH_DECISION = Pattern.compile("(?i)\\b(?:KEEP|TEST|CHANGE|REJECT)\\b");
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
+    static final int MAX_CONTEXT_PROMPT_CHARS = 7_000;
+    private static final int MAX_HISTORY_OUTPUT_VALUE_CHARS = 1_000;
+    private static final int MAX_HISTORY_SUMMARY_CHARS = 500;
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
             Map.entry(GeneralWebResearchAction.ACTION_REF, Map.of(
                     "inputs", Map.of("query", "required external research/search requirement"),
@@ -110,21 +113,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (gitInspection != null) return gitInspection;
 
         String system = """
-                You are the action-selection brain for a governed Metatron Cognitive Worker.
-                You have no authority to execute outside the supplied action catalog.
-                The memory field workerConstitution is the Worker's materialized institutional runtime Constitution.
-                Treat it as authoritative operating context for identity, participation, Position/Role, capability,
-                qualification, authority/authorization relationships, availability/capacity, assignments, schedules,
-                runtime and prior execution attribution. Role or runtime profile never self-grants authority.
-                Select exactly one next action that advances the actual Work using current observations.
-                For unfamiliar code, inspect before editing: list/search/read the relevant source, reproduce or run focused tests when useful, then patch.
-                After a failed test/build/action, do not blindly repeat it. Inspect the failure, search/read relevant code, change state, then retry verification.
-                Prefer workspace.file.patch for bounded edits after you have observed the exact source; use workspace.file.write when creating files or replacing complete content.
-                Do not invent action names or input keys. Follow the supplied actionContracts exactly.
-                If the Work targets a repository and the workspace has not yet been materialized, use workspace.repository.materialize before any Git, build, test or repository-file action.
-                Repository materialization creates a local baseline commit. The authoritative source snapshot identity is sourceCommitSha from materialization provenance; localBaselineCommitSha and later local HEAD identify the mutable Objective workspace and need not equal sourceCommitSha.
-                Do not claim completion in this response.
-                Inputs must be concrete strings. For list arguments use a JSON array encoded as a string in argsJson/tasksJson.
+                You are the action-selection brain for a governed Metatron Cognitive Worker; you have no execution authority.
+                workerConstitution is the assignment-scoped cognitive projection of the durable Worker Constitution. Historical
+                relationships remain durable by snapshot reference. Role or runtime profile never self-grants authority.
+                Choose exactly one action from availableActions, using only keys listed in actionInputKeys, grounded in Work,
+                memory and recent observations. Inspect unfamiliar code before editing. After failure, inspect/change state before
+                retrying; never blindly repeat an identical failed action. Materialize a required repository before Git/build/test
+                or repository-file work. sourceCommitSha proves source identity; local baseline/HEAD are workspace identities.
+                Do not claim completion. Inputs are strings; encode list arguments as JSON strings in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
                 """;
         CognitiveProviderResult providerResult = completeObject(context, system, contextPrompt(context));
@@ -215,7 +211,6 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "workspace.git.status", Map.of(),
                 "READ_ONLY Work requires immutable local Git HEAD/history evidence; use governed read-only inspection");
     }
-
 
     static CognitiveWorkerRuntime.Thought governedExactTextReplacementPrecondition(
             CognitiveWorkerRuntime.CognitiveContext context) {
@@ -1147,10 +1142,15 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
         List<String> catalog = context.availableActions();
-        Map<String, Map<String, Object>> contracts = new LinkedHashMap<>();
+        Map<String, List<String>> actionInputKeys = new LinkedHashMap<>();
         for (String action : catalog) {
             Map<String, Object> contract = ACTION_CONTRACTS.get(action);
-            if (contract != null) contracts.put(action, contract);
+            if (contract == null) continue;
+            Object rawInputs = contract.getOrDefault("inputs", Map.of());
+            if (rawInputs instanceof Map<?, ?> inputs) {
+                actionInputKeys.put(action, inputs.keySet().stream()
+                        .map(String::valueOf).sorted().toList());
+            }
         }
         List<Map<String, Object>> history = context.history().stream()
                 .skip(Math.max(0, context.history().size() - 10L))
@@ -1159,15 +1159,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                         "actionRef", cycle.thought().actionRef(),
                         "inputs", cycle.thought().inputs(),
                         "observationSuccess", cycle.observation().success(),
-                        "observationSummary", cycle.observation().summary(),
-                        "observationOutputs", cycle.observation().outputs(),
+                        "observationSummary", boundedPromptText(
+                                cycle.observation().summary(), MAX_HISTORY_SUMMARY_CHARS),
+                        "observationOutputs", boundedPromptMap(cycle.observation().outputs()),
                         "reflection", cycle.reflection().decision().name(),
-                        "reflectionSummary", cycle.reflection().summary()))
+                        "reflectionSummary", boundedPromptText(
+                                cycle.reflection().summary(), MAX_HISTORY_SUMMARY_CHARS)))
                 .toList();
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("objectiveId", context.objectiveId());
-        payload.put("workerId", context.workerId());
-        payload.put("assignmentReference", context.assignmentReference());
         payload.put("work", Map.of(
                 "stepId", context.workSpec().stepId(),
                 "objective", context.workSpec().objective(),
@@ -1177,10 +1176,40 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "acceptanceCriteria", context.workSpec().acceptanceCriteria(),
                 "evidenceRequirements", context.workSpec().evidenceRequirements()));
         payload.put("availableActions", catalog);
-        payload.put("actionContracts", contracts);
-        payload.put("memory", context.memory());
+        payload.put("actionInputKeys", actionInputKeys);
+        Map<String, String> cognitionMemory = new LinkedHashMap<>(context.memory());
+        // Duplicates already embedded in workerConstitution; retain them durably outside the model prompt.
+        cognitionMemory.remove("workerConstitutionSnapshotRef");
+        cognitionMemory.remove("workerConstitutionMaterializedAt");
+        payload.put("memory", Map.copyOf(cognitionMemory));
         payload.put("recentCycles", history);
-        return write(payload);
+        String rendered = write(payload);
+        if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
+            throw new IllegalStateException("worker-cognition-request-context-budget-exceeded:chars="
+                    + rendered.length() + ":limit=" + MAX_CONTEXT_PROMPT_CHARS
+                    + ":worker=" + context.workerId()
+                    + ":assignment=" + context.assignmentReference()
+                    + ":objective=" + context.objectiveId());
+        }
+        return rendered;
+    }
+
+    private static Map<String, String> boundedPromptMap(Map<String, String> values) {
+        if (values == null || values.isEmpty()) return Map.of();
+        Map<String, String> bounded = new LinkedHashMap<>();
+        values.entrySet().stream().limit(12).forEach(entry -> bounded.put(
+                entry.getKey(), boundedPromptText(entry.getValue(), MAX_HISTORY_OUTPUT_VALUE_CHARS)));
+        if (values.size() > bounded.size()) {
+            bounded.put("_contextCompaction", "EXPLICITLY_OMITTED_ENTRIES=" + (values.size() - bounded.size()));
+        }
+        return Map.copyOf(bounded);
+    }
+
+    private static String boundedPromptText(String value, int maxChars) {
+        String normalized = value == null ? "" : value;
+        if (normalized.length() <= maxChars) return normalized;
+        return normalized.substring(0, maxChars)
+                + "...[EXPLICITLY_COMPACTED original_chars=" + normalized.length() + "]";
     }
 
     private Map<String, Object> parseObject(String raw) {
