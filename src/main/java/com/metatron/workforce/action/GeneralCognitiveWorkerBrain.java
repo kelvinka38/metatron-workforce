@@ -49,6 +49,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (exactTextReplacement != null) return exactTextReplacement;
         CognitiveWorkerRuntime.Thought requiredFileWrite = governedExactShaFileWritePrecondition(context);
         if (requiredFileWrite != null) return requiredFileWrite;
+        CognitiveWorkerRuntime.Thought requiredProjectPrepare = governedProjectPreparePrecondition(context);
+        if (requiredProjectPrepare != null) return requiredProjectPrepare;
         CognitiveWorkerRuntime.Thought requiredDependencies = governedDependencyPrecondition(context);
         if (requiredDependencies != null) return requiredDependencies;
         CognitiveWorkerRuntime.Thought requiredBuild = governedBuildPrecondition(context);
@@ -91,11 +93,11 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
                 && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST)
                 && !hasProjectManifestMutation(context)
-                && context.availableActions().contains("workspace.file.write")) {
+                && context.availableActions().contains("workspace.project.prepare")) {
             return new CognitiveWorkerRuntime.CognitiveContext(
                     context.workerId(), context.assignmentReference(), context.authorizationReference(),
                     context.objectiveId(), context.workSpec(), context.idempotencyKey(),
-                    List.of("workspace.file.write"), context.history(), context.memory());
+                    List.of("workspace.project.prepare"), context.history(), context.memory());
         }
         if (!isFreshNewApplicationWork(context)) return context;
 
@@ -156,6 +158,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return context.history().stream().anyMatch(cycle -> {
             if (!cycle.observation().success()) return false;
             String action = cycle.thought().actionRef();
+            if ("workspace.project.prepare".equals(action)) return true;
             if (!"workspace.file.write".equals(action) && !"workspace.file.patch".equals(action)) return false;
             return isProjectManifestPath(cycle.thought().inputs().getOrDefault("path", ""));
         });
@@ -372,6 +375,19 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 && (text.contains("create or replace only") || text.contains("write only"))
                 && text.contains("exact utf-8 content:")
                 && text.contains("source_sha=");
+    }
+
+    static CognitiveWorkerRuntime.Thought governedProjectPreparePrecondition(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
+                || !hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST)
+                || !context.availableActions().contains("workspace.project.prepare")) return null;
+        if (successfulAction(context, "workspace.project.prepare")
+                || failedAction(context, "workspace.project.prepare")) return null;
+        return new CognitiveWorkerRuntime.Thought(
+                "workspace.project.prepare", Map.of(),
+                "Deterministically prepare the minimal supported project scaffold from the carried work product");
     }
 
     static CognitiveWorkerRuntime.Thought governedDependencyPrecondition(
@@ -1191,10 +1207,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "Production phase emitted governed workspace work-product evidence");
         }
         if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
-                && ("workspace.file.write".equals(observation.actionRef())
-                || "workspace.file.patch".equals(observation.actionRef()))) {
+                && "workspace.project.prepare".equals(observation.actionRef())) {
             return CognitiveWorkerRuntime.Reflection.complete(
-                    "Preparation phase emitted governed project scaffold evidence");
+                    "Preparation phase emitted governed deterministic project scaffold evidence");
         }
         if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
                 && ("workspace.build.run".equals(observation.actionRef())
@@ -1283,9 +1298,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     : "workspace source/work-product mutation");
         }
         boolean latestManifestMutation = observation.success()
-                && ("workspace.file.write".equals(observation.actionRef())
+                && ("workspace.project.prepare".equals(observation.actionRef())
+                || (("workspace.file.write".equals(observation.actionRef())
                 || "workspace.file.patch".equals(observation.actionRef()))
-                && isProjectManifestPath(observation.outputs().getOrDefault("path", ""));
+                && isProjectManifestPath(observation.outputs().getOrDefault("path", ""))));
         if (hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_PREPARE)
                 && hasMarker(context, GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST)
                 && !latestManifestMutation
