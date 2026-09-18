@@ -26,7 +26,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
     private static final Pattern RESEARCH_DECISION = Pattern.compile("(?i)\\b(?:KEEP|TEST|CHANGE|REJECT)\\b");
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
-    static final int MAX_CONTEXT_PROMPT_CHARS = 11_000;
+    static final int MAX_CONTEXT_PROMPT_CHARS = 7_000;
     private static final int MAX_HISTORY_OUTPUT_VALUE_CHARS = 1_000;
     private static final int MAX_HISTORY_SUMMARY_CHARS = 500;
     private static final Map<String, Map<String, Object>> ACTION_CONTRACTS = Map.ofEntries(
@@ -113,22 +113,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         if (gitInspection != null) return gitInspection;
 
         String system = """
-                You are the action-selection brain for a governed Metatron Cognitive Worker.
-                You have no authority to execute outside the supplied action catalog.
-                The memory field workerConstitution is an assignment-scoped cognitive projection of the Worker's durable runtime Constitution.
-                Treat it as authoritative operating context for identity, participation, Position/Role, capability,
-                qualification, the current Assignment's authority/authorization, current capacity/schedule/runtime,
-                and bounded recent learning/execution attribution. Historical relationships remain durable by snapshot reference
-                and are intentionally not dumped into cognition. Role or runtime profile never self-grants authority.
-                Select exactly one next action that advances the actual Work using current observations.
-                For unfamiliar code, inspect before editing: list/search/read the relevant source, reproduce or run focused tests when useful, then patch.
-                After a failed test/build/action, do not blindly repeat it. Inspect the failure, search/read relevant code, change state, then retry verification.
-                Prefer workspace.file.patch for bounded edits after you have observed the exact source; use workspace.file.write when creating files or replacing complete content.
-                Do not invent action names or input keys. Follow the supplied actionContracts exactly.
-                If the Work targets a repository and the workspace has not yet been materialized, use workspace.repository.materialize before any Git, build, test or repository-file action.
-                Repository materialization creates a local baseline commit. The authoritative source snapshot identity is sourceCommitSha from materialization provenance; localBaselineCommitSha and later local HEAD identify the mutable Objective workspace and need not equal sourceCommitSha.
-                Do not claim completion in this response.
-                Inputs must be concrete strings. For list arguments use a JSON array encoded as a string in argsJson/tasksJson.
+                You are the action-selection brain for a governed Metatron Cognitive Worker; you have no execution authority.
+                workerConstitution is the assignment-scoped cognitive projection of the durable Worker Constitution. Historical
+                relationships remain durable by snapshot reference. Role or runtime profile never self-grants authority.
+                Choose exactly one action from availableActions, using only keys listed in actionInputKeys, grounded in Work,
+                memory and recent observations. Inspect unfamiliar code before editing. After failure, inspect/change state before
+                retrying; never blindly repeat an identical failed action. Materialize a required repository before Git/build/test
+                or repository-file work. sourceCommitSha proves source identity; local baseline/HEAD are workspace identities.
+                Do not claim completion. Inputs are strings; encode list arguments as JSON strings in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
                 """;
         CognitiveProviderResult providerResult = completeObject(context, system, contextPrompt(context));
@@ -1150,11 +1142,15 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
         List<String> catalog = context.availableActions();
-        Map<String, Map<String, Object>> contracts = new LinkedHashMap<>();
+        Map<String, List<String>> actionInputKeys = new LinkedHashMap<>();
         for (String action : catalog) {
             Map<String, Object> contract = ACTION_CONTRACTS.get(action);
-            if (contract != null) contracts.put(action, Map.of(
-                    "inputs", contract.getOrDefault("inputs", Map.of())));
+            if (contract == null) continue;
+            Object rawInputs = contract.getOrDefault("inputs", Map.of());
+            if (rawInputs instanceof Map<?, ?> inputs) {
+                actionInputKeys.put(action, inputs.keySet().stream()
+                        .map(String::valueOf).sorted().toList());
+            }
         }
         List<Map<String, Object>> history = context.history().stream()
                 .skip(Math.max(0, context.history().size() - 10L))
@@ -1171,9 +1167,6 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                                 cycle.reflection().summary(), MAX_HISTORY_SUMMARY_CHARS)))
                 .toList();
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("objectiveId", context.objectiveId());
-        payload.put("workerId", context.workerId());
-        payload.put("assignmentReference", context.assignmentReference());
         payload.put("work", Map.of(
                 "stepId", context.workSpec().stepId(),
                 "objective", context.workSpec().objective(),
@@ -1183,8 +1176,12 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 "acceptanceCriteria", context.workSpec().acceptanceCriteria(),
                 "evidenceRequirements", context.workSpec().evidenceRequirements()));
         payload.put("availableActions", catalog);
-        payload.put("actionContracts", contracts);
-        payload.put("memory", context.memory());
+        payload.put("actionInputKeys", actionInputKeys);
+        Map<String, String> cognitionMemory = new LinkedHashMap<>(context.memory());
+        // Duplicates already embedded in workerConstitution; retain them durably outside the model prompt.
+        cognitionMemory.remove("workerConstitutionSnapshotRef");
+        cognitionMemory.remove("workerConstitutionMaterializedAt");
+        payload.put("memory", Map.copyOf(cognitionMemory));
         payload.put("recentCycles", history);
         String rendered = write(payload);
         if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
@@ -1269,3 +1266,5 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return value.trim();
     }
 }
+
+[executed on device: ubuntu-4gb-sin-2 (794df3db-670a-4e18-ba4c-6d51d3c2f84f)]
