@@ -1,5 +1,6 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.action.ActionJournal;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -53,6 +54,54 @@ class WorkCardRendererTest {
         when(management.findAutonomousWork("recent-active")).thenReturn(Optional.of(recentActiveWork));
 
         assertEquals(Optional.of("recent-active"), renderer.latestObjectiveIdForHuman("human-primary"));
+    }
+
+    @Test
+    void recentDurableActionCycleMakesExecutingCardWorkingInsteadOfStale() {
+        ManagementAutonomyService management = mock(ManagementAutonomyService.class);
+        ActionJournal journal = mock(ActionJournal.class);
+        WorkCardRenderer renderer = new WorkCardRenderer(management, null, journal);
+        Instant old = Instant.now().minusSeconds(900);
+        Instant actionAt = Instant.now().minusSeconds(5);
+        ManagementObjective objective = objective("active-objective", ManagementObjective.Status.EXECUTING, old);
+        AutonomousObjectiveWork work = mock(AutonomousObjectiveWork.class);
+        ActionJournal.ActionRecord action = new ActionJournal.ActionRecord(
+                actionAt,
+                "active-objective",
+                "step-1",
+                "WORKER-GENERAL-ENGINEERING",
+                "assignment-1",
+                4,
+                "workspace.file.write",
+                "MUTATING",
+                true,
+                "workspace file written",
+                java.util.Map.of("path", "src/app.java"),
+                java.util.Map.of("path", "src/app.java"),
+                List.of("action-fabric:action=workspace.file.write"),
+                "CONTINUE",
+                "continue implementation");
+
+        when(work.humanId()).thenReturn("human-primary");
+        when(work.terminal()).thenReturn(false);
+        when(work.updatedAt()).thenReturn(old);
+        when(work.completedStepIds()).thenReturn(List.of());
+        when(work.evidenceReferences()).thenReturn(List.of());
+        when(work.plannedWork()).thenReturn(List.of());
+        when(work.status()).thenReturn(AutonomousObjectiveWork.Status.EXECUTING);
+        when(work.blocker()).thenReturn("");
+        when(management.get("active-objective")).thenReturn(objective);
+        when(management.findAutonomousWork("active-objective")).thenReturn(Optional.of(work));
+        when(management.history("active-objective")).thenReturn(List.of());
+        when(journal.objectiveActionRecords("active-objective")).thenReturn(List.of(action));
+
+        String card = renderer.render("active-objective");
+
+        assertFalse(card.contains("HISTORICAL / STALE OBJECTIVE"));
+        assertTrue(card.contains("STATUS     🟢 WORKING"));
+        assertTrue(card.contains("ACTIVITY   cycle 4 · workspace.file.write · PASS"));
+        assertTrue(card.contains("OBSERVED durable action cycle 4 · workspace.file.write"));
+        assertTrue(card.contains("LAST EVENT " + actionAt));
     }
 
     @Test

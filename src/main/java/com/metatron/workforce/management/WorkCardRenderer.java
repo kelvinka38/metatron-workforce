@@ -1,7 +1,9 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.action.ActionJournal;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -19,10 +21,17 @@ public final class WorkCardRenderer {
     private static final Duration MONITOR_RECENT_WINDOW = Duration.ofMinutes(10);
     private final ManagementAutonomyService management;
     private final WorkforceCoreService core;
+    private final ActionJournal actionJournal;
 
+    @Autowired
     public WorkCardRenderer(ManagementAutonomyService management, WorkforceCoreService core) {
+        this(management, core, ActionJournal.runtimeEvidenceJournal());
+    }
+
+    WorkCardRenderer(ManagementAutonomyService management, WorkforceCoreService core, ActionJournal actionJournal) {
         this.management = management;
         this.core = core;
+        this.actionJournal = actionJournal;
     }
 
     /**
@@ -67,11 +76,24 @@ public final class WorkCardRenderer {
         boolean terminal = management.findAutonomousWork(objective.objectiveId())
                 .map(AutonomousObjectiveWork::terminal)
                 .orElseGet(objective::terminal);
-        boolean recent = Duration.between(objective.updatedAt(), Instant.now()).compareTo(MONITOR_RECENT_WINDOW) <= 0;
+        boolean recent = Duration.between(latestActivity(objective), Instant.now())
+                .compareTo(MONITOR_RECENT_WINDOW) <= 0;
         if (!terminal && recent) return 3;
         if (recent) return 2;
         if (!terminal) return 1;
         return 0;
+    }
+
+    private Instant latestActivity(ManagementObjective objective) {
+        Instant last = management.history(objective.objectiveId()).stream()
+                .map(ManagementAutonomyService.ManagementEvent::occurredAt)
+                .max(Comparator.naturalOrder())
+                .orElse(objective.updatedAt());
+        return actionJournal.objectiveActionRecords(objective.objectiveId()).stream()
+                .map(ActionJournal.ActionRecord::recordedAt)
+                .max(Comparator.naturalOrder())
+                .filter(actionAt -> actionAt.isAfter(last))
+                .orElse(last);
     }
 
     private String render(ManagementObjective objective) {
@@ -81,8 +103,11 @@ public final class WorkCardRenderer {
                 + "\nWORKLOAD   Not planned yet\nETA        Not committed\nSTAFFING   Not materialized";
 
         List<ManagementAutonomyService.ManagementEvent> history = management.history(objective.objectiveId());
+        List<ActionJournal.ActionRecord> actionRecords = actionJournal.objectiveActionRecords(objective.objectiveId());
+        ActionJournal.ActionRecord latestAction = actionRecords.isEmpty() ? null : actionRecords.getFirst();
         Instant last = history.stream().map(ManagementAutonomyService.ManagementEvent::occurredAt)
                 .max(Comparator.naturalOrder()).orElse(work.updatedAt());
+        if (latestAction != null && latestAction.recordedAt().isAfter(last)) last = latestAction.recordedAt();
         boolean fresh = Duration.between(last, Instant.now()).compareTo(Duration.ofSeconds(90)) <= 0;
         Set<String> completed = Set.copyOf(work.completedStepIds());
         Map<String, String> performers = performersByStep(work.evidenceReferences());
@@ -90,7 +115,7 @@ public final class WorkCardRenderer {
         int total = work.plannedWork().size();
         int done = completed.size();
         int percent = total == 0 ? (work.terminal() ? 100 : 0) : (int)Math.floor(done * 100.0 / total);
-        String status = humanStatus(work, history, fresh);
+        String status = humanStatus(work, history, fresh, latestAction);
         String reportsTo = "human:" + work.humanId();
         String staffing;
         if (!performers.isEmpty()) {
@@ -117,7 +142,14 @@ public final class WorkCardRenderer {
         out.append("WORKLOAD   ").append(total == 0 ? "Planning pending" : total + " work item(s)").append('\n');
         out.append("ETA        ").append(work.terminal() ? "Completed" : "Not committed by canonical plan").append('\n');
         out.append("STAFFING   ").append(staffing).append('\n');
-        out.append("LAST EVENT ").append(last).append("\n\n");
+        out.append("LAST EVENT ").append(last).append('\n');
+        if (latestAction != null) {
+            out.append("ACTIVITY   cycle ").append(latestAction.cycle())
+                    .append(" · ").append(latestAction.actionRef())
+                    .append(" · ").append(latestAction.success() ? "PASS" : "FAIL")
+                    .append(" · ").append(compact(latestAction.summary())).append('\n');
+        }
+        out.append('\n');
 
         if (work.plannedWork().isEmpty()) {
             out.append("WORK BREAKDOWN\n  ⏳ Planning has not produced work items yet.\n");
@@ -144,8 +176,8 @@ public final class WorkCardRenderer {
         }
         if (!work.blocker().isBlank()) out.append("\nNOTE / BLOCKER\n  🛑 ").append(compact(work.blocker())).append('\n');
         else out.append("\nNOTE / RISK\n  No active blocker recorded.\n");
-        out.append("\nREAL EXECUTION\n  ").append(executionTruth(work, history, fresh)).append('\n');
-        out.append("  ").append(proof(work, history, fresh)).append('\n');
+        out.append("\nREAL EXECUTION\n  ").append(executionTruth(work, history, fresh, latestAction)).append('\n');
+        out.append("  ").append(proof(work, history, fresh, latestAction)).append('\n');
         if (!work.evidenceReferences().isEmpty()) {
             out.append("\nEVIDENCE  ").append(work.evidenceReferences().size()).append(" refs");
             if (work.terminal()) for (String ref : work.evidenceReferences().stream().limit(5).toList()) out.append("\n  • ").append(ref);
@@ -173,12 +205,17 @@ public final class WorkCardRenderer {
         return Map.copyOf(performers);
     }
 
-    private static String humanStatus(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean fresh) {
+    private static String humanStatus(
+            AutonomousObjectiveWork work,
+            List<ManagementAutonomyService.ManagementEvent> history,
+            boolean fresh,
+            ActionJournal.ActionRecord latestAction) {
         return switch (work.status()) {
             case PENDING_PLANNING -> "RECEIVED";
             case PLANNING -> "PLANNING";
             case READY -> "READY";
-            case EXECUTING -> proof(work, history, fresh).startsWith("OBSERVED") ? "WORKING" : "WAITING FOR EXECUTION PROOF";
+            case EXECUTING -> proof(work, history, fresh, latestAction).startsWith("OBSERVED")
+                    ? "WORKING" : "WAITING FOR EXECUTION PROOF";
             case PENDING_VERIFICATION -> "PENDING VERIFICATION";
             case VERIFYING -> "VERIFYING";
             case BLOCKED -> "BLOCKED";
@@ -187,7 +224,11 @@ public final class WorkCardRenderer {
         };
     }
 
-    private static String executionTruth(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean fresh) {
+    private static String executionTruth(
+            AutonomousObjectiveWork work,
+            List<ManagementAutonomyService.ManagementEvent> history,
+            boolean fresh,
+            ActionJournal.ActionRecord latestAction) {
         if (work.status() == AutonomousObjectiveWork.Status.COMPLETED) {
             return work.evidenceReferences().isEmpty()
                     ? "⚠️ COMPLETED STATE EXISTS, BUT NO EXECUTION/OUTCOME EVIDENCE IS ATTACHED"
@@ -196,14 +237,28 @@ public final class WorkCardRenderer {
         if (work.status() == AutonomousObjectiveWork.Status.BLOCKED) return "🛑 NO — work is blocked";
         if (work.status() != AutonomousObjectiveWork.Status.EXECUTING) return "🟡 NOT YET — no active execution state";
         boolean execution = history.stream().anyMatch(e -> e.type() == ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED);
+        if (latestAction != null) {
+            return fresh
+                    ? "🟢 YES — durable action execution observed recently"
+                    : "⚠️ STALE — action execution exists, but no recent durable action activity";
+        }
         if (!execution) return "⚠️ UNPROVEN — state says EXECUTING but no durable execution-start evidence exists";
         return fresh ? "🟢 YES — durable execution activity observed recently" : "⚠️ STALE — execution started, but no recent durable activity";
     }
 
-    private static String proof(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean fresh) {
+    private static String proof(
+            AutonomousObjectiveWork work,
+            List<ManagementAutonomyService.ManagementEvent> history,
+            boolean fresh,
+            ActionJournal.ActionRecord latestAction) {
         if (work.status() == AutonomousObjectiveWork.Status.COMPLETED)
             return work.evidenceReferences().isEmpty() ? "UNPROVEN terminal state" : "TERMINAL EVIDENCE PRESENT";
         if (work.status() != AutonomousObjectiveWork.Status.EXECUTING) return "NOT EXECUTING";
+        if (latestAction != null) {
+            return fresh
+                    ? "OBSERVED durable action cycle " + latestAction.cycle() + " · " + latestAction.actionRef()
+                    : "STALE — no recent durable action activity";
+        }
         boolean execution = history.stream().anyMatch(e -> e.type() == ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED);
         if (!execution) return "UNPROVEN execution claim";
         return fresh ? "OBSERVED durable execution activity" : "STALE — no recent durable activity";

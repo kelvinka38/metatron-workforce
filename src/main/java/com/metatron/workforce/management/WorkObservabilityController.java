@@ -1,7 +1,9 @@
 package com.metatron.workforce.management;
 
+import com.metatron.workforce.action.ActionJournal;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,10 +32,20 @@ public final class WorkObservabilityController {
     private static final Duration LIVE_ACTIVITY_WINDOW = Duration.ofSeconds(90);
     private final ManagementAutonomyService management;
     private final WorkforceCoreService core;
+    private final ActionJournal actionJournal;
 
+    @Autowired
     public WorkObservabilityController(ManagementAutonomyService management, WorkforceCoreService core) {
+        this(management, core, ActionJournal.runtimeEvidenceJournal());
+    }
+
+    WorkObservabilityController(
+            ManagementAutonomyService management,
+            WorkforceCoreService core,
+            ActionJournal actionJournal) {
         this.management = management;
         this.core = core;
+        this.actionJournal = actionJournal;
     }
 
     @GetMapping(value = "", produces = MediaType.TEXT_HTML_VALUE)
@@ -63,9 +75,20 @@ public final class WorkObservabilityController {
     private ObjectiveMonitorView view(ManagementObjective objective) {
         AutonomousObjectiveWork work = management.findAutonomousWork(objective.objectiveId()).orElse(null);
         List<ManagementAutonomyService.ManagementEvent> history = management.history(objective.objectiveId());
+        List<ActionJournal.ActionRecord> actionRecords = actionJournal.objectiveActionRecords(objective.objectiveId());
+        ActionJournal.ActionRecord latestAction = actionRecords.isEmpty() ? null : actionRecords.getFirst();
         Instant lastActivity = history.stream().map(ManagementAutonomyService.ManagementEvent::occurredAt)
                 .max(Comparator.naturalOrder()).orElse(objective.updatedAt());
-        boolean recentActivity = Duration.between(lastActivity, Instant.now()).compareTo(LIVE_ACTIVITY_WINDOW) <= 0;
+        if (latestAction != null && latestAction.recordedAt().isAfter(lastActivity)) {
+            lastActivity = latestAction.recordedAt();
+        }
+        Instant now = Instant.now();
+        boolean recentActivity = Duration.between(lastActivity, now).compareTo(LIVE_ACTIVITY_WINDOW) <= 0;
+        Set<String> activeStepIds = actionRecords.stream()
+                .filter(record -> Duration.between(record.recordedAt(), now).compareTo(LIVE_ACTIVITY_WINDOW) <= 0)
+                .map(ActionJournal.ActionRecord::workStepId)
+                .filter(stepId -> stepId != null && !stepId.isBlank())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         boolean staffed = !objective.assignmentRefs().isEmpty();
         // Truthful attribution from durable Assignment/execution attribution -- never inferred from
         // requested capability or Worker name in the Objective. Real even before/without step-level
@@ -80,6 +103,8 @@ public final class WorkObservabilityController {
                 String state;
                 if (completedIds.contains(step.stepId())) state = "COMPLETED";
                 else if (!completedIds.containsAll(step.dependsOn())) state = "WAITING_DEPENDENCY";
+                else if (work.status() == AutonomousObjectiveWork.Status.EXECUTING
+                        && activeStepIds.contains(step.stepId())) state = "RUNNING";
                 else if (work.status() == AutonomousObjectiveWork.Status.EXECUTING) state = "READY_OR_RUNNING";
                 else if (work.status() == AutonomousObjectiveWork.Status.BLOCKED) state = "BLOCKED";
                 else state = "READY";
@@ -92,10 +117,24 @@ public final class WorkObservabilityController {
         }
 
         int progress = total == 0 ? (objective.terminal() ? 100 : 0) : (int)Math.floor(completed * 100.0 / total);
-        String executionProof = executionProof(work, history, recentActivity);
+        String executionProof = executionProof(work, history, recentActivity, latestAction);
         String humanStatus = humanStatus(objective, work, executionProof);
-        List<EventView> recentEvents = history.stream().sorted(Comparator.comparing(ManagementAutonomyService.ManagementEvent::occurredAt).reversed())
-                .limit(20).map(event -> new EventView(event.type().name(), event.actorWorkerId(), event.detail(), event.occurredAt())).toList();
+        List<EventView> activityEvents = new ArrayList<>();
+        history.forEach(event -> activityEvents.add(new EventView(
+                event.type().name(), event.actorWorkerId(), event.detail(), event.occurredAt())));
+        actionRecords.forEach(record -> activityEvents.add(new EventView(
+                "ACTION_CYCLE",
+                record.workerId(),
+                "step=" + record.workStepId()
+                        + "; cycle=" + record.cycle()
+                        + "; action=" + record.actionRef()
+                        + "; result=" + (record.success() ? "PASS" : "FAIL")
+                        + "; " + record.summary(),
+                record.recordedAt())));
+        List<EventView> recentEvents = activityEvents.stream()
+                .sorted(Comparator.comparing(EventView::at).reversed())
+                .limit(20)
+                .toList();
         List<String> evidence = work == null ? objective.evidenceRefs() : work.evidenceReferences();
         String blocker = work == null ? "" : work.blocker();
         String reportsTo = work == null ? "NOT_MATERIALIZED" : "human:" + work.humanId();
@@ -106,8 +145,22 @@ public final class WorkObservabilityController {
         // attribution).
         String staffing = !staffed ? "UNASSIGNED" : !durablePerformers.isEmpty() ? "ASSIGNED:" + durablePerformerLabel : "ASSIGNMENT_EVIDENCE_PRESENT";
 
-        Map<String,String> proof = new LinkedHashMap<>(); proof.put("state",executionProof); proof.put("last_activity_at",lastActivity.toString());
-        proof.put("activity_fresh",Boolean.toString(recentActivity)); proof.put("work_version",work==null?"0":Integer.toString(work.version())); proof.put("evidence_count",Integer.toString(evidence.size()));
+        Map<String,String> proof = new LinkedHashMap<>();
+        proof.put("state", executionProof);
+        proof.put("last_activity_at", lastActivity.toString());
+        proof.put("activity_fresh", Boolean.toString(recentActivity));
+        proof.put("activity_source",
+                latestAction != null && latestAction.recordedAt().equals(lastActivity)
+                        ? "ACTION_JOURNAL" : "MANAGEMENT");
+        proof.put("work_version", work == null ? "0" : Integer.toString(work.version()));
+        proof.put("evidence_count", Integer.toString(evidence.size()));
+        if (latestAction != null) {
+            proof.put("latest_action", latestAction.actionRef());
+            proof.put("latest_action_cycle", Integer.toString(latestAction.cycle()));
+            proof.put("latest_action_success", Boolean.toString(latestAction.success()));
+            proof.put("latest_action_at", latestAction.recordedAt().toString());
+            proof.put("latest_action_step", latestAction.workStepId());
+        }
 
         return new ObjectiveMonitorView(objective.objectiveId(), concise(objective.description()), objective.ownerWorkerId(), reportsTo,
                 workload, eta, staffing, objective.status().name(), work==null?"NONE":work.status().name(), humanStatus,
@@ -115,12 +168,25 @@ public final class WorkObservabilityController {
                 objective.assignmentRefs(), evidence, items, recentEvents, proof, durablePerformers);
     }
 
-    private static String executionProof(AutonomousObjectiveWork work, List<ManagementAutonomyService.ManagementEvent> history, boolean recentActivity) {
+    private static String executionProof(
+            AutonomousObjectiveWork work,
+            List<ManagementAutonomyService.ManagementEvent> history,
+            boolean recentActivity,
+            ActionJournal.ActionRecord latestAction) {
         if (work == null) return "NO_AUTONOMOUS_WORK";
-        if (work.status() == AutonomousObjectiveWork.Status.COMPLETED) return work.evidenceReferences().isEmpty()?"TERMINAL_WITHOUT_EVIDENCE":"TERMINAL_EVIDENCE_PRESENT";
+        if (work.status() == AutonomousObjectiveWork.Status.COMPLETED) {
+            return work.evidenceReferences().isEmpty()
+                    ? "TERMINAL_WITHOUT_EVIDENCE" : "TERMINAL_EVIDENCE_PRESENT";
+        }
         if (work.status() != AutonomousObjectiveWork.Status.EXECUTING) return "NOT_EXECUTING";
-        boolean executionStarted = history.stream().anyMatch(e -> e.type()==ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED);
-        boolean material = history.stream().anyMatch(e -> e.type()==ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED || e.type()==ManagementAutonomyService.ManagementEvent.Type.WORK_STEP_COMPLETED);
+        if (latestAction != null) {
+            return recentActivity ? "EXECUTION_ACTIVITY_OBSERVED" : "EXECUTION_STALE";
+        }
+        boolean executionStarted = history.stream()
+                .anyMatch(e -> e.type() == ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED);
+        boolean material = history.stream().anyMatch(e ->
+                e.type() == ManagementAutonomyService.ManagementEvent.Type.EXECUTION_STARTED
+                        || e.type() == ManagementAutonomyService.ManagementEvent.Type.WORK_STEP_COMPLETED);
         if (!executionStarted || !material) return "EXECUTION_CLAIM_UNPROVEN";
         return recentActivity ? "EXECUTION_ACTIVITY_OBSERVED" : "EXECUTION_STALE";
     }
