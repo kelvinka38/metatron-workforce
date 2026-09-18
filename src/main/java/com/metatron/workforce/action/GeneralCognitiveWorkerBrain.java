@@ -145,6 +145,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             // provider-selected action to create actual source/work-product; Git/build/test/runtime
             // sequencing only becomes meaningful after at least one successful source mutation.
             providerActions = List.of("workspace.file.write");
+        } else if (requiresProjectManifestBeforeLifecycle(context)
+                && !hasProjectManifestMutation(context)) {
+            // A fresh app that must build/test/run needs a project/dependency manifest before lifecycle
+            // actions can be meaningful. Keep cognition in bounded scaffold creation/inspection until
+            // it has created one instead of wasting cycles on dependency/build/test actions that can only fail.
+            providerActions = context.availableActions().stream()
+                    .filter(action -> action.startsWith("workspace.file."))
+                    .toList();
         } else {
             // Git is a deterministic governed postcondition for fresh-app work. Let the existing
             // governedGitPrecondition()/remote-proposal preconditions perform add/commit/status only
@@ -167,6 +175,34 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 providerActions,
                 context.history(),
                 context.memory());
+    }
+
+    private static boolean requiresProjectManifestBeforeLifecycle(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        return requiresGovernedBuild(context)
+                || requiresGovernedTest(context)
+                || requiresRuntimeVerification(context)
+                || context.availableActions().contains("workspace.dependencies.install");
+    }
+
+    private static boolean hasProjectManifestMutation(CognitiveWorkerRuntime.CognitiveContext context) {
+        return context.history().stream().anyMatch(cycle -> {
+            if (!cycle.observation().success()) return false;
+            String action = cycle.thought().actionRef();
+            if (!"workspace.file.write".equals(action) && !"workspace.file.patch".equals(action)) return false;
+            String path = cycle.thought().inputs().getOrDefault("path", "")
+                    .replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+            return path.endsWith("/package.json") || "package.json".equals(path)
+                    || path.endsWith("/pyproject.toml") || "pyproject.toml".equals(path)
+                    || path.endsWith("/requirements.txt") || "requirements.txt".equals(path)
+                    || path.endsWith("/pom.xml") || "pom.xml".equals(path)
+                    || path.endsWith("/build.gradle") || "build.gradle".equals(path)
+                    || path.endsWith("/build.gradle.kts") || "build.gradle.kts".equals(path)
+                    || path.endsWith("/cargo.toml") || "cargo.toml".equals(path)
+                    || path.endsWith("/go.mod") || "go.mod".equals(path)
+                    || path.endsWith("/composer.json") || "composer.json".equals(path)
+                    || path.endsWith("/gemfile") || "gemfile".equals(path);
+        });
     }
 
     static CognitiveWorkerRuntime.Thought researchSearchPrecondition(
