@@ -72,14 +72,16 @@ public final class GeneralWorkspacePhasePlanner {
         boolean fresh = base.evidenceRequirements().stream()
                 .anyMatch(value -> "workspace-source:fresh-new-application".equalsIgnoreCase(value));
 
-        List<String> sharedRequirements = new ArrayList<>();
-        if (fresh && (build || test || runtime)) sharedRequirements.add(REQUIRE_MANIFEST);
-        if (build) sharedRequirements.add(REQUIRE_BUILD);
-        if (test) sharedRequirements.add(REQUIRE_TEST);
-        if (runtime) sharedRequirements.add(REQUIRE_RUNTIME);
-        if (commit || publish) sharedRequirements.add(REQUIRE_GIT_COMMIT);
-        if (gitVerify || publish) sharedRequirements.add(REQUIRE_GIT_VERIFY);
-        if (publish) sharedRequirements.add(REQUIRE_GITHUB_PR);
+        List<String> prepareRequirements = fresh && (build || test || runtime)
+                ? List.of(REQUIRE_MANIFEST) : List.of();
+        List<String> verifyRequirements = new ArrayList<>();
+        if (build) verifyRequirements.add(REQUIRE_BUILD);
+        if (test) verifyRequirements.add(REQUIRE_TEST);
+        if (runtime) verifyRequirements.add(REQUIRE_RUNTIME);
+        List<String> deliverRequirements = new ArrayList<>();
+        if (commit || publish) deliverRequirements.add(REQUIRE_GIT_COMMIT);
+        if (gitVerify || publish) deliverRequirements.add(REQUIRE_GIT_VERIFY);
+        if (publish) deliverRequirements.add(REQUIRE_GITHUB_PR);
 
         List<ExecutionWorkSpec> phased = new ArrayList<>();
         String produceId = base.stepId() + "-produce";
@@ -93,7 +95,7 @@ public final class GeneralWorkspacePhasePlanner {
                 base.dependsOn(),
                 ExecutionWorkSpec.Consequence.MUTATING,
                 List.of("requested source/work product exists in the Objective workspace"),
-                evidence(base.evidenceRequirements(), PHASE_PRODUCE, sharedRequirements)));
+                evidence(base.evidenceRequirements(), PHASE_PRODUCE, List.of())));
 
         String predecessor = produceId;
         if (fresh && (build || test || runtime)) {
@@ -109,7 +111,7 @@ public final class GeneralWorkspacePhasePlanner {
                     List.of(produceId),
                     ExecutionWorkSpec.Consequence.MUTATING,
                     List.of("a project/dependency manifest exists for the carried work product"),
-                    evidence(base.evidenceRequirements(), PHASE_PREPARE, sharedRequirements)));
+                    evidence(base.evidenceRequirements(), PHASE_PREPARE, prepareRequirements)));
             predecessor = prepareId;
         }
         if (build || test || runtime) {
@@ -127,7 +129,7 @@ public final class GeneralWorkspacePhasePlanner {
                     List.of(predecessor),
                     runtime ? ExecutionWorkSpec.Consequence.MUTATING : ExecutionWorkSpec.Consequence.READ_ONLY,
                     acceptance,
-                    evidence(base.evidenceRequirements(), PHASE_VERIFY, sharedRequirements)));
+                    evidence(base.evidenceRequirements(), PHASE_VERIFY, verifyRequirements)));
             predecessor = verifyId;
         }
 
@@ -147,7 +149,7 @@ public final class GeneralWorkspacePhasePlanner {
                     List.of(predecessor),
                     ExecutionWorkSpec.Consequence.MUTATING,
                     acceptance,
-                    evidence(base.evidenceRequirements(), PHASE_DELIVER, sharedRequirements)));
+                    evidence(base.evidenceRequirements(), PHASE_DELIVER, deliverRequirements)));
         }
 
         return List.copyOf(phased);
