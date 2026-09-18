@@ -55,6 +55,7 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, fileSearch(workerId, authorizationReference, workspace));
         add(profile, actions, filePatch(workerId, authorizationReference, workspace));
         add(profile, actions, fileWrite(workerId, authorizationReference, workspace));
+        add(profile, actions, projectPrepare(workerId, authorizationReference, workspace));
         add(profile, actions, dependenciesInstall(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, process(workerId, authorizationReference, objectiveId));
         add(profile, actions, shell(workerId, authorizationReference, objectiveId));
@@ -340,6 +341,209 @@ public final class GeneralWorkspaceActionCatalog {
                     workspaceEvidence(workspace, request.actionRef()));
         });
     }
+
+    private ActionFabric.Action projectPrepare(String worker, String auth,
+                                                     ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        return action("workspace.project.prepare", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+            ProjectScaffold prepared = prepareProjectScaffold(workspace);
+            Map<String, String> outputs = new LinkedHashMap<>();
+            outputs.put("projectKind", prepared.projectKind());
+            outputs.put("manifestPath", prepared.manifestPath());
+            outputs.put("writtenPathsJson", write(prepared.writtenPaths()));
+            outputs.put("reused", Boolean.toString(prepared.reused()));
+            List<String> evidence = new ArrayList<>(workspaceEvidence(workspace, request.actionRef()));
+            evidence.add("workspace-project-kind:" + prepared.projectKind());
+            evidence.add("workspace-project-manifest:" + prepared.manifestPath());
+            prepared.writtenPaths().forEach(path -> evidence.add("workspace-project-prepared-path:" + path));
+            return observation(request.actionRef(), true,
+                    prepared.reused()
+                            ? "existing supported project scaffold reused"
+                            : "minimal supported project scaffold prepared",
+                    outputs, evidence);
+        });
+    }
+
+    private ProjectScaffold prepareProjectScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        String existing = existingProjectManifest(workspace.path());
+        if (!existing.isBlank()) {
+            return new ProjectScaffold(projectKindForManifest(workspace, existing), existing, List.of(), true);
+        }
+
+        SourceFile source = primarySourceFile(workspace);
+        if (source == null) throw new IllegalStateException("project preparation requires a supported source file");
+        String lowerPath = source.path().toLowerCase(java.util.Locale.ROOT);
+        String lowerContent = source.content().toLowerCase(java.util.Locale.ROOT);
+        boolean javascript = lowerPath.endsWith(".js") || lowerPath.endsWith(".jsx")
+                || lowerPath.endsWith(".ts") || lowerPath.endsWith(".tsx");
+        boolean react = javascript && (lowerContent.contains("from 'react'")
+                || lowerContent.contains("from \"react\"")
+                || lowerContent.contains("require('react')")
+                || lowerContent.contains("require(\"react\")")
+                || lowerPath.endsWith(".jsx") || lowerPath.endsWith(".tsx"));
+
+        if (react) return prepareReactScaffold(workspace, source);
+        if (javascript) return prepareNodeScaffold(workspace, source);
+        if (lowerPath.endsWith(".py")) return preparePythonScaffold(workspace, source);
+        throw new IllegalStateException("unsupported project scaffold for source: " + source.path());
+    }
+
+    private ProjectScaffold prepareReactScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                                   SourceFile source) {
+        List<String> written = new ArrayList<>();
+        String componentPath = source.path();
+        String lower = componentPath.toLowerCase(java.util.Locale.ROOT);
+        boolean jsxSyntax = source.content().contains("<") && source.content().contains(">");
+        if (jsxSyntax && (lower.endsWith(".js") || lower.endsWith(".ts"))) {
+            componentPath = componentPath.substring(0, componentPath.lastIndexOf('.'))
+                    + (lower.endsWith(".ts") ? ".tsx" : ".jsx");
+            writeIfMissing(workspace, componentPath, source.content(), written);
+        }
+
+        Path component = Path.of(componentPath);
+        String importPath = Path.of("src").relativize(component).toString().replace('\\', '/');
+        if (!importPath.startsWith(".")) importPath = "./" + importPath;
+        writeIfMissing(workspace, "src/main.jsx",
+                "import React from 'react';\n"
+                        + "import { createRoot } from 'react-dom/client';\n"
+                        + "import App from '" + importPath + "';\n\n"
+                        + "createRoot(document.getElementById('root')).render(\n"
+                        + "  <React.StrictMode><App /></React.StrictMode>\n"
+                        + ");\n", written);
+        writeIfMissing(workspace, "index.html",
+                "<!doctype html>\n<html><head><meta charset=\"UTF-8\"/>"
+                        + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"/>"
+                        + "<title>Metatron Application</title></head>"
+                        + "<body><div id=\"root\"></div><script type=\"module\" src=\"/src/main.jsx\"></script></body></html>\n",
+                written);
+        String escapedComponent = componentPath.replace("\\", "\\\\").replace("'", "\\'");
+        writeIfMissing(workspace, "test/scaffold.test.js",
+                "import test from 'node:test';\n"
+                        + "import assert from 'node:assert/strict';\n"
+                        + "import { existsSync, readFileSync } from 'node:fs';\n\n"
+                        + "test('generated web application has a runnable scaffold', () => {\n"
+                        + "  assert.ok(existsSync('index.html'));\n"
+                        + "  assert.ok(existsSync('src/main.jsx'));\n"
+                        + "  assert.ok(existsSync('" + escapedComponent + "'));\n"
+                        + "  assert.ok(readFileSync('" + escapedComponent + "', 'utf8').trim().length > 0);\n"
+                        + "});\n", written);
+        writeIfMissing(workspace, "package.json",
+                "{\n"
+                        + "  \"name\": \"metatron-generated-web-app\",\n"
+                        + "  \"version\": \"1.0.0\",\n"
+                        + "  \"private\": true,\n"
+                        + "  \"type\": \"module\",\n"
+                        + "  \"scripts\": {\n"
+                        + "    \"build\": \"vite build\",\n"
+                        + "    \"test\": \"node --test test/*.test.js\",\n"
+                        + "    \"start\": \"vite --host 0.0.0.0 --port 3000\"\n"
+                        + "  },\n"
+                        + "  \"dependencies\": {\n"
+                        + "    \"react\": \"^18.3.1\",\n"
+                        + "    \"react-dom\": \"^18.3.1\"\n"
+                        + "  },\n"
+                        + "  \"devDependencies\": { \"vite\": \"^5.4.0\" }\n"
+                        + "}\n", written);
+        return new ProjectScaffold("node-react", "package.json", List.copyOf(written), false);
+    }
+
+    private ProjectScaffold prepareNodeScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                                  SourceFile source) {
+        List<String> written = new ArrayList<>();
+        String escaped = source.path().replace("\\", "\\\\").replace("\"", "\\\"");
+        String escapedSingle = source.path().replace("\\", "\\\\").replace("'", "\\'");
+        writeIfMissing(workspace, "test/scaffold.test.js",
+                "import test from 'node:test';\n"
+                        + "import assert from 'node:assert/strict';\n"
+                        + "import { existsSync } from 'node:fs';\n"
+                        + "test('generated source exists', () => assert.ok(existsSync('"
+                        + escapedSingle + "')));\n", written);
+        writeIfMissing(workspace, "package.json",
+                "{\n"
+                        + "  \"name\": \"metatron-generated-node-app\",\n"
+                        + "  \"version\": \"1.0.0\",\n"
+                        + "  \"private\": true,\n"
+                        + "  \"type\": \"module\",\n"
+                        + "  \"scripts\": {\n"
+                        + "    \"build\": \"node --check " + escaped + "\",\n"
+                        + "    \"test\": \"node --test test/*.test.js\",\n"
+                        + "    \"start\": \"node " + escaped + "\"\n"
+                        + "  }\n"
+                        + "}\n", written);
+        return new ProjectScaffold("node", "package.json", List.copyOf(written), false);
+    }
+
+    private ProjectScaffold preparePythonScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                                    SourceFile source) {
+        List<String> written = new ArrayList<>();
+        String escaped = source.path().replace("\\", "\\\\").replace("'", "\\'");
+        writeIfMissing(workspace, "tests/test_scaffold.py",
+                "import py_compile\n\n"
+                        + "def test_generated_source_compiles():\n"
+                        + "    py_compile.compile('" + escaped + "', doraise=True)\n", written);
+        writeIfMissing(workspace, "requirements.txt", "pytest>=8,<9\n", written);
+        return new ProjectScaffold("python", "requirements.txt", List.copyOf(written), false);
+    }
+
+    private void writeIfMissing(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                String path,
+                                String content,
+                                List<String> written) {
+        Path target = workspaces.resolve(workspace, path);
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(target)) {
+                throw new IllegalStateException("project scaffold path is not a regular file: " + path);
+            }
+            return;
+        }
+        workspaces.write(workspace, path, content);
+        written.add(path);
+    }
+
+    private SourceFile primarySourceFile(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        try (var stream = Files.walk(workspace.path(), 5)) {
+            List<Path> candidates = stream
+                    .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> !Files.isSymbolicLink(path))
+                    .filter(path -> {
+                        String rel = workspace.path().relativize(path).toString().replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+                        return (rel.endsWith(".js") || rel.endsWith(".jsx") || rel.endsWith(".ts")
+                                || rel.endsWith(".tsx") || rel.endsWith(".py"))
+                                && !rel.startsWith("test/") && !rel.startsWith("tests/")
+                                && !rel.startsWith("node_modules/") && !rel.startsWith("dist/");
+                    })
+                    .sorted()
+                    .toList();
+            for (Path path : candidates) {
+                String relative = workspace.path().relativize(path).toString().replace('\\', '/');
+                return new SourceFile(relative, workspaces.read(workspace, relative));
+            }
+            return null;
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot inspect Objective workspace source", e);
+        }
+    }
+
+    private static String existingProjectManifest(Path root) {
+        for (String path : List.of("package.json", "requirements.txt", "pyproject.toml", "pom.xml", "build.gradle", "build.gradle.kts")) {
+            Path candidate = root.resolve(path).normalize();
+            if (candidate.startsWith(root) && Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isSymbolicLink(candidate)) return path;
+        }
+        return "";
+    }
+
+    private String projectKindForManifest(ObjectiveWorkspaceService.ObjectiveWorkspace workspace, String manifest) {
+        if (manifest.equals("package.json")) {
+            String body = workspaces.read(workspace, manifest).toLowerCase(java.util.Locale.ROOT);
+            return body.contains("react") || body.contains("vite") ? "node-react" : "node";
+        }
+        if (manifest.equals("requirements.txt") || manifest.equals("pyproject.toml")) return "python";
+        if (manifest.equals("pom.xml")) return "maven";
+        return "gradle";
+    }
+
+    private record SourceFile(String path, String content) {}
+    private record ProjectScaffold(String projectKind, String manifestPath, List<String> writtenPaths, boolean reused) {}
 
     private ActionFabric.Action dependenciesInstall(String worker, String auth, String objectiveId,
                                                      ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
