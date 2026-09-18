@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -70,26 +71,32 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
                 "case:full-composition-acceptance", request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
-        assertEquals(1, plan.size());
-        ExecutionWorkSpec routed = plan.getFirst();
-        assertEquals(CAPABILITY, routed.requiredCapability());
-        assertEquals("repository:kelvinka38/metatron-workforce-control-center", routed.target());
-        assertEquals(ExecutionWorkSpec.Consequence.MUTATING, routed.consequence());
-        assertTrue(routed.evidenceRequirements().stream()
+        assertEquals(3, plan.size());
+        assertTrue(plan.stream().allMatch(routed -> CAPABILITY.equals(routed.requiredCapability())));
+        assertTrue(plan.stream().allMatch(routed ->
+                "repository:kelvinka38/metatron-workforce-control-center".equals(routed.target())));
+        assertEquals(List.of(), plan.get(0).dependsOn());
+        assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
+        assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertTrue(plan.getFirst().evidenceRequirements().stream()
                 .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase),
-                "planner must mark this as fresh new-application work, not existing-repository work");
+                "only the production phase must carry the fresh-new-application source marker");
+        assertTrue(plan.subList(1, plan.size()).stream().noneMatch(step -> step.evidenceRequirements().stream()
+                .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase)));
 
-        // 2. AUTHORITY BINDING: the routed target resolves against the REAL production authority
-        // manifest catalog exactly like the production incident's authority-target fix.
+        // 2. AUTHORITY BINDING: every durable phase resolves against the same real production authority.
         GovernanceTestHarness harness = new GovernanceTestHarness(CLOCK);
-        try {
-            harness.plans.bindAuthorizedWork(
-                    "objective:full-composition-acceptance", "founder", routed,
-                    "FOUNDER", "authorization:full-composition-acceptance", java.util.Map.of());
-        } catch (GovernanceDeniedException denied) {
-            throw new AssertionError("authority binding must succeed for the routed new-app target: "
-                    + denied.code() + " -- " + denied.getMessage(), denied);
+        for (ExecutionWorkSpec routed : plan) {
+            try {
+                harness.plans.bindAuthorizedWork(
+                        "objective:full-composition-acceptance", "founder", routed,
+                        "FOUNDER", "authorization:full-composition-acceptance", java.util.Map.of());
+            } catch (GovernanceDeniedException denied) {
+                throw new AssertionError("authority binding must succeed for routed phase " + routed.stepId() + ": "
+                        + denied.code() + " -- " + denied.getMessage(), denied);
+            }
         }
+        ExecutionWorkSpec routed = plan.getFirst();
 
         // 3. STAFFING: reuse the existing canonical Worker; never form a duplicate.
         WorkforceCoreService core = stagedCore();
@@ -97,12 +104,11 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
 
         ManagementAutonomyService management = new ManagementAutonomyService();
         AtomicBoolean assignmentVisibleBeforeSuccess = new AtomicBoolean(false);
+        AtomicInteger executionCalls = new AtomicInteger();
 
-        // 4/5. REAL ASSIGNMENT + FRESH-WORKSPACE EXECUTION (simulated): the delegate stands in for the
-        // deterministic GeneralCognitiveWorkerBrain action sequence -- source mutation, build, test,
-        // runtime verification and local Git evidence -- whose own deterministic contract (materialization
-        // is not forced for a fresh app, the completion floor requires every one of these categories) is
-        // separately unit-proven. Here it asserts truthful assignment attribution is already visible.
+        // 4/5. REAL ASSIGNMENT + PHASED EXECUTION (simulated): each durable Work phase receives a real
+        // governed Assignment before capability execution and emits only the evidence category that
+        // belongs to that phase. Detailed Action Fabric sequencing is separately unit-proven.
         AutonomousExecutionCapability delegate = new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return CAPABILITY; }
             @Override public String authorityReference() { return GeneralWorkspaceAutonomousCapability.AUTHORITY_REFERENCE; }
@@ -110,23 +116,38 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
             @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
             @Override public CapabilityResult execute(CapabilityRequest capabilityRequest) {
                 String objectiveId = capabilityRequest.objectiveId();
-                assertFalse(management.get(objectiveId).assignmentRefs().isEmpty(),
-                        "the real Assignment must already be referenced before this capability call returns");
+                assertTrue(management.get(objectiveId).assignmentRefs().contains(
+                                capabilityRequest.assignmentReference()),
+                        "the phase Assignment must already be referenced before capability execution returns");
                 WorkforceCoreService.Assignment assignment = core.allAssignments().stream()
-                        .filter(a -> objectiveId.equals(a.objectiveRef())).findFirst().orElseThrow();
+                        .filter(a -> capabilityRequest.assignmentReference().equals(a.assignmentId()))
+                        .findFirst().orElseThrow();
                 assertEquals(WORKER_ID, assignment.workerId());
                 assignmentVisibleBeforeSuccess.set(true);
+                executionCalls.incrementAndGet();
 
-                List<String> evidence = List.of(
-                        "workspace-source:fresh-new-application:path=src/App.java",
-                        "workspace-build:workspace.build.run:success",
-                        "workspace-test:workspace.test.run:success",
-                        "workspace-runtime:workspace.process.run:success",
-                        "workspace-git:workspace.git.run:commit",
-                        "worker-assignment evidence attributed to " + WORKER_ID);
+                String stepId = capabilityRequest.workSpec().stepId();
+                List<String> evidence;
+                if (stepId.endsWith("-produce")) {
+                    evidence = List.of(
+                            "workspace-source:fresh-new-application:path=src/App.java",
+                            "worker-assignment evidence attributed to " + WORKER_ID);
+                } else if (stepId.endsWith("-verify")) {
+                    evidence = List.of(
+                            "workspace-build:workspace.build.run:success",
+                            "workspace-test:workspace.test.run:success",
+                            "workspace-runtime:workspace.process.run:success",
+                            "worker-assignment evidence attributed to " + WORKER_ID);
+                } else if (stepId.endsWith("-deliver")) {
+                    evidence = List.of(
+                            "workspace-git:workspace.git.run:commit",
+                            "worker-assignment evidence attributed to " + WORKER_ID);
+                } else {
+                    throw new AssertionError("unexpected phased Work step: " + stepId);
+                }
                 return new CapabilityResult(true, capabilityRequest.allocatedWorkerId(),
                         capabilityRequest.assignmentReference(), "work-metatron-workforce-control-center",
-                        evidence, "PASS");
+                        evidence, "PASS:" + stepId);
             }
         };
         GovernedAutonomousExecutionCapability governed = new GovernedAutonomousExecutionCapability(
@@ -145,24 +166,30 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
             var receipt = ingress.submit(
                     "human-primary", "metatron", "case-full-composition-acceptance",
                     "conversation-full-composition-acceptance", "message-full-composition-acceptance",
-                    "workplace", requestWithExactPlan(routed));
+                    "workplace", requestWithExactPlan(plan));
             runner.runOnce();
 
             String objectiveId = receipt.objectiveId();
             assertTrue(assignmentVisibleBeforeSuccess.get(), "capability execution must have actually run");
+            assertEquals(plan.size(), executionCalls.get(),
+                    "each durable phase must execute exactly once");
 
-            // 6. REAL ASSIGNMENT TERMINAL COMPLETION: the durable Assignment itself completes.
-            assertEquals(1, core.allAssignments().size());
-            WorkforceCoreService.Assignment assignment = core.allAssignments().getFirst();
-            assertEquals(WORKER_ID, assignment.workerId());
-            assertEquals(WorkforceCoreService.AssignmentStatus.COMPLETED, assignment.status());
-            assertTrue(management.get(objectiveId).assignmentRefs().contains(assignment.assignmentId()));
+            // 6. REAL ASSIGNMENT TERMINAL COMPLETION: each phase owns a real terminal Assignment.
+            assertEquals(plan.size(), core.allAssignments().size());
+            assertTrue(core.allAssignments().stream().allMatch(assignment ->
+                    WORKER_ID.equals(assignment.workerId())
+                            && assignment.status() == WorkforceCoreService.AssignmentStatus.COMPLETED));
+            assertEquals(plan.size(), management.get(objectiveId).assignmentRefs().size());
+            assertTrue(core.allAssignments().stream().allMatch(assignment ->
+                    management.get(objectiveId).assignmentRefs().contains(assignment.assignmentId())));
             assertNotEquals(GeneralWorkspaceAutonomousCapability.WORKER_ID, routed.target(),
                     "governed execution target must never be the performer's own Worker identity");
 
             // 7. STEP EVIDENCE: every requested acceptance category landed as durable Objective evidence.
             AutonomousObjectiveWork work = management.findAutonomousWork(objectiveId).orElseThrow();
-            assertEquals(1, work.completedStepIds().size());
+            assertEquals(plan.size(), work.completedStepIds().size());
+            assertEquals(plan.stream().map(ExecutionWorkSpec::stepId).collect(java.util.stream.Collectors.toSet()),
+                    work.completedStepIds().stream().collect(java.util.stream.Collectors.toSet()));
             assertTrue(work.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("workspace-source:")));
             assertTrue(work.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("workspace-build:")));
             assertTrue(work.evidenceReferences().stream().anyMatch(ref -> ref.startsWith("workspace-test:")));
@@ -185,8 +212,8 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
         }
     }
 
-    /** The real planner's exact output, reused so the runner executes the identical governed WorkSpec. */
-    private static NormalizedRequest requestWithExactPlan(ExecutionWorkSpec routed) {
+    /** The real planner's exact output, reused so the runner executes the identical governed Work graph. */
+    private static NormalizedRequest requestWithExactPlan(List<ExecutionWorkSpec> routedPlan) {
         return new NormalizedRequest(
                 OBJECTIVE_TEXT, WORKER_ID,
                 List.of("execute autonomously under governed Workforce Assignment attribution"),
@@ -199,7 +226,7 @@ class GeneralEngineeringFullCompositionAcceptanceTest {
                 com.metatron.workforce.interaction.intelligence.CollaborationMode.SINGLE,
                 List.<com.metatron.workforce.interaction.intelligence.AnalyticalProtocolType>of(),
                 com.metatron.workforce.interaction.intelligence.DeterministicCapability.NONE,
-                List.of(), List.of(routed), false, null,
+                List.of(), List.copyOf(routedPlan), false, null,
                 com.metatron.workforce.interaction.llm.LlmProvider.OPENAI, "");
     }
 
