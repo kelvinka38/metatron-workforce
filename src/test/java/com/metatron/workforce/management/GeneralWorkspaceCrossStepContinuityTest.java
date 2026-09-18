@@ -83,6 +83,34 @@ class GeneralWorkspaceCrossStepContinuityTest {
     }
 
     @Test
+    void freshNewApplicationRemovesMaterializeActionBeforeFirstCognitionTurn() {
+        ExecutionWorkSpec fresh = new ExecutionWorkSpec(
+                "general-engineering-workspace-execution",
+                "Build and deliver a complete runnable web application called Metatron Workforce Control Center",
+                "repository:kelvinka38/metatron-workforce-control-center",
+                GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("runnable application is delivered"),
+                List.of("workspace-source:fresh-new-application", "build/test/runtime evidence"));
+
+        List<ActionFabric.Action> filtered = GeneralWorkspaceAutonomousCapability.actionsForWork(
+                List.of(action("workspace.repository.materialize"), action("workspace.file.write"),
+                        action("workspace.build.run"), action("workspace.test.run"),
+                        action("workspace.process.run"), action("workspace.git.run")),
+                fresh, Map.of(GeneralWorkspaceAutonomousCapability.MEMORY_WORKSPACE_MATERIALIZED, "false"));
+
+        List<String> refs = filtered.stream().map(ActionFabric.Action::actionRef).toList();
+        assertFalse(refs.contains("workspace.repository.materialize"),
+                "a destination repository for a fresh application must not be exposed as a source-checkout action");
+        assertTrue(refs.contains("workspace.file.write"));
+        assertTrue(refs.contains("workspace.build.run"));
+        assertTrue(refs.contains("workspace.test.run"));
+        assertTrue(refs.contains("workspace.process.run"));
+        assertTrue(refs.contains("workspace.git.run"));
+    }
+
+    @Test
     void explicitMaterializationStepRetainsMaterializeActionEvenWhenWorkspaceAlreadyExists() {
         ExecutionWorkSpec materialize = new ExecutionWorkSpec(
                 "step-1",

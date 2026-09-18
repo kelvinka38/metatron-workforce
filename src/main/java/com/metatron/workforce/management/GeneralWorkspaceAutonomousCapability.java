@@ -233,6 +233,13 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
             return candidates.stream().filter(action -> GeneralWebResearchAction.ACTION_REF.equals(action.actionRef())).toList();
         }
         boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
+        boolean freshNewApplication = workSpec.evidenceRequirements().stream()
+                .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase);
+        if (freshNewApplication && !requiresRepositoryMaterialization(workSpec)) {
+            return candidates.stream()
+                    .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
+                    .toList();
+        }
         if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(candidates);
         return candidates.stream().filter(action -> !"workspace.repository.materialize".equals(action.actionRef())).toList();
     }
