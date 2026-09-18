@@ -1266,5 +1266,3 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         return value.trim();
     }
 }
-
-[executed on device: ubuntu-4gb-sin-2 (794df3db-670a-4e18-ba4c-6d51d3c2f84f)]
