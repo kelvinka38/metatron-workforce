@@ -5,7 +5,6 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -22,13 +21,14 @@ public final class CognitionRuntimeAssuranceObservationVerifier implements Obser
     @Override
     public boolean supports(ObservationRequirement requirement) {
         Objects.requireNonNull(requirement, "requirement");
-        String criterion = requirement.criterion().toLowerCase(Locale.ROOT);
-        boolean cognitionCriterion = criterion.contains("cognition");
-        boolean assuranceEvidence = requirement.evidenceRequirements().stream()
-                .map(value -> value == null ? "" : value.toLowerCase(Locale.ROOT))
-                .anyMatch(value -> value.contains("metatron cognition")
-                        || value.contains("worker intelligence request"));
-        return cognitionCriterion && assuranceEvidence;
+        List<String> evidence = requirement.evidenceRequirements().stream()
+                .map(value -> value == null ? "" : value.toLowerCase(java.util.Locale.ROOT))
+                .toList();
+        boolean metatronCognitionEvidence = evidence.stream()
+                .anyMatch(value -> value.contains("metatron cognition"));
+        boolean workerRequestEvidence = evidence.stream()
+                .anyMatch(value -> value.contains("worker intelligence request"));
+        return metatronCognitionEvidence && workerRequestEvidence;
     }
 
     @Override
