@@ -123,12 +123,50 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 Do not claim completion. Inputs are strings; encode list arguments as JSON strings in argsJson/tasksJson.
                 Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
                 """;
-        CognitiveProviderResult providerResult = completeObject(context, system, contextPrompt(context));
+        CognitiveWorkerRuntime.CognitiveContext providerContext = providerActionSelectionContext(context);
+        CognitiveProviderResult providerResult = completeObject(
+                providerContext, system, contextPrompt(providerContext));
         Map<String, Object> parsed = providerResult.parsed();
         String actionRef = text(parsed.get("actionRef"), "actionRef");
         String rationale = text(parsed.get("rationale"), "rationale");
         Map<String, String> inputs = stringMap(parsed.get("inputs"));
         return new CognitiveWorkerRuntime.Thought(actionRef, inputs, rationale);
+    }
+
+    static CognitiveWorkerRuntime.CognitiveContext providerActionSelectionContext(
+            CognitiveWorkerRuntime.CognitiveContext context) {
+        Objects.requireNonNull(context, "context");
+        if (!isFreshNewApplicationWork(context)) return context;
+
+        List<String> providerActions;
+        if (!hasWorkspaceSourceMutation(context)
+                && context.availableActions().contains("workspace.file.write")) {
+            // A planner-marked fresh application starts from an empty workspace. Force the first
+            // provider-selected action to create actual source/work-product; Git/build/test/runtime
+            // sequencing only becomes meaningful after at least one successful source mutation.
+            providerActions = List.of("workspace.file.write");
+        } else {
+            // Git is a deterministic governed postcondition for fresh-app work. Let the existing
+            // governedGitPrecondition()/remote-proposal preconditions perform add/commit/status only
+            // after source/build/test/runtime prerequisites are satisfied; never spend model turns
+            // inventing argsJson or staging an empty workspace.
+            providerActions = context.availableActions().stream()
+                    .filter(action -> !"workspace.git.run".equals(action))
+                    .filter(action -> !"workspace.git.status".equals(action))
+                    .filter(action -> !"workspace.github.pr.publish".equals(action))
+                    .toList();
+        }
+        if (providerActions.equals(context.availableActions())) return context;
+        return new CognitiveWorkerRuntime.CognitiveContext(
+                context.workerId(),
+                context.assignmentReference(),
+                context.authorizationReference(),
+                context.objectiveId(),
+                context.workSpec(),
+                context.idempotencyKey(),
+                providerActions,
+                context.history(),
+                context.memory());
     }
 
     static CognitiveWorkerRuntime.Thought researchSearchPrecondition(
