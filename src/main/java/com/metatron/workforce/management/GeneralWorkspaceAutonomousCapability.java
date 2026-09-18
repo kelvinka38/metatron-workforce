@@ -349,11 +349,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                         || ref.equals("workspace.shell.run");
             }
             if (prepare) {
-                return ref.equals("workspace.file.read")
-                        || ref.equals("workspace.file.list")
-                        || ref.equals("workspace.file.search")
-                        || ref.equals("workspace.file.patch")
-                        || ref.equals("workspace.file.write");
+                return ref.equals("workspace.project.prepare");
             }
             if (verify) {
                 return ref.equals("workspace.file.read")

@@ -31,6 +31,30 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
     @TempDir Path temp;
 
     @Test
+    void reactSourceProjectPrepareCreatesDeterministicRunnableScaffold() throws Exception {
+        try (Harness harness = new Harness(temp.resolve("prepare-react"))) {
+            String original = "import React from 'react';\n"
+                    + "export default function App(){ return <h1>Metatron Workforce Control Center</h1>; }\n";
+            harness.workspaces.write(harness.workspace, "src/App.js", original);
+
+            ActionFabric.ActionObservation observation =
+                    harness.invokeDirect("workspace.project.prepare", Map.of());
+
+            assertTrue(observation.success());
+            assertEquals("node-react", observation.outputs().get("projectKind"));
+            assertEquals("package.json", observation.outputs().get("manifestPath"));
+            assertEquals(original, harness.workspaces.read(harness.workspace, "src/App.js"),
+                    "PREPARE must not overwrite the requested work product");
+            assertTrue(harness.workspaces.read(harness.workspace, "package.json").contains("\"vite build\""));
+            assertTrue(harness.workspaces.read(harness.workspace, "package.json").contains("\"node --test test/*.test.js\""));
+            assertTrue(harness.workspaces.read(harness.workspace, "src/main.jsx").contains("createRoot"));
+            assertTrue(harness.workspaces.read(harness.workspace, "index.html").contains("src/main.jsx"));
+            assertTrue(harness.workspaces.read(harness.workspace, "src/App.jsx").contains("Metatron Workforce Control Center"));
+            assertTrue(observation.evidenceReferences().contains("workspace-project-kind:node-react"));
+        }
+    }
+
+    @Test
     void nodeProjectUsesDetectedPackageManagerScriptsAndProjectWorkingDirectory() throws Exception {
         try (Harness harness = new Harness(temp.resolve("node"))) {
             harness.workspaces.write(harness.workspace, "web/package.json",
@@ -85,6 +109,7 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
         private final ObjectiveWorkspaceService workspaces;
         private final ObjectiveWorkspaceService.ObjectiveWorkspace workspace;
         private final ActionFabric fabric;
+        private final List<ActionFabric.Action> catalogActions;
 
         private Harness(Path root) throws Exception {
             workspaces = new ObjectiveWorkspaceService(root.resolve("workspaces"));
@@ -122,7 +147,17 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
                     new GitHubWorkspaceProposalPublisher(http, "", workspaces, sandbox, json);
             GeneralWorkspaceActionCatalog catalog =
                     new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, repositories, proposals, json);
-            fabric = new ActionFabric(catalog.actions(WORKER, AUTH, OBJECTIVE));
+            catalogActions = catalog.actions(WORKER, AUTH, OBJECTIVE);
+            fabric = new ActionFabric(catalogActions);
+        }
+
+        private ActionFabric.ActionObservation invokeDirect(String actionRef, Map<String, String> inputs) {
+            ActionFabric.Action action = catalogActions.stream()
+                    .filter(candidate -> actionRef.equals(candidate.actionRef()))
+                    .findFirst().orElseThrow();
+            return action.invoke(new ActionFabric.ActionRequest(
+                    actionRef, WORKER, "assignment:test", AUTH, OBJECTIVE,
+                    "step:test", "idempotency:prepare", true, inputs));
         }
 
         private void execute(String actionRef, Map<String, String> inputs) {

@@ -70,6 +70,9 @@ public final class ActionContractCatalog {
                     Map.of(
                             "path", requiredString("required workspace-relative path"),
                             "content", optionalString("file content; empty allowed")))),
+            Map.entry("workspace.project.prepare", contract(
+                    "inspect carried source and deterministically create the minimal supported project scaffold",
+                    Map.of())),
             Map.entry("workspace.dependencies.install", contract(
                     "detect supported dependency metadata and install dependencies in the isolated Objective workspace",
                     Map.of("workingDirectory", optionalString("optional workspace-relative project directory; empty means root")))),
