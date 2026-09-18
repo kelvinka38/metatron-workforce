@@ -138,6 +138,7 @@ class GeneralWorkspaceCrossStepContinuityTest {
                 action("workspace.file.search"),
                 action("workspace.file.patch"),
                 action("workspace.file.write"),
+                action("workspace.project.prepare"),
                 action("workspace.dependencies.install"),
                 action("workspace.process.run"),
                 action("workspace.shell.run"),
@@ -170,8 +171,9 @@ class GeneralWorkspaceCrossStepContinuityTest {
                         com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
         List<String> prepareRefs = GeneralWorkspaceAutonomousCapability.actionsForWork(
                 candidates, prepare, Map.of()).stream().map(ActionFabric.Action::actionRef).toList();
-        assertTrue(prepareRefs.contains("workspace.file.write"));
-        assertTrue(prepareRefs.contains("workspace.file.read"));
+        assertEquals(List.of("workspace.project.prepare"), prepareRefs);
+        assertFalse(prepareRefs.contains("workspace.file.write"));
+        assertFalse(prepareRefs.contains("workspace.file.read"));
         assertFalse(prepareRefs.contains("workspace.dependencies.install"));
         assertFalse(prepareRefs.contains("workspace.build.run"));
         assertFalse(prepareRefs.contains("workspace.git.run"));
