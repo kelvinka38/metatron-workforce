@@ -252,7 +252,7 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
-    void preparePhaseRequiresManifestAndCountsCurrentObservationImmediately() {
+    void preparePhaseUsesDeterministicProjectPrepareActionAndCountsItsObservation() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
                 "prepare",
                 "PREPARE PHASE. Create a project manifest for the carried application source.",
@@ -266,28 +266,27 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
                         com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_MANIFEST));
         CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
-                List.of("workspace.file.write"), List.of(),
+                List.of("workspace.project.prepare"), List.of(),
                 Map.of(
                         "workspacePrimarySourcePath", "src/App.js",
                         "workspacePrimarySourcePreview", "import React from 'react';"));
 
-        CognitiveWorkerRuntime.Reflection wrongFile = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
-                context,
-                ActionFabric.ActionObservation.success(
-                        "workspace.file.write", "written", Map.of("path", "README.md"), List.of()),
-                CognitiveWorkerRuntime.Reflection.complete("prepared"));
-        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, wrongFile.decision());
+        CognitiveWorkerRuntime.Thought prepare =
+                GeneralCognitiveWorkerBrain.governedProjectPreparePrecondition(context);
+        assertEquals("workspace.project.prepare", prepare.actionRef());
+        assertTrue(prepare.inputs().isEmpty());
 
-        CognitiveWorkerRuntime.Reflection manifest = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
+        CognitiveWorkerRuntime.Reflection complete = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
                 context,
                 ActionFabric.ActionObservation.success(
-                        "workspace.file.write", "written", Map.of("path", "package.json"), List.of()),
+                        "workspace.project.prepare", "prepared",
+                        Map.of("manifestPath", "package.json", "projectKind", "node-react"), List.of()),
                 CognitiveWorkerRuntime.Reflection.complete("prepared"));
-        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, manifest.decision());
+        assertEquals(CognitiveWorkerRuntime.Decision.COMPLETE, complete.decision());
 
         CognitiveWorkerRuntime.CognitiveContext providerContext =
                 GeneralCognitiveWorkerBrain.providerActionSelectionContext(context);
-        assertEquals(List.of("workspace.file.write"), providerContext.availableActions());
+        assertEquals(List.of("workspace.project.prepare"), providerContext.availableActions());
     }
 
     @Test
