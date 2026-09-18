@@ -141,24 +141,26 @@ public interface WorkerIntelligenceService {
         java.util.ArrayDeque<Throwable> pending = new java.util.ArrayDeque<>();
         java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         pending.add(failure);
-        boolean transientNetworkOrServer = false;
         while (!pending.isEmpty()) {
             Throwable current = pending.removeFirst();
             if (current == null || !seen.add(current)) continue;
-            String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
-            if (message.contains("429") || message.contains("rate limit") || message.contains("quota")
-                    || message.contains("capacity_exhausted") || message.contains("resource_exhausted")) {
-                return 60_000L;
+            if (current instanceof HttpMetatronCognitionClient.MetatronCognitionHttpException httpFailure) {
+                if ((httpFailure.statusCode() == 502 && "all_providers_failed".equals(httpFailure.errorCode()))
+                        || (httpFailure.statusCode() == 504 && "cognition_deadline_exhausted".equals(httpFailure.errorCode()))) {
+                    return 0L;
+                }
             }
-            if (message.contains("500") || message.contains("502") || message.contains("503")
-                    || message.contains("504") || message.contains("timeout")
-                    || message.contains("temporarily unavailable") || current instanceof java.io.IOException) {
-                transientNetworkOrServer = true;
+            String message = String.valueOf(current.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            if (current instanceof java.io.IOException
+                    || message.contains("connection refused")
+                    || message.contains("connection reset")
+                    || message.contains("broken pipe")) {
+                return 5_000L;
             }
             if (current.getCause() != null) pending.addLast(current.getCause());
             for (Throwable suppressed : current.getSuppressed()) pending.addLast(suppressed);
         }
-        return transientNetworkOrServer ? 5_000L : 0L;
+        return 0L;
     }
 
     @FunctionalInterface
