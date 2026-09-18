@@ -52,6 +52,7 @@ class GeneralEngineeringFreshApplicationMaterializationTest {
         List<String> catalog = List.of(
                 "workspace.file.write",
                 "workspace.file.read",
+                "workspace.dependencies.install",
                 "workspace.build.run",
                 "workspace.test.run",
                 "workspace.process.run",
@@ -86,13 +87,40 @@ class GeneralEngineeringFreshApplicationMaterializationTest {
                 .availableActions();
 
         assertTrue(providerActions.contains("workspace.file.write"));
-        assertTrue(providerActions.contains("workspace.build.run"));
-        assertTrue(providerActions.contains("workspace.test.run"));
-        assertTrue(providerActions.contains("workspace.process.run"));
-        assertFalse(providerActions.contains("workspace.git.run"),
+        assertTrue(providerActions.contains("workspace.file.read"));
+        assertFalse(providerActions.contains("workspace.dependencies.install"),
+                "dependency installation must stay hidden until a project manifest exists");
+        assertFalse(providerActions.contains("workspace.build.run"));
+        assertFalse(providerActions.contains("workspace.test.run"));
+        assertFalse(providerActions.contains("workspace.process.run"));
+        assertFalse(providerActions.contains("workspace.git.run"));
+
+        CognitiveWorkerRuntime.Cycle wroteManifest = new CognitiveWorkerRuntime.Cycle(
+                2,
+                new CognitiveWorkerRuntime.Thought(
+                        "workspace.file.write",
+                        Map.of("path", "package.json",
+                                "content", "{\"scripts\":{\"test\":\"node --test\"},\"dependencies\":{\"express\":\"latest\"}}"),
+                        "define Node project and dependency manifest"),
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "written", Map.of(), List.of("workspace-write:package.json")),
+                CognitiveWorkerRuntime.Reflection.continueWith("install and verify"));
+        CognitiveWorkerRuntime.CognitiveContext afterManifest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                catalog, List.of(wroteSource, wroteManifest), Map.of());
+
+        List<String> lifecycleActions = GeneralCognitiveWorkerBrain
+                .providerActionSelectionContext(afterManifest)
+                .availableActions();
+
+        assertTrue(lifecycleActions.contains("workspace.dependencies.install"));
+        assertTrue(lifecycleActions.contains("workspace.build.run"));
+        assertTrue(lifecycleActions.contains("workspace.test.run"));
+        assertTrue(lifecycleActions.contains("workspace.process.run"));
+        assertFalse(lifecycleActions.contains("workspace.git.run"),
                 "Git staging/commit is a deterministic governed postcondition, not a provider-selected fresh-app action");
-        assertFalse(providerActions.contains("workspace.git.status"));
-        assertFalse(providerActions.contains("workspace.github.pr.publish"));
+        assertFalse(lifecycleActions.contains("workspace.git.status"));
+        assertFalse(lifecycleActions.contains("workspace.github.pr.publish"));
     }
 
     @Test
