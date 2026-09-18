@@ -57,7 +57,7 @@ class GeneralEngineeringAuthorityTargetRegressionTest {
                 request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
-        assertEquals(3, plan.size());
+        assertEquals(4, plan.size());
         assertTrue(plan.stream().allMatch(routed ->
                 GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(routed.requiredCapability())));
         assertTrue(plan.stream().noneMatch(routed ->
@@ -69,6 +69,7 @@ class GeneralEngineeringAuthorityTargetRegressionTest {
         assertEquals(List.of(), plan.get(0).dependsOn());
         assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
         assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertEquals(List.of(plan.get(2).stepId()), plan.get(3).dependsOn());
 
         // 2. GOVERNANCE: every phase must bind independently against the same real production authority.
         GovernanceTestHarness harness = new GovernanceTestHarness(CLOCK);
