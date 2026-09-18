@@ -126,7 +126,7 @@ class AutonomousStaffingServiceTest {
                 "case:general-engineering-staffing-reuse",
                 request,
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY));
-        assertEquals(3, plan.size());
+        assertEquals(4, plan.size());
         assertTrue(plan.stream().allMatch(routed ->
                 GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(routed.requiredCapability())));
         assertTrue(plan.stream().noneMatch(routed ->
