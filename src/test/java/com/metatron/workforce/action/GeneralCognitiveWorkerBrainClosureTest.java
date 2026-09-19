@@ -305,6 +305,49 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void oversizedWorkspacePhaseProjectionCompactsBeforeCallingIntelligence() {
+        AtomicInteger calls = new AtomicInteger();
+        WorkerIntelligenceService intelligence = request -> {
+            calls.incrementAndGet();
+            assertTrue(request.context().length() <= GeneralCognitiveWorkerBrain.MAX_CONTEXT_PROMPT_CHARS);
+            assertTrue(request.context().contains("WORKSPACE_PHASE_PROJECTION_BOUNDED"));
+            assertTrue(request.context().contains("WORK_CONTRACT_BOUNDED"));
+            assertTrue(request.context().contains("workerConstitution"));
+            assertTrue(request.context().contains("AUTHORITY_BOUNDARY"));
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-bounded-phase-context",
+                    "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"package.json\"},\"rationale\":\"verify carried project\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-verify",
+                "VERIFY PHASE. Verify the carried workspace without changing source. Original Objective: "
+                        + "build and deliver a complete runnable web application with build, tests, bounded runtime verification, "
+                        + "local Git commit and Git verification.",
+                "repository:example/project", "execution.general.workspace", List.of("step-prepare"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("governed build succeeds", "governed tests succeed", "bounded runtime verification succeeds"),
+                List.of("workspace-phase:verify", "workspace-requirement:build",
+                        "workspace-requirement:test", "workspace-requirement:runtime"));
+        Map<String, String> memory = Map.of(
+                "workerConstitution", "AUTHORITY_BOUNDARY\n" + "c".repeat(3_250),
+                "workspaceFileInventory", "f".repeat(1_200),
+                "workspaceProjectManifestPreview", "m".repeat(1_200),
+                "workspacePrimarySourcePreview", "s".repeat(1_200),
+                "workspaceProjectManifest", "package.json",
+                "workspaceProjectKind", "node-react");
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-verify", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(), memory);
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals(1, calls.get());
+    }
+
+    @Test
     void oversizedCognitiveContextFailsClosedBeforeCallingIntelligence() {
         AtomicInteger calls = new AtomicInteger();
         WorkerIntelligenceService intelligence = request -> {

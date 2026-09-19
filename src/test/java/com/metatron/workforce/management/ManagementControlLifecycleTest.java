@@ -63,7 +63,7 @@ class ManagementControlLifecycleTest {
 
         management.requestReplan("objective-replan", "worker-head", "dependency changed", at.plusSeconds(3));
         assertEquals(ManagementObjective.Status.REPLANNING, management.get("objective-replan").status());
-        assertTrue(management.findAutonomousWork("objective-replan").orElseThrow().plannedWork().isEmpty());
+        assertEquals(plan1, management.findAutonomousWork("objective-replan").orElseThrow().plannedWork());
 
         management.beginPlanning("objective-replan", "runner", lease.token(), at.plusSeconds(4));
         List<ExecutionWorkSpec> plan2 = List.of(step("step-b", "path B"));

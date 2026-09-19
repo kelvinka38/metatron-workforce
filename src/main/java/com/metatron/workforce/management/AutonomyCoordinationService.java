@@ -14,10 +14,12 @@ import com.metatron.workforce.observation.ObservationRequirement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Durable P3/P4 coordination: inbox dedupe, versioned DAG, fenced dispatch lifecycle,
@@ -82,8 +84,10 @@ public final class AutonomyCoordinationService {
         require(objectiveId, "objectiveId"); Objects.requireNonNull(plan, "plan"); Objects.requireNonNull(at, "at");
         validatePlan(plan);
         Integer active = activeGraphVersions.get(objectiveId);
+        DurableWorkGraph priorGraph = null;
         if (active != null) {
             DurableWorkGraph current = graph(objectiveId, active);
+            priorGraph = current;
             boolean failedPlan = current.nodes().values().stream()
                     .anyMatch(node -> node.status() == DurableWorkGraph.NodeStatus.FAILED);
             if (samePlan(current, plan)
@@ -95,10 +99,17 @@ public final class AutonomyCoordinationService {
             }
         }
         int version = active == null ? 1 : active + 1;
+        Set<String> reusable = reusableSucceededSteps(priorGraph, plan);
         Map<String, DurableWorkGraph.Node> nodes = new LinkedHashMap<>();
         for (ExecutionWorkSpec step : plan) {
-            nodes.put(step.stepId(), new DurableWorkGraph.Node(step, DurableWorkGraph.NodeStatus.PENDING,
-                    0, "", List.of(), "", at));
+            DurableWorkGraph.Node prior = priorGraph == null ? null : priorGraph.nodes().get(step.stepId());
+            if (reusable.contains(step.stepId()) && prior != null) {
+                nodes.put(step.stepId(), new DurableWorkGraph.Node(step, DurableWorkGraph.NodeStatus.SUCCEEDED,
+                        0, "", prior.evidenceReferences(), "", at));
+            } else {
+                nodes.put(step.stepId(), new DurableWorkGraph.Node(step, DurableWorkGraph.NodeStatus.PENDING,
+                        0, "", List.of(), "", at));
+            }
         }
         DurableWorkGraph created = new DurableWorkGraph(objectiveId, version,
                 DurableWorkGraph.Status.ACTIVE, nodes, at, at);
@@ -340,6 +351,24 @@ public final class AutonomyCoordinationService {
         if (node == null) throw new IllegalArgumentException("graph node not found: " + stepId);
         return node;
     }
+    private static Set<String> reusableSucceededSteps(DurableWorkGraph priorGraph, List<ExecutionWorkSpec> plan) {
+        if (priorGraph == null) return Set.of();
+        Set<String> reusable = new LinkedHashSet<>();
+        boolean changed;
+        do {
+            changed = false;
+            for (ExecutionWorkSpec step : plan) {
+                if (reusable.contains(step.stepId())) continue;
+                DurableWorkGraph.Node prior = priorGraph.nodes().get(step.stepId());
+                if (prior == null || prior.status() != DurableWorkGraph.NodeStatus.SUCCEEDED
+                        || !prior.spec().equals(step)) continue;
+                if (!reusable.containsAll(step.dependsOn())) continue;
+                changed |= reusable.add(step.stepId());
+            }
+        } while (changed);
+        return Set.copyOf(reusable);
+    }
+
     private static boolean samePlan(DurableWorkGraph graph, List<ExecutionWorkSpec> plan) {
         if (graph.nodes().size() != plan.size()) return false;
         for (ExecutionWorkSpec step : plan) {

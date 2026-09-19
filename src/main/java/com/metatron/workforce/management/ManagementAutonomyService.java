@@ -189,7 +189,9 @@ public final class ManagementAutonomyService {
         // one place a plan is actually recorded as the work that will execute, so it cannot be bypassed by
         // a planner that omits or weakens completion policy on individual steps.
         normalized = current.normalizedRequest().withExecutionWorkPlan(normalized).executionWorkPlan();
-        AutonomousObjectiveWork updated = copyWork(current, normalized, current.completedStepIds(),
+        List<String> preservedCompleted = preservedCompletedSteps(
+                current.plannedWork(), normalized, current.completedStepIds());
+        AutonomousObjectiveWork updated = copyWork(current, normalized, preservedCompleted,
                 current.evidenceReferences(), AutonomousObjectiveWork.Status.READY, "", at);
         objectiveWork.put(objectiveId, updated);
         transitionObjectiveUnpersisted(objectiveId, ManagementObjective.Status.READY, at);
@@ -442,8 +444,8 @@ public final class ManagementAutonomyService {
     }
 
     /**
-     * Starts a new planning cycle while preserving the old durable Work Graph in Coordination history.
-     * Active Work projection is cleared so the Runner must obtain and persist a fresh plan.
+     * Starts a new planning cycle while preserving durable completed progress. The Runner still obtains
+     * and persists a fresh plan, but unchanged completed steps remain resumable instead of being replayed.
      */
     public synchronized ManagementObjective requestReplan(
             String objectiveId, String actorWorkerId, String reason, Instant at) {
@@ -451,8 +453,9 @@ public final class ManagementAutonomyService {
         requireOwnerOrManagerActor(current, actorWorkerId);
         requireText(reason, "reason");
         AutonomousObjectiveWork work = workRequired(objectiveId);
-        objectiveWork.put(objectiveId, copyWork(work, List.of(), List.of(), List.of(),
-                AutonomousObjectiveWork.Status.PENDING_PLANNING, "replan:" + reason, at));
+        objectiveWork.put(objectiveId, copyWork(work, work.plannedWork(), work.completedStepIds(),
+                work.evidenceReferences(), AutonomousObjectiveWork.Status.PENDING_PLANNING,
+                "replan:" + reason, at));
         ManagementObjective updated = copy(current, ManagementObjective.Status.REPLANNING,
                 current.assignmentRefs(), current.evidenceRefs(), at);
         objectives.put(objectiveId, updated);
@@ -653,6 +656,31 @@ public final class ManagementAutonomyService {
         return new ManagementObjective(current.objectiveId(), current.ownerWorkerId(),
                 current.organizationContextId(), current.description(), status,
                 assignmentRefs, evidenceRefs, current.createdAt(), at);
+    }
+
+    private static List<String> preservedCompletedSteps(
+            List<ExecutionWorkSpec> priorPlan, List<ExecutionWorkSpec> newPlan, List<String> completedStepIds) {
+        if (priorPlan == null || priorPlan.isEmpty() || completedStepIds == null || completedStepIds.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ExecutionWorkSpec> prior = new LinkedHashMap<>();
+        for (ExecutionWorkSpec step : priorPlan) prior.put(step.stepId(), step);
+        Map<String, ExecutionWorkSpec> next = new LinkedHashMap<>();
+        for (ExecutionWorkSpec step : newPlan) next.put(step.stepId(), step);
+        Set<String> completed = new LinkedHashSet<>(completedStepIds);
+        Set<String> reusable = new LinkedHashSet<>();
+        boolean changed;
+        do {
+            changed = false;
+            for (ExecutionWorkSpec step : newPlan) {
+                if (reusable.contains(step.stepId()) || !completed.contains(step.stepId())) continue;
+                ExecutionWorkSpec previous = prior.get(step.stepId());
+                if (previous == null || !previous.equals(step)) continue;
+                if (!reusable.containsAll(step.dependsOn())) continue;
+                changed |= reusable.add(step.stepId());
+            }
+        } while (changed);
+        return newPlan.stream().map(ExecutionWorkSpec::stepId).filter(reusable::contains).toList();
     }
 
     private static AutonomousObjectiveWork copyWork(AutonomousObjectiveWork current,

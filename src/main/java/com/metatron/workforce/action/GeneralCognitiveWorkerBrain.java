@@ -2,6 +2,7 @@ package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 
@@ -1415,14 +1416,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                                 cycle.reflection().summary(), MAX_HISTORY_SUMMARY_CHARS)))
                 .toList();
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("work", Map.of(
-                "stepId", context.workSpec().stepId(),
-                "objective", context.workSpec().objective(),
-                "target", context.workSpec().target(),
-                "requiredCapability", context.workSpec().requiredCapability(),
-                "consequence", context.workSpec().consequence().name(),
-                "acceptanceCriteria", context.workSpec().acceptanceCriteria(),
-                "evidenceRequirements", context.workSpec().evidenceRequirements()));
+        payload.put("work", workPrompt(context.workSpec(), false));
         payload.put("availableActions", catalog);
         payload.put("actionInputKeys", actionInputKeys);
         Map<String, String> cognitionMemory = new LinkedHashMap<>(context.memory());
@@ -1455,6 +1449,11 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             rendered = write(payload);
         }
         if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
+            payload.put("work", workPrompt(context.workSpec(), true));
+            payload.put("memory", boundedPhaseMemory(cognitionMemory));
+            rendered = write(payload);
+        }
+        if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
             throw new IllegalStateException("worker-cognition-request-context-budget-exceeded:chars="
                     + rendered.length() + ":limit=" + MAX_CONTEXT_PROMPT_CHARS
                     + ":worker=" + context.workerId()
@@ -1462,6 +1461,45 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     + ":objective=" + context.objectiveId());
         }
         return rendered;
+    }
+
+    private static Map<String, Object> workPrompt(ExecutionWorkSpec work, boolean compact) {
+        Map<String, Object> projected = new LinkedHashMap<>();
+        projected.put("stepId", work.stepId());
+        projected.put("objective", compact ? boundedPromptText(work.objective(), 900) : work.objective());
+        projected.put("target", compact ? boundedPromptText(work.target(), 320) : work.target());
+        projected.put("requiredCapability", work.requiredCapability());
+        projected.put("consequence", work.consequence().name());
+        projected.put("acceptanceCriteria", compact
+                ? boundedPromptList(work.acceptanceCriteria(), 6, 180) : work.acceptanceCriteria());
+        projected.put("evidenceRequirements", compact
+                ? boundedPromptList(work.evidenceRequirements(), 10, 180) : work.evidenceRequirements());
+        if (compact) projected.put("_contextCompaction", "WORK_CONTRACT_BOUNDED");
+        return Map.copyOf(projected);
+    }
+
+    private static List<String> boundedPromptList(List<String> values, int maxItems, int maxItemChars) {
+        if (values == null || values.isEmpty()) return List.of();
+        List<String> bounded = new ArrayList<>();
+        int include = Math.min(values.size(), maxItems);
+        for (int i = 0; i < include; i++) bounded.add(boundedPromptText(values.get(i), maxItemChars));
+        if (values.size() > include) bounded.add("...[EXPLICITLY_OMITTED_ENTRIES=" + (values.size() - include) + "]");
+        return List.copyOf(bounded);
+    }
+
+    private static Map<String, String> boundedPhaseMemory(Map<String, String> values) {
+        if (values == null || values.isEmpty()) return Map.of();
+        Map<String, String> bounded = new LinkedHashMap<>(values);
+        boundMemoryValue(bounded, "workspaceFileInventory", 600);
+        boundMemoryValue(bounded, "workspaceProjectManifestPreview", 360);
+        boundMemoryValue(bounded, "workspacePrimarySourcePreview", 360);
+        bounded.put("_contextCompaction", "WORKSPACE_PHASE_PROJECTION_BOUNDED");
+        return Map.copyOf(bounded);
+    }
+
+    private static void boundMemoryValue(Map<String, String> memory, String key, int maxChars) {
+        if (!memory.containsKey(key)) return;
+        memory.put(key, boundedPromptText(memory.get(key), maxChars));
     }
 
     private static Map<String, String> boundedPromptMap(Map<String, String> values) {
