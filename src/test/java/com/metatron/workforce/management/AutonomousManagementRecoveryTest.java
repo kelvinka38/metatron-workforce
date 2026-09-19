@@ -124,6 +124,73 @@ class AutonomousManagementRecoveryTest {
     }
 
     @Test
+    void boundedReplanPreservesCompletedPrefixAndResumesFailedStep() {
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:06:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger firstStepExecutions = new AtomicInteger();
+        AtomicInteger secondStepExecutions = new AtomicInteger();
+
+        AutonomousExecutionCapability capability = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                if ("step-1".equals(request.workSpec().stepId())) {
+                    firstStepExecutions.incrementAndGet();
+                    return new CapabilityResult(true, "worker-resume", "assignment-step-1",
+                            "work-step-1", List.of("evidence:step-1"), "PASS");
+                }
+                int attempt = secondStepExecutions.incrementAndGet();
+                if (attempt <= 3) throw new IllegalStateException("provider-timeout-step-2-" + attempt);
+                return new CapabilityResult(true, "worker-resume", "assignment-step-2",
+                        "work-step-2", List.of("evidence:step-2"), "PASS");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(capability), coordination, clock,
+                "runner-resume", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        ExecutionWorkSpec first = new ExecutionWorkSpec(
+                "step-1", "Prepare durable prerequisite", "target", "test.recovery.read", List.of(),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("first complete"), List.of("evidence first"));
+        ExecutionWorkSpec second = new ExecutionWorkSpec(
+                "step-2", "Verify after prerequisite", "target", "test.recovery.read", List.of("step-1"),
+                ExecutionWorkSpec.Consequence.READ_ONLY, List.of("second complete"), List.of("evidence second"));
+        NormalizedRequest resumable = new NormalizedRequest(
+                "Run two-step resumable work", "target", List.of("read-only"), IntelligenceDepth.ANALYZE,
+                "evidence-backed result", List.of(), List.of("do not mutate"), "current", "",
+                IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.<AnalyticalProtocolType>of(), DeterministicCapability.NONE,
+                List.of(), List.of(first, second), false, null, LlmProvider.OPENAI, "");
+
+        management.acceptHumanObjective(
+                "objective-resume", "worker-head", "org-metatron", "Resume failed verification",
+                "human:founder", "request-admission:resume", "case-resume", "conversation-resume",
+                "message-resume", "telegram", resumable, clock.instant());
+
+        runner.runOnce();
+
+        assertEquals(1, firstStepExecutions.get());
+        assertEquals(3, secondStepExecutions.get());
+        assertEquals(ManagementObjective.Status.REPLANNING, management.get("objective-resume").status());
+        assertEquals(List.of("step-1"),
+                management.findAutonomousWork("objective-resume").orElseThrow().completedStepIds());
+
+        runner.runOnce();
+
+        assertEquals(1, firstStepExecutions.get(), "completed prerequisite must not be replayed after replan");
+        assertEquals(4, secondStepExecutions.get(), "failed step should resume on the replanned graph");
+        assertEquals(ManagementObjective.Status.COMPLETED, management.get("objective-resume").status());
+        List<DurableWorkGraph> graphs = coordination.graphHistory("objective-resume");
+        assertEquals(2, graphs.size());
+        assertEquals(DurableWorkGraph.NodeStatus.SUCCEEDED, graphs.get(1).nodes().get("step-1").status());
+        assertEquals(DurableWorkGraph.NodeStatus.SUCCEEDED, graphs.get(1).nodes().get("step-2").status());
+    }
+
+    @Test
     void repeatedFailureAfterBoundedReplanEscalatesInsteadOfLoopingForever() {
         Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:07:00Z"), ZoneOffset.UTC);
         ManagementAutonomyService management = new ManagementAutonomyService();
