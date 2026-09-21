@@ -17,7 +17,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -222,6 +224,131 @@ class AutonomousManagementRunnerTest {
                         "work-restart", List.of("evidence:restart-pass"), "PASS");
             }
         };
+    }
+
+    @Test
+    void slowObjectiveNeverDelaysAnIndependentObjectiveOnItsOwnLane() throws InterruptedException {
+        // Before per-objective execution lanes existed, runOnce() processed every runnable
+        // Objective sequentially inside one exclusive pass, so a single slow/stuck Objective's
+        // dispatch delayed every other Objective's turn for its entire duration. Each Objective
+        // must get its own isolated lane so an independent Objective can finish while a slow one
+        // is still mid-dispatch.
+        Clock clock = Clock.fixed(Instant.parse("2026-09-21T00:00:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+
+        CountDownLatch slowStarted = new CountDownLatch(1);
+        CountDownLatch releaseSlow = new CountDownLatch(1);
+
+        AutonomousExecutionCapability slow = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.lane.slow"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                slowStarted.countDown();
+                try {
+                    if (!releaseSlow.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test never released the slow lane");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return new CapabilityResult(true, "worker-slow", "assignment-slow",
+                        "work-slow", List.of("evidence:slow-done"), "PASS");
+            }
+        };
+        AutonomousExecutionCapability fast = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.lane.fast"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, "worker-fast", "assignment-fast",
+                        "work-fast", List.of("evidence:fast-done"), "PASS");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management, (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(slow, fast), coordination, clock,
+                "runner-lanes", Duration.ofMinutes(5), Duration.ofSeconds(5), 2);
+
+        management.acceptHumanObjective(
+                "objective-slow", "worker-head", "org-metatron", "Slow lane objective",
+                "human:founder", "request-admission:slow", "case-slow", "conversation-slow",
+                "message-slow", "telegram", request("test.lane.slow", ExecutionWorkSpec.Consequence.READ_ONLY),
+                clock.instant());
+        management.acceptHumanObjective(
+                "objective-fast", "worker-head", "org-metatron", "Fast lane objective",
+                "human:founder", "request-admission:fast", "case-fast", "conversation-fast",
+                "message-fast", "telegram", request("test.lane.fast", ExecutionWorkSpec.Consequence.READ_ONLY),
+                clock.instant());
+
+        Thread runOnceThread = new Thread(runner::runOnce, "test-run-once");
+        runOnceThread.start();
+        try {
+            assertTrue(slowStarted.await(10, TimeUnit.SECONDS),
+                    "the slow objective's dispatch must actually have started");
+            assertTrue(waitUntil(Duration.ofSeconds(5),
+                    () -> management.get("objective-fast").status() == ManagementObjective.Status.COMPLETED),
+                    "an independent objective must complete on its own lane while a slow objective is still "
+                            + "mid-dispatch, not wait behind it");
+            assertEquals(ManagementObjective.Status.EXECUTING, management.get("objective-slow").status(),
+                    "the slow objective must still be genuinely in progress, not already finished");
+        } finally {
+            releaseSlow.countDown();
+            runOnceThread.join(Duration.ofSeconds(10).toMillis());
+        }
+
+        assertEquals(ManagementObjective.Status.COMPLETED, management.get("objective-slow").status());
+    }
+
+    private static boolean waitUntil(Duration timeout, java.util.function.BooleanSupplier condition)
+            throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadlineNanos) {
+            if (condition.getAsBoolean()) return true;
+            Thread.sleep(10);
+        }
+        return condition.getAsBoolean();
+    }
+
+    @Test
+    void reconciliationOrderIsIndependentOfInputOrderingAndRespectsDependencies() {
+        ExecutionWorkSpec produce = new ExecutionWorkSpec("produce", "Produce", "target",
+                "test.workspace", List.of(), ExecutionWorkSpec.Consequence.MUTATING);
+        ExecutionWorkSpec prepare = new ExecutionWorkSpec("prepare", "Prepare", "target",
+                "test.workspace", List.of("produce"), ExecutionWorkSpec.Consequence.MUTATING);
+        ExecutionWorkSpec verify = new ExecutionWorkSpec("verify", "Verify", "target",
+                "test.workspace", List.of("prepare"), ExecutionWorkSpec.Consequence.MUTATING);
+
+        Instant at = Instant.parse("2026-08-31T00:00:00Z");
+        DurableWorkGraph.Node produceNode = new DurableWorkGraph.Node(
+                produce, DurableWorkGraph.NodeStatus.SUCCEEDED, 1, "", List.of("evidence:produce"), "", at);
+        DurableWorkGraph.Node prepareNode = new DurableWorkGraph.Node(
+                prepare, DurableWorkGraph.NodeStatus.SUCCEEDED, 1, "", List.of("evidence:prepare"), "", at);
+        DurableWorkGraph.Node verifyNode = new DurableWorkGraph.Node(
+                verify, DurableWorkGraph.NodeStatus.SUCCEEDED, 1, "", List.of("evidence:verify"), "", at);
+
+        // Deliberately reversed relative to dependency order: a Map.copyOf()-backed
+        // DurableWorkGraph.nodes() has no guaranteed iteration order, and reconciliation must
+        // not depend on it. A naive single pass in this order would try to complete "verify"
+        // before its still-uncompleted "prepare"/"produce" dependencies and fail.
+        List<DurableWorkGraph.Node> reversed = List.of(verifyNode, prepareNode, produceNode);
+
+        List<DurableWorkGraph.Node> ordered =
+                AutonomousManagementRunner.reconciliationOrder(reversed, Set.of());
+
+        assertEquals(List.of("produce", "prepare", "verify"),
+                ordered.stream().map(node -> node.spec().stepId()).toList());
+    }
+
+    @Test
+    void reconciliationOrderRejectsGenuinelyUnmetDependenciesInsteadOfSilentlyDroppingThem() {
+        ExecutionWorkSpec verify = new ExecutionWorkSpec("verify", "Verify", "target",
+                "test.workspace", List.of("prepare"), ExecutionWorkSpec.Consequence.MUTATING);
+        Instant at = Instant.parse("2026-08-31T00:00:00Z");
+        DurableWorkGraph.Node verifyNode = new DurableWorkGraph.Node(
+                verify, DurableWorkGraph.NodeStatus.SUCCEEDED, 1, "", List.of("evidence:verify"), "", at);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> AutonomousManagementRunner.reconciliationOrder(List.of(verifyNode), Set.of()));
+        assertTrue(failure.getMessage().contains("verify"));
     }
 
     private static NormalizedRequest request() {

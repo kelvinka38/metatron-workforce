@@ -104,6 +104,50 @@ class CognitiveWorkerFailureRecoveryTest {
         assertTrue(outcome.evidenceReferences().contains("diagnostic-failed"));
     }
 
+    @Test
+    void identicalFailingActionRepeatedTwiceCircuitBreaksInsteadOfBurningTheFullCycleBudget() {
+        AtomicInteger invocations = new AtomicInteger();
+        ActionFabric fabric = new ActionFabric(List.of(
+                action("tool.flaky", request -> {
+                    invocations.incrementAndGet();
+                    return ActionFabric.ActionObservation.failure(
+                            "tool.flaky", "deterministic-precondition-failure", List.of("flaky-failed"));
+                })));
+        int maxCycles = 20;
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, ActionJournal.noop(), maxCycles);
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-circuit-breaker", "repeat an identical failing action", "fixture", "test.recovery",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("required effect succeeds"), List.of("required evidence"));
+
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
+                WORKER, "assignment-breaker", AUTH, "objective-breaker", work, "breaker-key",
+                new CognitiveWorkerRuntime.Brain() {
+                    @Override
+                    public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                        return new CognitiveWorkerRuntime.Thought(
+                                "tool.flaky", Map.of(), "retry the same deterministic action every cycle");
+                    }
+
+                    @Override
+                    public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                      ActionFabric.ActionObservation observation) {
+                        return CognitiveWorkerRuntime.Reflection.continueWith(
+                                "keep retrying regardless of the identical failure");
+                    }
+                });
+
+        assertTrue(outcome.success() == false, "a permanently failing deterministic action must not be reported as success");
+        assertEquals(2, invocations.get(),
+                "the action itself must only actually run twice before the breaker blocks a third identical attempt");
+        assertEquals(3, outcome.cycles().size(),
+                "cycle 3 must be the synthetic breaker-blocked cycle, not a real third invocation");
+        assertTrue(maxCycles > outcome.cycles().size(),
+                "the breaker must stop well short of the full cycle budget, not silently burn it to exhaustion");
+        assertTrue(outcome.evidenceReferences().contains("action-repeated-failure-circuit-breaker:tool.flaky"));
+        assertTrue(outcome.summary().contains("bounded retry exhausted"));
+    }
+
     private static ActionFabric.Action action(
             String ref,
             java.util.function.Function<ActionFabric.ActionRequest, ActionFabric.ActionObservation> invocation) {

@@ -10,6 +10,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,6 +55,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final Duration pollInterval;
     private final ScheduledExecutorService executor;
     private final ExecutorService workExecutor;
+    private final ExecutorService objectiveExecutor;
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
     private volatile AutonomySchedulingService scheduling;
@@ -169,6 +172,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
+        this.objectiveExecutor = Executors.newFixedThreadPool(parallelism, runnable -> {
+            Thread thread = new Thread(runnable, "metatron-objective-lane");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     /** Configure the production scheduler before start; compatibility tests may omit it. */
@@ -210,11 +218,31 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         executor.execute(this::runSafely);
     }
 
+    /**
+     * Each runnable Objective gets its own execution lane on {@link #objectiveExecutor}, so one slow or
+     * stuck Objective's lease-held pass never delays any other Objective's turn: before this, every
+     * Objective in the whole system was processed sequentially inside one exclusive pass, so a single
+     * long-running dispatch (see {@link #configureNodeExecutionTimeout}) still starved every other
+     * Objective's progress for its entire duration. runLock still bounds this method to one concurrent
+     * pass overall (a re-entrant call, e.g. from wake() racing the scheduled tick, waits its turn rather
+     * than doubly processing the same runnable set); each Objective itself remains single-threaded, since
+     * processWithLease() only ever runs for a given objectiveId on one lane at a time here.
+     */
     public void runOnce() {
         if (!runLock.tryLock()) return;
         try {
+            List<Future<?>> lanes = new ArrayList<>();
             for (AutonomousObjectiveWork work : management.runnableAutonomousWork()) {
-                processWithLease(work.objectiveId());
+                String objectiveId = work.objectiveId();
+                lanes.add(objectiveExecutor.submit(() -> processWithLease(objectiveId)));
+            }
+            for (Future<?> lane : lanes) {
+                try { lane.get(); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException failed) {
+                    LOG.error("Autonomous objective lane failed", failed.getCause());
+                }
             }
         } finally {
             runLock.unlock();
@@ -480,14 +508,51 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                                               AutonomousObjectiveWork work, ManagementLease lease) {
         DurableWorkGraph graph = coordination.activeGraph(objectiveId).orElseThrow();
         if (graph.graphVersion() != graphVersion) throw new IllegalStateException("graph version changed during reconciliation");
-        for (DurableWorkGraph.Node node : graph.nodes().values()) {
-            if (node.status() == DurableWorkGraph.NodeStatus.SUCCEEDED
-                    && !work.completedStepIds().contains(node.spec().stepId())) {
-                work = management.recordStepCompleted(objectiveId, runnerId, lease.token(),
-                        node.spec().stepId(), node.evidenceReferences(), clock.instant());
-            }
+        List<String> completedSoFar = work.completedStepIds();
+        List<DurableWorkGraph.Node> pending = graph.nodes().values().stream()
+                .filter(node -> node.status() == DurableWorkGraph.NodeStatus.SUCCEEDED
+                        && !completedSoFar.contains(node.spec().stepId()))
+                .toList();
+        for (DurableWorkGraph.Node node : reconciliationOrder(pending, Set.copyOf(work.completedStepIds()))) {
+            work = management.recordStepCompleted(objectiveId, runnerId, lease.token(),
+                    node.spec().stepId(), node.evidenceReferences(), clock.instant());
         }
         return work;
+    }
+
+    /**
+     * DurableWorkGraph.nodes() is backed by Map.copyOf(), whose iteration order is unspecified by
+     * the JDK (not insertion order); it must never be trusted as dependency/topological order.
+     * recordStepCompleted() requires a step's dependsOn() to already be in completedStepIds, so
+     * reconciling SUCCEEDED nodes in raw map order can spuriously fail (e.g. a SUCCEEDED VERIFY
+     * node visited before its already-SUCCEEDED PRODUCE/PREPARE dependencies). This resolves a
+     * dependency-safe order by repeatedly completing any node whose dependencies are already
+     * satisfied, independent of the input order, until no more progress can be made.
+     */
+    static List<DurableWorkGraph.Node> reconciliationOrder(
+            Collection<DurableWorkGraph.Node> succeededPending, Set<String> alreadyCompleted) {
+        List<DurableWorkGraph.Node> remaining = new ArrayList<>(succeededPending);
+        Set<String> completed = new java.util.HashSet<>(alreadyCompleted);
+        List<DurableWorkGraph.Node> ordered = new ArrayList<>();
+        boolean progressed = true;
+        while (!remaining.isEmpty() && progressed) {
+            progressed = false;
+            Iterator<DurableWorkGraph.Node> iterator = remaining.iterator();
+            while (iterator.hasNext()) {
+                DurableWorkGraph.Node node = iterator.next();
+                if (completed.containsAll(node.spec().dependsOn())) {
+                    ordered.add(node);
+                    completed.add(node.spec().stepId());
+                    iterator.remove();
+                    progressed = true;
+                }
+            }
+        }
+        if (!remaining.isEmpty()) {
+            throw new IllegalStateException("unreconcilable succeeded nodes with unmet dependencies: "
+                    + remaining.stream().map(node -> node.spec().stepId()).toList());
+        }
+        return ordered;
     }
 
     private NodeExecutionOutcome executeNode(String objectiveId, int graphVersion, int plannedAttempt,
@@ -683,6 +748,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     @Override public void close() {
         executor.shutdownNow();
         workExecutor.shutdownNow();
+        objectiveExecutor.shutdownNow();
     }
 
     private record NodeExecutionOutcome(String stepId, boolean success, boolean missingCapability,
