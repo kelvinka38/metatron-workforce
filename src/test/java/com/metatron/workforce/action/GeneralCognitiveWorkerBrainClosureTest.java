@@ -174,6 +174,100 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void jsonAnswerPrecededByProseContainingQuotedSourceCodeBracesIsStillExtracted() {
+        // Production incident (2026-09-21): during a VERIFY code-review step the provider's raw
+        // text response quoted Java source (containing its own '{'/'}' characters) before giving
+        // its real JSON answer. The naive first-'{'-to-last-'}' extraction spliced the quoted
+        // code's opening brace to the real answer's closing brace, producing invalid JSON and
+        // failing the whole step with "invalid Intelligence cognitive JSON" even though a valid
+        // JSON answer was present in the response.
+        String raw = """
+                Looking at the change, here is the relevant method for context:
+                public void apply() { doWork(); if (ready) { finish(); } }
+                Given that, my selected action is below.
+                {"actionRef":"workspace.file.read","inputs":{"path":"Fixed.java"},"rationale":"re-inspect after the quoted method"}
+                """;
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "intelligence-verify", raw, List.of("intelligence-provider:test"));
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "verify", "verify the change", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("change verified"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals("Fixed.java", thought.inputs().get("path"));
+    }
+
+    @Test
+    void jsonAnswerFollowedByProseContainingQuotedSourceCodeBracesIsStillExtracted() {
+        String raw = """
+                {"actionRef":"workspace.file.read","inputs":{"path":"Fixed.java"},"rationale":"inspect current state"}
+                For reference, the applied method now reads:
+                public void apply() { doWork(); if (ready) { finish(); } }
+                """;
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "intelligence-verify", raw, List.of("intelligence-provider:test"));
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "verify", "verify the change", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("change verified"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals("Fixed.java", thought.inputs().get("path"));
+    }
+
+    @Test
+    void jsonAnswerWrappedInMarkdownCodeFenceIsStillExtracted() {
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "intelligence-think",
+                "```json\n{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"README.md\"},\"rationale\":\"inspect\"}\n```",
+                List.of("intelligence-provider:test"));
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "inspect", "inspect the source", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("source inspected"), List.of("read evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals("README.md", thought.inputs().get("path"));
+    }
+
+    @Test
+    void truncatedUnbalancedResponseStillFailsClosedRatherThanFabricatingSuccess() {
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "intelligence-truncated",
+                "{\"decision\":\"COMPLETE\",\"summary\":\"cut off mid-stream",
+                List.of("intelligence-provider:test"));
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "repair defect", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("defect repaired"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.patch"), List.of(), Map.of());
+
+        assertThrows(IllegalStateException.class, () -> brain.think(context));
+    }
+
+    @Test
     void topNResearchCannotCompleteWithNarrativeClaimOrTooFewObservedSources() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
                 "general-external-research",
