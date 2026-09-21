@@ -1484,14 +1484,60 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
 
     private Map<String, Object> parseObject(String raw) {
         String value = raw == null ? "" : raw.trim();
-        int start = value.indexOf('{');
-        int end = value.lastIndexOf('}');
-        if (start < 0 || end <= start) throw new IllegalStateException("cognitive provider returned no JSON object");
-        try {
-            return json.readValue(value.substring(start, end + 1), new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            throw new IllegalStateException("invalid cognitive provider JSON", e);
+        List<String> candidates = topLevelJsonObjectCandidates(value);
+        if (candidates.isEmpty()) throw new IllegalStateException("cognitive provider returned no JSON object");
+        Exception lastFailure = null;
+        for (int i = candidates.size() - 1; i >= 0; i--) {
+            try {
+                return json.readValue(candidates.get(i), new TypeReference<Map<String, Object>>() {});
+            } catch (Exception e) {
+                lastFailure = e;
+            }
         }
+        throw new IllegalStateException("invalid cognitive provider JSON", lastFailure);
+    }
+
+    /**
+     * Scans for every top-level, brace-balanced {...} substring, respecting JSON string
+     * literals so that braces quoted inside prose (e.g. source code shown during a code
+     * review) never desynchronize the balance count. The model's real answer is typically
+     * the last such candidate, since providers often preface it with reasoning or quoted
+     * examples that legitimately contain their own brace characters.
+     */
+    private static List<String> topLevelJsonObjectCandidates(String value) {
+        List<String> candidates = new ArrayList<>();
+        int depth = 0;
+        int start = -1;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                if (depth == 0) start = i;
+                depth++;
+            } else if (c == '}') {
+                if (depth > 0) {
+                    depth--;
+                    if (depth == 0 && start >= 0) {
+                        candidates.add(value.substring(start, i + 1));
+                        start = -1;
+                    }
+                }
+            }
+        }
+        return candidates;
     }
 
     private Map<String, String> stringMap(Object raw) {
