@@ -1381,7 +1381,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         try {
             parsed = parseObject(response.text());
         } catch (RuntimeException invalidResponse) {
-            throw new IllegalStateException("invalid Intelligence cognitive JSON", invalidResponse);
+            throw new IllegalStateException(
+                    "invalid Intelligence cognitive JSON: " + invalidResponse.getMessage(), invalidResponse);
         }
         evidence.addAll(response.evidenceReferences());
         evidence.add("cognitive-intelligence-request:" + response.requestReference());
@@ -1485,7 +1486,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private Map<String, Object> parseObject(String raw) {
         String value = raw == null ? "" : raw.trim();
         List<String> candidates = topLevelJsonObjectCandidates(value);
-        if (candidates.isEmpty()) throw new IllegalStateException("cognitive provider returned no JSON object");
+        if (candidates.isEmpty()) {
+            throw new IllegalStateException(
+                    "cognitive provider returned no JSON object (raw_preview=" + diagnosticPreview(value) + ")");
+        }
         Exception lastFailure = null;
         for (int i = candidates.size() - 1; i >= 0; i--) {
             try {
@@ -1494,7 +1498,23 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 lastFailure = e;
             }
         }
-        throw new IllegalStateException("invalid cognitive provider JSON", lastFailure);
+        throw new IllegalStateException(
+                "invalid cognitive provider JSON (candidates=" + candidates.size()
+                        + ", cause=" + (lastFailure == null ? "unknown" : lastFailure.getMessage())
+                        + ", raw_preview=" + diagnosticPreview(value) + ")",
+                lastFailure);
+    }
+
+    /**
+     * Bounded, whitespace-collapsed preview of a raw provider response for diagnosability.
+     * Kept short and reused only in fail-closed exception messages, never in evidence sent
+     * back to a provider or a Human, since JSON-parse failures otherwise leave zero trace of
+     * the actual malformed text anywhere in production logs or evidence.
+     */
+    private static String diagnosticPreview(String value) {
+        String collapsed = value.replaceAll("\\s+", " ").trim();
+        int max = 400;
+        return collapsed.length() <= max ? collapsed : collapsed.substring(0, max) + "...[truncated]";
     }
 
     /**
