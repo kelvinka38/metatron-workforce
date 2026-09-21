@@ -7,6 +7,7 @@ import com.metatron.workforce.interaction.intelligence.IntelligenceCaseStore;
 import com.metatron.workforce.interaction.intelligence.IntelligenceDepthControlService;
 import com.metatron.workforce.interaction.intelligence.InstitutionalIntelligenceRuntime;
 import com.metatron.workforce.interaction.intelligence.MetatronIntelligenceResponder;
+import com.metatron.workforce.interaction.llm.ProviderCallBudgetRegistry;
 import com.metatron.workforce.interaction.memory.PersistentConversationMemoryStore;
 import com.metatron.workforce.workplace.WorkplaceMeetingService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,8 @@ public final class ChannelInteractionIngressService {
 
     private final MetatronInteractionOrchestrator orchestrator;
     private final DirectWorkerConversationService directWorkerConversation;
+    private final int configuredProviderCount;
+    private final ProviderCallBudgetRegistry callBudgetRegistry;
 
     @Autowired
     public ChannelInteractionIngressService(
@@ -66,6 +69,8 @@ public final class ChannelInteractionIngressService {
                 MEMORY_MAX_CHARS);
         this.orchestrator = new MetatronInteractionOrchestrator(conversationRuntime::handle);
         this.directWorkerConversation = Objects.requireNonNull(directWorkerConversation, "directWorkerConversation");
+        this.configuredProviderCount = Math.max(1, intelligenceRuntime.configuredProviders().size());
+        this.callBudgetRegistry = intelligenceRuntime.router().callBudgetRegistry();
     }
 
     /**
@@ -85,11 +90,14 @@ public final class ChannelInteractionIngressService {
     ChannelInteractionIngressService(MetatronInteractionOrchestrator orchestrator) {
         this.orchestrator = Objects.requireNonNull(orchestrator, "orchestrator");
         this.directWorkerConversation = null;
+        this.configuredProviderCount = 3;
+        this.callBudgetRegistry = null;
     }
 
     public MetatronInteractionOrchestrator.InteractionResponse handle(MetatronInteraction interaction) {
         MetatronInteraction normalized = Objects.requireNonNull(interaction, "interaction");
-        try (CognitiveRequestScope.Scope ignored = CognitiveRequestScope.open(normalized)) {
+        try (CognitiveRequestScope.Scope ignored =
+                     CognitiveRequestScope.open(normalized, configuredProviderCount, callBudgetRegistry)) {
             if (directWorkerConversation != null) {
                 java.util.Optional<DirectWorkerConversationService.HandledReply> direct =
                         directWorkerConversation.handle(normalized);

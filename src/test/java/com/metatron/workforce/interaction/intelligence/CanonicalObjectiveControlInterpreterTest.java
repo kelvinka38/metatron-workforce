@@ -53,6 +53,19 @@ final class CanonicalObjectiveControlInterpreterTest {
                     + "evidence and must retry autonomously until authoritative evidence settles. Complete only after "
                     + "Observation PASS. Do not mutate anything.";
 
+    /**
+     * The exact form of the message that failed Telegram update 103337958's fresh production
+     * acceptance: an explicit delegation using "this Objective" (a demonstrative determiner)
+     * instead of the previously-recognized "one Objective" grammar. Before this fix it fell
+     * through to frontier semantic interpretation, where it exhausted the provider-failure fallback
+     * budget (structurally too small for the 4 configured providers) before ever reaching Objective
+     * admission.
+     */
+    private static final String PRODUCTION_ACCEPTANCE_103337958 =
+            "Take ownership of this Objective: perform a governed read-only institutional audit of "
+                    + "kelvinka38/metatron-workforce, verify every acceptance criterion through Observation, "
+                    + "and deliver one evidence-backed completion. Do not mutate anything.";
+
     private static final String GS4 =
             "Take ownership of one bounded-elasticity Objective: perform governed READ_ONLY audits of "
                     + "kelvinka38/universal, kelvinka38/metatron-institution, kelvinka38/metatron-workforce, and "
@@ -123,6 +136,92 @@ final class CanonicalObjectiveControlInterpreterTest {
                 normalized.target());
         assertTrue(normalized.analyticalProtocols().contains(AnalyticalProtocolType.AUDIT));
         assertNull(normalized.semanticProvider());
+    }
+
+    /**
+     * Acceptance test A: the exact Runtime Acceptance App message form that failed production
+     * Telegram update 103337958 must be deterministically recognized as explicit Objective
+     * delegation and must reach Objective admission without requiring a frontier semantic call.
+     */
+    @Test
+    void productionAcceptance103337958FormIsRecognizedWithoutFrontierProvider() {
+        assertTrue(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(PRODUCTION_ACCEPTANCE_103337958));
+        NormalizedRequest normalized =
+                CanonicalObjectiveControlInterpreter.interpret(PRODUCTION_ACCEPTANCE_103337958).orElseThrow();
+
+        assertEquals(IntelligenceMode.EXECUTION, normalized.mode());
+        assertEquals("kelvinka38/metatron-workforce", normalized.target());
+        assertTrue(normalized.analyticalProtocols().contains(AnalyticalProtocolType.AUDIT));
+        assertNull(normalized.semanticProvider());
+    }
+
+    @Test
+    void productionAcceptance103337958FormReachesObjectiveAdmissionWithZeroConfiguredProviders() {
+        AtomicReference<NormalizedRequest> captured = new AtomicReference<>();
+        ExecutionObjectiveHandoff handoff = new ExecutionObjectiveHandoff() {
+            @Override
+            public HandoffReceipt submit(
+                    String humanId,
+                    String organizationContextId,
+                    String caseId,
+                    String conversationId,
+                    String externalMessageReference,
+                    String channel,
+                    NormalizedRequest request) {
+                captured.set(request);
+                return new HandoffReceipt(
+                        true,
+                        "objective:103337958",
+                        "metatron-workforce",
+                        "queue:103337958",
+                        "ACCEPTED",
+                        "ACCEPTED",
+                        "OBJECTIVE_ACCEPTED_FOR_AUTONOMOUS_MANAGEMENT");
+            }
+        };
+
+        // Zero API keys configured: if this message fell through to frontier semantic
+        // interpretation as it did in production, semanticInterpreter.interpret(...) would throw
+        // semantic_provider_required and this call would fail outright instead of admitting Work.
+        MetatronIntelligenceResponder responder = new MetatronIntelligenceResponder(
+                "", "", "", "AUTO", "", "", "", new ObjectMapper(),
+                "", "", new InMemoryIntelligenceCaseStore(), handoff);
+
+        String answer = responder.respond(
+                "human-primary",
+                PRODUCTION_ACCEPTANCE_103337958,
+                "telegram:update:103337958",
+                "telegram",
+                "conversation:human:human-primary",
+                "organization:metatron",
+                "");
+
+        assertTrue(answer.startsWith("METATRON WORK ACCEPTED"));
+        assertTrue(answer.contains("objective_id=objective:103337958"));
+        assertEquals(IntelligenceMode.EXECUTION, captured.get().mode());
+        assertEquals("kelvinka38/metatron-workforce", captured.get().target());
+        assertNull(captured.get().semanticProvider());
+    }
+
+    /**
+     * Acceptance test D: ordinary casual conversation must never be misclassified as an explicit
+     * Objective control, even when it happens to mention "objective" or use a demonstrative
+     * determiner the broadened grammar now recognizes.
+     */
+    @Test
+    void ordinaryCasualConversationIsNeverMisclassifiedAsObjectiveDelegation() {
+        assertFalse(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(
+                "What's the objective of this project, anyway?"));
+        assertFalse(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(
+                "I think this objective is a bit unclear, can you explain it?"));
+        assertFalse(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(
+                "Take ownership of this and let me know how it goes."));
+        assertFalse(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(
+                "Can you take ownership of the following task for me?"));
+        assertFalse(CanonicalObjectiveControlInterpreter.isExplicitObjectiveControl(
+                "Hey, how's it going today?"));
+        assertTrue(CanonicalObjectiveControlInterpreter.interpret(
+                "What's the objective of this project, anyway?").isEmpty());
     }
 
     @Test
