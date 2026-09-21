@@ -14,17 +14,33 @@ class AutonomousRecoveryPolicyTest {
                 List.of("accepted"), List.of("evidence"));
     }
 
-    @Test void generalWorkspaceMutatingFailureCanReplan() {
-        assertTrue(AutonomousRecoveryPolicy.autonomousReplanEligible(
-                step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING),
-                "capability-unsuccessful:cognitive worker failed"));
+    @Test void generalWorkspaceMutatingFailureIsBoundedLocalRetryEligibleNeverReplan() {
+        ExecutionWorkSpec step = step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING);
+        assertTrue(AutonomousRecoveryPolicy.boundedLocalRetryEligible(
+                step, "capability-unsuccessful:cognitive worker failed"),
+                "an ordinary DELIVER/PRODUCE/PREPARE/VERIFY execution failure must recover via bounded "
+                        + "step-local retry");
+        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(
+                step, "capability-unsuccessful:cognitive worker failed"),
+                "REPLAN must never be used as recovery for an ordinary general-workspace execution failure");
+    }
+
+    @Test void readOnlyExhaustedRetryStillReplansNotLocalRetry() {
+        ExecutionWorkSpec step = step("test.recovery.read", ExecutionWorkSpec.Consequence.READ_ONLY);
+        assertTrue(AutonomousRecoveryPolicy.autonomousReplanEligible(step, "provider-timeout"),
+                "REPLAN remains the pre-existing recovery vehicle for an exhausted bounded READ_ONLY retry");
+        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(step, "provider-timeout"),
+                "bounded step-local retry only ever applies to the MUTATING general-workspace pipeline");
     }
 
     @Test void unrelatedMutationAndSafetyFailuresStayFailClosed() {
-        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(
-                step("repository.pr.propose", ExecutionWorkSpec.Consequence.MUTATING), "runtime-failure:x"));
-        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(
-                step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING),
-                "autonomy-safety-gate:denied"));
+        ExecutionWorkSpec unrelated = step("repository.pr.propose", ExecutionWorkSpec.Consequence.MUTATING);
+        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(unrelated, "runtime-failure:x"));
+        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(unrelated, "runtime-failure:x"));
+
+        ExecutionWorkSpec generalWorkspace = step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING);
+        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(generalWorkspace, "autonomy-safety-gate:denied"));
+        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(generalWorkspace, "autonomy-safety-gate:denied"),
+                "a genuine safety-gate denial must never be bounded-locally-retried either -- only Human recovery");
     }
 }
