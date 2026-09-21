@@ -607,8 +607,30 @@ public final class GeneralWorkspaceActionCatalog {
         return action("workspace.git.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             List<String> args = stringList(input(request, "argsJson"));
             if (args.isEmpty()) throw new IllegalArgumentException("git args required");
-            return sandboxObservation(request.actionRef(), sandbox.run(worker, objectiveId, "git", args));
+            WorkerExecutionSandboxService.SandboxResult result = sandbox.run(worker, objectiveId, "git", args);
+            if (result.success() && !args.isEmpty() && "init".equals(args.get(0))) {
+                // Deterministic infrastructure, not a cognitive decision: a freshly initialized repository
+                // has no author identity, so the very next `git commit` fails identically every time until
+                // someone configures it. A fresh isolated Objective workspace (no prior materialization
+                // baseline) never gets this identity from anywhere else, so it must be established here,
+                // in the same action call, at zero extra cognitive-cycle cost.
+                configureGitIdentity(worker, objectiveId);
+            }
+            return sandboxObservation(request.actionRef(), result);
         });
+    }
+
+    private void configureGitIdentity(String worker, String objectiveId) {
+        WorkerExecutionSandboxService.SandboxResult name =
+                sandbox.run(worker, objectiveId, "git", List.of("config", "user.name", "Metatron Workforce"));
+        if (!name.success()) {
+            throw new IllegalStateException("failed to configure git user.name after init: " + name.output());
+        }
+        WorkerExecutionSandboxService.SandboxResult email =
+                sandbox.run(worker, objectiveId, "git", List.of("config", "user.email", "workforce@metatron.local"));
+        if (!email.success()) {
+            throw new IllegalStateException("failed to configure git user.email after init: " + email.output());
+        }
     }
 
     private ActionFabric.Action githubProposal(String worker, String auth, String objectiveId) {

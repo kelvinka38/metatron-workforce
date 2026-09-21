@@ -32,6 +32,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -309,16 +310,17 @@ public final class TelegramWebhookController {
         ScheduledFuture<?> prior = monitorTasks.remove(objectiveId);
         if (prior != null) prior.cancel(false);
         AtomicInteger consecutiveFailures = new AtomicInteger();
+        AtomicLong activeMessageId = new AtomicLong(messageId);
         ScheduledFuture<?> future = monitorExecutor.scheduleAtFixedRate(() -> {
             try {
-                gateway.editWorkCard(chatId, messageId, workCardRenderer.render(objectiveId));
+                gateway.editWorkCard(chatId, activeMessageId.get(), workCardRenderer.render(objectiveId));
                 consecutiveFailures.set(0);
                 if (workCardRenderer.terminal(objectiveId)) {
                     stopMonitor(objectiveId, "refresh-succeeded-terminal");
                 }
             } catch (RuntimeException failure) {
                 LOG.warn("telegram_monitor_refresh_failed objective_id={} chat={} message_id={} reason={}",
-                        objectiveId, chatId, messageId, failure.getMessage());
+                        objectiveId, chatId, activeMessageId.get(), failure.getMessage());
                 // Root-cause fix (2026-09-14): this catch block previously never checked whether the
                 // Objective had already reached a terminal state, so a monitor whose edit keeps
                 // failing (e.g. the underlying Telegram message became uneditable, or the Objective
@@ -331,10 +333,28 @@ public final class TelegramWebhookController {
                     stopMonitor(objectiveId, "refresh-failed-but-terminal");
                     return;
                 }
+                // A still-progressing Objective's Work Card message can independently become
+                // permanently uneditable (Telegram's "message can't be edited": too old, deleted, or
+                // edited outside Workforce) while the Objective itself is nowhere near terminal.
+                // Silently retrying the same broken edit for up to 100s and then giving up left the
+                // human with zero visible progress for the rest of the run. Replace the message
+                // instead: send a fresh Work Card and keep monitoring against its new message id.
+                long staleMessageId = activeMessageId.get();
+                try {
+                    long freshMessageId = gateway.sendWorkCard(chatId, workCardRenderer.render(objectiveId));
+                    activeMessageId.set(freshMessageId);
+                    consecutiveFailures.set(0);
+                    LOG.info("telegram_monitor_message_replaced objective_id={} chat={} old_message_id={} new_message_id={}",
+                            objectiveId, chatId, staleMessageId, freshMessageId);
+                    return;
+                } catch (RuntimeException replacementFailure) {
+                    LOG.warn("telegram_monitor_replacement_send_failed objective_id={} chat={} reason={}",
+                            objectiveId, chatId, replacementFailure.getMessage());
+                }
                 // Safety net for a class of failure this fix does not otherwise cover (terminal()
-                // itself misreporting, or a non-terminal Objective whose card can never be rendered
-                // again for some other reason): bound retries instead of relying solely on terminal()
-                // ever becoming true. 20 consecutive failures at the 5s cadence below is ~100 seconds.
+                // itself misreporting, or the chat/channel itself no longer being reachable at all):
+                // bound retries instead of retrying forever. 20 consecutive failures at the 5s cadence
+                // below is ~100 seconds.
                 if (consecutiveFailures.incrementAndGet() >= 20) {
                     stopMonitor(objectiveId, "refresh-failed-consecutive-limit");
                 }

@@ -172,6 +172,35 @@ public final class CognitiveWorkerRuntime {
                 throw new SecurityException("brain-selected-action-outside-catalog:" + thought.actionRef());
             }
 
+            if (repeatsFailingWithoutStateChange(history, thought)) {
+                // Deterministic circuit breaker, independent of what the failing action actually is: the
+                // same action + same inputs has now failed on both of the last two cycles with nothing in
+                // between to change workspace state, so a third identical attempt cannot succeed either.
+                // Without this, a deterministic precondition (e.g. a required git commit that keeps failing
+                // for the same reason) gets re-selected every remaining cycle until the whole cycle budget
+                // is silently burned -- production observed this reach 48 identical attempts. Fail closed
+                // immediately with a diagnosable reason instead, rather than retrying to exhaustion.
+                ActionFabric.ActionObservation blocked = ActionFabric.ActionObservation.failure(
+                        thought.actionRef(),
+                        "repeated identical failing action blocked after 2 attempts with no state change; "
+                                + "a deterministic repair or Human diagnosis is required",
+                        List.of("action-repeated-failure-circuit-breaker:" + thought.actionRef()));
+                Reflection breakerReflection = Reflection.failed(
+                        "Deterministic action " + thought.actionRef()
+                                + " failed identically twice with no intervening state change; "
+                                + "bounded retry exhausted, a repair or Human diagnosis is required.");
+                Cycle cycle = new Cycle(cycleNumber, thought, blocked, breakerReflection);
+                history.add(cycle);
+                evidence.addAll(blocked.evidenceReferences());
+                evidence.add("cognitive-cycle:" + cycleNumber
+                        + ":action=" + thought.actionRef() + ":observation=FAILED:reflection=FAILED");
+                journal.append(objectiveId, workSpec.stepId(), workerId, assignmentReference,
+                        authorizationReference, idempotencyKey, cycle);
+                terminalSummary = breakerReflection.summary();
+                success = false;
+                break;
+            }
+
             ActionFabric.ActionRequest request = new ActionFabric.ActionRequest(
                     thought.actionRef(), workerId, assignmentReference, authorizationReference,
                     objectiveId, workSpec.stepId(), idempotencyKey, mutating, thought.inputs());
@@ -253,6 +282,20 @@ public final class CognitiveWorkerRuntime {
                 + ":actions=" + history.size()
                 + ":success=" + success);
         return new Outcome(success, history, memory, evidence, terminalSummary, Instant.now());
+    }
+
+    /** True once the proposed thought would be the third consecutive identical failing attempt. */
+    private static boolean repeatsFailingWithoutStateChange(List<Cycle> history, Thought thought) {
+        if (history.size() < 2) return false;
+        Cycle last = history.get(history.size() - 1);
+        Cycle secondLast = history.get(history.size() - 2);
+        return sameFailingAction(last, thought) && sameFailingAction(secondLast, thought);
+    }
+
+    private static boolean sameFailingAction(Cycle cycle, Thought thought) {
+        return !cycle.observation().success()
+                && cycle.thought().actionRef().equals(thought.actionRef())
+                && cycle.thought().inputs().equals(thought.inputs());
     }
 
     private ExecutionPermit authorizeMutationIfRequired(ActionFabric.ActionRequest request,
