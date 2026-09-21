@@ -86,6 +86,12 @@ public final class ProviderTelemetryRegistry {
             if (isRateLimit(message)) {
                 state.cooldownUntil = Instant.now().plus(RATE_LIMIT_COOLDOWN);
                 state.remainingRequests = 0L;
+            } else if (isPermanentCreditFailure(message)) {
+                // A 400 insufficient-credit or similar account-level rejection is not a useful
+                // immediate retry candidate either -- it will not resolve itself within seconds,
+                // unlike a transient timeout/5xx. Cool down on the very first occurrence instead of
+                // waiting for two consecutive failures, reusing the exact same bounded mechanism.
+                state.cooldownUntil = Instant.now().plus(RATE_LIMIT_COOLDOWN);
             } else if (state.consecutiveFailures >= 2) {
                 state.cooldownUntil = Instant.now().plus(FAILURE_COOLDOWN);
             }
@@ -144,6 +150,18 @@ public final class ProviderTelemetryRegistry {
         if (message == null) return false;
         String value = message.toLowerCase(java.util.Locale.ROOT);
         return value.contains("429") || value.contains("rate limit") || value.contains("quota");
+    }
+
+    /**
+     * True for a permanent account-level rejection (insufficient/no credit, exhausted credit
+     * balance) that a same-second immediate retry cannot resolve, unlike a transient timeout/5xx.
+     */
+    private static boolean isPermanentCreditFailure(String message) {
+        if (message == null) return false;
+        String value = message.toLowerCase(java.util.Locale.ROOT);
+        return value.contains("insufficient credit") || value.contains("insufficient_credit")
+                || value.contains("no credit") || value.contains("credit balance")
+                || (value.contains("400") && value.contains("credit"));
     }
 
     private static long parseLong(String value, long fallback) {

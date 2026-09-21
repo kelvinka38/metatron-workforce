@@ -80,6 +80,19 @@ public final class ProviderCallBudgetRegistry {
         counters.clear();
     }
 
+    /**
+     * Releases the bounded-call bookkeeping for exactly one logical request once its cognitive
+     * pass has finished (success or failure). Without this, a durably-retried interaction that
+     * reuses the same logical request reference (e.g. the same Telegram update retried after a
+     * failure) would inherit the prior pass's already-exhausted counters and fail every provider
+     * immediately -- a retry in name only. Each retried pass gets its own fresh, still-bounded
+     * budget instead of accumulating across passes forever.
+     */
+    public void release(String logicalRequestRef) {
+        String ref = logicalRequestRef == null ? "" : logicalRequestRef.trim();
+        if (!ref.isBlank()) counters.remove(ref);
+    }
+
     private static IllegalStateException denied(String logicalRef, String category,
                                                 FrontierCallBudget budget, Counters state) {
         return new IllegalStateException("frontier_call_budget_exhausted:logical_request=" + logicalRef

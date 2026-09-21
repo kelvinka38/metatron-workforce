@@ -11,14 +11,28 @@ import java.util.regex.Pattern;
 /**
  * Deterministic semantic bridge for explicit institutional Objective controls.
  *
- * <p>This remains intentionally narrow. It recognizes the canonical "Take ownership of one ...
- * Objective" grammar and explicit assignment of work to a named canonical WORKER-* identity.
- * Ordinary Human language remains owned by the frontier semantic boundary.</p>
+ * <p>This remains intentionally narrow. It recognizes the canonical "Take ownership of
+ * one/this/that/the following ... Objective" grammar and explicit assignment of work to a named
+ * canonical WORKER-* identity. Ordinary Human language remains owned by the frontier semantic
+ * boundary; this must never widen to match vague conversational requests, only clearly explicit
+ * Objective/execution delegation.</p>
  */
 public final class CanonicalObjectiveControlInterpreter {
     private static final String PREFIX_OBJECTIVE = "take ownership of one objective:";
     private static final Pattern QUALIFIED_OBJECTIVE = Pattern.compile(
             "^take ownership of one (?:governed|bounded(?:-[a-z0-9_-]+)?)(?: [a-z0-9_-]+){0,10} objective(?::|\\.|\\s).*");
+    /**
+     * Explicit delegation using a demonstrative determiner instead of "one" -- e.g. "Take
+     * ownership of this Objective:" or "Take ownership of the following Objective:". This is the
+     * exact production form (Telegram update 103337958) that previously fell through to frontier
+     * semantic interpretation because only the "one Objective" / qualified "one ... Objective"
+     * forms were recognized. The optional qualifier group keeps parity with {@link
+     * #QUALIFIED_OBJECTIVE} (e.g. "this governed READ_ONLY Objective:").
+     */
+    private static final Pattern DEMONSTRATIVE_OBJECTIVE = Pattern.compile(
+            "^take ownership of (?:this|that|the following)"
+                    + "(?: (?:governed|bounded(?:-[a-z0-9_-]+)?)(?: [a-z0-9_-]+){0,10})?"
+                    + " objective(?::|\\.|\\s).*");
     private static final String NAME = "[A-Za-z0-9_.-]*[A-Za-z0-9_-]";
     private static final Pattern SCOPED_REPOSITORY = Pattern.compile(
             "(?i)\\b(?:against|of|repository|repositories)\\s+(?:https://github\\.com/)?(" + NAME + "/" + NAME + ")(?:\\.git)?(?=$|[,.;:)\\s])");
@@ -36,6 +50,7 @@ public final class CanonicalObjectiveControlInterpreter {
         String normalized = humanText.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
         return normalized.startsWith(PREFIX_OBJECTIVE)
                 || QUALIFIED_OBJECTIVE.matcher(normalized).matches()
+                || DEMONSTRATIVE_OBJECTIVE.matcher(normalized).matches()
                 || isExplicitWorkerAssignment(humanText);
     }
 
