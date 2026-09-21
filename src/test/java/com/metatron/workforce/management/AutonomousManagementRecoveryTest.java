@@ -78,17 +78,95 @@ class AutonomousManagementRecoveryTest {
     }
 
     @Test
-    void exhaustedRoutineRecoveryTriggersOneAutonomousReplanAndCompletesOnNewGraph() {
+    void exhaustedReadOnlyRetryEscalatesWithoutReplanAndPreservesPriorCompletedStepEvidence() {
+        // Finishes the Runtime v1 contract: REPLAN is for a genuinely invalid/impossible plan, not
+        // an ordinary READ_ONLY provider/network/timeout/runtime failure. No trustworthy automatic
+        // plan-invalid classifier exists, so exhausting a bounded READ_ONLY retry must never fall
+        // back to REPLAN -- it escalates for Human review instead, leaving the graph, and any
+        // already-completed step's evidence, completely untouched.
         Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:05:00Z"), ZoneOffset.UTC);
         ManagementAutonomyService management = new ManagementAutonomyService();
         AutonomyCoordinationService coordination = new AutonomyCoordinationService();
-        AtomicInteger executions = new AtomicInteger();
+        AtomicInteger flakyAttempts = new AtomicInteger();
 
-        AutonomousExecutionCapability recoveredAfterReplan = new AutonomousExecutionCapability() {
-            @Override public String capabilityRef() { return "test.recovery.read"; }
+        AutonomousExecutionCapability stepOk = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read.ok"; }
 
             @Override public CapabilityResult execute(CapabilityRequest request) {
-                int attempt = executions.incrementAndGet();
+                return new CapabilityResult(true, "worker-ok", "assignment-ok",
+                        "work-ok", List.of("evidence:step-ok-done"), "PASS");
+            }
+        };
+        AutonomousExecutionCapability stepFlaky = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read.flaky"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                int attempt = flakyAttempts.incrementAndGet();
+                throw new IllegalStateException("provider-remained-unavailable-" + attempt);
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(stepOk, stepFlaky), coordination, clock,
+                "runner-readonly-exhausted", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        management.acceptHumanObjective(
+                "objective-readonly-exhausted", "worker-head", "org-metatron", "Bound an impossible read",
+                "human:founder", "request-admission:readonly-exhausted", "case-readonly-exhausted",
+                "conversation-readonly-exhausted", "message-readonly-exhausted", "telegram",
+                twoStepRequest(), clock.instant());
+
+        runner.runOnce();
+
+        assertEquals(3, flakyAttempts.get(), "the flaky step must be retried exactly to its bound");
+        assertEquals(ManagementObjective.Status.ESCALATED,
+                management.get("objective-readonly-exhausted").status(),
+                "exhausted bounded read-only retry must escalate for Human review, never fall back to REPLAN");
+        assertEquals(0, management.history("objective-readonly-exhausted").stream()
+                        .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
+                        .count(),
+                "an ordinary READ_ONLY provider/runtime failure must never trigger REPLAN");
+        assertEquals(List.of(DurableWorkGraph.Status.ACTIVE),
+                coordination.graphHistory("objective-readonly-exhausted").stream()
+                        .map(DurableWorkGraph::status).toList(),
+                "the graph version must remain unchanged -- no SUPERSEDED replan graph was ever created");
+
+        AutonomousObjectiveWork work = management.findAutonomousWork("objective-readonly-exhausted").orElseThrow();
+        assertTrue(work.completedStepIds().contains("step-ok"),
+                "a previously completed step must remain completed after a later step's retry exhausts");
+        assertTrue(work.evidenceReferences().contains("evidence:step-ok-done"),
+                "a previously completed step's evidence must remain intact");
+        assertTrue(management.history("objective-readonly-exhausted").stream()
+                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.ESCALATED)
+                .anyMatch(event -> event.detail().contains("bounded-read-only-retry-exhausted")));
+    }
+
+    @Test
+    void explicitManualReplanStillCompletesIndependentlyOfAutomaticEscalation() {
+        // Automatic REPLAN is gone for ordinary execution failures, but the explicit/manual replan
+        // path (an operator or administrative action deliberately calling
+        // ManagementAutonomyService.requestReplan()) must still work on its own, completely
+        // independent of the runner's automatic classification.
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:07:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger flakyAttempts = new AtomicInteger();
+
+        AutonomousExecutionCapability stepOk = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read.ok"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, "worker-ok", "assignment-ok",
+                        "work-ok", List.of("evidence:step-ok-done"), "PASS");
+            }
+        };
+        AutonomousExecutionCapability stepFlaky = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.recovery.read.flaky"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                int attempt = flakyAttempts.incrementAndGet();
                 if (attempt <= 3) throw new IllegalStateException("provider-remained-unavailable-" + attempt);
                 return new CapabilityResult(true, "worker-replanned", "assignment-replanned",
                         "work-replanned", List.of("evidence:replanned-outcome"), "PASS");
@@ -98,71 +176,41 @@ class AutonomousManagementRecoveryTest {
         AutonomousManagementRunner runner = new AutonomousManagementRunner(
                 management,
                 (caseId, normalized, available) -> normalized.executionWorkPlan(),
-                List.of(recoveredAfterReplan), coordination, clock,
-                "runner-replan", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+                List.of(stepOk, stepFlaky), coordination, clock,
+                "runner-explicit-replan", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
 
         management.acceptHumanObjective(
-                "objective-replan", "worker-head", "org-metatron", "Recover through a managed replan",
-                "human:founder", "request-admission:replan", "case-replan", "conversation-replan",
-                "message-replan", "telegram", request(), clock.instant());
+                "objective-explicit-replan", "worker-head", "org-metatron",
+                "Recover through an explicit manual replan",
+                "human:founder", "request-admission:explicit-replan", "case-explicit-replan",
+                "conversation-explicit-replan", "message-explicit-replan", "telegram",
+                twoStepRequest(), clock.instant());
 
         runner.runOnce();
-        assertEquals(ManagementObjective.Status.REPLANNING, management.get("objective-replan").status());
-        assertEquals(1, management.history("objective-replan").stream()
+
+        assertEquals(3, flakyAttempts.get());
+        assertEquals(ManagementObjective.Status.ESCALATED, management.get("objective-explicit-replan").status());
+        assertEquals(0, management.history("objective-explicit-replan").stream()
+                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
+                .count());
+
+        String owner = management.get("objective-explicit-replan").ownerWorkerId();
+        management.requestReplan("objective-explicit-replan", owner,
+                "manual-operator-recovery-decision", clock.instant());
+        assertEquals(ManagementObjective.Status.REPLANNING, management.get("objective-explicit-replan").status());
+        assertEquals(1, management.history("objective-explicit-replan").stream()
                 .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
                 .count());
 
         runner.runOnce();
 
-        assertEquals(4, executions.get());
-        assertEquals(ManagementObjective.Status.COMPLETED, management.get("objective-replan").status());
+        assertEquals(4, flakyAttempts.get(), "the explicit replan must give the failed step a fresh attempt budget");
+        assertEquals(ManagementObjective.Status.COMPLETED, management.get("objective-explicit-replan").status());
         assertEquals(List.of(DurableWorkGraph.Status.SUPERSEDED, DurableWorkGraph.Status.COMPLETED),
-                coordination.graphHistory("objective-replan").stream().map(DurableWorkGraph::status).toList());
+                coordination.graphHistory("objective-explicit-replan").stream().map(DurableWorkGraph::status).toList());
         assertTrue(management.outbox().stream()
                 .anyMatch(message -> message.messageType().equals("ObjectiveOutcomeReportReady")
                         && message.payload().contains("evidence:replanned-outcome")));
-    }
-
-    @Test
-    void repeatedFailureAfterBoundedReplanEscalatesInsteadOfLoopingForever() {
-        Clock clock = Clock.fixed(Instant.parse("2026-08-31T13:07:00Z"), ZoneOffset.UTC);
-        ManagementAutonomyService management = new ManagementAutonomyService();
-        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
-        AtomicInteger executions = new AtomicInteger();
-
-        AutonomousExecutionCapability unavailable = new AutonomousExecutionCapability() {
-            @Override public String capabilityRef() { return "test.recovery.read"; }
-
-            @Override public CapabilityResult execute(CapabilityRequest request) {
-                executions.incrementAndGet();
-                throw new IllegalStateException("provider-persistently-unavailable");
-            }
-        };
-
-        AutonomousManagementRunner runner = new AutonomousManagementRunner(
-                management,
-                (caseId, normalized, available) -> normalized.executionWorkPlan(),
-                List.of(unavailable), coordination, clock,
-                "runner-bounded-replan", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
-
-        management.acceptHumanObjective(
-                "objective-bounded-replan", "worker-head", "org-metatron", "Bound impossible recovery",
-                "human:founder", "request-admission:bounded-replan", "case-bounded-replan",
-                "conversation-bounded-replan", "message-bounded-replan", "telegram",
-                request(), clock.instant());
-
-        runner.runOnce();
-        runner.runOnce();
-
-        assertEquals(6, executions.get());
-        assertEquals(ManagementObjective.Status.ESCALATED,
-                management.get("objective-bounded-replan").status());
-        assertEquals(1, management.history("objective-bounded-replan").stream()
-                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED)
-                .count());
-        assertTrue(management.history("objective-bounded-replan").stream()
-                .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.ESCALATED)
-                .anyMatch(event -> event.detail().contains("bounded-autonomous-recovery-exhausted")));
     }
 
     @Test
@@ -214,5 +262,22 @@ class AutonomousManagementRecoveryTest {
                 IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
                 List.<AnalyticalProtocolType>of(), DeterministicCapability.NONE,
                 List.of(), List.of(step), false, null, LlmProvider.OPENAI, "");
+    }
+
+    private static NormalizedRequest twoStepRequest() {
+        ExecutionWorkSpec stepOk = new ExecutionWorkSpec(
+                "step-ok", "Perform a routine read that always succeeds", "target",
+                "test.recovery.read.ok", List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("read completes"), List.of("execution evidence"));
+        ExecutionWorkSpec stepFlaky = new ExecutionWorkSpec(
+                "step-flaky", "Perform a recoverable read that depends on step-ok", "target",
+                "test.recovery.read.flaky", List.of("step-ok"), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("read completes"), List.of("execution evidence"));
+        return new NormalizedRequest(
+                "Perform two dependent reads", "target", List.of("read-only"), IntelligenceDepth.ANALYZE,
+                "evidence-backed result", List.of(), List.of("do not mutate"), "current", "",
+                IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.<AnalyticalProtocolType>of(), DeterministicCapability.NONE,
+                List.of(), List.of(stepOk, stepFlaky), false, null, LlmProvider.OPENAI, "");
     }
 }

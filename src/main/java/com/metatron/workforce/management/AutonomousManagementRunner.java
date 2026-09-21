@@ -381,6 +381,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                         stop = true;
                         continue;
                     }
+                    if (outcome.readOnlyRecoveryExhausted()) {
+                        handleReadOnlyRecoveryExhausted(objectiveId, outcome, lease);
+                        stop = true;
+                        continue;
+                    }
                     String reason = outcome.failure().startsWith("autonomy-safety-gate:")
                             ? outcome.failure()
                             : "worker-execution-failure:" + outcome.stepId() + ":" + outcome.failure();
@@ -558,6 +563,25 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 objectiveId, outcome.stepId(), outcome.dispatchAttempt(), outcome.failure());
     }
 
+    /**
+     * A bounded-read-only-retry-eligible step that has now failed identically
+     * MAX_READ_ONLY_DISPATCH_ATTEMPTS times must not fall back to REPLAN (no trustworthy automatic
+     * plan-invalid signal exists) or sit permanently BLOCKED as if it were a genuine human/
+     * external/safety blocker: it escalates for Human review instead, exactly once its automatic
+     * bounded recovery budget is spent. The graph/step/evidence are left completely untouched --
+     * no replan, no new graph version, no loss of any other completed step's evidence.
+     */
+    private void handleReadOnlyRecoveryExhausted(String objectiveId, NodeExecutionOutcome outcome,
+                                                 ManagementLease lease) {
+        String failure = "bounded-read-only-retry-exhausted:step=" + outcome.stepId()
+                + ":attempts=" + outcome.dispatchAttempt() + ":failure=" + outcome.failure();
+        management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), failure, clock.instant());
+        String owner = management.get(objectiveId).ownerWorkerId();
+        management.escalate(objectiveId, owner, failure, clock.instant());
+        LOG.error("autonomy_readonly_recovery_escalated objective_id={} step_id={} attempts={} failure={}",
+                objectiveId, outcome.stepId(), outcome.dispatchAttempt(), outcome.failure());
+    }
+
     private AutonomousObjectiveWork reconcileSucceededNodes(String objectiveId, int graphVersion,
                                                               AutonomousObjectiveWork work, ManagementLease lease) {
         DurableWorkGraph graph = coordination.activeGraph(objectiveId).orElseThrow();
@@ -621,7 +645,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                         Math.max(0.000001d, capability.requiredCapacity()), clock.instant());
             }
         } catch (AutonomySafetyService.SafetyGateException denied) {
-            return NodeExecutionOutcome.failed(step.stepId(), denied.getMessage(), plannedAttempt, false, false);
+            return NodeExecutionOutcome.failed(step.stepId(), denied.getMessage(), plannedAttempt, false, false, false);
         }
 
         DurableDispatch dispatch = coordination.beginDispatch(objectiveId, graphVersion, step.stepId(), clock.instant());
@@ -672,7 +696,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                                     assignment.assignmentId(), WorkforceCoreService.AssignmentStatus.BLOCKED));
                 }
                 coordination.failDispatch(dispatch.dispatchId(), failure, clock.instant());
-                return NodeExecutionOutcome.failed(step.stepId(), failure, plannedAttempt, false, false);
+                return NodeExecutionOutcome.failed(step.stepId(), failure, plannedAttempt, false, false, false);
             }
             if (!result.success()) {
                 String failure = "capability-unsuccessful:" + nonBlank(result.summary(), "unspecified");
@@ -687,7 +711,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     return NodeExecutionOutcome.recoverableMutating(step.stepId(), failure, plannedAttempt);
                 }
                 return NodeExecutionOutcome.failed(step.stepId(), failure, plannedAttempt,
-                        autonomousReplanEligible(step, failure), mutatingRecoveryExhausted(step, failure, plannedAttempt));
+                        autonomousReplanEligible(step, failure), mutatingRecoveryExhausted(step, failure, plannedAttempt),
+                        readOnlyRecoveryExhausted(step, failure, plannedAttempt));
             }
             List<String> evidence = new ArrayList<>(result.evidenceReferences());
             evidence.add("autonomous-step:" + step.stepId()
@@ -716,14 +741,22 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 return NodeExecutionOutcome.recoverableMutating(step.stepId(), classified, plannedAttempt);
             }
             return NodeExecutionOutcome.failed(step.stepId(), classified, plannedAttempt,
-                    autonomousReplanEligible(step, classified), mutatingRecoveryExhausted(step, classified, plannedAttempt));
+                    autonomousReplanEligible(step, classified), mutatingRecoveryExhausted(step, classified, plannedAttempt),
+                    readOnlyRecoveryExhausted(step, classified, plannedAttempt));
         }
     }
 
     private static boolean recoverableReadOnly(ExecutionWorkSpec step, String failure, int attempt) {
-        return step.consequence() == ExecutionWorkSpec.Consequence.READ_ONLY
-                && attempt < MAX_READ_ONLY_DISPATCH_ATTEMPTS
-                && autonomousReplanEligible(step, failure);
+        return attempt < MAX_READ_ONLY_DISPATCH_ATTEMPTS
+                && AutonomousRecoveryPolicy.readOnlyRecoveryEligible(step, failure);
+    }
+
+    /** True once a bounded-read-only-retry-eligible failure has exhausted its attempt budget: no
+     * trustworthy automatic plan-invalid signal exists, so this must escalate for Human review,
+     * never fall back to REPLAN or a plain BLOCKED-forever state. */
+    private static boolean readOnlyRecoveryExhausted(ExecutionWorkSpec step, String failure, int attempt) {
+        return attempt >= MAX_READ_ONLY_DISPATCH_ATTEMPTS
+                && AutonomousRecoveryPolicy.readOnlyRecoveryEligible(step, failure);
     }
 
     private static boolean autonomousReplanEligible(ExecutionWorkSpec step, String failure) {
@@ -781,7 +814,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             if (recoverableReadOnly(step, failure, pending.attempt())) {
                 return NodeExecutionOutcome.recoverableReadOnly(step.stepId(), failure, pending.attempt());
             }
-            return NodeExecutionOutcome.failed(step.stepId(), failure, pending.attempt(), false, false);
+            return NodeExecutionOutcome.failed(step.stepId(), failure, pending.attempt(), false, false, false);
         }
     }
 
@@ -832,29 +865,31 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private record NodeExecutionOutcome(String stepId, boolean success, boolean missingCapability,
                                         boolean recoverableReadOnlyFailure, boolean recoverableMutatingFailure,
                                         boolean autonomousReplanEligible, boolean mutatingRecoveryExhausted,
+                                        boolean readOnlyRecoveryExhausted,
                                         String requiredCapability, String assignmentReference,
                                         List<String> evidenceReferences, String failure, int dispatchAttempt) {
         static NodeExecutionOutcome succeeded(String stepId, String assignmentReference,
                                               List<String> evidence, int attempt) {
-            return new NodeExecutionOutcome(stepId, true, false, false, false, false, false, "",
+            return new NodeExecutionOutcome(stepId, true, false, false, false, false, false, false, "",
                     assignmentReference == null ? "" : assignmentReference,
                     List.copyOf(evidence), "", attempt);
         }
         static NodeExecutionOutcome failed(String stepId, String failure, int attempt,
-                                           boolean autonomousReplanEligible, boolean mutatingRecoveryExhausted) {
+                                           boolean autonomousReplanEligible, boolean mutatingRecoveryExhausted,
+                                           boolean readOnlyRecoveryExhausted) {
             return new NodeExecutionOutcome(stepId, false, false, false, false, autonomousReplanEligible,
-                    mutatingRecoveryExhausted, "", "", List.of(), failure, attempt);
+                    mutatingRecoveryExhausted, readOnlyRecoveryExhausted, "", "", List.of(), failure, attempt);
         }
         static NodeExecutionOutcome recoverableReadOnly(String stepId, String failure, int attempt) {
-            return new NodeExecutionOutcome(stepId, false, false, true, false, false, false,
+            return new NodeExecutionOutcome(stepId, false, false, true, false, false, false, false,
                     "", "", List.of(), failure, attempt);
         }
         static NodeExecutionOutcome recoverableMutating(String stepId, String failure, int attempt) {
-            return new NodeExecutionOutcome(stepId, false, false, false, true, false, false,
+            return new NodeExecutionOutcome(stepId, false, false, false, true, false, false, false,
                     "", "", List.of(), failure, attempt);
         }
         static NodeExecutionOutcome missing(String stepId, String capability) {
-            return new NodeExecutionOutcome(stepId, false, true, false, false, false, false,
+            return new NodeExecutionOutcome(stepId, false, true, false, false, false, false, false,
                     capability, "", List.of(), "missing-capability", 0);
         }
     }
