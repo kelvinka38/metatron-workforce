@@ -82,6 +82,7 @@ public final class AutonomyCoordinationService {
         require(objectiveId, "objectiveId"); Objects.requireNonNull(plan, "plan"); Objects.requireNonNull(at, "at");
         validatePlan(plan);
         Integer active = activeGraphVersions.get(objectiveId);
+        Map<String, DurableWorkGraph.Node> priorNodes = Map.of();
         if (active != null) {
             DurableWorkGraph current = graph(objectiveId, active);
             boolean failedPlan = current.nodes().values().stream()
@@ -89,6 +90,7 @@ public final class AutonomyCoordinationService {
             if (samePlan(current, plan)
                     && current.status() == DurableWorkGraph.Status.ACTIVE
                     && !failedPlan) return current;
+            priorNodes = current.nodes();
             if (current.status() == DurableWorkGraph.Status.ACTIVE) {
                 graphs.put(key(objectiveId, active), new DurableWorkGraph(current.objectiveId(), current.graphVersion(),
                         DurableWorkGraph.Status.SUPERSEDED, current.nodes(), current.createdAt(), at));
@@ -97,8 +99,18 @@ public final class AutonomyCoordinationService {
         int version = active == null ? 1 : active + 1;
         Map<String, DurableWorkGraph.Node> nodes = new LinkedHashMap<>();
         for (ExecutionWorkSpec step : plan) {
-            nodes.put(step.stepId(), new DurableWorkGraph.Node(step, DurableWorkGraph.NodeStatus.PENDING,
-                    0, "", List.of(), "", at));
+            // A replan (typically triggered by exactly one FAILED step, e.g. VERIFY) must not discard
+            // durable evidence of OTHER steps in the same plan that already genuinely succeeded (e.g.
+            // PRODUCE/PREPARE): carrying the identical prior SUCCEEDED node forward here is what lets
+            // AutonomousManagementRunner.reconcileSucceededNodes() correctly restore
+            // AutonomousObjectiveWork.completedStepIds() for it too, instead of the runner blindly
+            // redispatching already-completed work from scratch on every replan.
+            DurableWorkGraph.Node prior = priorNodes.get(step.stepId());
+            nodes.put(step.stepId(), prior != null
+                    && prior.status() == DurableWorkGraph.NodeStatus.SUCCEEDED
+                    && prior.spec().equals(step)
+                    ? prior
+                    : new DurableWorkGraph.Node(step, DurableWorkGraph.NodeStatus.PENDING, 0, "", List.of(), "", at));
         }
         DurableWorkGraph created = new DurableWorkGraph(objectiveId, version,
                 DurableWorkGraph.Status.ACTIVE, nodes, at, at);
