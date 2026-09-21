@@ -17,11 +17,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AutonomousManagementRunnerTest {
@@ -96,6 +98,67 @@ class AutonomousManagementRunnerTest {
     }
 
     @Test
+    void hungReadOnlyDispatchTimesOutAndBoundedlyRetriesInsteadOfFreezingTheRunner() {
+        // Production incident (2026-09-21): a single node dispatch blocked forever inside a
+        // governed capability call. AutonomousManagementRunner.await() had no timeout on
+        // future.get(), and runOnce()'s exclusive lock is held for the whole pass, so that one
+        // hung dispatch silently froze the ENTIRE runner -- every objective, not just the stuck
+        // one -- with zero further log output until an operator manually restarted the process.
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T00:00:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomousExecutionCapability hangs = hangingCapability("test.read.hangs");
+        AutonomousManagementRunner runner = runnerWithNodeTimeout(
+                management, hangs, clock, "runner-hung-read-only", Duration.ofMillis(50));
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(hangs), runner, "worker-head", clock);
+
+        var receipt = ingress.submit("human-primary", "org-metatron", "case-hung-read-only",
+                "conversation-hung", "message-hung", "chat",
+                request("test.read.hangs", ExecutionWorkSpec.Consequence.READ_ONLY));
+
+        assertTimeoutPreemptively(Duration.ofSeconds(10), runner::runOnce,
+                "a single hung dispatch must never block runOnce() beyond its configured node timeout");
+
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertTrue(management.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.BLOCKED
+                        && event.detail().contains("node-execution-timeout")),
+                "exhausted read-only retries must surface the timeout, not silently vanish");
+    }
+
+    @Test
+    void hungMutatingDispatchTimesOutAndBlocksForReconciliationRatherThanAutoReplanning() {
+        // A MUTATING dispatch that times out may still be running in the background (cancel(true)
+        // best-effort-interrupts it, but cannot guarantee termination), so it must never be
+        // auto-replanned -- a fresh replan could dispatch a duplicate concurrent mutation. It
+        // surfaces as a governed block instead, exactly like any other unsafe interrupted
+        // mutating dispatch, so a Human/operator resolves it via recoverLocally().
+        Clock clock = Clock.fixed(Instant.parse("2026-08-31T00:00:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomousExecutionCapability hangs = hangingCapability("test.mutation.hangs");
+        AutonomousManagementRunner runner = runnerWithNodeTimeout(
+                management, hangs, clock, "runner-hung-mutating", Duration.ofMillis(50));
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(hangs), runner, "worker-head", clock);
+
+        var receipt = ingress.submit("human-primary", "org-metatron", "case-hung-mutating",
+                "conversation-hung-mutating", "message-hung-mutating", "chat",
+                request("test.mutation.hangs", ExecutionWorkSpec.Consequence.MUTATING));
+
+        assertTimeoutPreemptively(Duration.ofSeconds(10), runner::runOnce,
+                "a single hung mutating dispatch must never block runOnce() beyond its configured node timeout");
+
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertTrue(management.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.BLOCKED
+                        && event.detail().contains("node-execution-timeout")),
+                "the timed-out mutating dispatch must surface for reconciliation");
+        assertFalse(management.history(receipt.objectiveId()).stream()
+                .anyMatch(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.REPLAN_REQUESTED),
+                "a mutating timeout must never be auto-replanned while the dispatch might still be running");
+    }
+
+    @Test
     void expiredLeaseCanBeReclaimedAndStaleRunnerIsFenced() {
         Instant acceptedAt = Instant.parse("2026-08-31T00:00:00Z");
         ManagementAutonomyService management = new ManagementAutonomyService();
@@ -124,6 +187,30 @@ class AutonomousManagementRunnerTest {
                 List.of(capability), clock, runnerId, Duration.ofMinutes(5), Duration.ofSeconds(5));
     }
 
+    private static AutonomousManagementRunner runnerWithNodeTimeout(ManagementAutonomyService management,
+                                                                     AutonomousExecutionCapability capability,
+                                                                     Clock clock, String runnerId,
+                                                                     Duration nodeExecutionTimeout) {
+        return runner(management, capability, clock, runnerId)
+                .configureNodeExecutionTimeout(nodeExecutionTimeout);
+    }
+
+    /** Blocks forever until its dispatch is cancelled/interrupted, simulating a stuck governed call. */
+    private static AutonomousExecutionCapability hangingCapability(String capabilityRef) {
+        return new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return capabilityRef; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                try {
+                    new CountDownLatch(1).await();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return new CapabilityResult(true, "worker-auditor", "assignment-hung",
+                        "work-hung", List.of("evidence:should-not-be-observed"), "PASS");
+            }
+        };
+    }
+
     private static AutonomousExecutionCapability capability(AtomicInteger executions) {
         return new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return "test.audit.read"; }
@@ -138,9 +225,12 @@ class AutonomousManagementRunnerTest {
     }
 
     private static NormalizedRequest request() {
+        return request("test.audit.read", ExecutionWorkSpec.Consequence.READ_ONLY);
+    }
+
+    private static NormalizedRequest request(String capabilityRef, ExecutionWorkSpec.Consequence consequence) {
         ExecutionWorkSpec step = new ExecutionWorkSpec("step-1", "Audit repository",
-                "kelvinka38/metatron-workforce", "test.audit.read", List.of(),
-                ExecutionWorkSpec.Consequence.READ_ONLY);
+                "kelvinka38/metatron-workforce", capabilityRef, List.of(), consequence);
         return new NormalizedRequest("Audit repository", "metatron-workforce",
                 List.of("read-only"), IntelligenceDepth.ANALYZE, "evidence-backed result",
                 List.of(), List.of("do not mutate"), "current", "",
