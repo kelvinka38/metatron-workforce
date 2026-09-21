@@ -153,15 +153,24 @@ class AssignmentLifecycleObservabilityTest {
             runner.runOnce();
 
             String objectiveId = receipt.objectiveId();
-            assertEquals(1, core.allAssignments().size(),
-                    "the real Assignment created before failure must remain historical truth, not be erased");
-            WorkforceCoreService.Assignment assignment = core.allAssignments().getFirst();
-            assertEquals(WORKER_ID, assignment.workerId());
-            assertEquals(WorkforceCoreService.AssignmentStatus.CANCELLED, assignment.status(),
-                    "execution failure must cancel the Assignment truthfully, not silently vanish it");
-            assertTrue(management.get(objectiveId).assignmentRefs().contains(assignment.assignmentId()),
-                    "the Management Objective must keep referencing the real historical Assignment after failure");
+            // This ordinary (non-safety, non-authorization) MUTATING execution failure is bounded-
+            // locally-retried in place (same step, same graph version) up to MAX_MUTATING_DISPATCH_ATTEMPTS
+            // (3) times within this single runOnce() call before escalating, so it genuinely attempts the
+            // work three times -- each attempt creates its own real Assignment, none of which are ever
+            // silently dropped or rewritten away.
+            assertEquals(3, core.allAssignments().size(),
+                    "each bounded local retry attempt must create its own real, historically-preserved Assignment");
+            for (WorkforceCoreService.Assignment assignment : core.allAssignments()) {
+                assertEquals(WORKER_ID, assignment.workerId());
+                assertEquals(WorkforceCoreService.AssignmentStatus.CANCELLED, assignment.status(),
+                        "every attempt's execution failure must cancel its Assignment truthfully, not silently vanish it");
+                assertTrue(management.get(objectiveId).assignmentRefs().contains(assignment.assignmentId()),
+                        "the Management Objective must keep referencing every real historical Assignment after failure");
+            }
             assertFalse(management.get(objectiveId).status() == ManagementObjective.Status.COMPLETED);
+            assertEquals(ManagementObjective.Status.ESCALATED, management.get(objectiveId).status(),
+                    "an ordinary MUTATING execution failure that exhausts bounded local retry must escalate, "
+                            + "never vanish or silently complete");
 
             String card = new WorkCardRenderer(management, core).render(objectiveId);
             assertFalse(card.contains("UNASSIGNED"),

@@ -238,6 +238,32 @@ public final class AutonomyCoordinationService {
         persist();
     }
 
+    /**
+     * Resets a node whose dispatch is KNOWN to have completed (failDispatch() already recorded a
+     * definite failure -- the capability call returned or threw synchronously, so nothing is still
+     * running in the background) back to PENDING for a bounded retry of that SAME step, within the
+     * SAME graph version. No new plan, no superseded graph, no planner invocation: every other
+     * node's SUCCEEDED/PENDING/FAILED status is untouched, so completed phases stay completed and
+     * only the failed step is retried. This must never be used for a node whose outcome is unknown
+     * (interrupted/timed-out/abandoned by a crash) -- reconcileInterrupted() owns that case, since a
+     * DISPATCHED MUTATING node there may still be running and is unsafe to blindly reset.
+     */
+    public synchronized DurableWorkGraph.Node retryFailedNode(String objectiveId, int graphVersion, String stepId, Instant at) {
+        DurableWorkGraph graph = requireActive(objectiveId, graphVersion);
+        DurableWorkGraph.Node node = requireNode(graph, stepId);
+        if (node.status() != DurableWorkGraph.NodeStatus.FAILED) {
+            throw new IllegalStateException("step is not in a failed state to retry: " + stepId + " status=" + node.status());
+        }
+        Map<String, DurableWorkGraph.Node> nodes = new LinkedHashMap<>(graph.nodes());
+        DurableWorkGraph.Node retried = new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.PENDING,
+                node.attempt(), "", List.of(), "", at);
+        nodes.put(stepId, retried);
+        graphs.put(key(graph.objectiveId(), graph.graphVersion()), new DurableWorkGraph(graph.objectiveId(),
+                graph.graphVersion(), graph.status(), nodes, graph.createdAt(), at));
+        persist();
+        return retried;
+    }
+
     public synchronized DurableWorkGraph completeGraph(String objectiveId, int graphVersion, Instant at) {
         DurableWorkGraph graph = requireActive(objectiveId, graphVersion);
         if (graph.nodes().values().stream().anyMatch(node -> node.status() != DurableWorkGraph.NodeStatus.SUCCEEDED))
