@@ -36,6 +36,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AutonomousManagementRunner.class);
     private static final Duration DEFAULT_LEASE = Duration.ofMinutes(5);
     private static final Duration DEFAULT_POLL = Duration.ofSeconds(5);
+    private static final Duration DEFAULT_NODE_EXECUTION_TIMEOUT = Duration.ofMinutes(30);
     private static final int DEFAULT_PARALLELISM = 4;
     private static final int MAX_READ_ONLY_DISPATCH_ATTEMPTS = 3;
     private static final int MAX_AUTONOMOUS_REPLANS = 1;
@@ -55,6 +56,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
     private volatile AutonomySchedulingService scheduling;
+    private volatile Duration nodeExecutionTimeout = DEFAULT_NODE_EXECUTION_TIMEOUT;
     /** Optional production bridge used to close canonical Assignments only after Observation PASS. */
     private volatile WorkforceCoreService workforceCore;
     private volatile WorkerActorAssignmentConsumer assignmentConsumer;
@@ -189,6 +191,13 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         return this;
     }
 
+    /** Bounds a single node dispatch; see {@link #await(PendingNodeExecution)} for why this exists. */
+    public AutonomousManagementRunner configureNodeExecutionTimeout(Duration timeout) {
+        if (started.get()) throw new IllegalStateException("node execution timeout must be configured before runner start");
+        this.nodeExecutionTimeout = requirePositive(timeout, "nodeExecutionTimeout");
+        return this;
+    }
+
     public void start() {
         if (started.compareAndSet(false, true)) {
             executor.scheduleWithFixedDelay(this::runSafely, 0,
@@ -298,26 +307,27 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 }
             }
 
-            List<Future<NodeExecutionOutcome>> futures = new ArrayList<>();
+            List<PendingNodeExecution> dispatched = new ArrayList<>();
             int graphVersion = graph.graphVersion();
             String schedulerRef = schedulingDecisionId;
             for (DurableWorkGraph.Node node : ready) {
                 AutonomousExecutionCapability capability = capabilities.get(node.spec().requiredCapability());
                 if (capability == null) {
-                    futures.add(java.util.concurrent.CompletableFuture.completedFuture(
-                            NodeExecutionOutcome.missing(node.spec().stepId(), node.spec().requiredCapability())));
+                    dispatched.add(new PendingNodeExecution(node.spec(), node.attempt(),
+                            java.util.concurrent.CompletableFuture.completedFuture(
+                                    NodeExecutionOutcome.missing(node.spec().stepId(), node.spec().requiredCapability()))));
                 } else {
                     AutonomousObjectiveWork dispatchContext = work;
                     int plannedAttempt = node.attempt() + 1;
-                    futures.add(workExecutor.submit(() -> executeNode(
+                    dispatched.add(new PendingNodeExecution(node.spec(), plannedAttempt, workExecutor.submit(() -> executeNode(
                             objectiveId, graphVersion, plannedAttempt, dispatchContext, node.spec(), capability,
-                            schedulerRef)));
+                            schedulerRef))));
                 }
             }
 
             boolean stop = false;
-            for (Future<NodeExecutionOutcome> future : futures) {
-                NodeExecutionOutcome outcome = await(future);
+            for (PendingNodeExecution pending : dispatched) {
+                NodeExecutionOutcome outcome = await(pending);
                 if (outcome.missingCapability()) {
                     handleCapabilityPlanGap(objectiveId, outcome.stepId(), outcome.requiredCapability(), lease);
                     stop = true;
@@ -595,8 +605,23 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         return AutonomousRecoveryPolicy.autonomousReplanEligible(step, failure);
     }
 
-    private static NodeExecutionOutcome await(Future<NodeExecutionOutcome> future) {
-        try { return future.get(); }
+    /**
+     * Bounds every node dispatch so a single stuck capability call (network stall, deadlocked
+     * external process) can never freeze this runner's single-threaded pass forever. Before this
+     * bound existed, an unbounded future.get() here meant one hung dispatch silently starved
+     * every objective in the system indefinitely, since runOnce()'s exclusive lock is held for
+     * the whole pass -- observed in production as a total, CPU-idle stall with zero further log
+     * output until an operator manually restarted the process.
+     *
+     * A READ_ONLY timeout is treated like any other recoverable read-only failure (safe to
+     * retry: reconcileInterrupted() already resets READ_ONLY DISPATCHED nodes to PENDING). A
+     * MUTATING timeout is never auto-replanned, since the abandoned execution may still be
+     * running in the background and a fresh replan could dispatch a duplicate mutation; it
+     * surfaces as a governed block instead, exactly like any other unsafe-interrupted mutating
+     * dispatch, so reconcileInterrupted() can resolve it once the objective is recovered.
+     */
+    private NodeExecutionOutcome await(PendingNodeExecution pending) {
+        try { return pending.future().get(nodeExecutionTimeout.toMillis(), TimeUnit.MILLISECONDS); }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("work dispatch interrupted", e);
@@ -604,8 +629,20 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             Throwable cause = e.getCause();
             if (cause instanceof RuntimeException runtime) throw runtime;
             throw new IllegalStateException("work dispatch failed", cause);
+        } catch (java.util.concurrent.TimeoutException timedOut) {
+            pending.future().cancel(true);
+            ExecutionWorkSpec step = pending.step();
+            String failure = "node-execution-timeout:exceeded-" + nodeExecutionTimeout;
+            LOG.error("autonomy_step_execution_timeout step_id={} capability={} attempt={} timeout={}",
+                    step.stepId(), step.requiredCapability(), pending.attempt(), nodeExecutionTimeout);
+            if (recoverableReadOnly(step, failure, pending.attempt())) {
+                return NodeExecutionOutcome.recoverable(step.stepId(), failure, pending.attempt());
+            }
+            return NodeExecutionOutcome.failed(step.stepId(), failure, pending.attempt(), false);
         }
     }
+
+    private record PendingNodeExecution(ExecutionWorkSpec step, int attempt, Future<NodeExecutionOutcome> future) {}
 
     public List<String> capabilityCatalog() {
         return capabilities.keySet().stream().sorted().toList();

@@ -262,6 +262,8 @@ public class LiveManagementConfiguration {
         runner.configureScheduling(scheduling);
         runner.configureAssignmentLifecycle(core);
         runner.configureAssignmentConsumer(assignmentConsumer);
+        runner.configureNodeExecutionTimeout(Duration.ofMillis(
+                positiveLong("METATRON_AUTONOMY_NODE_EXECUTION_TIMEOUT_MS", 1_800_000L)));
         runner.start();
         return runner;
     }
