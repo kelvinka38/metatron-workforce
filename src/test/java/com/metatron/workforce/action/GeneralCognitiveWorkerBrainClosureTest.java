@@ -1,6 +1,7 @@
 package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.intelligence.CognitiveOutputBudget;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import org.junit.jupiter.api.Test;
@@ -550,6 +551,94 @@ class GeneralCognitiveWorkerBrainClosureTest {
         CognitiveWorkerRuntime.Thought thought = brain.think(context);
 
         assertEquals("workspace.file.read", thought.actionRef());
+    }
+
+    @Test
+    void actionSelectionRequestsTheLargerContentGenerationBudgetWhenAContentBearingActionIsOffered() {
+        // Root-cause fix: the cognition transport previously applied one global 256-token output ceiling
+        // to every request, which truncated the JSON response whenever the selected action carried
+        // generated source/work-product content (e.g. workspace.file.write's "content" input). The brain
+        // must now request the larger CONTENT_GENERATION budget whenever such an action is offered this
+        // cycle, deterministically and before any provider call is made.
+        AtomicInteger calls = new AtomicInteger();
+        WorkerIntelligenceService intelligence = request -> {
+            calls.incrementAndGet();
+            assertEquals(CognitiveOutputBudget.CONTENT_GENERATION, request.outputBudget(),
+                    "workspace.file.write is offered this cycle; the response JSON must be able to carry "
+                            + "generated file content, so the larger output budget must be requested");
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-content-budget",
+                    "{\"actionRef\":\"workspace.file.write\",\"inputs\":{\"path\":\"app.py\",\"content\":\"print(1)\"},\"rationale\":\"write source\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "write a fresh application file", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("file exists"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.write"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.write", thought.actionRef());
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void actionSelectionRequestsOnlyTheSmallSelectionBudgetWhenNoContentBearingActionIsOffered() {
+        AtomicInteger calls = new AtomicInteger();
+        WorkerIntelligenceService intelligence = request -> {
+            calls.incrementAndGet();
+            assertEquals(CognitiveOutputBudget.SELECTION, request.outputBudget());
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-selection-budget",
+                    "{\"actionRef\":\"workspace.file.read\",\"inputs\":{\"path\":\"README.md\"},\"rationale\":\"inspect\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "inspect the source", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("source inspected"), List.of("read evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.file.list", "workspace.git.status"),
+                List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.file.read", thought.actionRef());
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void reflectionAlwaysUsesTheSmallSelectionBudgetEvenWhenContentBearingActionsWereAvailable() {
+        WorkerIntelligenceService intelligence = request -> {
+            assertEquals(CognitiveOutputBudget.SELECTION, request.outputBudget(),
+                    "reflection is a short decision+summary JSON; it never needs the content-generation budget");
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-reflect-budget",
+                    "{\"decision\":\"CONTINUE\",\"summary\":\"more work required\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "write a fresh application file", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("file exists", "tests pass"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.write", "workspace.test.run"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Reflection reflection = brain.reflect(
+                context,
+                ActionFabric.ActionObservation.success(
+                        "workspace.file.write", "file written",
+                        Map.of("path", "app.py"), List.of("workspace-write:evidence")));
+
+        assertEquals(CognitiveWorkerRuntime.Decision.CONTINUE, reflection.decision());
     }
 
 }

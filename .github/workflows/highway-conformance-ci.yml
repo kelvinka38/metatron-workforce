@@ -30,6 +30,7 @@ on:
       - '.github/workflows/highway-conformance-ci.yml'
       - '.github/workflows/highway-execution-fabric-acceptance.yml'
       - 'highway/**'
+      - 'deploy/cognition-node/**'
   workflow_dispatch:
 
 permissions:
@@ -57,6 +58,12 @@ jobs:
           set -euo pipefail
           chmod +x gradlew
           ./gradlew clean compileJava compileTestJava --no-daemon --max-workers=1
+      - name: Test Metatron Cognition Node (request-aware output budget, provider chain, deadline)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test deploy/cognition-node/server.test.js
+          echo 'COGNITION_NODE_UNIT_TESTS=PASS'
       - name: EE test ExecutionWorkspaceIsolationRegressionTest
         shell: bash
         run: ./gradlew test --tests 'com.metatron.workforce.runtime.execution.ExecutionWorkspaceIsolationRegressionTest' --no-daemon --max-workers=1

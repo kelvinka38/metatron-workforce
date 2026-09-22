@@ -23,7 +23,33 @@ public record IntelligenceRequest(
         List<LlmProvider> requestedProviders,
         int maxProviders,
         boolean freshExternalDataRequired,
-        IntelligenceOriginContext originContext) {
+        IntelligenceOriginContext originContext,
+        CognitiveOutputBudget outputBudget) {
+
+    /** Backward-compatible constructor predating the request-aware output-token budget. */
+    public IntelligenceRequest(
+            String requestId,
+            String requester,
+            IntelligenceMode mode,
+            CollaborationMode collaborationMode,
+            String objective,
+            String context,
+            List<String> evidenceReferences,
+            String requiredCapability,
+            String consequence,
+            String latencyBudget,
+            String costBudget,
+            String authorityContext,
+            String requiredOutput,
+            List<LlmProvider> requestedProviders,
+            int maxProviders,
+            boolean freshExternalDataRequired,
+            IntelligenceOriginContext originContext) {
+        this(requestId, requester, mode, collaborationMode, objective, context, evidenceReferences,
+                requiredCapability, consequence, latencyBudget, costBudget, authorityContext, requiredOutput,
+                requestedProviders, maxProviders, freshExternalDataRequired, originContext,
+                CognitiveOutputBudget.SELECTION);
+    }
 
     /** Backward-compatible constructor for callers that do not require external freshness. */
     public IntelligenceRequest(
@@ -88,6 +114,7 @@ public record IntelligenceRequest(
         Objects.requireNonNull(requiredOutput, "requiredOutput");
         Objects.requireNonNull(requestedProviders, "requestedProviders");
         Objects.requireNonNull(originContext, "originContext");
+        Objects.requireNonNull(outputBudget, "outputBudget");
         evidenceReferences = List.copyOf(evidenceReferences);
         requestedProviders = List.copyOf(requestedProviders);
 

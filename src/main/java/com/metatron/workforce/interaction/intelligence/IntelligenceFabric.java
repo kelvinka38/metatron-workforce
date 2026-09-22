@@ -314,7 +314,7 @@ public final class IntelligenceFabric {
                             enrichedRequest.requestId(), enrichedRequest.requiredCapability(),
                             enrichedRequest.objective(), enrichedRequest.context(),
                             enrichedRequest.evidenceReferences(), enrichedRequest.originContext(),
-                            enrichedRequest.requiredOutput()));
+                            enrichedRequest.requiredOutput(), enrichedRequest.outputBudget()));
             long latencyMillis = Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
             inferenceLedger.record(InferenceConsumptionRecord.from(
                     enrichedRequest.originContext(), IntelligenceComputeOwner.METATRON_OWNED,
@@ -428,7 +428,7 @@ public final class IntelligenceFabric {
                 request.objective(), context, request.evidenceReferences(), request.requiredCapability(),
                 request.consequence(), request.latencyBudget(), request.costBudget(), request.authorityContext(),
                 request.requiredOutput(), request.requestedProviders(), request.maxProviders(),
-                request.freshExternalDataRequired(), request.originContext());
+                request.freshExternalDataRequired(), request.originContext(), request.outputBudget());
     }
 
     private static String caseRef(String context) {
@@ -478,7 +478,7 @@ public final class IntelligenceFabric {
                 request.objective(), context, evidence, request.requiredCapability(), request.consequence(),
                 request.latencyBudget(), request.costBudget(), request.authorityContext(), request.requiredOutput(),
                 request.requestedProviders(), request.maxProviders(), request.freshExternalDataRequired(),
-                request.originContext());
+                request.originContext(), request.outputBudget());
         return new WebEnrichment(enriched, result);
     }
 

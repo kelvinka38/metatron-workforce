@@ -2,6 +2,7 @@ package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.metatron.workforce.interaction.intelligence.CognitiveOutputBudget;
 import com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 
@@ -11,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,6 +41,10 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     static final int MAX_CONTEXT_PROMPT_CHARS = 16_000;
     private static final int MAX_HISTORY_OUTPUT_VALUE_CHARS = 1_000;
     private static final int MAX_HISTORY_SUMMARY_CHARS = 500;
+    // Action-contract input keys whose value is generated source/work-product content rather than a
+    // short reference (path, command, SHA): when the offered catalog includes any of these, the
+    // cognitive response's JSON must itself carry that content and needs the larger output budget.
+    private static final Set<String> CONTENT_BEARING_INPUT_KEYS = Set.of("content", "newText", "body");
     private final WorkerIntelligenceService intelligence;
     private final ObjectMapper json;
     private final List<String> evidence = new ArrayList<>();
@@ -88,7 +94,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 """;
         CognitiveWorkerRuntime.CognitiveContext providerContext = providerActionSelectionContext(context);
         CognitiveProviderResult providerResult = completeObject(
-                providerContext, system, contextPrompt(providerContext));
+                providerContext, system, contextPrompt(providerContext), outputBudgetFor(providerContext));
         Map<String, Object> parsed = providerResult.parsed();
         String actionRef = text(parsed.get("actionRef"), "actionRef");
         String rationale = text(parsed.get("rationale"), "rationale");
@@ -1374,6 +1380,14 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
             CognitiveWorkerRuntime.CognitiveContext context,
             String system,
             String user) {
+        return completeObject(context, system, user, CognitiveOutputBudget.SELECTION);
+    }
+
+    private CognitiveProviderResult completeObject(
+            CognitiveWorkerRuntime.CognitiveContext context,
+            String system,
+            String user,
+            CognitiveOutputBudget outputBudget) {
         WorkerIntelligenceService.Response response = intelligence.reason(
                 new WorkerIntelligenceService.Request(
                         context.workerId(),
@@ -1385,7 +1399,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                         context.objectiveId(),
                         context.assignmentReference(),
                         context.workSpec().stepId(),
-                        ""));
+                        "",
+                        outputBudget));
         Map<String, Object> parsed;
         try {
             parsed = parseObject(response.text());
@@ -1396,6 +1411,26 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         evidence.addAll(response.evidenceReferences());
         evidence.add("cognitive-intelligence-request:" + response.requestReference());
         return new CognitiveProviderResult(response.requestReference(), parsed);
+    }
+
+    /**
+     * Deterministically classifies this cycle's output-token budget before any provider call: if the
+     * catalog of actions actually offered this cycle includes one whose contract carries a
+     * content-bearing input (a full file body, patch replacement text, or PR body), the model's JSON
+     * response must itself be able to hold that generated content, so the larger CONTENT_GENERATION
+     * ceiling applies. Plain action selection among non-content-bearing actions stays on the small
+     * SELECTION ceiling. The classification is computed here, never guessed by the provider transport.
+     */
+    private static CognitiveOutputBudget outputBudgetFor(CognitiveWorkerRuntime.CognitiveContext context) {
+        for (String action : context.availableActions()) {
+            Map<String, Object> contract = ActionContractCatalog.promptContract(action);
+            Object rawInputs = contract.getOrDefault("inputs", Map.of());
+            if (rawInputs instanceof Map<?, ?> inputs && CONTENT_BEARING_INPUT_KEYS.stream()
+                    .anyMatch(key -> inputs.containsKey(key))) {
+                return CognitiveOutputBudget.CONTENT_GENERATION;
+            }
+        }
+        return CognitiveOutputBudget.SELECTION;
     }
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {

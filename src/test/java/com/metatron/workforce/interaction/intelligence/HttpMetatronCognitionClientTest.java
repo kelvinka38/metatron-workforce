@@ -1,5 +1,6 @@
 package com.metatron.workforce.interaction.intelligence;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,6 +49,53 @@ class HttpMetatronCognitionClientTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void requestAwareOutputBudgetReachesTheCognitionNodeAsMaxOutputTokens() throws Exception {
+        // Root-cause fix: the cognition-node previously received no per-request output-token hint at
+        // all and applied one global 256-token ceiling to every request. The HTTP transport must now
+        // forward the caller's CognitiveOutputBudget so a work-product-generation request (e.g. a fresh
+        // workspace.file.write) is not truncated by that old, too-small ceiling.
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        HttpServer server = capturingServer(200,
+                "{\"result\":\"ok\",\"modelIdentity\":\"test\",\"endpointId\":\"metatron-cognition-node:test:ollama\","
+                        + "\"requestReference\":\"REQ-2\",\"usage\":{\"inputTokens\":1,\"outputTokens\":1}}",
+                capturedBody);
+        try {
+            HttpMetatronCognitionClient client = client(server);
+            client.reason(new MetatronCognitionClient.Request(
+                    "REQ-2",
+                    "worker.cognition",
+                    "write a fresh application file",
+                    "context",
+                    List.of("evidence:test"),
+                    IntelligenceOriginContext.worker(
+                            "WORKER-TEST", "OBJ-1", "ASG-1", "STEP-1", "ATT-1", "worker.cognition", "REQ-2"),
+                    "strict json",
+                    CognitiveOutputBudget.CONTENT_GENERATION));
+
+            assertEquals(CognitiveOutputBudget.CONTENT_GENERATION.maxOutputTokens(),
+                    capturedBody.get().path("maxOutputTokens").asInt());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static HttpServer capturingServer(int status, String body, AtomicReference<JsonNode> capturedBody)
+            throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/cognition", exchange -> {
+            capturedBody.set(json.readTree(exchange.getRequestBody()));
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        return server;
     }
 
     private static HttpMetatronCognitionClient client(HttpServer server) {
