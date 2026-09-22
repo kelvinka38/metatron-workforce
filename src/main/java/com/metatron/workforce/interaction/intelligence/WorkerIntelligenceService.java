@@ -21,7 +21,24 @@ public interface WorkerIntelligenceService {
             String objectiveId,
             String assignmentId,
             String stepId,
-            String executionAttemptId) {
+            String executionAttemptId,
+            CognitiveOutputBudget outputBudget) {
+        /** Legacy constructor for callers predating the request-aware output-token budget. */
+        public Request(String requester,
+                       String capability,
+                       String instructions,
+                       String context,
+                       List<String> evidenceReferences,
+                       String workerId,
+                       String objectiveId,
+                       String assignmentId,
+                       String stepId,
+                       String executionAttemptId) {
+            this(requester, capability, instructions, context, evidenceReferences,
+                    workerId, objectiveId, assignmentId, stepId, executionAttemptId,
+                    CognitiveOutputBudget.SELECTION);
+        }
+
         public Request(String requester,
                        String capability,
                        String instructions,
@@ -32,6 +49,7 @@ public interface WorkerIntelligenceService {
         }
 
         public Request {
+            outputBudget = outputBudget == null ? CognitiveOutputBudget.SELECTION : outputBudget;
             Objects.requireNonNull(requester, "requester");
             Objects.requireNonNull(capability, "capability");
             Objects.requireNonNull(instructions, "instructions");
@@ -104,7 +122,8 @@ public interface WorkerIntelligenceService {
                         false,
                         IntelligenceOriginContext.worker(
                                 request.workerId(), request.objectiveId(), request.assignmentId(), request.stepId(),
-                                request.executionAttemptId(), request.capability(), requestId));
+                                request.executionAttemptId(), request.capability(), requestId),
+                        request.outputBudget());
                 try {
                     result = fabric.execute(intelligenceRequest);
                     break;

@@ -64,6 +64,7 @@ public final class HttpMetatronCognitionClient implements MetatronCognitionClien
             body.put("context", request.context());
             body.put("evidenceReferences", request.evidenceReferences());
             body.put("requiredOutput", request.requiredOutput());
+            body.put("maxOutputTokens", request.outputBudget().maxOutputTokens());
             body.put("provenance", provenance);
 
             HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)

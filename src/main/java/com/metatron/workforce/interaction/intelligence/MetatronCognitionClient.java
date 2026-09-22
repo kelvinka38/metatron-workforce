@@ -15,7 +15,21 @@ public interface MetatronCognitionClient {
             String context,
             List<String> evidenceReferences,
             IntelligenceOriginContext origin,
-            String requiredOutput) {
+            String requiredOutput,
+            CognitiveOutputBudget outputBudget) {
+        /** Legacy constructor for callers predating the request-aware output-token budget. */
+        public Request(
+                String requestId,
+                String capability,
+                String objective,
+                String context,
+                List<String> evidenceReferences,
+                IntelligenceOriginContext origin,
+                String requiredOutput) {
+            this(requestId, capability, objective, context, evidenceReferences, origin, requiredOutput,
+                    CognitiveOutputBudget.SELECTION);
+        }
+
         public Request {
             requestId = require(requestId, "requestId");
             capability = require(capability, "capability");
@@ -24,6 +38,7 @@ public interface MetatronCognitionClient {
             evidenceReferences = evidenceReferences == null ? List.of() : List.copyOf(evidenceReferences);
             Objects.requireNonNull(origin, "origin");
             requiredOutput = require(requiredOutput, "requiredOutput");
+            Objects.requireNonNull(outputBudget, "outputBudget");
         }
     }
 

@@ -22,7 +22,13 @@ function configFromEnv() {
     totalTimeoutMs: positiveInt(process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS, 210000),
     ollamaTimeoutMs: positiveInt(process.env.OLLAMA_TIMEOUT_MS, 150000),
     frontierTimeoutMs: positiveInt(process.env.FRONTIER_PROVIDER_TIMEOUT_MS, 18000),
-    maxOutputTokens: positiveInt(process.env.COGNITION_MAX_OUTPUT_TOKENS, 256),
+    // Default applied only when a request omits maxOutputTokens. Real Workforce callers (see
+    // MetatronCognitionClient.Request/CognitiveOutputBudget) always send an explicit, request-aware
+    // value; this default only covers callers of the raw HTTP contract that do not.
+    maxOutputTokens: positiveInt(process.env.COGNITION_MAX_OUTPUT_TOKENS, 1536),
+    // Hard ceiling enforced regardless of what a request asks for -- output generation must stay
+    // bounded even if a caller is misconfigured or compromised.
+    maxOutputTokensCeiling: positiveInt(process.env.COGNITION_MAX_OUTPUT_TOKENS_CEILING, 8192),
     ollamaThink: optionalBoolean(process.env.OLLAMA_THINK),
   };
 }
@@ -221,6 +227,7 @@ function createServer(cfg = configFromEnv()) {
         ollamaTimeoutMs: cfg.ollamaTimeoutMs,
         frontierTimeoutMs: cfg.frontierTimeoutMs,
         maxOutputTokens: cfg.maxOutputTokens,
+        maxOutputTokensCeiling: cfg.maxOutputTokensCeiling,
         workerCognitionOllamaThink: cfg.ollamaThink === undefined ? false : cfg.ollamaThink,
         providerOrder: providerList().map(([name]) => name),
       });
@@ -240,8 +247,13 @@ function createServer(cfg = configFromEnv()) {
       let body;
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: 'invalid_json' }); }
       const requestId = String(body.requestId || '');
+      const requestedMaxOutputTokens = positiveInt(body.maxOutputTokens, cfg.maxOutputTokens);
+      const effectiveCfg = {
+        ...cfg,
+        maxOutputTokens: Math.min(requestedMaxOutputTokens, cfg.maxOutputTokensCeiling),
+      };
       const outcome = await runProviderChain(
-        buildPrompt(body), providerList(), cfg, { capability: String(body.capability || '') });
+        buildPrompt(body), providerList(), effectiveCfg, { capability: String(body.capability || '') });
       if (outcome.status === 200) outcome.body.requestReference = requestId;
       return send(res, outcome.status, outcome.body);
     });

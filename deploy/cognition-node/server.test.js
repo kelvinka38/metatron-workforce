@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const http = require('node:http');
 
 const {
   boundedFetch,
@@ -7,6 +8,7 @@ const {
   callGemini,
   callOllama,
   callOpenAi,
+  createServer,
   runProviderChain,
 } = require('./server');
 
@@ -157,6 +159,113 @@ test('worker.cognition disables ollama thinking by default', async () => {
 
   assert.equal(outcome.status, 200);
   assert.equal(seenThink, false);
+});
+
+function postCognitionRequest(server, body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: server.address().port,
+      path: '/v1/cognition',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+        authorization: 'Bearer test',
+      },
+    }, res => {
+      let raw = '';
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(raw) }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+test('a request-supplied maxOutputTokens overrides the server default and reaches the provider call', async () => {
+  // Root-cause fix: previously the single global COGNITION_MAX_OUTPUT_TOKENS ceiling (256) applied
+  // identically to every cognition request, truncating any response whose JSON had to carry generated
+  // source/work-product content (e.g. workspace.file.write's "content"). Workforce now sends a
+  // request-aware maxOutputTokens (see CognitiveOutputBudget on the Java side); the cognition-node must
+  // honor it per request rather than always falling back to its own default.
+  const originalFetch = global.fetch;
+  const bodies = [];
+  global.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
+  };
+  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 256, maxOutputTokensCeiling: 8192 }));
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const outcome = await postCognitionRequest(server, {
+      requestId: 'req-content-generation',
+      capability: 'worker.cognition',
+      objective: 'write file',
+      context: 'context',
+      requiredOutput: 'strict json',
+      maxOutputTokens: 6144,
+    });
+    assert.equal(outcome.status, 200);
+    assert.equal(bodies[0].options.num_predict, 6144);
+  } finally {
+    server.close();
+    global.fetch = originalFetch;
+  }
+});
+
+test('a requested maxOutputTokens above the enforced ceiling is clamped, never applied verbatim', async () => {
+  const originalFetch = global.fetch;
+  const bodies = [];
+  global.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
+  };
+  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 256, maxOutputTokensCeiling: 8192 }));
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const outcome = await postCognitionRequest(server, {
+      requestId: 'req-unbounded-attempt',
+      capability: 'worker.cognition',
+      objective: 'write file',
+      context: 'context',
+      requiredOutput: 'strict json',
+      maxOutputTokens: 999999,
+    });
+    assert.equal(outcome.status, 200);
+    assert.equal(bodies[0].options.num_predict, 8192,
+        'the enforced ceiling must apply even when a caller requests far more');
+  } finally {
+    server.close();
+    global.fetch = originalFetch;
+  }
+});
+
+test('a request that omits maxOutputTokens falls back to the configured server default', async () => {
+  const originalFetch = global.fetch;
+  const bodies = [];
+  global.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
+  };
+  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 1536, maxOutputTokensCeiling: 8192 }));
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const outcome = await postCognitionRequest(server, {
+      requestId: 'req-no-budget-hint',
+      capability: 'worker.cognition',
+      objective: 'select action',
+      context: 'context',
+      requiredOutput: 'strict json',
+    });
+    assert.equal(outcome.status, 200);
+    assert.equal(bodies[0].options.num_predict, 1536);
+  } finally {
+    server.close();
+    global.fetch = originalFetch;
+  }
 });
 
 test('ollama provider leaves thinking unchanged outside worker cognition unless explicitly configured', async () => {
