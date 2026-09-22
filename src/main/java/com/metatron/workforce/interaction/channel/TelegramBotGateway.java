@@ -27,6 +27,7 @@ public final class TelegramBotGateway implements ChannelGateway {
     static final String WORK_CONTROL = ConversationSurfaceModeService.WORK_CONTROL;
     static final String MEETING_CONTROL = ConversationSurfaceModeService.MEETING_CONTROL;
     static final String MONITOR_CONTROL = "📊 Monitor";
+    static final String RESUME_CONTROL = "🔄 Resume";
     static final String WORKERS_CONTROL = DirectWorkerConversationService.WORKERS_CONTROL;
     /**
      * Telegram sendMessage accepts at most 4096 characters. Stay below the hard limit so
@@ -175,6 +176,7 @@ public final class TelegramBotGateway implements ChannelGateway {
         return Map.of(
                 "keyboard", List.of(
                         List.of(MEETING_CONTROL, MONITOR_CONTROL),
+                        List.of(RESUME_CONTROL),
                         List.of(CHAT_CONTROL, WORKERS_CONTROL)),
                 "resize_keyboard", true,
                 "is_persistent", true,

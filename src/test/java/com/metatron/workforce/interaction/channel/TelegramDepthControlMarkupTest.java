@@ -18,6 +18,7 @@ class TelegramDepthControlMarkupTest {
                 List.of("👥 Workers")), markup.get("keyboard"));
         assertEquals(List.of(
                 List.of("🏛 Meeting", "📊 Monitor"),
+                List.of("🔄 Resume"),
                 List.of("💬 Chat", "👥 Workers")), TelegramBotGateway.workReplyMarkup().get("keyboard"));
         assertEquals(true, markup.get("resize_keyboard"));
         assertEquals(true, markup.get("is_persistent"));
