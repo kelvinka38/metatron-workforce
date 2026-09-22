@@ -28,6 +28,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Pattern RESEARCH_URL = Pattern.compile("https?://[^\\s)\\]}>;,]+");
     private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
     private static final Pattern RESEARCH_DECISION = Pattern.compile("(?i)\\b(?:KEEP|TEST|CHANGE|REJECT)\\b");
+    private static final Pattern NODE_START_SCRIPT = Pattern.compile("\"start\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern NODE_START_ENTRY = Pattern.compile("^node\\s+([\\w./-]+\\.m?js)\\b");
+    private static final Pattern NODE_MAIN_FIELD = Pattern.compile("\"main\"\\s*:\\s*\"([^\"]*\\.m?js)\"");
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
     // Root-cause fix (production incident, 2026-09-22): a real VERIFY-phase cognitive request for
     // WORKER-GENERAL-ENGINEERING (its full available-action catalog, acceptance criteria, evidence
@@ -458,7 +461,50 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     Map.of("executable", "node", "argsJson", writeActionArgs(List.of("-e", script))),
                     "Run a bounded localhost HTTP probe against the built web artifact");
         }
+        if ("node".equals(kind)) {
+            // Root-cause fix (2026-09-22): plain (non-react) Node workspaces had no deterministic
+            // runtime-check script, so this precondition always returned null here and cognition was
+            // forced to freehand workspace.process.run's executable/argsJson from scratch every cycle.
+            // The real LLM twice produced a malformed argsJson (failing ActionContractCatalog's
+            // json-string-array validation identically), tripping the repeated-failure circuit breaker
+            // and blocking the Objective at VERIFY. A generic Node entry point has no known HTTP port to
+            // probe (unlike the node-react static-file-serving trick above), so instead this deterministically
+            // spawns the entry point as a child process and treats an immediate crash/error as failure and
+            // a process that is still alive after a bounded wait as success, then kills it.
+            String entry = nodeEntryPoint(context);
+            if (entry.isBlank()) return null;
+            String script = "const cp=require('child_process');"
+                    + "const c=cp.spawn('node',[" + jsonStringLiteral(entry) + "],{stdio:'ignore'});"
+                    + "let crashed=false;"
+                    + "c.on('error',()=>{crashed=true;});"
+                    + "c.on('exit',(code)=>{if(code!==0)crashed=true;});"
+                    + "setTimeout(()=>{try{c.kill();}catch(e){}process.exitCode=crashed?1:0;},1500);";
+            return new CognitiveWorkerRuntime.Thought(
+                    "workspace.process.run",
+                    Map.of("executable", "node", "argsJson", writeActionArgs(List.of("-e", script))),
+                    "Run a bounded process-start self-check against the produced Node entry point");
+        }
         return null;
+    }
+
+    private static String jsonStringLiteral(String value) {
+        try {
+            return ACTION_INPUT_JSON.writeValueAsString(value);
+        } catch (Exception impossible) {
+            throw new IllegalStateException("cannot serialize governed script literal", impossible);
+        }
+    }
+
+    private static String nodeEntryPoint(CognitiveWorkerRuntime.CognitiveContext context) {
+        String manifest = context.memory().getOrDefault("workspaceProjectManifestPreview", "");
+        Matcher start = NODE_START_SCRIPT.matcher(manifest);
+        if (start.find()) {
+            Matcher entry = NODE_START_ENTRY.matcher(start.group(1).trim());
+            if (entry.find()) return entry.group(1);
+        }
+        Matcher main = NODE_MAIN_FIELD.matcher(manifest);
+        if (main.find()) return main.group(1);
+        return "";
     }
 
     private static boolean failedAction(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
