@@ -6,18 +6,49 @@ final class AutonomousRecoveryPolicy {
     private AutonomousRecoveryPolicy() {}
 
     /**
-     * True only for a failure that genuinely requires a Human/operator: authorization denial, data
-     * validity, an explicit safety-gate denial, or a staffing/capacity gap. None of these are ever
-     * silently retried, retried locally, or replanned -- they must stay BLOCKED pending explicit
-     * human recovery.
+     * Typed classification of a step failure string. Production incident (2026-09-22): the
+     * bounded-local-retry policy treated every non-authorization/data/safety-gate/staffing failure
+     * as equally retry-worthy, so a deterministically oversized cognition request (context-budget-
+     * exceeded) and the in-runtime repeated-failure circuit breaker were both blindly retried up to
+     * MAX_MUTATING_DISPATCH_ATTEMPTS times against an identical request that could never succeed,
+     * wasting the whole bounded-retry budget before escalating for the same Human review it should
+     * have reached immediately. Only {@link FailureClassification#TRANSIENT} is retry-eligible now.
+     */
+    static FailureClassification classify(String failure) {
+        String value = failure == null ? "" : failure;
+        if (value.startsWith("authorization-failure:") || value.contains("autonomy-safety-gate:")) {
+            return FailureClassification.AUTHORIZATION_GOVERNANCE;
+        }
+        if (value.contains("staffing-gap:") || value.contains("capacity-unavailable:")) {
+            return FailureClassification.HUMAN_REQUIRED;
+        }
+        // "data-failure:" is ActionContractCatalog rejecting an action's own declared input contract
+        // (unexpected/missing/blank/mistyped input) -- a defect in the request itself, not external
+        // conditions, so retrying the identical request can never succeed.
+        if (value.startsWith("data-failure:")
+                // The cognition context-prompt budget is exceeded by this exact request; nothing about
+                // a bare retry changes its size.
+                || value.contains("worker-cognition-request-context-budget-exceeded")
+                // No supported dependency/build system was detected at the resolved project root;
+                // retrying without a workspace change (e.g. workspace.project.prepare) cannot detect one.
+                || value.contains("system not detected")
+                // CognitiveWorkerRuntime's own repeated-failure circuit breaker already determined the
+                // same action failed identically twice with no intervening state change -- see its
+                // "bounded retry exhausted, a repair or Human diagnosis is required" reflection text.
+                || value.contains("bounded retry exhausted, a repair or Human diagnosis is required")) {
+            return FailureClassification.DETERMINISTIC_CONTRACT;
+        }
+        return FailureClassification.TRANSIENT;
+    }
+
+    /**
+     * True only for a failure that genuinely requires a Human/operator: authorization/governance
+     * denial, a deterministic contract defect no retry can fix, or a staffing/capacity gap. None of
+     * these are ever silently retried, retried locally, or replanned -- they must stay BLOCKED
+     * pending explicit human recovery.
      */
     private static boolean requiresHumanIntervention(String failure) {
-        String value = failure == null ? "" : failure;
-        return value.startsWith("authorization-failure:")
-                || value.startsWith("data-failure:")
-                || value.startsWith("autonomy-safety-gate:")
-                || value.contains("staffing-gap:")
-                || value.contains("capacity-unavailable:");
+        return classify(failure) != FailureClassification.TRANSIENT;
     }
 
     /**

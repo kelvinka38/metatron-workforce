@@ -251,6 +251,66 @@ class AutonomousManagementRecoveryTest {
                 .count());
     }
 
+    @Test
+    void deterministicContractFailureEscalatesOnFirstAttemptWithoutBurningTheBoundedRetryBudget() {
+        // Root-cause fix: a failure that will recur identically on an unmodified retry (a
+        // deterministically oversized cognition request, an unsupported/missing project system, or
+        // CognitiveWorkerRuntime's own repeated-failure circuit breaker) was previously blindly
+        // bounded-locally-retried up to MAX_MUTATING_DISPATCH_ATTEMPTS times before escalating -- wasted
+        // work against a request that could never succeed, and a delayed escalation for the exact same
+        // Human review it should have reached on the very first attempt.
+        Clock clock = Clock.fixed(Instant.parse("2026-09-22T14:00:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger executions = new AtomicInteger();
+
+        AutonomousExecutionCapability deterministicallyBroken = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return GeneralWorkspaceAutonomousCapability.CAPABILITY; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                executions.incrementAndGet();
+                throw new IllegalStateException("workspace build system not detected");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, request, available) -> request.executionWorkPlan(),
+                List.of(deterministicallyBroken), coordination, clock,
+                "runner-deterministic-contract", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        management.acceptHumanObjective(
+                "objective-deterministic-contract", "worker-head", "org-metatron",
+                "Build a project with no supported build system",
+                "human:founder", "request-admission:deterministic-contract", "case-deterministic-contract",
+                "conversation-deterministic-contract", "message-deterministic-contract", "telegram",
+                generalWorkspaceRequest(), clock.instant());
+
+        runner.runOnce();
+
+        assertEquals(1, executions.get(),
+                "a deterministic-contract failure must never consume the bounded-retry budget: it cannot "
+                        + "succeed on an unmodified retry, so it must escalate on the very first attempt");
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get("objective-deterministic-contract").status());
+        assertEquals(0, management.history("objective-deterministic-contract").stream()
+                        .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.LOCAL_RECOVERY)
+                        .count(),
+                "no bounded-local-retry recovery event may be recorded for a deterministic-contract failure");
+    }
+
+    private static NormalizedRequest generalWorkspaceRequest() {
+        ExecutionWorkSpec step = new ExecutionWorkSpec(
+                "step-1", "Build the workspace", "target", GeneralWorkspaceAutonomousCapability.CAPABILITY, List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("build succeeds"), List.of("build evidence"));
+        return new NormalizedRequest(
+                "Build the workspace", "target", List.of("mutating"), IntelligenceDepth.ANALYZE,
+                "evidence-backed result", List.of(), List.of("mutate the workspace"), "current", "",
+                IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.<AnalyticalProtocolType>of(), DeterministicCapability.NONE,
+                List.of(), List.of(step), false, null, LlmProvider.OPENAI, "");
+    }
+
     private static NormalizedRequest request() {
         ExecutionWorkSpec step = new ExecutionWorkSpec(
                 "step-1", "Perform recoverable read", "target", "test.recovery.read", List.of(),

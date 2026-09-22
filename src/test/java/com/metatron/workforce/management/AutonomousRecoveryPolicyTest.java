@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,5 +53,44 @@ class AutonomousRecoveryPolicyTest {
                 ExecutionWorkSpec.Consequence.READ_ONLY);
         assertFalse(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(readOnlyGeneralWorkspace, "authorization-failure:denied"),
                 "a genuine authorization failure must never be bounded-read-only-retried either -- only Human recovery");
+    }
+
+    @Test void deterministicContractFailuresAreNeverBlindlyRetried() {
+        // Production incident: a deterministically oversized cognition request (context-budget-exceeded)
+        // and the in-runtime repeated-failure circuit breaker were both blindly bounded-locally-retried up
+        // to MAX_MUTATING_DISPATCH_ATTEMPTS times against a request that could never succeed on an
+        // unmodified retry, wasting the whole bounded-retry budget before finally escalating for the exact
+        // same Human review it should have reached on the very first attempt.
+        ExecutionWorkSpec generalWorkspace = step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING);
+        ExecutionWorkSpec readOnlyGeneralWorkspace = step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.READ_ONLY);
+
+        assertEquals(FailureClassification.DETERMINISTIC_CONTRACT, AutonomousRecoveryPolicy.classify(
+                "logic-or-provider-failure:worker-cognition-request-context-budget-exceeded:chars=8753:limit=7000"));
+        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(generalWorkspace,
+                "logic-or-provider-failure:worker-cognition-request-context-budget-exceeded:chars=8753:limit=7000"),
+                "a deterministically oversized cognition request cannot shrink on a bare retry");
+
+        assertEquals(FailureClassification.DETERMINISTIC_CONTRACT, AutonomousRecoveryPolicy.classify(
+                "capability-unsuccessful:Deterministic action workspace.build.run failed identically twice with no "
+                        + "intervening state change; bounded retry exhausted, a repair or Human diagnosis is "
+                        + "required. Last failure detail: action threw IllegalStateException: workspace build "
+                        + "system not detected"));
+        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(generalWorkspace,
+                "capability-unsuccessful:Deterministic action workspace.build.run failed identically twice with no "
+                        + "intervening state change; bounded retry exhausted, a repair or Human diagnosis is "
+                        + "required. Last failure detail: action threw IllegalStateException: workspace build "
+                        + "system not detected"),
+                "CognitiveWorkerRuntime's own repeated-failure circuit breaker has already determined this cannot "
+                        + "succeed on an unmodified retry; the outer step-dispatch retry must not repeat it");
+
+        assertEquals(FailureClassification.DETERMINISTIC_CONTRACT,
+                AutonomousRecoveryPolicy.classify("data-failure:action-input-unexpected:action=workspace.file.write:key=bogus"));
+        assertFalse(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(readOnlyGeneralWorkspace,
+                "data-failure:action-input-unexpected:action=workspace.file.write:key=bogus"),
+                "an action's own declared input contract being violated cannot be fixed by an identical retry");
+
+        // A genuinely transient failure (network/provider/timeout) is unaffected and still retry-eligible.
+        assertEquals(FailureClassification.TRANSIENT, AutonomousRecoveryPolicy.classify("runtime-failure:connection reset"));
+        assertTrue(AutonomousRecoveryPolicy.boundedLocalRetryEligible(generalWorkspace, "runtime-failure:connection reset"));
     }
 }
