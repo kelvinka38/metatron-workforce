@@ -252,6 +252,71 @@ class AutonomousManagementRecoveryTest {
     }
 
     @Test
+    void invalidActionSelectionFromASingleCognitiveCompletionGetsABoundedFreshRetryInsteadOfImmediateEscalation() {
+        // Regression test for a real production failure (objective:intelligence-case:case-6419a010):
+        // CognitiveWorkerRuntime throws SecurityException("brain-selected-action-outside-catalog:...")
+        // whenever a single cognitive completion selects an actionRef its own catalog does not contain
+        // -- including a hallucinated/invalid name that never existed anywhere, not just a genuine
+        // privilege-escalation attempt. That SecurityException used to be classified identically to a
+        // real authorization/governance denial ("authorization-failure:"), which is never bounded-
+        // retried, so the Objective was permanently BLOCKED after exactly one dispatch attempt even
+        // though a fresh, independent cognitive completion could plausibly select a valid action next
+        // time. This proves the failure is now treated as an ordinary retryable failure instead.
+        Clock clock = Clock.fixed(Instant.parse("2026-09-22T22:40:00Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger executions = new AtomicInteger();
+
+        AutonomousExecutionCapability hallucinatesOnce = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return GeneralWorkspaceAutonomousCapability.CAPABILITY; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                if (executions.incrementAndGet() == 1) {
+                    throw new SecurityException("brain-selected-action-outside-catalog:verify-workspace-integrity");
+                }
+                return new CapabilityResult(true, "worker-recovery", "assignment-recovery",
+                        "work-recovery", List.of("evidence:recovered-on-attempt-2"), "PASS");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, request, available) -> request.executionWorkPlan(),
+                List.of(hallucinatesOnce), coordination, clock,
+                "runner-invalid-action-selection", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        management.acceptHumanObjective(
+                "objective-invalid-action-selection", "worker-head", "org-metatron",
+                "Verify a workspace after a hallucinated action selection",
+                "human:founder", "request-admission:invalid-action-selection", "case-invalid-action-selection",
+                "conversation-invalid-action-selection", "message-invalid-action-selection", "telegram",
+                generalWorkspaceRequest(), clock.instant());
+
+        runner.runOnce();
+
+        assertEquals(2, executions.get(),
+                "an invalid action selection from one cognitive completion must still get a fresh bounded "
+                        + "retry attempt, not an immediate zero-retry escalation");
+        // Final ManagementObjective.COMPLETED for a MUTATING graph additionally requires a wired
+        // CompletionGate/Observation closure (AutonomyCoordinationService.requireGovernedCompletion),
+        // out of scope here -- see GeneralWorkspaceBoundedLocalRetryTest's identical note. What this
+        // test proves is unaffected by that: the step itself recovered via an ordinary bounded local
+        // retry instead of an immediate zero-retry authorization-style escalation.
+        AutonomousObjectiveWork work = management.findAutonomousWork("objective-invalid-action-selection").orElseThrow();
+        assertEquals(List.of("step-1"), work.completedStepIds());
+        assertTrue(work.evidenceReferences().contains("evidence:recovered-on-attempt-2"));
+        assertEquals(1, management.history("objective-invalid-action-selection").stream()
+                        .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.LOCAL_RECOVERY)
+                        .count(),
+                "the invalid-action-selection failure must be recorded as an ordinary local recovery, "
+                        + "not skipped as an authorization/governance denial");
+        assertTrue(management.history("objective-invalid-action-selection").stream()
+                        .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.LOCAL_RECOVERY)
+                        .allMatch(event -> event.detail().contains("bounded-local-retry")),
+                "recovery must go through the ordinary bounded-local-retry path, not a replan or human escalation");
+    }
+
+    @Test
     void deterministicContractFailureEscalatesOnFirstAttemptWithoutBurningTheBoundedRetryBudget() {
         // Root-cause fix: a failure that will recur identically on an unmodified retry (a
         // deterministically oversized cognition request, an unsupported/missing project system, or

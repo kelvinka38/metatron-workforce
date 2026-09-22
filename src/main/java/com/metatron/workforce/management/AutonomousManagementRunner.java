@@ -907,11 +907,32 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     }
 
     private static String classify(RuntimeException failure) {
+        String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+        // Root-cause fix (2026-09-22): CognitiveWorkerRuntime throws the SAME SecurityException type
+        // whether a Worker's authorization genuinely lacks an authority reference (requireAuthority(),
+        // an autonomy safety gate, etc.) or whether a single cognitive completion merely selected an
+        // action name outside its own, already-correctly-scoped catalog -- e.g. a hallucinated/invalid
+        // actionRef that never existed anywhere. Both used to collapse into "authorization-failure:",
+        // which AutonomousRecoveryPolicy treats as zero-bounded-retry/Human-required -- so ONE cognitive
+        // completion's invalid action selection permanently blocked the whole Objective on its very
+        // first dispatch attempt, before a fresh, independent cognitive completion ever got a chance to
+        // select a valid action instead (production incident: objective:intelligence-case:
+        // case-6419a010, VERIFY blocked after exactly 1 attempt on "brain-selected-action-outside-
+        // catalog:verify-workspace-integrity"). A genuine authorization/governance denial is a
+        // repeatable request-shape defect no retry can fix, so it keeps zero-retry treatment; an
+        // invalid action-selection is a single completion's mistake, not a repeatable defect, so it is
+        // classified as an ordinary retryable failure and gets the same bounded, fresh-dispatch-attempt
+        // retry any other recoverable failure already gets. The in-cycle catalog hard-stop itself
+        // (CognitiveWorkerRuntime's SecurityException throw) is unchanged -- only how the MANAGEMENT
+        // RUNNER classifies and recovers from it changes.
+        if (failure instanceof SecurityException
+                && detail.startsWith("brain-selected-action-outside-catalog:")) {
+            return "invalid-action-selection:" + detail;
+        }
         String type = failure instanceof SecurityException ? "authorization-failure"
                 : failure instanceof IllegalArgumentException ? "data-failure"
                 : failure instanceof IllegalStateException ? "logic-or-provider-failure"
                 : "runtime-failure";
-        String detail = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
         return type + ":" + detail;
     }
 
