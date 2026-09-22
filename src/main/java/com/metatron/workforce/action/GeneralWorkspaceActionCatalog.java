@@ -772,15 +772,53 @@ public final class GeneralWorkspaceActionCatalog {
         throw new IllegalStateException("workspace dependency system not detected");
     }
 
+    private static final List<String> PROJECT_MANIFEST_FILENAMES = List.of(
+            "package.json", "requirements.txt", "pyproject.toml", "setup.py",
+            "pom.xml", "build.gradle", "build.gradle.kts", "gradlew", "mvnw");
+
     private String workingDirectory(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
                                     ActionFabric.ActionRequest request) {
         String requested = request.inputs().getOrDefault("workingDirectory", "").trim();
         if (requested.isBlank()) return "";
-        Path resolved = workspaces.resolve(workspace, requested);
+        if (Path.of(requested).isAbsolute()) return detectProjectDirectory(workspace);
+        Path resolved;
+        try {
+            resolved = workspaces.resolve(workspace, requested);
+        } catch (RuntimeException invalid) {
+            return detectProjectDirectory(workspace);
+        }
         if (!Files.isDirectory(resolved, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IllegalArgumentException("workspace working directory not found: " + requested);
+            return detectProjectDirectory(workspace);
         }
         return workspace.path().relativize(resolved).toString().replace('\\', '/');
+    }
+
+    /**
+     * Root-cause fix (production incident, 2026-09-22): dependency/build/test previously trusted a
+     * cognition-supplied "workingDirectory" input verbatim. A cognitive VERIFY reasoning pass invented an
+     * absolute path for it -- ObjectiveWorkspaceService correctly rejected it with
+     * "SecurityException: absolute workspace path denied" -- and the bounded local-retry policy then
+     * repeated the exact same doomed call until escalation: a deterministic contract failure blind retry
+     * can never heal. VERIFY does not need cognition to invent its project directory: PREPARE already
+     * deterministically wrote exactly one project manifest into the workspace, so an invalid supplied value
+     * now falls back to locating that manifest directly instead of failing closed, mirroring the same
+     * manifest detection GeneralWorkspaceObservationVerifier already performs independently.
+     */
+    private String detectProjectDirectory(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        if (!existingProjectManifest(workspace.path()).isEmpty()) return "";
+        String shallowest = null;
+        for (String path : workspaces.list(workspace, "")) {
+            String name = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+            if (!PROJECT_MANIFEST_FILENAMES.contains(name)) continue;
+            if (shallowest == null || pathDepth(path) < pathDepth(shallowest)) shallowest = path;
+        }
+        if (shallowest == null) return "";
+        int lastSlash = shallowest.lastIndexOf('/');
+        return lastSlash < 0 ? "" : shallowest.substring(0, lastSlash);
+    }
+
+    private static int pathDepth(String path) {
+        return (int) path.chars().filter(c -> c == '/').count();
     }
 
     private Path workingRoot(ObjectiveWorkspaceService.ObjectiveWorkspace workspace, String workingDirectory) {
