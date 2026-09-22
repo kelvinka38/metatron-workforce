@@ -32,7 +32,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,6 +52,16 @@ public final class TelegramWebhookController {
     private static final int MAX_PROCESSING_ATTEMPTS = 3;
     private static final long MONITOR_REFRESH_SECONDS = 5L;
     private static final Pattern OBJECTIVE_ID = Pattern.compile("(?m)^objective_id=([^\\s]+)$");
+    /**
+     * Sent once, independently of the live Work Card, whenever monitoring starts. It exists solely
+     * to (re-)establish the persistent Telegram Work keyboard via the ordinary {@code send} path
+     * (its text matches {@code TelegramBotGateway.replyMarkupFor}'s existing "📊 METATRON WORK"
+     * detection, so {@code workReplyMarkup()} is attached exactly as it already is for other
+     * Work-shaped messages) -- never by attaching a keyboard to the Work Card message itself, which
+     * would make that message permanently non-editable.
+     */
+    private static final String WORK_CONTROLS_TEXT =
+            "📊 METATRON WORK\nLive monitoring started. This card updates in place; new messages are not created for routine refreshes.";
 
     private final String secret;
     private final TelegramWebhookAdapter adapter;
@@ -178,6 +187,7 @@ public final class TelegramWebhookController {
                     || "/monitor".equalsIgnoreCase(text.trim())) {
                 String monitorChatId = chatId;
                 workCardRenderer.latestObjectiveIdForHuman(identity.human().actorId()).ifPresentOrElse(objectiveId -> {
+                    sendWorkControls(monitorChatId);
                     long messageId = gateway.sendWorkCard(monitorChatId, workCardRenderer.render(objectiveId));
                     startLiveMonitor(objectiveId, monitorChatId, messageId);
                 }, () -> gateway.send(new ChannelMessage("telegram", monitorChatId,
@@ -270,6 +280,7 @@ public final class TelegramWebhookController {
             if (objectiveId.isBlank()) {
                 delivery = gateway.send(new ChannelMessage("telegram", inbound.senderId(), safeAnswer));
             } else {
+                sendWorkControls(inbound.senderId());
                 long workCardMessageId = gateway.sendWorkCard(inbound.senderId(), workCardRenderer.render(objectiveId));
                 startLiveMonitor(objectiveId, inbound.senderId(), workCardMessageId);
                 delivery = "work-card:" + workCardMessageId;
@@ -306,60 +317,32 @@ public final class TelegramWebhookController {
         }
     }
 
+    /**
+     * Establishes/refreshes the persistent Telegram Work keyboard through an ordinary message,
+     * decoupled from the live-editable Work Card (see {@code WORK_CONTROLS_TEXT}).
+     */
+    private void sendWorkControls(String chatId) {
+        gateway.send(new ChannelMessage("telegram", chatId, WORK_CONTROLS_TEXT));
+    }
+
     private void startLiveMonitor(String objectiveId, String chatId, long messageId) {
         ScheduledFuture<?> prior = monitorTasks.remove(objectiveId);
         if (prior != null) prior.cancel(false);
-        AtomicInteger consecutiveFailures = new AtomicInteger();
-        AtomicLong activeMessageId = new AtomicLong(messageId);
-        ScheduledFuture<?> future = monitorExecutor.scheduleAtFixedRate(() -> {
-            try {
-                gateway.editWorkCard(chatId, activeMessageId.get(), workCardRenderer.render(objectiveId));
-                consecutiveFailures.set(0);
-                if (workCardRenderer.terminal(objectiveId)) {
-                    stopMonitor(objectiveId, "refresh-succeeded-terminal");
-                }
-            } catch (RuntimeException failure) {
-                LOG.warn("telegram_monitor_refresh_failed objective_id={} chat={} message_id={} reason={}",
-                        objectiveId, chatId, activeMessageId.get(), failure.getMessage());
-                // Root-cause fix (2026-09-14): this catch block previously never checked whether the
-                // Objective had already reached a terminal state, so a monitor whose edit keeps
-                // failing (e.g. the underlying Telegram message became uneditable, or the Objective
-                // was cancelled out from under it) retried every 5 seconds forever. Observed live in
-                // production: 15+ minutes of continuous "message can't be edited" warnings for an
-                // Objective that had already been cancelled hours earlier. The success path already
-                // checked terminal() to decide whether to stop; the failure path must do the same, or
-                // a terminal Objective's monitor never stops on its own.
-                if (workCardRenderer.terminal(objectiveId)) {
-                    stopMonitor(objectiveId, "refresh-failed-but-terminal");
-                    return;
-                }
-                // A still-progressing Objective's Work Card message can independently become
-                // permanently uneditable (Telegram's "message can't be edited": too old, deleted, or
-                // edited outside Workforce) while the Objective itself is nowhere near terminal.
-                // Silently retrying the same broken edit for up to 100s and then giving up left the
-                // human with zero visible progress for the rest of the run. Replace the message
-                // instead: send a fresh Work Card and keep monitoring against its new message id.
-                long staleMessageId = activeMessageId.get();
-                try {
-                    long freshMessageId = gateway.sendWorkCard(chatId, workCardRenderer.render(objectiveId));
-                    activeMessageId.set(freshMessageId);
-                    consecutiveFailures.set(0);
-                    LOG.info("telegram_monitor_message_replaced objective_id={} chat={} old_message_id={} new_message_id={}",
-                            objectiveId, chatId, staleMessageId, freshMessageId);
-                    return;
-                } catch (RuntimeException replacementFailure) {
-                    LOG.warn("telegram_monitor_replacement_send_failed objective_id={} chat={} reason={}",
-                            objectiveId, chatId, replacementFailure.getMessage());
-                }
-                // Safety net for a class of failure this fix does not otherwise cover (terminal()
-                // itself misreporting, or the chat/channel itself no longer being reachable at all):
-                // bound retries instead of retrying forever. 20 consecutive failures at the 5s cadence
-                // below is ~100 seconds.
-                if (consecutiveFailures.incrementAndGet() >= 20) {
-                    stopMonitor(objectiveId, "refresh-failed-consecutive-limit");
-                }
-            }
-        }, MONITOR_REFRESH_SECONDS, MONITOR_REFRESH_SECONDS, TimeUnit.SECONDS);
+        TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
+                new TelegramWorkCardMonitor.Gateway() {
+                    @Override public void editWorkCard(String cardChatId, long cardMessageId, String text) {
+                        gateway.editWorkCard(cardChatId, cardMessageId, text);
+                    }
+                    @Override public long sendWorkCard(String cardChatId, String text) {
+                        return gateway.sendWorkCard(cardChatId, text);
+                    }
+                },
+                chatId, objectiveId, messageId,
+                () -> workCardRenderer.render(objectiveId),
+                () -> workCardRenderer.terminal(objectiveId),
+                reason -> stopMonitor(objectiveId, reason));
+        ScheduledFuture<?> future = monitorExecutor.scheduleAtFixedRate(
+                monitor::tick, MONITOR_REFRESH_SECONDS, MONITOR_REFRESH_SECONDS, TimeUnit.SECONDS);
         monitorTasks.put(objectiveId, future);
         LOG.info("telegram_monitor_live objective_id={} chat={} message_id={}", objectiveId, chatId, messageId);
     }

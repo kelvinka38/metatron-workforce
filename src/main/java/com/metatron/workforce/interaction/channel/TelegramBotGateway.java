@@ -119,12 +119,25 @@ public final class TelegramBotGateway implements ChannelGateway {
         return hardEnd;
     }
 
-    /** Sends one Human-facing Work Card and returns Telegram's message id for future live edits. */
+    /**
+     * Sends one Human-facing Work Card and returns Telegram's message id for future live edits.
+     *
+     * <p>Root-cause fix (2026-09-22, found live in production): this must never attach a
+     * ReplyKeyboardMarkup (or any other incompatible reply_markup). Telegram only allows
+     * {@code editMessageText} on a message whose reply_markup is absent or an editable inline
+     * keyboard; a normal persistent {@link #workReplyMarkup()} makes the message permanently
+     * non-editable. {@link TelegramWorkCardMonitor} depends on this Work Card remaining editable --
+     * attaching a keyboard here previously forced every live refresh to fail with "message can't be
+     * edited", which (combined with the pre-fix unconditional replace-on-failure policy) produced a
+     * new Telegram message roughly every 5 seconds for the life of the Objective. The persistent
+     * Telegram keyboard is never lost by this: it is (re-)established independently through an
+     * ordinary {@link #send} message (see {@code TelegramWebhookController}'s Work-controls
+     * message), which keeps carrying it via {@link #replyMarkupFor}.</p>
+     */
     public long sendWorkCard(String chatId, String text) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("chat_id", chatId);
         payload.put("text", text);
-        payload.put("reply_markup", workReplyMarkup());
         ApiResult result = invoke("sendMessage", payload);
         long messageId = result.json().path("result").path("message_id").asLong(-1L);
         if (messageId < 0) throw new IllegalStateException("telegram_work_card_message_id_missing");
