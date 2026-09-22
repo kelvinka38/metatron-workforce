@@ -309,55 +309,45 @@ public final class TelegramWebhookController {
     private void startLiveMonitor(String objectiveId, String chatId, long messageId) {
         ScheduledFuture<?> prior = monitorTasks.remove(objectiveId);
         if (prior != null) prior.cancel(false);
-        AtomicInteger consecutiveFailures = new AtomicInteger();
         AtomicLong activeMessageId = new AtomicLong(messageId);
+        java.util.concurrent.atomic.AtomicBoolean replacementUsed = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<String> lastRendered =
+                new java.util.concurrent.atomic.AtomicReference<>(workCardRenderer.render(objectiveId));
         ScheduledFuture<?> future = monitorExecutor.scheduleAtFixedRate(() -> {
+            String rendered = workCardRenderer.render(objectiveId);
+            boolean quiescent = workCardRenderer.quiescent(objectiveId);
+            // Durable state is the source of truth. Do not hit Telegram merely because a 5s timer
+            // fired when the Human-visible card has not materially changed.
+            if (rendered.equals(lastRendered.get())) {
+                if (quiescent) stopMonitor(objectiveId, "unchanged-quiescent");
+                return;
+            }
             try {
-                gateway.editWorkCard(chatId, activeMessageId.get(), workCardRenderer.render(objectiveId));
-                consecutiveFailures.set(0);
-                if (workCardRenderer.terminal(objectiveId)) {
-                    stopMonitor(objectiveId, "refresh-succeeded-terminal");
-                }
+                gateway.editWorkCard(chatId, activeMessageId.get(), rendered);
+                lastRendered.set(rendered);
+                if (quiescent) stopMonitor(objectiveId, "refresh-succeeded-quiescent");
             } catch (RuntimeException failure) {
                 LOG.warn("telegram_monitor_refresh_failed objective_id={} chat={} message_id={} reason={}",
                         objectiveId, chatId, activeMessageId.get(), failure.getMessage());
-                // Root-cause fix (2026-09-14): this catch block previously never checked whether the
-                // Objective had already reached a terminal state, so a monitor whose edit keeps
-                // failing (e.g. the underlying Telegram message became uneditable, or the Objective
-                // was cancelled out from under it) retried every 5 seconds forever. Observed live in
-                // production: 15+ minutes of continuous "message can't be edited" warnings for an
-                // Objective that had already been cancelled hours earlier. The success path already
-                // checked terminal() to decide whether to stop; the failure path must do the same, or
-                // a terminal Objective's monitor never stops on its own.
-                if (workCardRenderer.terminal(objectiveId)) {
-                    stopMonitor(objectiveId, "refresh-failed-but-terminal");
-                    return;
+                // A genuinely stale/deleted/uneditable message gets one replacement only. sendWorkCard
+                // creates a live-edit-safe message with no ReplyKeyboardMarkup, so repeating replacement
+                // after that point would be a transport storm rather than recovery.
+                if (replacementUsed.compareAndSet(false, true)) {
+                    long staleMessageId = activeMessageId.get();
+                    try {
+                        long freshMessageId = gateway.sendWorkCard(chatId, rendered);
+                        activeMessageId.set(freshMessageId);
+                        lastRendered.set(rendered);
+                        LOG.info("telegram_monitor_message_replaced objective_id={} chat={} old_message_id={} new_message_id={}",
+                                objectiveId, chatId, staleMessageId, freshMessageId);
+                        if (quiescent) stopMonitor(objectiveId, "replacement-succeeded-quiescent");
+                        return;
+                    } catch (RuntimeException replacementFailure) {
+                        LOG.warn("telegram_monitor_replacement_send_failed objective_id={} chat={} reason={}",
+                                objectiveId, chatId, replacementFailure.getMessage());
+                    }
                 }
-                // A still-progressing Objective's Work Card message can independently become
-                // permanently uneditable (Telegram's "message can't be edited": too old, deleted, or
-                // edited outside Workforce) while the Objective itself is nowhere near terminal.
-                // Silently retrying the same broken edit for up to 100s and then giving up left the
-                // human with zero visible progress for the rest of the run. Replace the message
-                // instead: send a fresh Work Card and keep monitoring against its new message id.
-                long staleMessageId = activeMessageId.get();
-                try {
-                    long freshMessageId = gateway.sendWorkCard(chatId, workCardRenderer.render(objectiveId));
-                    activeMessageId.set(freshMessageId);
-                    consecutiveFailures.set(0);
-                    LOG.info("telegram_monitor_message_replaced objective_id={} chat={} old_message_id={} new_message_id={}",
-                            objectiveId, chatId, staleMessageId, freshMessageId);
-                    return;
-                } catch (RuntimeException replacementFailure) {
-                    LOG.warn("telegram_monitor_replacement_send_failed objective_id={} chat={} reason={}",
-                            objectiveId, chatId, replacementFailure.getMessage());
-                }
-                // Safety net for a class of failure this fix does not otherwise cover (terminal()
-                // itself misreporting, or the chat/channel itself no longer being reachable at all):
-                // bound retries instead of retrying forever. 20 consecutive failures at the 5s cadence
-                // below is ~100 seconds.
-                if (consecutiveFailures.incrementAndGet() >= 20) {
-                    stopMonitor(objectiveId, "refresh-failed-consecutive-limit");
-                }
+                stopMonitor(objectiveId, "refresh-failed-after-bounded-replacement");
             }
         }, MONITOR_REFRESH_SECONDS, MONITOR_REFRESH_SECONDS, TimeUnit.SECONDS);
         monitorTasks.put(objectiveId, future);

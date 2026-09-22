@@ -69,6 +69,44 @@ class AutonomyCoordinationServiceTest {
         assertEquals(1, service.deadLetters().size());
     }
 
+
+    @Test
+    void interruptedMutationUsesExplicitReconciliationResolution() {
+        Instant t0 = Instant.parse("2026-09-22T00:00:00Z");
+        AutonomyCoordinationService service = new AutonomyCoordinationService();
+
+        service.ensureGraph("safe", List.of(
+                step("safe-write", List.of(), ExecutionWorkSpec.Consequence.MUTATING)), t0);
+        service.beginDispatch("safe", 1, "safe-write", t0.plusSeconds(1));
+        assertTrue(service.reconcileInterrupted("safe", 1, java.util.Map.of(
+                "safe-write", AutonomousExecutionCapability.InterruptedMutationResolution.SAFE_TO_RETRY),
+                t0.plusSeconds(2)).isEmpty());
+        assertEquals(List.of("safe-write"), service.readyNodes("safe", 1).stream()
+                .map(node -> node.spec().stepId()).toList());
+
+        service.ensureGraph("confirmed", List.of(
+                step("confirmed-write", List.of(), ExecutionWorkSpec.Consequence.MUTATING)), t0);
+        service.beginDispatch("confirmed", 1, "confirmed-write", t0.plusSeconds(1));
+        assertTrue(service.reconcileInterrupted("confirmed", 1, java.util.Map.of(
+                "confirmed-write", AutonomousExecutionCapability.InterruptedMutationResolution.CONFIRMED_SUCCEEDED),
+                t0.plusSeconds(2)).isEmpty());
+        DurableWorkGraph.Node confirmed = service.activeGraph("confirmed").orElseThrow()
+                .nodes().get("confirmed-write");
+        assertEquals(DurableWorkGraph.NodeStatus.SUCCEEDED, confirmed.status());
+        assertTrue(confirmed.evidenceReferences().contains(
+                "interrupted-mutation-reconciled:execution-attempt-succeeded"));
+
+        service.ensureGraph("waiting", List.of(
+                step("waiting-write", List.of(), ExecutionWorkSpec.Consequence.MUTATING)), t0);
+        service.beginDispatch("waiting", 1, "waiting-write", t0.plusSeconds(1));
+        assertTrue(service.reconcileInterrupted("waiting", 1, java.util.Map.of(
+                "waiting-write", AutonomousExecutionCapability.InterruptedMutationResolution.WAIT_RETRY_LATER),
+                t0.plusSeconds(2)).isEmpty());
+        assertEquals(DurableWorkGraph.NodeStatus.DISPATCHED,
+                service.activeGraph("waiting").orElseThrow().nodes().get("waiting-write").status());
+    }
+
+
     @Test
     void replanAfterOneStepFailsPreservesOtherAlreadySucceededSteps() {
         // Production incident (2026-09-21): a 4-phase Objective (produce/prepare/verify/deliver) had

@@ -113,6 +113,27 @@ class HumanObjectiveIngressServiceTest {
         assertTrue(management.get(first.objectiveId()).evidenceRefs().contains("evidence:test-pass"));
     }
 
+
+    @Test
+    void plannerCatalogExcludesRegisteredCapabilityWhoseHardPrerequisiteIsUnavailable() {
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomousExecutionCapability unavailable = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.not-configured"; }
+            @Override public PlanningReadiness planningReadiness() { return PlanningReadiness.NOT_CONFIGURED; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                throw new AssertionError("unavailable capability must not execute");
+            }
+        };
+        Clock clock = Clock.systemUTC();
+        AutonomousManagementRunner runner = runner(management, List.of(unavailable), clock);
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(unavailable), runner, "worker-head", clock);
+
+        assertTrue(ingress.capabilityCatalog().isEmpty());
+        assertTrue(runner.capabilityCatalog().isEmpty());
+    }
+
+
     @Test
     void targetedWorkerOwnsDurableObjectiveAndReplayCannotChangeOwner() {
         ManagementAutonomyService management = new ManagementAutonomyService();

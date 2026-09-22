@@ -53,6 +53,16 @@ public final class HostCommanderAutonomousCapability implements AutonomousExecut
     @Override public String capabilityRef() { return CAPABILITY; }
     @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
+    @Override public PlanningReadiness planningReadiness() {
+        try {
+            return java.nio.file.Files.isRegularFile(java.nio.file.Path.of(sshKey))
+                    ? PlanningReadiness.AVAILABLE : PlanningReadiness.NOT_CONFIGURED;
+        } catch (RuntimeException invalidPath) {
+            return PlanningReadiness.NOT_CONFIGURED;
+        }
+    }
+    // Host mutations intentionally keep the default fail-closed mutation recovery policy. A process
+    // restart cannot assume a privileged host effect did or did not happen.
     @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
     @Override public String capabilityDescription() {
         return CAPABILITY + " — governed Workforce composition to the existing founder Host Commander privileged broker; no raw shell";

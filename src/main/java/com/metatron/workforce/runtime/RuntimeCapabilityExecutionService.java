@@ -49,6 +49,10 @@ public final class RuntimeCapabilityExecutionService {
         if (capability == null) {
             throw new IllegalArgumentException("runtime-capability-unavailable:" + capabilityRef);
         }
+        if (capability.planningReadiness() != AutonomousExecutionCapability.PlanningReadiness.AVAILABLE) {
+            throw new IllegalStateException("runtime-capability-not-ready:" + capabilityRef + ":"
+                    + capability.planningReadiness());
+        }
         if (!capability.supportsWorker(command.workerId())) {
             throw new SecurityException("runtime-worker-not-admitted-for-capability:" + command.workerId());
         }
@@ -101,7 +105,12 @@ public final class RuntimeCapabilityExecutionService {
     }
 
     public List<String> capabilityCatalog() {
-        return capabilities.keySet().stream().sorted().toList();
+        return capabilities.values().stream()
+                .filter(capability -> capability.planningReadiness()
+                        == AutonomousExecutionCapability.PlanningReadiness.AVAILABLE)
+                .map(AutonomousExecutionCapability::capabilityRef)
+                .sorted()
+                .toList();
     }
 
     private void verifyAssignmentBinding(RuntimeExecutionCommand command, String authorityReference) {

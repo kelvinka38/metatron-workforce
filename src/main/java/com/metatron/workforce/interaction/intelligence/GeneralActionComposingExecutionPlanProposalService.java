@@ -47,6 +47,10 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
         if (plan == null || plan.isEmpty()) return plan;
         plan = collapseExplicitRecoveryComposite(request, availableCapabilities, plan);
         plan = normalizeRecoveryProbeTargets(plan);
+        // Frontier planning is advisory for decomposition, never an authority grant. Remove
+        // consequential specialized capabilities the Human did not actually request, and rewire
+        // any downstream dependencies to the removed step's prerequisites before execution sees it.
+        plan = sanitizeConsequentialScope(request, plan);
         plan = collapseExplicitGeneralWorkspaceObjective(request, availableCapabilities, plan);
         plan = removeInvalidCrossRepositoryAuditJoins(plan);
         if (plan.isEmpty()) return plan;
@@ -72,7 +76,10 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                     step.stepId(), step.objective(), step.target(), GeneralWorkspaceAutonomousCapability.CAPABILITY,
                     step.dependsOn(), step.consequence(), acceptance, evidence));
         }
-        return List.copyOf(composed);
+        // General Workspace lifecycle semantics are a capability invariant, not a special property
+        // of the explicit-Worker route. Any normal mutating engineering step selected/composed into
+        // execution.general.workspace receives the same bounded phase decomposition.
+        return phaseGeneralWorkspaceSteps(request, List.copyOf(composed));
     }
 
     /**
@@ -346,6 +353,94 @@ public final class GeneralActionComposingExecutionPlanProposalService implements
                     step.acceptanceCriteria(), step.evidenceRequirements()));
         }
         return List.copyOf(normalized);
+    }
+
+    static List<ExecutionWorkSpec> sanitizeConsequentialScope(
+            NormalizedRequest request, List<ExecutionWorkSpec> plan) {
+        if (request == null || plan == null || plan.isEmpty()) return plan;
+        String semantic = explicitRequestSemantic(request).toLowerCase(Locale.ROOT);
+        boolean hostRequested = (semantic.contains("host commander")
+                || semantic.contains("real host")
+                || semantic.contains("metatron host")
+                || semantic.contains("commander session"))
+                && (semantic.contains("uptime") || semantic.contains("docker")
+                || semantic.contains("container") || semantic.contains("runtime identity")
+                || semantic.contains("host file") || semantic.contains("host process")
+                || semantic.contains("host storage") || semantic.contains("host network")
+                || semantic.contains("cleanup") || semantic.contains("reclaim")
+                || semantic.contains("disk usage") || semantic.contains("free disk")
+                || semantic.contains("free space") || semantic.contains("/tmp/metatron-commander/"));
+        boolean prRequested = semantic.contains("pull request")
+                || semantic.contains("open pr")
+                || semantic.contains("proposal branch")
+                || semantic.contains("repository proposal")
+                || semantic.contains("approved bounded") && semantic.contains("proposal")
+                || (semantic.contains("publish") && semantic.contains("github"));
+
+        Map<String, List<String>> removed = new LinkedHashMap<>();
+        for (ExecutionWorkSpec step : plan) {
+            boolean disallowedHost = "host.commander.execute".equals(step.requiredCapability()) && !hostRequested;
+            boolean disallowedPr = "repository.pr.propose".equals(step.requiredCapability()) && !prRequested;
+            if (disallowedHost || disallowedPr) removed.put(step.stepId(), step.dependsOn());
+        }
+        if (removed.isEmpty()) return plan;
+
+        List<ExecutionWorkSpec> sanitized = new ArrayList<>();
+        for (ExecutionWorkSpec step : plan) {
+            if (removed.containsKey(step.stepId())) continue;
+            LinkedHashSet<String> dependencies = new LinkedHashSet<>();
+            for (String dependency : step.dependsOn()) {
+                expandRemovedDependency(dependency, removed, dependencies, new LinkedHashSet<>());
+            }
+            sanitized.add(new ExecutionWorkSpec(
+                    step.stepId(), step.objective(), step.target(), step.requiredCapability(),
+                    List.copyOf(dependencies), step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
+        }
+        return List.copyOf(sanitized);
+    }
+
+    static List<ExecutionWorkSpec> phaseGeneralWorkspaceSteps(
+            NormalizedRequest request, List<ExecutionWorkSpec> plan) {
+        if (request == null || plan == null || plan.isEmpty()) return plan;
+
+        Map<String, List<ExecutionWorkSpec>> expansions = new LinkedHashMap<>();
+        Map<String, String> terminalStepByOriginal = new LinkedHashMap<>();
+        String humanSemantic = explicitRequestSemantic(request);
+        for (ExecutionWorkSpec step : plan) {
+            if (!GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(step.requiredCapability())
+                    || step.evidenceRequirements().stream().anyMatch(value ->
+                    value != null && value.startsWith("workspace-phase:"))) {
+                expansions.put(step.stepId(), List.of(step));
+                terminalStepByOriginal.put(step.stepId(), step.stepId());
+                continue;
+            }
+            ExecutionWorkSpec base = new ExecutionWorkSpec(
+                    step.stepId(),
+                    step.objective() + "\nHuman Objective: " + humanSemantic,
+                    step.target(),
+                    step.requiredCapability(),
+                    step.dependsOn(),
+                    step.consequence(),
+                    step.acceptanceCriteria(),
+                    step.evidenceRequirements());
+            List<ExecutionWorkSpec> phased = GeneralWorkspacePhasePlanner.phase(base);
+            expansions.put(step.stepId(), phased);
+            terminalStepByOriginal.put(step.stepId(), phased.getLast().stepId());
+        }
+
+        List<ExecutionWorkSpec> flattened = new ArrayList<>();
+        for (ExecutionWorkSpec original : plan) {
+            for (ExecutionWorkSpec step : expansions.get(original.stepId())) {
+                List<String> dependencies = step.dependsOn().stream()
+                        .map(dep -> terminalStepByOriginal.getOrDefault(dep, dep))
+                        .distinct()
+                        .toList();
+                flattened.add(new ExecutionWorkSpec(
+                        step.stepId(), step.objective(), step.target(), step.requiredCapability(),
+                        dependencies, step.consequence(), step.acceptanceCriteria(), step.evidenceRequirements()));
+            }
+        }
+        return List.copyOf(flattened);
     }
 
     private static ExecutionWorkSpec markDirectGeneral(ExecutionWorkSpec step) {

@@ -51,6 +51,29 @@ class RuntimeCapabilityExecutionServiceTest {
                 ref.startsWith("runtime-actual-effect:execution=execution:runtime-effect")));
     }
 
+
+    @Test
+    void unavailableHardPrerequisiteIsExcludedFromCatalogAndCannotExecute() {
+        AutonomousExecutionCapability unavailable = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return CAPABILITY; }
+            @Override public String authorityReference() { return AUTHORITY; }
+            @Override public String authorizationReference() { return AUTHORIZATION; }
+            @Override public PlanningReadiness planningReadiness() { return PlanningReadiness.NOT_CONFIGURED; }
+            @Override public boolean supportsWorker(String workerId) { return WORKER.equals(workerId); }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                throw new AssertionError("not-ready capability must never execute");
+            }
+        };
+        RuntimeCapabilityExecutionService service =
+                new RuntimeCapabilityExecutionService(List.of(unavailable), governedCore());
+
+        assertTrue(service.capabilityCatalog().isEmpty());
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> service.execute(command(AUTHORIZATION, WORKER, ASSIGNMENT, DISPATCH)));
+        assertTrue(failure.getMessage().contains("runtime-capability-not-ready"));
+    }
+
+
     @Test
     void transportOnlyEnvelopeCannotCreateEffectWithoutGovernedBindings() {
         AtomicInteger effects = new AtomicInteger();

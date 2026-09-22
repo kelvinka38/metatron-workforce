@@ -221,6 +221,35 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
     @Override public String authorizationReference() { return delegate.authorizationReference(); }
     @Override public double minimumCapabilityLevel() { return delegate.minimumCapabilityLevel(); }
     @Override public double requiredCapacity() { return delegate.requiredCapacity(); }
+    @Override public PlanningReadiness planningReadiness() { return delegate.planningReadiness(); }
+    @Override public MutationRecoveryPolicy mutationRecoveryPolicy() { return delegate.mutationRecoveryPolicy(); }
+    @Override public InterruptedMutationResolution reconcileInterruptedMutation(InterruptedMutationContext context) {
+        Objects.requireNonNull(context, "context");
+        if (executionAttempts == null) return delegate.reconcileInterruptedMutation(context);
+
+        Instant now = clock.instant();
+        ExecutionAttempt latest = executionAttempts.all().stream()
+                .filter(attempt -> context.dispatchReference().equals(attempt.dispatchId()))
+                .max(Comparator.comparingLong(ExecutionAttempt::fencingToken))
+                .orElse(null);
+        if (latest == null) return delegate.reconcileInterruptedMutation(context);
+        if (latest.status() == ExecutionAttempt.Status.SUCCEEDED) {
+            return InterruptedMutationResolution.CONFIRMED_SUCCEEDED;
+        }
+        if (!latest.terminal()) {
+            if (latest.leaseExpiresAt().isAfter(now)) {
+                return InterruptedMutationResolution.WAIT_RETRY_LATER;
+            }
+            executionAttempts.reconcileExpired(now);
+            latest = executionAttempts.find(latest.attemptId()).orElse(latest);
+        }
+        if (latest.status() == ExecutionAttempt.Status.FAILED
+                || latest.status() == ExecutionAttempt.Status.ABANDONED
+                || latest.status() == ExecutionAttempt.Status.FENCED) {
+            return delegate.reconcileInterruptedMutation(context);
+        }
+        return InterruptedMutationResolution.HUMAN_REQUIRED;
+    }
     @Override public boolean supportsWorker(String workerId) { return delegate.supportsWorker(workerId); }
     @Override public boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
         return delegate.supportsWorker(workerId, workSpec);

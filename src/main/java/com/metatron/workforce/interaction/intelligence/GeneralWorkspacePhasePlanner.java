@@ -54,7 +54,12 @@ public final class GeneralWorkspacePhasePlanner {
                 || semantic.contains("local commit")
                 || semantic.contains(" commit")
                 || semantic.contains("git status")
-                || semantic.contains("git show");
+                || semantic.contains("git show")
+                // "deliver" is a Human-facing lifecycle intent, not permission to publish a PR.
+                // For General Workspace it means preserve the completed work product in governed
+                // local Git even when the Human did not explicitly say "commit".
+                || semantic.contains("deliver")
+                || semantic.contains("delivery");
         boolean gitVerify = semantic.contains("git evidence")
                 || semantic.contains("git status")
                 || semantic.contains("git show")

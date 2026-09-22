@@ -59,6 +59,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final ExecutorService objectiveExecutor;
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
+    /** Process-local duplicate-submission fence; durable Management leases remain the restart fence. */
+    private final Set<String> inFlightObjectives = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile AutonomySchedulingService scheduling;
     private volatile Duration nodeExecutionTimeout = DEFAULT_NODE_EXECUTION_TIMEOUT;
     /** Optional production bridge used to close canonical Assignments only after Observation PASS. */
@@ -220,38 +222,55 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     }
 
     /**
-     * Each runnable Objective gets its own execution lane on {@link #objectiveExecutor}, so one slow or
-     * stuck Objective's lease-held pass never delays any other Objective's turn: before this, every
-     * Objective in the whole system was processed sequentially inside one exclusive pass, so a single
-     * long-running dispatch (see {@link #configureNodeExecutionTimeout}) still starved every other
-     * Objective's progress for its entire duration. runLock still bounds this method to one concurrent
-     * pass overall (a re-entrant call, e.g. from wake() racing the scheduled tick, waits its turn rather
-     * than doubly processing the same runnable set); each Objective itself remains single-threaded, since
-     * processWithLease() only ever runs for a given objectiveId on one lane at a time here.
+     * Compatibility/manual drain: submit the Objectives that are runnable at call time and wait for only
+     * those newly-submitted lanes. Production polling does not use this wait path; see runSafely().
      */
     public void runOnce() {
-        if (!runLock.tryLock()) return;
+        for (Future<?> lane : dispatchRunnableObjectives()) {
+            try { lane.get(); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException failed) {
+                LOG.error("Autonomous objective lane failed", failed.getCause());
+            }
+        }
+    }
+
+    /**
+     * Discover and submit runnable Objectives without waiting for prior lanes. The short runLock only
+     * serializes discovery/submission; inFlightObjectives prevents duplicate process-local submission.
+     * A later poll/wake can therefore discover a newly-admitted Objective while an older Objective is
+     * still blocked inside a provider/action call. Durable Management leases remain the authoritative
+     * fence across restart/process replacement.
+     */
+    private List<Future<?>> dispatchRunnableObjectives() {
+        if (!runLock.tryLock()) return List.of();
         try {
-            List<Future<?>> lanes = new ArrayList<>();
+            List<Future<?>> submitted = new ArrayList<>();
             for (AutonomousObjectiveWork work : management.runnableAutonomousWork()) {
                 String objectiveId = work.objectiveId();
-                lanes.add(objectiveExecutor.submit(() -> processWithLease(objectiveId)));
-            }
-            for (Future<?> lane : lanes) {
-                try { lane.get(); }
-                catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                } catch (ExecutionException failed) {
-                    LOG.error("Autonomous objective lane failed", failed.getCause());
+                if (!inFlightObjectives.add(objectiveId)) continue;
+                try {
+                    submitted.add(objectiveExecutor.submit(() -> {
+                        try {
+                            processWithLease(objectiveId);
+                        } finally {
+                            inFlightObjectives.remove(objectiveId);
+                        }
+                    }));
+                } catch (RuntimeException rejected) {
+                    inFlightObjectives.remove(objectiveId);
+                    throw rejected;
                 }
             }
+            return List.copyOf(submitted);
         } finally {
             runLock.unlock();
         }
     }
 
     private void runSafely() {
-        try { runOnce(); }
+        try { dispatchRunnableObjectives(); }
         catch (RuntimeException failure) { LOG.error("Autonomous management pass failed", failure); }
     }
 
@@ -286,11 +305,19 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         DurableWorkGraph graph = coordination.ensureGraph(objectiveId, work.plannedWork(), clock.instant());
         work = management.beginExecution(objectiveId, runnerId, lease.token(), clock.instant());
 
+        Map<String, AutonomousExecutionCapability.InterruptedMutationResolution> interruptedResolutions =
+                interruptedMutationResolutions(objectiveId, graph);
         List<String> unsafeInterrupted = coordination.reconcileInterrupted(
-                objectiveId, graph.graphVersion(), clock.instant());
+                objectiveId, graph.graphVersion(), interruptedResolutions, clock.instant());
         if (!unsafeInterrupted.isEmpty()) {
             management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
                     "execution-reconciliation-required:" + String.join(",", unsafeInterrupted), clock.instant());
+            return;
+        }
+        // A still-live durable ExecutionAttempt owns its lease until expiry. Do not block or duplicate
+        // the mutation; simply let a later management poll re-run reconciliation after the lease ends.
+        if (interruptedResolutions.values().stream().anyMatch(
+                resolution -> resolution == AutonomousExecutionCapability.InterruptedMutationResolution.WAIT_RETRY_LATER)) {
             return;
         }
         work = reconcileSucceededNodes(objectiveId, graph.graphVersion(), work, lease);
@@ -582,6 +609,40 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 objectiveId, outcome.stepId(), outcome.dispatchAttempt(), outcome.failure());
     }
 
+    private Map<String, AutonomousExecutionCapability.InterruptedMutationResolution>
+    interruptedMutationResolutions(String objectiveId, DurableWorkGraph graph) {
+        Map<String, AutonomousExecutionCapability.InterruptedMutationResolution> resolutions = new LinkedHashMap<>();
+        for (DurableWorkGraph.Node node : graph.nodes().values()) {
+            if (node.status() != DurableWorkGraph.NodeStatus.DISPATCHED
+                    || node.spec().consequence() != ExecutionWorkSpec.Consequence.MUTATING) continue;
+            AutonomousExecutionCapability capability = capabilities.get(node.spec().requiredCapability());
+            if (capability == null
+                    || capability.mutationRecoveryPolicy()
+                    == AutonomousExecutionCapability.MutationRecoveryPolicy.NONE) {
+                resolutions.put(node.spec().stepId(),
+                        AutonomousExecutionCapability.InterruptedMutationResolution.HUMAN_REQUIRED);
+                continue;
+            }
+            try {
+                resolutions.put(node.spec().stepId(), capability.reconcileInterruptedMutation(
+                        new AutonomousExecutionCapability.InterruptedMutationContext(
+                                objectiveId,
+                                node.spec(),
+                                objectiveId + ":work-step:" + node.spec().stepId(),
+                                node.dispatchId(),
+                                node.attempt(),
+                                node.evidenceReferences())));
+            } catch (RuntimeException reconciliationFailure) {
+                LOG.warn("autonomy_interrupted_mutation_reconciliation_failed objective_id={} step_id={} capability={} failure={}",
+                        objectiveId, node.spec().stepId(), node.spec().requiredCapability(),
+                        reconciliationFailure.getMessage());
+                resolutions.put(node.spec().stepId(),
+                        AutonomousExecutionCapability.InterruptedMutationResolution.HUMAN_REQUIRED);
+            }
+        }
+        return Map.copyOf(resolutions);
+    }
+
     private AutonomousObjectiveWork reconcileSucceededNodes(String objectiveId, int graphVersion,
                                                               AutonomousObjectiveWork work, ManagementLease lease) {
         DurableWorkGraph graph = coordination.activeGraph(objectiveId).orElseThrow();
@@ -707,11 +768,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                     return NodeExecutionOutcome.recoverableReadOnly(step.stepId(), failure, plannedAttempt);
                 }
                 coordination.failDispatch(dispatch.dispatchId(), failure, clock.instant());
-                if (boundedLocalRetryEligible(step, failure, plannedAttempt)) {
+                if (boundedLocalRetryEligible(step, capability, failure, plannedAttempt)) {
                     return NodeExecutionOutcome.recoverableMutating(step.stepId(), failure, plannedAttempt);
                 }
                 return NodeExecutionOutcome.failed(step.stepId(), failure, plannedAttempt,
-                        autonomousReplanEligible(step, failure), mutatingRecoveryExhausted(step, failure, plannedAttempt),
+                        autonomousReplanEligible(step, failure), mutatingRecoveryExhausted(step, capability, failure, plannedAttempt),
                         readOnlyRecoveryExhausted(step, failure, plannedAttempt));
             }
             List<String> evidence = new ArrayList<>(result.evidenceReferences());
@@ -737,11 +798,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 return NodeExecutionOutcome.recoverableReadOnly(step.stepId(), classified, plannedAttempt);
             }
             coordination.failDispatch(dispatch.dispatchId(), classified, clock.instant());
-            if (boundedLocalRetryEligible(step, classified, plannedAttempt)) {
+            if (boundedLocalRetryEligible(step, capability, classified, plannedAttempt)) {
                 return NodeExecutionOutcome.recoverableMutating(step.stepId(), classified, plannedAttempt);
             }
             return NodeExecutionOutcome.failed(step.stepId(), classified, plannedAttempt,
-                    autonomousReplanEligible(step, classified), mutatingRecoveryExhausted(step, classified, plannedAttempt),
+                    autonomousReplanEligible(step, classified), mutatingRecoveryExhausted(step, capability, classified, plannedAttempt),
                     readOnlyRecoveryExhausted(step, classified, plannedAttempt));
         }
     }
@@ -764,21 +825,30 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     }
 
     /**
-     * Ordinary MUTATING execution failures on the general-workspace pipeline (a Git/command/
-     * provider/runtime error, never authorization/data/safety-gate/staffing) recover via a bounded
-     * retry of the SAME failed step in the SAME graph version -- never a replan -- so completed
-     * phases are never touched and only the failed phase is retried.
+     * Known ordinary MUTATING failures retry only when the capability explicitly opts into bounded
+     * same-step recovery. New/future mutating capabilities default to NONE and therefore fail closed.
      */
-    private static boolean boundedLocalRetryEligible(ExecutionWorkSpec step, String failure, int attempt) {
+    private static boolean boundedLocalRetryEligible(
+            ExecutionWorkSpec step,
+            AutonomousExecutionCapability capability,
+            String failure,
+            int attempt) {
         return attempt < MAX_MUTATING_DISPATCH_ATTEMPTS
-                && AutonomousRecoveryPolicy.boundedLocalRetryEligible(step, failure);
+                && capability.mutationRecoveryPolicy()
+                == AutonomousExecutionCapability.MutationRecoveryPolicy.BOUNDED_RETRY
+                && AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(step, failure);
     }
 
-    /** True once a bounded-local-retry-eligible failure has exhausted its attempt budget: this must
-     * escalate for Human review, never fall back to REPLAN or a plain BLOCKED-forever state. */
-    private static boolean mutatingRecoveryExhausted(ExecutionWorkSpec step, String failure, int attempt) {
+    /** True once an opted-in bounded mutating retry has exhausted its attempt budget. */
+    private static boolean mutatingRecoveryExhausted(
+            ExecutionWorkSpec step,
+            AutonomousExecutionCapability capability,
+            String failure,
+            int attempt) {
         return attempt >= MAX_MUTATING_DISPATCH_ATTEMPTS
-                && AutonomousRecoveryPolicy.boundedLocalRetryEligible(step, failure);
+                && capability.mutationRecoveryPolicy()
+                == AutonomousExecutionCapability.MutationRecoveryPolicy.BOUNDED_RETRY
+                && AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(step, failure);
     }
 
     /**
@@ -821,7 +891,12 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private record PendingNodeExecution(ExecutionWorkSpec step, int attempt, Future<NodeExecutionOutcome> future) {}
 
     public List<String> capabilityCatalog() {
-        return capabilities.keySet().stream().sorted().toList();
+        return capabilities.values().stream()
+                .filter(capability -> capability.planningReadiness()
+                        == AutonomousExecutionCapability.PlanningReadiness.AVAILABLE)
+                .map(AutonomousExecutionCapability::capabilityRef)
+                .sorted()
+                .toList();
     }
 
     private void blockIfLeaseActive(String objectiveId, ManagementLease lease, String reason) {

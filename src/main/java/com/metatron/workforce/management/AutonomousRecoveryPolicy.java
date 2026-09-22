@@ -28,7 +28,7 @@ final class AutonomousRecoveryPolicy {
      * replanning remains an explicit/manual operator action
      * (ManagementAutonomyService.requestReplan()), never an automatic runner response to a step
      * that merely failed to execute. READ_ONLY recovers via {@link #readOnlyRecoveryEligible} and
-     * MUTATING via {@link #boundedLocalRetryEligible}; exhausting either bound escalates for Human
+     * MUTATING via capability-owned recovery policy; exhausting either bound escalates for Human
      * review instead of falling back to REPLAN.
      */
     static boolean autonomousReplanEligible(ExecutionWorkSpec step, String failure) {
@@ -46,14 +46,13 @@ final class AutonomousRecoveryPolicy {
     }
 
     /**
-     * Ordinary MUTATING execution failures on the general-workspace pipeline (PRODUCE/PREPARE/
-     * VERIFY/DELIVER) recover via a bounded retry of the SAME failed step, in the SAME graph
-     * version -- never a replan, so completed phases are never re-planned or re-dispatched and
-     * only the failed phase is retried.
+     * Generic failure classifier for MUTATING work. Whether a particular capability may actually
+     * retry is owned by AutonomousExecutionCapability.mutationRecoveryPolicy(); this class only
+     * decides whether the failure itself is an ordinary execution failure rather than a Human/
+     * authorization/data/safety/capacity boundary.
      */
-    static boolean boundedLocalRetryEligible(ExecutionWorkSpec step, String failure) {
+    static boolean mutatingExecutionFailureEligible(ExecutionWorkSpec step, String failure) {
         if (requiresHumanIntervention(failure)) return false;
-        return step.consequence() == ExecutionWorkSpec.Consequence.MUTATING
-                && GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(step.requiredCapability());
+        return step.consequence() == ExecutionWorkSpec.Consequence.MUTATING;
     }
 }

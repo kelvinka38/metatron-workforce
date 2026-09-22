@@ -144,6 +144,77 @@ class GeneralActionComposingExecutionPlanProposalServiceExplicitGeneralTest {
                 GeneralActionComposingExecutionPlanProposalService.GENERAL_RUNTIME_MARKER)));
     }
 
+
+    @Test
+    void ordinaryFreshAppCannotAcquireUnrequestedHostOrPrAndIsAlwaysPhased() {
+        NormalizedRequest request = new NormalizedRequest(
+                "Create and deliver a small runnable web application called Runtime Acceptance App.",
+                "repository:kelvinka38/runtime-acceptance-app",
+                List.of(),
+                IntelligenceDepth.FAST,
+                "runnable delivered application",
+                List.of(),
+                List.of(),
+                "",
+                "",
+                IntelligenceMode.EXECUTION,
+                CollaborationMode.SINGLE,
+                List.of(),
+                DeterministicCapability.NONE,
+                false,
+                null,
+                LlmProvider.OPENAI,
+                "");
+
+        List<ExecutionWorkSpec> plannerPlan = List.of(
+                new ExecutionWorkSpec(
+                        "app",
+                        "Create application",
+                        "repository:kelvinka38/runtime-acceptance-app",
+                        GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                        List.of(),
+                        ExecutionWorkSpec.Consequence.MUTATING,
+                        List.of("application is runnable"),
+                        List.of("workspace-source:fresh-new-application")),
+                new ExecutionWorkSpec(
+                        "host-1", "Inspect host", "host://metatron", "host.commander.execute",
+                        List.of("app"), ExecutionWorkSpec.Consequence.MUTATING,
+                        List.of("host inspected"), List.of("host evidence")),
+                new ExecutionWorkSpec(
+                        "host-2", "Change host", "host://metatron", "host.commander.execute",
+                        List.of("host-1"), ExecutionWorkSpec.Consequence.MUTATING,
+                        List.of("host changed"), List.of("host evidence")),
+                new ExecutionWorkSpec(
+                        "host-3", "Verify host", "host://metatron", "host.commander.execute",
+                        List.of("host-2"), ExecutionWorkSpec.Consequence.MUTATING,
+                        List.of("host verified"), List.of("host evidence")),
+                new ExecutionWorkSpec(
+                        "pr", "Publish proposal", "repository:kelvinka38/runtime-acceptance-app",
+                        "repository.pr.propose", List.of("host-3"), ExecutionWorkSpec.Consequence.MUTATING,
+                        List.of("proposal exists"), List.of("proposal evidence")));
+
+        GeneralActionComposingExecutionPlanProposalService service =
+                new GeneralActionComposingExecutionPlanProposalService((caseId, normalized, capabilities) -> plannerPlan);
+
+        List<ExecutionWorkSpec> result = service.propose(
+                "case", request, List.of(
+                        GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                        "host.commander.execute",
+                        "repository.pr.propose"));
+
+        assertEquals(List.of("app-produce", "app-prepare", "app-verify", "app-deliver"),
+                result.stream().map(ExecutionWorkSpec::stepId).toList());
+        assertTrue(result.stream().allMatch(step ->
+                GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(step.requiredCapability())));
+        assertTrue(result.stream().allMatch(step ->
+                "repository:kelvinka38/runtime-acceptance-app".equals(step.target())));
+        assertTrue(result.getFirst().evidenceRequirements().contains("workspace-source:fresh-new-application"));
+        assertTrue(result.getLast().evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GIT_COMMIT));
+        assertFalse(result.stream().anyMatch(step -> "host.commander.execute".equals(step.requiredCapability())));
+        assertFalse(result.stream().anyMatch(step -> "repository.pr.propose".equals(step.requiredCapability())));
+    }
+
+
     @Test
     void ordinaryExecutionRequestStillKeepsAvailableSpecialCapabilityPlan() {
         NormalizedRequest request = new NormalizedRequest(

@@ -36,7 +36,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
     private final ManagementAutonomyService management;
     private final String headWorkerId;
     private final WorkQueueService workQueue;
-    private final List<String> capabilityCatalog;
+    private final Map<String, AutonomousExecutionCapability> executionCapabilities;
     private final AutonomousManagementRunner runner;
     private final WorkplaceContinuityService workplaceContinuity;
     private final Function<String, String> targetWorkerResolver;
@@ -105,7 +105,7 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
                 throw new IllegalStateException("duplicate autonomous execution capability: " + ref);
             }
         }
-        this.capabilityCatalog = registered.keySet().stream().sorted().toList();
+        this.executionCapabilities = Map.copyOf(registered);
         AuthorizationPolicy requestAdmission = (source, recipient, organizationContextId) -> {
             boolean allowed = source.type() == ActorRef.ActorType.HUMAN
                     && recipient.type() == ActorRef.ActorType.WORKER
@@ -119,7 +119,12 @@ public final class HumanObjectiveIngressService implements ExecutionObjectiveHan
 
     @Override
     public List<String> capabilityCatalog() {
-        return capabilityCatalog;
+        return executionCapabilities.values().stream()
+                .filter(capability -> capability.planningReadiness()
+                        == AutonomousExecutionCapability.PlanningReadiness.AVAILABLE)
+                .map(AutonomousExecutionCapability::capabilityRef)
+                .sorted()
+                .toList();
     }
 
     @Override

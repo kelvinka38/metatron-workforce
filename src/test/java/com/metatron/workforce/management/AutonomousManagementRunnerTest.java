@@ -298,6 +298,71 @@ class AutonomousManagementRunnerTest {
         assertEquals(ManagementObjective.Status.COMPLETED, management.get("objective-slow").status());
     }
 
+
+    @Test
+    void objectiveAdmittedAfterSlowLaneStartedStillRunsImmediately() throws InterruptedException {
+        Clock clock = Clock.systemUTC();
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        CountDownLatch slowStarted = new CountDownLatch(1);
+        CountDownLatch releaseSlow = new CountDownLatch(1);
+
+        AutonomousExecutionCapability slow = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.late.slow"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                slowStarted.countDown();
+                try {
+                    if (!releaseSlow.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test never released slow objective");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return new CapabilityResult(true, "worker-slow", "assignment-slow-late",
+                        "work-slow", List.of("evidence:slow"), "PASS");
+            }
+        };
+        AutonomousExecutionCapability fast = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.late.fast"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, "worker-fast", "assignment-fast-late",
+                        "work-fast", List.of("evidence:fast"), "PASS");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management, (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(slow, fast), coordination, clock,
+                "runner-late-arrival", Duration.ofMinutes(5), Duration.ofSeconds(5), 2);
+        management.acceptHumanObjective(
+                "objective-late-slow", "worker-head", "org-metatron", "Slow objective",
+                "human:founder", "request:slow", "case-slow", "conversation-slow", "message-slow",
+                "telegram", request("test.late.slow", ExecutionWorkSpec.Consequence.READ_ONLY), clock.instant());
+
+        runner.start();
+        try {
+            assertTrue(slowStarted.await(5, TimeUnit.SECONDS), "slow objective must already be executing");
+
+            management.acceptHumanObjective(
+                    "objective-late-fast", "worker-head", "org-metatron", "Fast objective admitted later",
+                    "human:founder", "request:fast", "case-fast", "conversation-fast", "message-fast",
+                    "telegram", request("test.late.fast", ExecutionWorkSpec.Consequence.READ_ONLY), clock.instant());
+            runner.wake();
+
+            assertTrue(waitUntil(Duration.ofSeconds(3),
+                    () -> management.get("objective-late-fast").status() == ManagementObjective.Status.COMPLETED),
+                    "a later Objective must not wait for the older slow lane to return");
+            assertEquals(ManagementObjective.Status.EXECUTING,
+                    management.get("objective-late-slow").status());
+        } finally {
+            releaseSlow.countDown();
+            assertTrue(waitUntil(Duration.ofSeconds(5),
+                    () -> management.get("objective-late-slow").status() == ManagementObjective.Status.COMPLETED));
+            runner.close();
+        }
+    }
+
+
     private static boolean waitUntil(Duration timeout, java.util.function.BooleanSupplier condition)
             throws InterruptedException {
         long deadlineNanos = System.nanoTime() + timeout.toNanos();

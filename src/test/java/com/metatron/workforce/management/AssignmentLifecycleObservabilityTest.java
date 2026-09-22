@@ -62,6 +62,9 @@ class AssignmentLifecycleObservabilityTest {
 
         AutonomousExecutionCapability delegate = new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return CAPABILITY; }
+            @Override public MutationRecoveryPolicy mutationRecoveryPolicy() {
+                return MutationRecoveryPolicy.BOUNDED_RETRY;
+            }
             @Override public String authorityReference() { return GeneralWorkspaceAutonomousCapability.AUTHORITY_REFERENCE; }
             @Override public String authorizationReference() { return GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE; }
             @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
@@ -128,6 +131,9 @@ class AssignmentLifecycleObservabilityTest {
 
         AutonomousExecutionCapability delegate = new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return CAPABILITY; }
+            @Override public MutationRecoveryPolicy mutationRecoveryPolicy() {
+                return MutationRecoveryPolicy.BOUNDED_RETRY;
+            }
             @Override public String authorityReference() { return GeneralWorkspaceAutonomousCapability.AUTHORITY_REFERENCE; }
             @Override public String authorizationReference() { return GeneralWorkspaceAutonomousCapability.AUTHORIZATION_REFERENCE; }
             @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
