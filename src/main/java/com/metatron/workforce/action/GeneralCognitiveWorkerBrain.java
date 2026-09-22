@@ -27,7 +27,16 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     private static final Pattern RESEARCH_ITEM = Pattern.compile("(?m)^\\s*(?:\\d+[.)]|[-*]\\s*\\d+[.)])\\s+");
     private static final Pattern RESEARCH_DECISION = Pattern.compile("(?i)\\b(?:KEEP|TEST|CHANGE|REJECT)\\b");
     private static final ObjectMapper ACTION_INPUT_JSON = new ObjectMapper();
-    static final int MAX_CONTEXT_PROMPT_CHARS = 7_000;
+    // Root-cause fix (production incident, 2026-09-22): a real VERIFY-phase cognitive request for
+    // WORKER-GENERAL-ENGINEERING (its full available-action catalog, acceptance criteria, evidence
+    // requirements and memory alone, with recentCycles already empty -- nothing left to compact) rendered
+    // to 8,753 chars against this budget, so the existing fail-closed guard fired even though it had
+    // nothing left to trim. The bounded-local-retry policy then repeated the identical, deterministically
+    // oversized request until escalation, since retrying without any change to the prompt could never
+    // shrink it below budget. This raises the ceiling with real headroom over the observed case rather
+    // than removing the bound: the budget must stay finite and enforced, but 7,000 chars proved too small
+    // for a realistic non-history VERIFY payload before any history is even added.
+    static final int MAX_CONTEXT_PROMPT_CHARS = 16_000;
     private static final int MAX_HISTORY_OUTPUT_VALUE_CHARS = 1_000;
     private static final int MAX_HISTORY_SUMMARY_CHARS = 500;
     private final WorkerIntelligenceService intelligence;
