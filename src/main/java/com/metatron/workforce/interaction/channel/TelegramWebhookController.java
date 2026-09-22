@@ -8,8 +8,14 @@ import com.metatron.workforce.interaction.ChannelInteractionIngressService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.MetatronInteractionOrchestrator;
 import com.metatron.workforce.interaction.intelligence.CanonicalObjectiveControlInterpreter;
+import com.metatron.workforce.management.AutonomousManagementRunner;
+import com.metatron.workforce.management.AutonomySafetyService;
+import com.metatron.workforce.management.ManagementAutonomyService;
+import com.metatron.workforce.management.ManagementObjective;
 import com.metatron.workforce.management.WorkCardRenderer;
 import com.metatron.workforce.phase3.ActorRef;
+import com.metatron.workforce.workplace.WorkplaceContinuityRecord;
+import com.metatron.workforce.workplace.WorkplaceContinuityService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
@@ -20,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -69,6 +76,10 @@ public final class TelegramWebhookController {
     private final ChannelInteractionIngressService interactionIngress;
     private final TelegramIdentityResolver identityResolver;
     private final WorkCardRenderer workCardRenderer;
+    private final ManagementAutonomyService management;
+    private final AutonomySafetyService safety;
+    private final AutonomousManagementRunner runner;
+    private final WorkplaceContinuityService workplace;
     private final ObjectMapper objectMapper;
     private final ThreadPoolExecutor interactionExecutor;
     private final ScheduledExecutorService monitorExecutor;
@@ -86,6 +97,10 @@ public final class TelegramWebhookController {
             @Value("${METATRON_CHANNEL_OBJECTIVE_HANDOFF_ENABLED:false}") boolean channelObjectiveHandoffEnabled,
             ChannelInteractionIngressService interactionIngress,
             WorkCardRenderer workCardRenderer,
+            ManagementAutonomyService management,
+            AutonomySafetyService safety,
+            AutonomousManagementRunner runner,
+            WorkplaceContinuityService workplace,
             ObjectMapper objectMapper) {
         if (secret == null || secret.isBlank()) throw new IllegalStateException("TELEGRAM_WEBHOOK_SECRET_MISSING");
         if (botToken == null || botToken.isBlank()) throw new IllegalStateException("TELEGRAM_BOT_TOKEN_MISSING");
@@ -114,6 +129,10 @@ public final class TelegramWebhookController {
                 organizationContextId.trim());
         this.interactionIngress = Objects.requireNonNull(interactionIngress, "interactionIngress");
         this.workCardRenderer = Objects.requireNonNull(workCardRenderer, "workCardRenderer");
+        this.management = Objects.requireNonNull(management, "management");
+        this.safety = Objects.requireNonNull(safety, "safety");
+        this.runner = Objects.requireNonNull(runner, "runner");
+        this.workplace = Objects.requireNonNull(workplace, "workplace");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.interactionExecutor = new ThreadPoolExecutor(
                 INTERACTION_THREADS, INTERACTION_THREADS, 30L, TimeUnit.SECONDS,
@@ -193,6 +212,24 @@ public final class TelegramWebhookController {
                 }, () -> gateway.send(new ChannelMessage("telegram", monitorChatId,
                         "📊 METATRON WORK\n\nNo autonomous Objective is currently visible for this Human.")));
                 LOG.info("telegram_monitor_mode_started update_id={} human={} chat={}", updateId, identity.human().actorId(), chatId);
+                return ResponseEntity.ok().build();
+            }
+
+            // Human explicitly requests that their own already-owned Objective resume after BLOCKED,
+            // ESCALATED or PAUSED, without discarding progress by starting a fresh Objective. Reuses the
+            // exact same governed control operations (AutonomySafetyService.resume,
+            // ManagementAutonomyService.resumeObjective, AutonomousManagementRunner.wake) that the
+            // Workplace dashboard's /control/resume endpoint uses -- see resumeOwnedObjective() for the
+            // authority binding this performs in place of that endpoint's dashboard bearer token.
+            if (TelegramBotGateway.RESUME_CONTROL.equals(text.trim())
+                    || "/resume".equalsIgnoreCase(text.trim())) {
+                String resumeChatId = chatId;
+                String humanActorId = identity.human().actorId();
+                workCardRenderer.latestObjectiveIdForHuman(humanActorId).ifPresentOrElse(
+                        objectiveId -> resumeOwnedObjective(objectiveId, humanActorId, resumeChatId),
+                        () -> gateway.send(new ChannelMessage("telegram", resumeChatId,
+                                "📋 METATRON WORK\n\nNo autonomous Objective is currently visible for this Human.")));
+                LOG.info("telegram_resume_requested update_id={} human={} chat={}", updateId, humanActorId, chatId);
                 return ResponseEntity.ok().build();
             }
 
@@ -351,6 +388,93 @@ public final class TelegramWebhookController {
         ScheduledFuture<?> completed = monitorTasks.remove(objectiveId);
         if (completed != null) completed.cancel(false);
         LOG.info("telegram_monitor_terminal objective_id={} reason={}", objectiveId, reason);
+    }
+
+    /**
+     * Resumes a BLOCKED/ESCALATED/PAUSED Objective already owned by this Telegram Human, without
+     * requiring the Workplace dashboard's bearer-token authentication. Authority binding is
+     * preserved, not bypassed: this performs the exact same ownership check
+     * (WorkplaceContinuityRecord.humanId() must equal the requesting actor) that
+     * AutonomyControlController.requireControlAuthority() enforces for the dashboard, and reads the
+     * same durable authorityReference (requestAdmissionRef()) that a dashboard caller would otherwise
+     * have to supply -- it substitutes Telegram's own already-trusted channel authentication (the
+     * webhook secret plus TELEGRAM_ALLOWED_USER_ID admission gate that already lets this same actor
+     * create and own Objectives) for the dashboard's session bearer token, rather than inventing a
+     * weaker or parallel authority concept.
+     */
+    private void resumeOwnedObjective(String objectiveId, String humanActorId, String chatId) {
+        ResumeOutcome outcome;
+        try {
+            outcome = attemptResume(management, safety, runner, workplace, objectiveId, humanActorId, Instant.now());
+        } catch (RuntimeException failure) {
+            LOG.error("telegram_resume_failed objective_id=" + objectiveId, failure);
+            gateway.send(new ChannelMessage("telegram", chatId,
+                    "📋 METATRON WORK\n\nCould not resume this Objective: " + failure.getMessage()));
+            return;
+        }
+        switch (outcome) {
+            case RESUMED -> {
+                LOG.info("telegram_resume_succeeded objective_id={} human={}", objectiveId, humanActorId);
+                long messageId = gateway.sendWorkCard(chatId, workCardRenderer.render(objectiveId));
+                startLiveMonitor(objectiveId, chatId, messageId);
+                gateway.send(new ChannelMessage("telegram", chatId, "🔄 Resume requested. Watching for progress…"));
+            }
+            case NOT_RESUMABLE -> gateway.send(new ChannelMessage("telegram", chatId,
+                    "📋 METATRON WORK\n\nThis Objective is not paused/blocked/escalated right now; "
+                            + "there is nothing to resume."));
+            case NO_PROVENANCE -> {
+                LOG.warn("telegram_resume_no_continuity objective_id={}", objectiveId);
+                gateway.send(new ChannelMessage("telegram", chatId,
+                        "📋 METATRON WORK\n\nCannot resume: no durable authority provenance found for this Objective."));
+            }
+            case NOT_OWNED -> {
+                LOG.warn("telegram_resume_actor_mismatch objective_id={} requester={}", objectiveId, humanActorId);
+                gateway.send(new ChannelMessage("telegram", chatId,
+                        "📋 METATRON WORK\n\nCannot resume: this Objective is not owned by this Human."));
+            }
+        }
+    }
+
+    enum ResumeOutcome { RESUMED, NOT_RESUMABLE, NO_PROVENANCE, NOT_OWNED }
+
+    /**
+     * Resumes a BLOCKED/ESCALATED/PAUSED Objective already owned by {@code humanActorId}, without
+     * requiring the Workplace dashboard's bearer-token authentication. Authority binding is
+     * preserved, not bypassed: this performs the exact same ownership check
+     * (WorkplaceContinuityRecord.humanId() must equal the requesting actor) that
+     * AutonomyControlController.requireControlAuthority() enforces for the dashboard, and reads the
+     * same durable authorityReference (requestAdmissionRef()) that a dashboard caller would otherwise
+     * have to supply -- it substitutes the caller's own already-trusted channel authentication (e.g.
+     * Telegram's webhook secret plus TELEGRAM_ALLOWED_USER_ID admission gate, which already lets this
+     * same actor create and own Objectives) for the dashboard's session bearer token, rather than
+     * inventing a weaker or parallel authority concept. Package-private static and free of any
+     * Telegram transport dependency so the authority/state-transition logic is directly testable.
+     */
+    static ResumeOutcome attemptResume(ManagementAutonomyService management, AutonomySafetyService safety,
+                                       AutonomousManagementRunner runner, WorkplaceContinuityService workplace,
+                                       String objectiveId, String humanActorId, Instant now) {
+        ManagementObjective objective = management.get(objectiveId);
+        if (objective.status() != ManagementObjective.Status.PAUSED
+                && objective.status() != ManagementObjective.Status.BLOCKED
+                && objective.status() != ManagementObjective.Status.ESCALATED) {
+            return ResumeOutcome.NOT_RESUMABLE;
+        }
+        WorkplaceContinuityRecord continuity;
+        try {
+            continuity = workplace.continuity(objectiveId);
+        } catch (IllegalArgumentException missing) {
+            return ResumeOutcome.NO_PROVENANCE;
+        }
+        String normalizedActor = humanActorId.startsWith("human:")
+                ? humanActorId.substring("human:".length()) : humanActorId;
+        if (!continuity.humanId().equals(normalizedActor)) {
+            return ResumeOutcome.NOT_OWNED;
+        }
+        safety.resume(objectiveId, continuity.requestAdmissionRef(), now);
+        management.resumeObjective(objectiveId, objective.ownerWorkerId(),
+                "telegram-control-resume:actor=" + humanActorId, now);
+        runner.wake();
+        return ResumeOutcome.RESUMED;
     }
 
 
