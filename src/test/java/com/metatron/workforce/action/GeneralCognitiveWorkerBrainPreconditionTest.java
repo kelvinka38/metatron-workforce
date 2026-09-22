@@ -345,6 +345,74 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
+    void plainNodeKindGetsADeterministicRuntimeProbeInsteadOfBeingLeftToCognitiveFreehand() {
+        // Regression test for a real production failure (case-c3c7f22f-1bca-451d-a42c-47499cdcd74c):
+        // a plain (non-react) Node workspace had no deterministic runtime-check script here, so cognition
+        // was forced to freehand workspace.process.run's argsJson every cycle; the real LLM produced a
+        // malformed argsJson twice identically, tripping the repeated-failure circuit breaker and
+        // permanently blocking the Objective at VERIFY.
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "verify",
+                "VERIFY PHASE. Run governed build, tests, and runtime verification.",
+                "repository:kelvinka38/example",
+                "execution.general.workspace",
+                List.of("prepare"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass", "runtime passes"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_VERIFY,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_TEST,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
+        List<String> actions = List.of("workspace.test.run", "workspace.process.run");
+        Map<String, String> memory = Map.of(
+                "workspaceProjectKind", "node",
+                "workspaceProjectManifestPreview",
+                "{\"name\":\"control-center\",\"scripts\":{\"start\":\"node server.js\",\"test\":\"echo ok\"}}");
+
+        CognitiveWorkerRuntime.Cycle test = successfulCycle(1, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext afterTest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                actions, List.of(test), memory);
+
+        CognitiveWorkerRuntime.Thought runtime = GeneralCognitiveWorkerBrain.governedRuntimePrecondition(afterTest);
+
+        assertEquals("workspace.process.run", runtime.actionRef());
+        assertEquals("node", runtime.inputs().get("executable"));
+        String argsJson = runtime.inputs().get("argsJson");
+        assertTrue(argsJson.startsWith("[\"-e\",\""), argsJson);
+        assertTrue(argsJson.contains("server.js"), argsJson);
+        assertTrue(argsJson.contains("child_process"), argsJson);
+    }
+
+    @Test
+    void plainNodeKindWithNoParseableEntryPointIsLeftToCognitionRatherThanGuessed() {
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "verify",
+                "VERIFY PHASE. Run governed build, tests, and runtime verification.",
+                "repository:kelvinka38/example",
+                "execution.general.workspace",
+                List.of("prepare"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("tests pass", "runtime passes"),
+                List.of(
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.PHASE_VERIFY,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_TEST,
+                        com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner.REQUIRE_RUNTIME));
+        List<String> actions = List.of("workspace.test.run", "workspace.process.run");
+        Map<String, String> memory = Map.of(
+                "workspaceProjectKind", "node",
+                "workspaceProjectManifestPreview",
+                "{\"name\":\"control-center\",\"scripts\":{\"start\":\"pm2 start ecosystem.config.js\"}}");
+
+        CognitiveWorkerRuntime.Cycle test = successfulCycle(1, "workspace.test.run", Map.of());
+        CognitiveWorkerRuntime.CognitiveContext afterTest = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                actions, List.of(test), memory);
+
+        assertNull(GeneralCognitiveWorkerBrain.governedRuntimePrecondition(afterTest));
+    }
+
+    @Test
     void dedicatedCommitStepStagesOnlyBoundedPathFromWorkWithoutStepLocalMutationHistory() {
         ExecutionWorkSpec work = stageAndCommitWork();
         CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
