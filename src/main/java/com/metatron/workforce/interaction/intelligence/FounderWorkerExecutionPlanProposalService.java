@@ -134,16 +134,26 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
         return GeneralWorkspacePhasePlanner.phase(base);
     }
 
+    /**
+     * The optional leading/trailing quote handles a Human Objective that quotes the application name
+     * (observed live: {@code called "Runtime Acceptance App"}) -- the quote characters themselves are
+     * matched but not captured, so the derived slug is unaffected either way.
+     */
     private static final Pattern APPLICATION_NAME = Pattern.compile(
-            "(?i)\\b(?:called|named)\\s+([A-Za-z][A-Za-z0-9' -]{1,60}?)(?=[.,;:]|\\s+(?:and|to|for)\\b|$)");
+            "(?i)\\b(?:called|named)\\s+[\"“]?([A-Za-z][A-Za-z0-9' -]{1,60}?)[\"”]?(?=[.,;:]|\\s+(?:and|to|for)\\b|$)");
 
     /**
      * The governed repository target and whether an existing GitHub source repository is genuinely
      * expected to be materialized (an explicitly named repository), or whether this is a governance/
      * authority-discovery destination the planner derived for a brand-new application that has no
      * existing source yet.
+     *
+     * <p>Package-visible (not private): {@link ExecutionWorkPlanner} reuses this exact derivation to
+     * normalize a frontier-planned {@code execution.general.workspace} step's target when the planner
+     * itself selected that capability without any explicit Worker naming -- the same governed
+     * repository-target semantics, never a second competing algorithm.</p>
      */
-    private record GovernedRepository(String repository, boolean existingSourceExpected) {}
+    record GovernedRepository(String repository, boolean existingSourceExpected) {}
 
     /**
      * Governed repository target for General Workspace work: an explicit repository named in the
@@ -152,7 +162,7 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
      * repository when neither can be determined. Never the Worker identity, and never an unrelated
      * existing repository.
      */
-    private static GovernedRepository governedRepositoryTarget(String objective) {
+    static GovernedRepository governedRepositoryTarget(String objective) {
         String repositories = CanonicalObjectiveControlInterpreter.repositoryTargets(objective);
         String explicit = repositories.isBlank() ? "" : repositories.split(",")[0].trim();
         if (!explicit.isBlank()) return new GovernedRepository(explicit, true);
