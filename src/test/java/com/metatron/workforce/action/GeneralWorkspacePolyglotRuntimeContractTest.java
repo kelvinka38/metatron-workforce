@@ -94,6 +94,28 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
         }
     }
 
+    @Test
+    void cognitionSuppliedAbsoluteWorkingDirectoryFallsBackToTheRealDeterministicProjectDirectory() throws Exception {
+        // Production incident (2026-09-22): a cognitive VERIFY reasoning pass invented an absolute path for
+        // "workingDirectory" (e.g. something like "/app/workspace/web") instead of the workspace-relative
+        // value the contract requires. ObjectiveWorkspaceService correctly rejected it with
+        // "SecurityException: absolute workspace path denied", and the bounded local-retry policy then
+        // burned all 3 attempts retrying the exact same doomed absolute path before escalating -- a
+        // deterministic contract failure that blind retry can never heal. VERIFY must instead deterministically
+        // locate the real project directory (the one PREPARE actually wrote a manifest into) rather than
+        // trusting cognition's invented path or failing closed.
+        try (Harness harness = new Harness(temp.resolve("absolute-working-directory"))) {
+            harness.workspaces.write(harness.workspace, "web/package.json",
+                    "{\"scripts\":{\"build\":\"node build.js\",\"test\":\"node test.js\"}}");
+            harness.workspaces.write(harness.workspace, "web/package-lock.json", "{}");
+
+            harness.execute("workspace.dependencies.install", Map.of("workingDirectory", "/app/workspace/web"));
+
+            assertEquals(1, harness.requests.size());
+            assertCommand(harness.requests.get(0), "web", "npm", List.of("ci"));
+        }
+    }
+
     private static void assertCommand(JsonNode request, String cwd, String executable, List<String> args) {
         ObjectMapper json = new ObjectMapper();
         assertEquals(cwd, request.path("workingDirectory").asText());
