@@ -57,8 +57,8 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, fileWrite(workerId, authorizationReference, workspace));
         add(profile, actions, projectPrepare(workerId, authorizationReference, workspace));
         add(profile, actions, dependenciesInstall(workerId, authorizationReference, objectiveId, workspace));
-        add(profile, actions, process(workerId, authorizationReference, objectiveId));
-        add(profile, actions, shell(workerId, authorizationReference, objectiveId));
+        add(profile, actions, process(workerId, authorizationReference, objectiveId, workspace));
+        add(profile, actions, shell(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, gitStatus(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitDiff(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitRun(workerId, authorizationReference, objectiveId));
@@ -556,20 +556,22 @@ public final class GeneralWorkspaceActionCatalog {
         });
     }
 
-    private ActionFabric.Action process(String worker, String auth, String objectiveId) {
+    private ActionFabric.Action process(String worker, String auth, String objectiveId,
+                                        ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         return action("workspace.process.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             String executable = input(request, "executable");
             List<String> args = stringList(request.inputs().getOrDefault("argsJson", "[]"));
-            String workingDirectory = request.inputs().getOrDefault("workingDirectory", "").trim();
+            String workingDirectory = workingDirectory(workspace, request);
             return sandboxObservation(request.actionRef(),
                     sandbox.run(worker, objectiveId, workingDirectory, executable, args));
         });
     }
 
-    private ActionFabric.Action shell(String worker, String auth, String objectiveId) {
+    private ActionFabric.Action shell(String worker, String auth, String objectiveId,
+                                      ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         return action("workspace.shell.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             String command = input(request, "command");
-            String workingDirectory = request.inputs().getOrDefault("workingDirectory", "").trim();
+            String workingDirectory = workingDirectory(workspace, request);
             return sandboxObservation(request.actionRef(),
                     sandbox.run(worker, objectiveId, workingDirectory, "sh", List.of("-lc", command)));
         });
@@ -776,34 +778,38 @@ public final class GeneralWorkspaceActionCatalog {
             "package.json", "requirements.txt", "pyproject.toml", "setup.py",
             "pom.xml", "build.gradle", "build.gradle.kts", "gradlew", "mvnw");
 
+    /**
+     * The single canonical deterministic project-root resolver for every dependency/build/test/runtime
+     * action. Root-cause fix (production incidents, 2026-09-22, cases 5fd21db7 and 757e8972): cognition is
+     * not authoritative for filesystem/project-root identity, so a cognition-supplied "workingDirectory"
+     * input is honored only when it is relative, resolves inside the workspace, and the directory it names
+     * actually contains a real project manifest -- otherwise (blank, absolute, a path that doesn't exist or
+     * escapes the workspace, or a directory with no manifest at all) it always falls back to
+     * {@link #detectProjectDirectory}. Earlier (#503) only the absolute/invalid case fell back; a blank
+     * input still returned the workspace root unconditionally, so a blank cognition response for a nested
+     * real project (e.g. web/package.json) still reached dependencyCommand()/buildCommand() with the wrong
+     * root and failed with "workspace dependency system not detected". This is now one resolver reused by
+     * dependencies.install, build.run, test.run and process.run/shell.run (the mechanism used for runtime
+     * verification), so all four phases of VERIFY agree on the same project directory. The absolute-path,
+     * traversal and symlink security checks in ObjectiveWorkspaceService.resolve() are unchanged.
+     */
     private String workingDirectory(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
                                     ActionFabric.ActionRequest request) {
         String requested = request.inputs().getOrDefault("workingDirectory", "").trim();
-        if (requested.isBlank()) return "";
-        if (Path.of(requested).isAbsolute()) return detectProjectDirectory(workspace);
-        Path resolved;
-        try {
-            resolved = workspaces.resolve(workspace, requested);
-        } catch (RuntimeException invalid) {
-            return detectProjectDirectory(workspace);
+        if (!requested.isBlank() && !Path.of(requested).isAbsolute()) {
+            try {
+                Path resolved = workspaces.resolve(workspace, requested);
+                if (Files.isDirectory(resolved, LinkOption.NOFOLLOW_LINKS)
+                        && !existingProjectManifest(resolved).isEmpty()) {
+                    return workspace.path().relativize(resolved).toString().replace('\\', '/');
+                }
+            } catch (RuntimeException invalid) {
+                // falls through to canonical detection below
+            }
         }
-        if (!Files.isDirectory(resolved, LinkOption.NOFOLLOW_LINKS)) {
-            return detectProjectDirectory(workspace);
-        }
-        return workspace.path().relativize(resolved).toString().replace('\\', '/');
+        return detectProjectDirectory(workspace);
     }
 
-    /**
-     * Root-cause fix (production incident, 2026-09-22): dependency/build/test previously trusted a
-     * cognition-supplied "workingDirectory" input verbatim. A cognitive VERIFY reasoning pass invented an
-     * absolute path for it -- ObjectiveWorkspaceService correctly rejected it with
-     * "SecurityException: absolute workspace path denied" -- and the bounded local-retry policy then
-     * repeated the exact same doomed call until escalation: a deterministic contract failure blind retry
-     * can never heal. VERIFY does not need cognition to invent its project directory: PREPARE already
-     * deterministically wrote exactly one project manifest into the workspace, so an invalid supplied value
-     * now falls back to locating that manifest directly instead of failing closed, mirroring the same
-     * manifest detection GeneralWorkspaceObservationVerifier already performs independently.
-     */
     private String detectProjectDirectory(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         if (!existingProjectManifest(workspace.path()).isEmpty()) return "";
         String shallowest = null;
