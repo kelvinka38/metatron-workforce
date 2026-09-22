@@ -44,7 +44,7 @@ class GeneralWorkspaceObservationVerifierProjectScopeTest {
             if ("git".equals(executable) && args.equals(List.of("rev-list", "--count", "HEAD"))) {
                 output = "2\n";
             } else if ("git".equals(executable)
-                    && args.equals(List.of("diff", "--name-only", "HEAD^", "HEAD", "--"))) {
+                    && args.equals(List.of("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"))) {
                 output = "acceptance/general-engineering-go1/slugify.py\n";
             } else if ("python3".equals(executable)
                     && args.equals(List.of("-m", "pytest", "-q"))) {

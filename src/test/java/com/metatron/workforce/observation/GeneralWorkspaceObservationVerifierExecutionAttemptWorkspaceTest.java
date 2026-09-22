@@ -137,7 +137,7 @@ class GeneralWorkspaceObservationVerifierExecutionAttemptWorkspaceTest {
                 success = true; output = "1111111111111111111111111111111111111111\n";
             } else if (args.equals(List.of("rev-list", "--count", "HEAD"))) {
                 success = true; output = "2\n";
-            } else if (args.equals(List.of("diff", "--name-only", "HEAD^", "HEAD", "--"))) {
+            } else if (args.equals(List.of("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"))) {
                 success = true; output = "app.txt\n";
             } else if (args.equals(List.of("status", "--short"))) {
                 success = true; output = "";
@@ -175,6 +175,94 @@ class GeneralWorkspaceObservationVerifierExecutionAttemptWorkspaceTest {
             assertEquals(ObservationReport.CriterionResult.PASS, report.criterionResult(),
                     "independent Git inspection must run against the real attempt-scoped workspace, not the "
                             + "empty legacy directory -- observedState was: " + report.observedState());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * Production gap (discovered 2026-09-22 by a real end-to-end acceptance run, not a fabricated one): a
+     * genuinely fresh workspace's very first commit has no HEAD^, so the older "git diff HEAD^ HEAD"
+     * inspection always failed/produced nothing for it, and independent Observation reported the real,
+     * just-created single commit as having no observable change -- FAIL, even though the delivered work
+     * product was genuinely committed. "git diff-tree ... --root HEAD" reports the same changed-path list
+     * for the root commit as for any later one, so this test simulates exactly that single-commit shape
+     * (rev-list --count HEAD reports "1") and asserts PASS.
+     */
+    @Test
+    void independentGitInspectionPassesForAGenuinelyFreshWorkspacesFirstCommitWithNoParent() throws Exception {
+        Instant t = Instant.parse("2026-09-22T11:00:00Z");
+        ExecutionAttemptService attempts = new ExecutionAttemptService();
+        ExecutionWorkspaceManager executionWorkspaces = new ExecutionWorkspaceManager(
+                temp.resolve("executions"), attempts, new InMemoryExecutionWorkspaceBindingStore());
+        ObjectiveWorkspaceService workspaces = new ObjectiveWorkspaceService(
+                temp.resolve("legacy-objective-workspaces"), executionWorkspaces);
+
+        ExecutionAttempt attempt = attempts.begin("dispatch-deliver-git-root", OBJECTIVE, STEP, WORKER,
+                "assignment:deliver-git-root", "authorization:deliver-git-root", "runtime:deliver-git-root", 1,
+                Duration.ofHours(1), t);
+        ExecutionWorkspaceBinding binding = executionWorkspaces.allocate(attempt.attemptId(), attempt.fencingToken(), t.plusSeconds(1));
+        Path primary = Path.of(binding.rootPath()).resolve("repos").resolve("primary");
+        Files.createDirectories(primary.resolve(".git"));
+        Files.writeString(primary.resolve("package.json"), "{}\n");
+        attempts.succeed(attempt.attemptId(), attempt.fencingToken(), t.plusSeconds(2));
+
+        String expectedWorkspaceKey = Path.of(binding.rootPath()).getFileName().toString();
+
+        ObjectMapper json = new ObjectMapper();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/run", exchange -> {
+            JsonNode requestBody = json.readTree(exchange.getRequestBody());
+            String workspaceKey = requestBody.path("workspaceKey").asText();
+            List<String> args = json.convertValue(requestBody.path("args"),
+                    json.getTypeFactory().constructCollectionType(List.class, String.class));
+            String output;
+            boolean success;
+            if (!expectedWorkspaceKey.equals(workspaceKey)) {
+                success = false;
+                output = "fatal: not a git repository -- wrong workspaceKey=" + workspaceKey;
+            } else if (args.equals(List.of("rev-parse", "HEAD"))) {
+                success = true; output = "2222222222222222222222222222222222222222\n";
+            } else if (args.equals(List.of("rev-list", "--count", "HEAD"))) {
+                success = true; output = "1\n";
+            } else if (args.equals(List.of("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"))) {
+                success = true; output = "package.json\n";
+            } else if (args.equals(List.of("status", "--short"))) {
+                success = true; output = "";
+            } else {
+                success = false; output = "unexpected command: " + args;
+            }
+            byte[] response = json.writeValueAsBytes(Map.of(
+                    "success", success, "exitCode", success ? 0 : 1, "timedOut", false, "outputTruncated", false,
+                    "output", output, "workspaceKey", workspaceKey,
+                    "executable", requestBody.path("executable").asText(), "durationMillis", 5));
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
+            profiles.bind(WORKER, WorkerRuntimeProfileBindingService.GENERAL_ENGINEERING_PROFILE,
+                    GeneralWorkspaceAutonomousCapability.CAPABILITY, Instant.now());
+            WorkerExecutionSandboxService sandbox = new WorkerExecutionSandboxService(
+                    HttpClient.newHttpClient(), URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    "test-token", profiles, workspaces, json);
+            GeneralWorkspaceObservationVerifier verifier = new GeneralWorkspaceObservationVerifier(workspaces, sandbox);
+
+            ObservationRequirement requirement = new ObservationRequirement(
+                    OBJECTIVE + ":observation:" + STEP + ":criterion:root-commit", OBJECTIVE, STEP,
+                    STEP + ":criterion:root-commit", "kelvinka38/metatron-workforce-control-center",
+                    "produced workspace changes are committed in local Git; local Git HEAD/status is verified after commit",
+                    List.of("general-action-composition:" + GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                            "requested-capability:" + GeneralWorkspaceAutonomousCapability.CAPABILITY),
+                    Instant.now());
+
+            ObservationReport report = verifier.observe(requirement, List.of(), t.plusSeconds(30)).orElseThrow();
+
+            assertEquals(ObservationReport.CriterionResult.PASS, report.criterionResult(),
+                    "a genuinely fresh workspace's first commit (no HEAD^) must still be independently "
+                            + "observable as a real committed change -- observedState was: " + report.observedState());
         } finally {
             server.stop(0);
         }

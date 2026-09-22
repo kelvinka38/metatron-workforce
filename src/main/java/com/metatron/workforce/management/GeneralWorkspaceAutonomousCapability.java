@@ -95,6 +95,25 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         this.executionGate = null;
     }
 
+    /**
+     * Test/composition constructor for a caller that has a real ExecutionGate (required to execute
+     * MUTATING work at all -- see the governance check in {@link #execute}) but no Worker Constitution
+     * runtime materializer wired. runtimeConstitution is already optional at every call site in
+     * {@link #execute}.
+     */
+    public GeneralWorkspaceAutonomousCapability(GeneralWorkspaceActionCatalog actions,
+                                                GeneralCognitiveWorkerBrainFactory brains,
+                                                WorkerRuntimeProfileBindingService profiles,
+                                                ObjectiveWorkspaceService workspaces,
+                                                ExecutionGate executionGate) {
+        this.actions = Objects.requireNonNull(actions, "actions");
+        this.brains = Objects.requireNonNull(brains, "brains");
+        this.profiles = Objects.requireNonNull(profiles, "profiles");
+        this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
+        this.runtimeConstitution = null;
+        this.executionGate = Objects.requireNonNull(executionGate, "executionGate");
+    }
+
     @Override public String capabilityRef() { return CAPABILITY; }
     @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
