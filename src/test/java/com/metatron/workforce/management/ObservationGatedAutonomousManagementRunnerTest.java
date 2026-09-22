@@ -85,6 +85,65 @@ class ObservationGatedAutonomousManagementRunnerTest {
         assertEquals(ObservationClosureService.Verdict.PASSED, observation.verdict(receipt.objectiveId()));
     }
 
+    @Test
+    void failedObservationBlocksWithTheRealVerifierDetailNotJustTheGenericVerdict() {
+        // Production incident (2026-09-22): an Objective reached 100% self-reported progress (all
+        // planned steps succeeded) but independent Observation re-verification found a real failure --
+        // ObservationVerifier implementations (e.g. GeneralWorkspaceObservationVerifier) already capture
+        // rich diagnostic detail in ObservationReport.observedState() when they independently re-run a
+        // build/test and it fails, but the durable BLOCKED reason only ever carried the generic
+        // "observation-failed" string, discarding that detail -- the exact same class of gap fixed for
+        // the CognitiveWorkerRuntime circuit breaker, recurring at a different governance checkpoint.
+        Instant now = Instant.parse("2026-08-31T04:30:00Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        ObservationClosureService observation = new ObservationClosureService(
+                new InMemoryObservationStateStore(), List.of());
+
+        AutonomousExecutionCapability capability = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.audit.read"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, "worker-auditor", "assignment-observation",
+                        "work-observation", List.of("execution:evidence:success"), "PASS");
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, request, available) -> request.executionWorkPlan(),
+                List.of(capability), coordination, observation, clock,
+                "runner-observation-fail", Duration.ofMinutes(5), Duration.ofSeconds(5), 2);
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(capability), runner, "worker-head", clock);
+
+        var receipt = ingress.submit("human-primary", "org-metatron", "case-observation-fail",
+                "conversation-observation-fail", "telegram:update:observation-fail", "telegram", request());
+
+        runner.runOnce();
+        runner.runOnce();
+
+        ObservationRequirement requirement = observation.requirements(receipt.objectiveId()).getFirst();
+        String realFailureDetail = "Independent build verification failed: npm ERR! code E404 "
+                + "npm ERR! 404 Not Found - GET https://registry.npmjs.org/@metatron%2fmissing-package";
+        observation.recordReport(new ObservationReport(
+                "observation-report-fail-1", requirement.requirementId(), receipt.objectiveId(), requirement.target(),
+                realFailureDetail,
+                "independent-sandbox-build-rerun", now.plusSeconds(30), now.plusSeconds(30),
+                List.of("observation-sandbox-verification:exit=1"), 0.95,
+                ObservationReport.Quality.HIGH, "", ObservationReport.CriterionResult.FAIL));
+
+        runner.runOnce();
+
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertEquals(ObservationClosureService.Verdict.FAILED, observation.verdict(receipt.objectiveId()));
+        assertTrue(management.history(receipt.objectiveId()).stream()
+                        .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.BLOCKED)
+                        .anyMatch(event -> event.detail().contains("npm ERR! 404")),
+                "the durable BLOCKED reason must contain the real independent-verification failure text, "
+                        + "not just the generic \"observation-failed\" verdict name");
+    }
+
     private static NormalizedRequest request() {
         ExecutionWorkSpec step = new ExecutionWorkSpec(
                 "step-1", "Audit repository", "kelvinka38/metatron-workforce", "test.audit.read",

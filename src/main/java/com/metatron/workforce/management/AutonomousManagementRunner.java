@@ -3,6 +3,7 @@ package com.metatron.workforce.management;
 import com.metatron.workforce.interaction.intelligence.ExecutionPlanProposalService;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.observation.ObservationClosureService;
+import com.metatron.workforce.observation.ObservationReport;
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.actor.WorkerActorAssignmentConsumer;
 
@@ -433,8 +434,16 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             if (verdict == ObservationClosureService.Verdict.PENDING) return;
             if (verdict == ObservationClosureService.Verdict.FAILED
                     || verdict == ObservationClosureService.Verdict.INCONCLUSIVE) {
+                // Surface the real reason, not just the verdict: production incidents (2026-09-22) reached
+                // this exact block with only the generic "observation-failed" reason ever visible to a
+                // Human -- the actual diagnostic (e.g. an ObservationVerifier's independent build/test
+                // re-run failure text, already captured in each report's observedState()) was discarded.
+                // Same class of gap as the CognitiveWorkerRuntime circuit breaker fix: don't throw away
+                // diagnostic detail the system already captured at the one place a Human can see it.
                 management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
-                        "observation-" + verdict.name().toLowerCase(java.util.Locale.ROOT), clock.instant());
+                        "observation-" + verdict.name().toLowerCase(java.util.Locale.ROOT)
+                                + ":" + observationFailureDetail(observationClosure.reports(objectiveId)),
+                        clock.instant());
                 return;
             }
         }
@@ -879,6 +888,22 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private void releaseIfOwned(String objectiveId, ManagementLease lease) {
         try { management.releaseManagementLease(objectiveId, runnerId, lease.token(), clock.instant()); }
         catch (RuntimeException stale) { LOG.debug("Management lease already expired or replaced for {}", objectiveId); }
+    }
+
+    private static final int OBSERVATION_FAILURE_DETAIL_MAX_CHARS = 600;
+
+    /** Bounded, diagnosable excerpt of why independent Observation did not pass, built from whatever
+     * requirements actually have a non-PASS report -- a requirement that never got a report at all
+     * (attempts exhausted without any verifier response) intentionally falls through to the generic
+     * fallback, since there is no real detail to surface for it. */
+    private static String observationFailureDetail(List<ObservationReport> reports) {
+        String detail = reports.stream()
+                .filter(report -> report.criterionResult() != ObservationReport.CriterionResult.PASS)
+                .map(report -> report.requirementId() + "=" + report.observedState())
+                .collect(java.util.stream.Collectors.joining("; "));
+        if (detail.isBlank()) return "no-observation-report-recorded";
+        return detail.length() <= OBSERVATION_FAILURE_DETAIL_MAX_CHARS
+                ? detail : detail.substring(0, OBSERVATION_FAILURE_DETAIL_MAX_CHARS) + "...";
     }
 
     private static String classify(RuntimeException failure) {
