@@ -29,6 +29,11 @@ public final class SafetyGovernedAutonomousExecutionCapability implements Autono
     @Override public String authorizationReference() { return delegate.authorizationReference(); }
     @Override public double minimumCapabilityLevel() { return delegate.minimumCapabilityLevel(); }
     @Override public double requiredCapacity() { return delegate.requiredCapacity(); }
+    @Override public PlanningReadiness planningReadiness() { return delegate.planningReadiness(); }
+    @Override public MutationRecoveryPolicy mutationRecoveryPolicy() { return delegate.mutationRecoveryPolicy(); }
+    @Override public InterruptedMutationResolution reconcileInterruptedMutation(InterruptedMutationContext context) {
+        return delegate.reconcileInterruptedMutation(context);
+    }
     @Override public boolean supportsWorker(String workerId) { return delegate.supportsWorker(workerId); }
     @Override public boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {
         return delegate.supportsWorker(workerId, workSpec);

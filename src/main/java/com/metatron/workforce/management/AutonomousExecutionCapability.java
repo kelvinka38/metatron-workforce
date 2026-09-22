@@ -21,6 +21,48 @@ public interface AutonomousExecutionCapability {
     default String authorizationReference() { return ""; }
     default double minimumCapabilityLevel() { return 1.0; }
     default double requiredCapacity() { return 1.0; }
+
+    enum PlanningReadiness { AVAILABLE, TEMPORARILY_UNAVAILABLE, NOT_CONFIGURED }
+    enum MutationRecoveryPolicy { NONE, BOUNDED_RETRY, RECONCILE_BEFORE_RETRY }
+    enum InterruptedMutationResolution {
+        CONFIRMED_SUCCEEDED,
+        SAFE_TO_RETRY,
+        WAIT_RETRY_LATER,
+        HUMAN_REQUIRED
+    }
+
+    record InterruptedMutationContext(
+            String objectiveId,
+            ExecutionWorkSpec workSpec,
+            String idempotencyKey,
+            String dispatchReference,
+            int dispatchAttempt,
+            List<String> priorEvidenceReferences) {
+        public InterruptedMutationContext {
+            Objects.requireNonNull(objectiveId, "objectiveId");
+            Objects.requireNonNull(workSpec, "workSpec");
+            Objects.requireNonNull(idempotencyKey, "idempotencyKey");
+            Objects.requireNonNull(dispatchReference, "dispatchReference");
+            priorEvidenceReferences = List.copyOf(
+                    priorEvidenceReferences == null ? List.of() : priorEvidenceReferences);
+        }
+    }
+
+    /** Hard prerequisite visibility for planning; finite capacity remains a scheduler concern. */
+    default PlanningReadiness planningReadiness() { return PlanningReadiness.AVAILABLE; }
+
+    /** Mutating retries are opt-in; fail-closed is the default for every new capability. */
+    default MutationRecoveryPolicy mutationRecoveryPolicy() { return MutationRecoveryPolicy.NONE; }
+
+    /**
+     * Called only after a restart/interruption left a MUTATING dispatch with an ambiguous outcome.
+     * Capabilities that can safely prove an idempotent same-step retry may opt in; all others stop.
+     */
+    default InterruptedMutationResolution reconcileInterruptedMutation(InterruptedMutationContext context) {
+        Objects.requireNonNull(context, "context");
+        return InterruptedMutationResolution.HUMAN_REQUIRED;
+    }
+
     default boolean supportsWorker(String workerId) { return true; }
 
     default boolean supportsWorker(String workerId, ExecutionWorkSpec workSpec) {

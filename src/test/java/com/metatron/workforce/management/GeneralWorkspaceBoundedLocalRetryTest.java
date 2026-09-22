@@ -39,6 +39,9 @@ class GeneralWorkspaceBoundedLocalRetryTest {
 
         AutonomousExecutionCapability workspace = new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return GeneralWorkspaceAutonomousCapability.CAPABILITY; }
+            @Override public MutationRecoveryPolicy mutationRecoveryPolicy() {
+                return MutationRecoveryPolicy.BOUNDED_RETRY;
+            }
 
             @Override public CapabilityResult execute(CapabilityRequest request) {
                 String stepId = request.workSpec().stepId();
@@ -112,6 +115,9 @@ class GeneralWorkspaceBoundedLocalRetryTest {
 
         AutonomousExecutionCapability workspace = new AutonomousExecutionCapability() {
             @Override public String capabilityRef() { return GeneralWorkspaceAutonomousCapability.CAPABILITY; }
+            @Override public MutationRecoveryPolicy mutationRecoveryPolicy() {
+                return MutationRecoveryPolicy.BOUNDED_RETRY;
+            }
 
             @Override public CapabilityResult execute(CapabilityRequest request) {
                 if (request.workSpec().stepId().equals("deliver")) {

@@ -19,9 +19,13 @@ function configFromEnv() {
     auth: process.env.METATRON_COGNITION_AUTH || '',
     port: positiveInt(process.env.PORT, 8091),
     revision: process.env.METATRON_COGNITION_REVISION || 'unknown',
-    totalTimeoutMs: positiveInt(process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS, 210000),
-    ollamaTimeoutMs: positiveInt(process.env.OLLAMA_TIMEOUT_MS, 150000),
+    totalTimeoutMs: positiveInt(process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS, 180000),
+    ollamaTimeoutMs: positiveInt(process.env.OLLAMA_TIMEOUT_MS, 105000),
     frontierTimeoutMs: positiveInt(process.env.FRONTIER_PROVIDER_TIMEOUT_MS, 18000),
+    providerCooldownMs: positiveInt(process.env.PROVIDER_COOLDOWN_MS, 60000),
+    providerLongCooldownMs: positiveInt(process.env.PROVIDER_LONG_COOLDOWN_MS, 900000),
+    providerOrder: String(process.env.COGNITION_PROVIDER_ORDER || 'gemini,openai,anthropic,ollama')
+      .split(',').map(v => v.trim().toLowerCase()).filter(Boolean),
     maxOutputTokens: positiveInt(process.env.COGNITION_MAX_OUTPUT_TOKENS, 256),
     ollamaThink: optionalBoolean(process.env.OLLAMA_THINK),
   };
@@ -131,13 +135,35 @@ async function callAnthropic(prompt, timeoutMs, cfg = configFromEnv()) {
   return { text, model: data.model || model, inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0, endpointId: 'anthropic' };
 }
 
-function providerList() {
-  return [
-    ['ollama', callOllama],
-    ['gemini', callGemini],
-    ['openai', callOpenAi],
-    ['anthropic', callAnthropic],
-  ];
+const providerFunctions = new Map([
+  ['gemini', callGemini],
+  ['openai', callOpenAi],
+  ['anthropic', callAnthropic],
+  ['ollama', callOllama],
+]);
+const providerCooldownUntil = new Map();
+
+function providerList(cfg = configFromEnv()) {
+  const ordered = [];
+  const seen = new Set();
+  for (const name of cfg.providerOrder || []) {
+    const fn = providerFunctions.get(name);
+    if (!fn || seen.has(name)) continue;
+    seen.add(name);
+    ordered.push([name, fn]);
+  }
+  for (const [name, fn] of providerFunctions) {
+    if (!seen.has(name)) ordered.push([name, fn]);
+  }
+  return ordered;
+}
+
+function cooldownDurationMs(klass, cfg) {
+  if (klass === 'http_401' || klass === 'http_402' || klass === 'http_403' || klass === 'http_400') {
+    return cfg.providerLongCooldownMs;
+  }
+  if (klass === 'http_429' || klass === 'http_503') return cfg.providerCooldownMs;
+  return 0;
 }
 
 function failureClass(error) {
@@ -150,6 +176,7 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
   const started = performance.now();
   const deadline = started + cfg.totalTimeoutMs;
   const attempts = [];
+  const cooldowns = requestOptions.cooldowns || providerCooldownUntil;
 
   for (let i = 0; i < providers.length; i++) {
     const remainingMs = Math.floor(deadline - performance.now());
@@ -158,6 +185,11 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
     }
 
     const [name, fn] = providers[i];
+    const cooldownUntil = cooldowns.get(name) || 0;
+    if (cooldownUntil > Date.now()) {
+      attempts.push({ provider: name, durationMs: 0, failureClass: 'cooldown' });
+      continue;
+    }
     const configuredTimeoutMs = name === 'ollama' ? cfg.ollamaTimeoutMs : cfg.frontierTimeoutMs;
     const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, remainingMs));
     const attemptStart = performance.now();
@@ -190,7 +222,9 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
     } catch (failure) {
       const durationMs = Math.max(0, Math.round(performance.now() - attemptStart));
       const klass = failureClass(failure);
-      console.error('provider_failed', name, klass, durationMs);
+      const cooldownMs = cooldownDurationMs(klass, cfg);
+      if (cooldownMs > 0) cooldowns.set(name, Date.now() + cooldownMs);
+      console.error('provider_failed', name, klass, durationMs, cooldownMs > 0 ? 'cooldown_ms=' + cooldownMs : '');
       attempts.push({ provider: name, durationMs, failureClass: klass });
       if (performance.now() >= deadline) {
         return { status: 504, body: { error: 'cognition_deadline_exhausted', providerAttempts: attempts, revision: cfg.revision } };
@@ -222,7 +256,7 @@ function createServer(cfg = configFromEnv()) {
         frontierTimeoutMs: cfg.frontierTimeoutMs,
         maxOutputTokens: cfg.maxOutputTokens,
         workerCognitionOllamaThink: cfg.ollamaThink === undefined ? false : cfg.ollamaThink,
-        providerOrder: providerList().map(([name]) => name),
+        providerOrder: providerList(cfg).map(([name]) => name),
       });
     }
     if (req.method !== 'POST' || req.url !== '/v1/cognition') return send(res, 404, { error: 'not_found' });
@@ -241,7 +275,7 @@ function createServer(cfg = configFromEnv()) {
       try { body = JSON.parse(raw); } catch { return send(res, 400, { error: 'invalid_json' }); }
       const requestId = String(body.requestId || '');
       const outcome = await runProviderChain(
-        buildPrompt(body), providerList(), cfg, { capability: String(body.capability || '') });
+        buildPrompt(body), providerList(cfg), cfg, { capability: String(body.capability || '') });
       if (outcome.status === 200) outcome.body.requestReference = requestId;
       return send(res, outcome.status, outcome.body);
     });

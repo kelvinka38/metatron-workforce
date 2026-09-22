@@ -1,19 +1,24 @@
 # Metatron Cognition Node
 
-Dependency-free Node.js front door for Metatron-owned cognition. The provider order is intentionally:
+Dependency-free Node.js front door for Metatron-owned cognition. AUTO failover defaults to:
 
-1. Ollama / `qwen3:8b` (primary)
-2. Gemini
-3. OpenAI
-4. Anthropic
+1. Gemini
+2. OpenAI
+3. Anthropic
+4. Ollama / `qwen3:8b` (local no-paid-credit fallback)
+
+The order is configurable with `COGNITION_PROVIDER_ORDER`; explicit deployments may override it without changing code.
 
 ## Reliability envelope
 
 The node treats one cognition request as a single bounded transaction:
 
-- `METATRON_COGNITION_TOTAL_TIMEOUT_MS=210000`
-- `OLLAMA_TIMEOUT_MS=150000`
+- `METATRON_COGNITION_TOTAL_TIMEOUT_MS=180000`
+- `OLLAMA_TIMEOUT_MS=105000`
 - `FRONTIER_PROVIDER_TIMEOUT_MS=18000`
+- `PROVIDER_COOLDOWN_MS=60000`
+- `PROVIDER_LONG_COOLDOWN_MS=900000`
+- `COGNITION_PROVIDER_ORDER=gemini,openai,anthropic,ollama`
 - `COGNITION_MAX_OUTPUT_TOKENS=256`
 - every provider attempt uses `min(provider timeout, remaining whole-request budget)`
 - every HTTP call is AbortController-bounded
@@ -49,8 +54,8 @@ node --test deploy/cognition-node/server.test.js
 ./gradlew test --no-daemon
 ```
 
-The Node suite covers provider order, output caps, whole-request deadline clamping, deterministic
-502/504 behavior, and explicit-vs-default Ollama thinking.
+The Node suite covers configurable provider order, provider cooldown/skip behavior, local Ollama fallback,
+output caps, whole-request deadline clamping, deterministic 502/504 behavior, and explicit-vs-default Ollama thinking.
 
 ## Safe smoke test
 
@@ -59,13 +64,13 @@ The Node suite covers provider order, output caps, whole-request deadline clampi
 ```
 
 The smoke test never stops or restarts the live Ollama container. It checks immutable health identity
-and the normal Ollama-primary path. Fallback behavior is covered by the Node test suite. A real
-fallback smoke may be run only against a separate canary Cognition Node by overriding `NODE_URL`.
+and one normal cognition request. Provider-failure/cooldown behavior is covered by the Node test suite.
+A destructive real fallback smoke must use a separate canary Cognition Node by overriding `NODE_URL`.
 
 ## Deployment ordering
 
 Deploy Workforce first with `METATRON_COGNITION_HTTP_TIMEOUT_MS=240000`, then deploy the Cognition
-Node. This ensures the Java caller remains alive longer than the Node's 210-second total deadline.
+Node. This keeps the Java caller alive longer than the Node's 180-second total deadline.
 
 For the current 4-vCPU / 8-GB host, start with one concurrent cognition request. Queue sizing and wait
 time must be based on the measured production-shaped qwen benchmark rather than increased blindly.

@@ -124,7 +124,9 @@ public final class TelegramBotGateway implements ChannelGateway {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("chat_id", chatId);
         payload.put("text", text);
-        payload.put("reply_markup", workReplyMarkup());
+        // Live Work Cards are edited in place by the monitor. Telegram editMessageText does not
+        // permit a message carrying ReplyKeyboardMarkup, so persistent navigation controls belong
+        // on separate control replies, never on the live-edit status message itself.
         ApiResult result = invoke("sendMessage", payload);
         long messageId = result.json().path("result").path("message_id").asLong(-1L);
         if (messageId < 0) throw new IllegalStateException("telegram_work_card_message_id_missing");

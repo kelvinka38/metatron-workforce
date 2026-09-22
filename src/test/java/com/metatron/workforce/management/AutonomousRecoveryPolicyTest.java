@@ -14,43 +14,42 @@ class AutonomousRecoveryPolicyTest {
                 List.of("accepted"), List.of("evidence"));
     }
 
-    @Test void generalWorkspaceMutatingFailureIsBoundedLocalRetryEligibleNeverReplan() {
-        ExecutionWorkSpec step = step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING);
-        assertTrue(AutonomousRecoveryPolicy.boundedLocalRetryEligible(
-                step, "capability-unsuccessful:cognitive worker failed"),
-                "an ordinary DELIVER/PRODUCE/PREPARE/VERIFY execution failure must recover via bounded "
-                        + "step-local retry");
+    @Test void ordinaryMutatingFailureIsClassifiedForCapabilityOwnedRecoveryNeverReplan() {
+        ExecutionWorkSpec general = step(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                ExecutionWorkSpec.Consequence.MUTATING);
+        ExecutionWorkSpec pr = step(RepositoryPullRequestAutonomousCapability.CAPABILITY,
+                ExecutionWorkSpec.Consequence.MUTATING);
+
+        assertTrue(AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(
+                general, "capability-unsuccessful:cognitive worker failed"));
+        assertTrue(AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(
+                pr, "runtime-failure:temporary"));
         assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(
-                step, "capability-unsuccessful:cognitive worker failed"),
-                "REPLAN must never be used as recovery for an ordinary general-workspace execution failure");
+                general, "capability-unsuccessful:cognitive worker failed"));
+        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(
+                pr, "runtime-failure:temporary"));
     }
 
     @Test void readOnlyProviderOrRuntimeFailureIsBoundedRetryEligibleNeverReplan() {
         ExecutionWorkSpec step = step("test.recovery.read", ExecutionWorkSpec.Consequence.READ_ONLY);
-        assertTrue(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(step, "provider-timeout"),
-                "an ordinary READ_ONLY provider/runtime failure must recover via bounded read-only retry");
-        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(step, "provider-timeout"),
-                "REPLAN must never be used as recovery for an exhausted ordinary READ_ONLY retry -- no "
-                        + "trustworthy automatic plan-invalid signal exists");
-        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(step, "provider-timeout"),
-                "bounded step-local retry (PR #489) only ever applies to the MUTATING general-workspace pipeline");
+        assertTrue(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(step, "provider-timeout"));
+        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(step, "provider-timeout"));
+        assertFalse(AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(step, "provider-timeout"));
     }
 
-    @Test void unrelatedMutationAndSafetyFailuresStayFailClosed() {
-        ExecutionWorkSpec unrelated = step("repository.pr.propose", ExecutionWorkSpec.Consequence.MUTATING);
-        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(unrelated, "runtime-failure:x"));
-        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(unrelated, "runtime-failure:x"));
-        assertFalse(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(unrelated, "runtime-failure:x"),
-                "bounded read-only retry never applies to a MUTATING step");
+    @Test void humanAuthorizationAndSafetyFailuresStayFailClosed() {
+        ExecutionWorkSpec mutation = step(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+                ExecutionWorkSpec.Consequence.MUTATING);
+        assertFalse(AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(
+                mutation, "autonomy-safety-gate:denied"));
+        assertFalse(AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(
+                mutation, "authorization-failure:denied"));
+        assertFalse(AutonomousRecoveryPolicy.mutatingExecutionFailureEligible(
+                mutation, "data-failure:invalid"));
 
-        ExecutionWorkSpec generalWorkspace = step(GeneralWorkspaceAutonomousCapability.CAPABILITY, ExecutionWorkSpec.Consequence.MUTATING);
-        assertFalse(AutonomousRecoveryPolicy.autonomousReplanEligible(generalWorkspace, "autonomy-safety-gate:denied"));
-        assertFalse(AutonomousRecoveryPolicy.boundedLocalRetryEligible(generalWorkspace, "autonomy-safety-gate:denied"),
-                "a genuine safety-gate denial must never be bounded-locally-retried either -- only Human recovery");
-
-        ExecutionWorkSpec readOnlyGeneralWorkspace = step(GeneralWorkspaceAutonomousCapability.CAPABILITY,
+        ExecutionWorkSpec readOnly = step(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                 ExecutionWorkSpec.Consequence.READ_ONLY);
-        assertFalse(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(readOnlyGeneralWorkspace, "authorization-failure:denied"),
-                "a genuine authorization failure must never be bounded-read-only-retried either -- only Human recovery");
+        assertFalse(AutonomousRecoveryPolicy.readOnlyRecoveryEligible(
+                readOnly, "authorization-failure:denied"));
     }
 }

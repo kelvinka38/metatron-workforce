@@ -75,6 +75,23 @@ public final class RepositoryPullRequestAutonomousCapability implements Autonomo
     }
     @Override public String authorityReference() { return AUTHORITY_REFERENCE; }
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
+    @Override public PlanningReadiness planningReadiness() {
+        return token.isBlank() ? PlanningReadiness.NOT_CONFIGURED : PlanningReadiness.AVAILABLE;
+    }
+    @Override public MutationRecoveryPolicy mutationRecoveryPolicy() {
+        return MutationRecoveryPolicy.BOUNDED_RETRY;
+    }
+    @Override public InterruptedMutationResolution reconcileInterruptedMutation(InterruptedMutationContext context) {
+        if (token.isBlank()
+                || context.workSpec().consequence() != ExecutionWorkSpec.Consequence.MUTATING
+                || !CAPABILITY.equals(context.workSpec().requiredCapability())) {
+            return InterruptedMutationResolution.HUMAN_REQUIRED;
+        }
+        // The proposal branch/probe/PR identity derives from the stable step idempotency key and all
+        // mutating GitHub actions are ENSURE operations, so a same-step retry reconciles existing
+        // remote state instead of creating a second independent mutation.
+        return InterruptedMutationResolution.SAFE_TO_RETRY;
+    }
     @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
 
     @Override

@@ -7,6 +7,7 @@ const {
   callGemini,
   callOllama,
   callOpenAi,
+  providerList,
   runProviderChain,
 } = require('./server');
 
@@ -18,6 +19,9 @@ function cfg(overrides = {}) {
     totalTimeoutMs: 120,
     ollamaTimeoutMs: 80,
     frontierTimeoutMs: 50,
+    providerCooldownMs: 25,
+    providerLongCooldownMs: 100,
+    providerOrder: ['gemini', 'openai', 'anthropic', 'ollama'],
     maxOutputTokens: 256,
     ollamaThink: undefined,
     ...overrides,
@@ -42,7 +46,38 @@ test('bounded fetch aborts a hanging provider call', async () => {
   }
 });
 
-test('provider order remains ollama then gemini then openai then anthropic', async () => {
+test('configured default order is frontier-first with local ollama last', () => {
+  assert.deepEqual(providerList(cfg()).map(([name]) => name),
+    ['gemini', 'openai', 'anthropic', 'ollama']);
+});
+
+test('rate-limited provider is cooled down and skipped on the next request', async () => {
+  const cooldowns = new Map();
+  let geminiCalls = 0;
+  const providers = [
+    ['gemini', async () => {
+      geminiCalls++;
+      const error = new Error('rate limited');
+      error.failureClass = 'http_429';
+      throw error;
+    }],
+    ['ollama', async () => ({
+      text: 'local-ok', model: 'local', inputTokens: 1, outputTokens: 1, endpointId: 'ollama',
+    })],
+  ];
+  const first = await runProviderChain('prompt', providers, cfg(), { cooldowns });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.providerUsed, 'ollama');
+  assert.equal(geminiCalls, 1);
+
+  const second = await runProviderChain('prompt', providers, cfg(), { cooldowns });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.providerUsed, 'ollama');
+  assert.equal(geminiCalls, 1, 'cooled-down provider must not be called again immediately');
+  assert.equal(second.body.providerAttempts[0].failureClass, 'cooldown');
+});
+
+test('explicit provider chain falls through in the supplied order', async () => {
   const seen = [];
   const fail = name => async () => {
     seen.push(name);
@@ -153,7 +188,7 @@ test('worker.cognition disables ollama thinking by default', async () => {
       seenThink = providerCfg.ollamaThink;
       return { text: 'ok', model: 'qwen3:8b', inputTokens: 1, outputTokens: 1, endpointId: 'ollama' };
     }],
-  ], cfg({ ollamaThink: undefined }), { capability: 'worker.cognition' });
+  ], cfg({ ollamaThink: undefined }), { capability: 'worker.cognition', cooldowns: new Map() });
 
   assert.equal(outcome.status, 200);
   assert.equal(seenThink, false);

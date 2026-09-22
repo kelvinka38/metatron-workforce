@@ -241,7 +241,13 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(3, plan.size());
+        assertEquals(4, plan.size());
+        assertEquals(List.of(
+                        "general-engineering-workspace-execution-produce",
+                        "general-engineering-workspace-execution-prepare",
+                        "general-engineering-workspace-execution-verify",
+                        "general-engineering-workspace-execution-deliver"),
+                plan.stream().map(ExecutionWorkSpec::stepId).toList());
         assertTrue(plan.stream().allMatch(work ->
                 "repository:kelvinka38/kitchen-companion".equals(work.target())));
         assertTrue(plan.stream().noneMatch(work ->
@@ -249,6 +255,7 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 "an unrelated new app must never be silently pointed at the existing Workforce repository");
         assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
         assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertEquals(List.of(plan.get(2).stepId()), plan.get(3).dependsOn());
     }
 
     @Test

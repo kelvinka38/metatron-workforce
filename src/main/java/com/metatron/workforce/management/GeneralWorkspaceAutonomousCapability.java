@@ -100,6 +100,19 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
     @Override public String authorizationReference() { return AUTHORIZATION_REFERENCE; }
     @Override public double minimumCapabilityLevel() { return 1.0; }
     @Override public double requiredCapacity() { return 1.0; }
+    @Override public MutationRecoveryPolicy mutationRecoveryPolicy() {
+        return MutationRecoveryPolicy.BOUNDED_RETRY;
+    }
+    @Override public InterruptedMutationResolution reconcileInterruptedMutation(InterruptedMutationContext context) {
+        if (!CAPABILITY.equals(context.workSpec().requiredCapability())
+                || context.workSpec().consequence() != ExecutionWorkSpec.Consequence.MUTATING) {
+            return InterruptedMutationResolution.HUMAN_REQUIRED;
+        }
+        // General Workspace mutations are confined to the durable Objective workspace and use
+        // stable step idempotency. Re-entering the SAME step re-inspects carried workspace/Git state
+        // through deterministic preconditions rather than replaying a different plan.
+        return InterruptedMutationResolution.SAFE_TO_RETRY;
+    }
     @Override public boolean supportsWorker(String workerId) { return WORKER_ID.equals(workerId); }
 
     @Override

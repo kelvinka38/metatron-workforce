@@ -72,6 +72,13 @@ public final class WorkCardRenderer {
                 .orElseGet(() -> management.get(objectiveId).terminal());
     }
 
+    /** Quiescent means the live monitor should stop polling until an explicit Human/runtime transition. */
+    public boolean quiescent(String objectiveId) {
+        return management.findAutonomousWork(objectiveId)
+                .map(work -> work.terminal() || work.status() == AutonomousObjectiveWork.Status.BLOCKED)
+                .orElseGet(() -> management.get(objectiveId).terminal());
+    }
+
     private int monitorPriority(ManagementObjective objective) {
         boolean terminal = management.findAutonomousWork(objective.objectiveId())
                 .map(AutonomousObjectiveWork::terminal)

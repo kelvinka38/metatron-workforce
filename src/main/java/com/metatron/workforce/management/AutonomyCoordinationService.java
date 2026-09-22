@@ -136,8 +136,23 @@ public final class AutonomyCoordinationService {
     }
 
     public synchronized List<String> reconcileInterrupted(String objectiveId, int graphVersion, Instant at) {
+        return reconcileInterrupted(objectiveId, graphVersion, Map.of(), at);
+    }
+
+    /**
+     * Reconciles dispatches left active by process/runtime replacement. READ_ONLY is always safely
+     * replayable. MUTATING is fail-closed unless the capability boundary supplied an explicit durable
+     * reconciliation resolution for that exact step.
+     */
+    public synchronized List<String> reconcileInterrupted(
+            String objectiveId,
+            int graphVersion,
+            Map<String, AutonomousExecutionCapability.InterruptedMutationResolution> mutatingResolutions,
+            Instant at) {
         DurableWorkGraph graph = requireActive(objectiveId, graphVersion);
         Map<String, DurableWorkGraph.Node> nodes = new LinkedHashMap<>(graph.nodes());
+        Map<String, AutonomousExecutionCapability.InterruptedMutationResolution> resolutions =
+                mutatingResolutions == null ? Map.of() : Map.copyOf(mutatingResolutions);
         List<String> unsafe = new ArrayList<>();
         boolean changed = false;
         for (var entry : graph.nodes().entrySet()) {
@@ -157,18 +172,51 @@ public final class AutonomyCoordinationService {
                 }
                 nodes.put(entry.getKey(), new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.PENDING,
                         node.attempt(), "", node.evidenceReferences(), "interrupted-read-only-retry", at));
-            } else {
-                String reason = "unknown-mutating-effect-requires-reconciliation";
+                changed = true;
+                continue;
+            }
+
+            AutonomousExecutionCapability.InterruptedMutationResolution resolution =
+                    resolutions.getOrDefault(node.spec().stepId(),
+                            AutonomousExecutionCapability.InterruptedMutationResolution.HUMAN_REQUIRED);
+            if (resolution == AutonomousExecutionCapability.InterruptedMutationResolution.WAIT_RETRY_LATER) {
+                continue;
+            }
+            if (resolution == AutonomousExecutionCapability.InterruptedMutationResolution.CONFIRMED_SUCCEEDED) {
+                List<String> evidence = new ArrayList<>(dispatch == null
+                        ? node.evidenceReferences() : dispatch.evidenceReferences());
+                evidence.add("interrupted-mutation-reconciled:execution-attempt-succeeded");
                 if (dispatch != null && dispatch.status() == DurableDispatch.Status.STARTED) {
-                    dispatches.put(dispatch.dispatchId(), copyDispatch(dispatch, DurableDispatch.Status.DEAD_LETTERED,
+                    dispatches.put(dispatch.dispatchId(), copyDispatch(dispatch, DurableDispatch.Status.SUCCEEDED,
+                            evidence, "", at));
+                }
+                nodes.put(entry.getKey(), new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.SUCCEEDED,
+                        node.attempt(), node.dispatchId(), List.copyOf(evidence), "", at));
+                changed = true;
+                continue;
+            }
+            if (resolution == AutonomousExecutionCapability.InterruptedMutationResolution.SAFE_TO_RETRY) {
+                String reason = "interrupted-mutating-safe-retry";
+                if (dispatch != null && dispatch.status() == DurableDispatch.Status.STARTED) {
+                    dispatches.put(dispatch.dispatchId(), copyDispatch(dispatch, DurableDispatch.Status.FAILED,
                             dispatch.evidenceReferences(), reason, at));
                 }
-                nodes.put(entry.getKey(), new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.FAILED,
-                        node.attempt(), node.dispatchId(), node.evidenceReferences(), reason, at));
-                deadLetters.add(new AutonomyCoordinationStateStore.DeadLetter(
-                        node.dispatchId(), objectiveId, node.spec().stepId(), reason, at));
-                unsafe.add(node.spec().stepId());
+                nodes.put(entry.getKey(), new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.PENDING,
+                        node.attempt(), "", node.evidenceReferences(), reason, at));
+                changed = true;
+                continue;
             }
+
+            String reason = "unknown-mutating-effect-requires-reconciliation";
+            if (dispatch != null && dispatch.status() == DurableDispatch.Status.STARTED) {
+                dispatches.put(dispatch.dispatchId(), copyDispatch(dispatch, DurableDispatch.Status.DEAD_LETTERED,
+                        dispatch.evidenceReferences(), reason, at));
+            }
+            nodes.put(entry.getKey(), new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.FAILED,
+                    node.attempt(), node.dispatchId(), node.evidenceReferences(), reason, at));
+            deadLetters.add(new AutonomyCoordinationStateStore.DeadLetter(
+                    node.dispatchId(), objectiveId, node.spec().stepId(), reason, at));
+            unsafe.add(node.spec().stepId());
             changed = true;
         }
         if (changed) {
