@@ -336,6 +336,11 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 }
             }
 
+            // Renew before dispatching, not only after: the FIRST await() below can itself block for
+            // up to nodeExecutionTimeout, so the lease must already have that much runway going in --
+            // a renewal placed only after await() returns is too late if that single await alone
+            // outlasted the lease (see renewLease() for the full production incident this covers).
+            lease = renewLease(lease);
             List<PendingNodeExecution> dispatched = new ArrayList<>();
             int graphVersion = graph.graphVersion();
             String schedulerRef = schedulingDecisionId;
@@ -840,14 +845,26 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     }
 
     /**
-     * Extends the held lease's expiry by the runner's normal lease duration, keyed by the SAME token
-     * (fencing version is unchanged, so every already-planned lease.token() reference in this pass
-     * stays valid). Reuses the existing renewManagementLease capability -- previously unused by this
-     * runner -- rather than a second lease/heartbeat mechanism.
+     * Extends the held lease's expiry, keyed by the SAME token (fencing version is unchanged, so
+     * every already-planned lease.token() reference in this pass stays valid). Reuses the existing
+     * renewManagementLease capability -- previously unused by this runner -- rather than a second
+     * lease/heartbeat mechanism.
+     *
+     * <p>Renews for at least nodeExecutionTimeout, not just leaseDuration: a single dispatch can
+     * legitimately block in await() for up to nodeExecutionTimeout (default 30 minutes), which is far
+     * longer than DEFAULT_LEASE (5 minutes). A renewal that only grants leaseDuration can itself
+     * already be too late -- renewManagementLease requires the CURRENT lease to still be active, so if
+     * the lease lapsed while this same await() was still blocked, the renewal call throws the same
+     * stale-lease failure it exists to prevent (observed live in production on 2026-09-22: a single
+     * slow cognitive-provider call outlasted the 5-minute lease before the first post-await renewal
+     * ever ran). Granting nodeExecutionTimeout of runway instead means a renewal taken right before
+     * dispatch can always survive whatever a single subsequent await legitimately takes.</p>
      */
     private ManagementLease renewLease(ManagementLease lease) {
+        Duration duration = leaseDuration.compareTo(nodeExecutionTimeout) >= 0
+                ? leaseDuration : nodeExecutionTimeout;
         return management.renewManagementLease(
-                lease.objectiveId(), runnerId, lease.token(), leaseDuration, clock.instant());
+                lease.objectiveId(), runnerId, lease.token(), duration, clock.instant());
     }
 
     private void blockIfLeaseActive(String objectiveId, ManagementLease lease, String reason) {
