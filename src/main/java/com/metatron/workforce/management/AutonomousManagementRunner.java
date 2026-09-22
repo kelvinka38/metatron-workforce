@@ -357,6 +357,21 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             boolean stop = false;
             for (PendingNodeExecution pending : dispatched) {
                 NodeExecutionOutcome outcome = await(pending);
+                // Root-cause fix (2026-09-22, found live in production): a single node dispatch can
+                // legitimately take up to nodeExecutionTimeout (30 minutes), and one process() pass can
+                // sequentially dispatch/await several bounded-retry attempts of the same step before
+                // returning -- but the management lease acquired once at the top of processWithLease()
+                // was never renewed during that same pass, only DEFAULT_LEASE (5 minutes) long. Once a
+                // pass ran past that window, every remaining durable write in the SAME pass (recording
+                // the retry, or persisting the eventual blocker) failed with "missing, expired, or stale
+                // management lease" -- silently swallowed by the outer catch in processWithLease() -- so
+                // the step's exhausted-retry state was never durably recorded and the very next poll
+                // simply re-dispatched the same already-failing step again, forever, with no diagnosable
+                // BLOCKED status ever reaching the Human. Renewing here, right after the one operation
+                // in this loop that can actually be slow, keeps the lease alive for exactly as long as
+                // this pass is genuinely still working -- reusing the existing renewManagementLease
+                // capability rather than inventing a second lease mechanism.
+                lease = renewLease(lease);
                 if (outcome.missingCapability()) {
                     handleCapabilityPlanGap(objectiveId, outcome.stepId(), outcome.requiredCapability(), lease);
                     stop = true;
@@ -822,6 +837,17 @@ public final class AutonomousManagementRunner implements AutoCloseable {
 
     public List<String> capabilityCatalog() {
         return capabilities.keySet().stream().sorted().toList();
+    }
+
+    /**
+     * Extends the held lease's expiry by the runner's normal lease duration, keyed by the SAME token
+     * (fencing version is unchanged, so every already-planned lease.token() reference in this pass
+     * stays valid). Reuses the existing renewManagementLease capability -- previously unused by this
+     * runner -- rather than a second lease/heartbeat mechanism.
+     */
+    private ManagementLease renewLease(ManagementLease lease) {
+        return management.renewManagementLease(
+                lease.objectiveId(), runnerId, lease.token(), leaseDuration, clock.instant());
     }
 
     private void blockIfLeaseActive(String objectiveId, ManagementLease lease, String reason) {
