@@ -36,9 +36,29 @@ public final class WorkerExecutionSandboxService {
     public SandboxResult run(String workerId,String objectiveId,String executable,List<String> args){return run(workerId,objectiveId,"",executable,args);}
 
     public SandboxResult run(String workerId,String objectiveId,String workingDirectory,String executable,List<String> args){
+        return run(workspaces.provision(objectiveId,workerId),workerId,objectiveId,workingDirectory,executable,args);
+    }
+
+    /**
+     * Root-cause fix, second call site (production incident, case-1a86decc, 2026-09-22): re-deriving the
+     * workspace from (objectiveId, workerId) here -- the same {@link ObjectiveWorkspaceService#provision}
+     * call the first case-bb53389d fix already worked around at the caller's file-listing site -- meant
+     * independent Observation's own sandbox git/build/test commands still ran against the empty legacy
+     * directory even after the caller had correctly resolved the real attempt-scoped workspace: the
+     * caller's already-resolved {@link ObjectiveWorkspaceService.ObjectiveWorkspace} was silently discarded
+     * and re-derived here instead of being used. These overloads let a caller that has already resolved the
+     * correct workspace (e.g. via {@link ObjectiveWorkspaceService#resolveExecuted}) pass it through
+     * directly, so it is never re-derived and can never disagree with what the caller is inspecting.
+     */
+    public SandboxResult run(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,String workerId,String objectiveId,String executable,List<String> args){
+        return run(workspace,workerId,objectiveId,"",executable,args);
+    }
+
+    public SandboxResult run(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,String workerId,String objectiveId,String workingDirectory,String executable,List<String> args){
         if(!provisioned())throw new IllegalStateException("sandbox-execution-token-not-provisioned");
         WorkerRuntimeProfileBindingService.Binding binding=profiles.requireBinding(workerId);WorkerRuntimeProfileBindingService.ToolProfile profile=binding.profile();requireAllowedExecutable(profile,executable);
-        ObjectiveWorkspaceService.ObjectiveWorkspace workspace=workspaces.provision(objectiveId,workerId);
+        Objects.requireNonNull(workspace,"workspace");
+        if(!workspace.objectiveId().equals(objectiveId)||!workspace.workerId().equals(workerId))throw new SecurityException("sandbox workspace attribution mismatch");
         ExecutionAttemptContext.Binding attempt=ExecutionAttemptContext.current().orElse(null);
         String relative=workingDirectory==null?"":workingDirectory.trim();String sandboxWorkingDirectory=relative;
         if(workspace.workspaceRef().startsWith("execution-workspace:")) sandboxWorkingDirectory="repos/primary"+(relative.isBlank()?"":"/"+relative);

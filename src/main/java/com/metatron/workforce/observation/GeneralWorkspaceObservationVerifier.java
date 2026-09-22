@@ -99,7 +99,7 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                         ObservationReport.Quality.HIGH, ObservationReport.CriterionResult.FAIL));
             }
             WorkerExecutionSandboxService.SandboxResult result = sandbox.run(
-                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                     requirement.objectiveId(), command.workingDirectory(), command.executable(), command.args());
             evidence.add("observation-sandbox-verification:workspace=" + result.workspaceKey()
                     + ":workingDirectory=" + command.workingDirectory()
@@ -121,7 +121,7 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
         // a valid committed work product, so inspect HEAD^..HEAD before falling back to working-tree state.
         if (Files.exists(workspaces.resolve(workspace, ".git"))) {
             WorkerExecutionSandboxService.SandboxResult head = sandbox.run(
-                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                     requirement.objectiveId(), "git", List.of("rev-parse", "HEAD"));
             if (!head.success() || !head.output().trim().matches("[0-9a-f]{40}")) {
                 return Optional.of(report(requirement, at,
@@ -132,13 +132,13 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
             evidence.add("observation-git-head:workspace=" + head.workspaceKey() + ":sha=" + head.output().trim());
 
             WorkerExecutionSandboxService.SandboxResult commitCount = sandbox.run(
-                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                     requirement.objectiveId(), "git", List.of("rev-list", "--count", "HEAD"));
             int commits = parsePositiveInt(commitCount.output());
             String committedDelta = "";
             if (commitCount.success() && commits >= 2) {
                 WorkerExecutionSandboxService.SandboxResult delta = sandbox.run(
-                        GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                        workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                         requirement.objectiveId(), "git", List.of("diff", "--name-only", "HEAD^", "HEAD", "--"));
                 if (delta.success()) {
                     committedDelta = delta.output().trim();
@@ -149,7 +149,7 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
             }
 
             WorkerExecutionSandboxService.SandboxResult status = sandbox.run(
-                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                     requirement.objectiveId(), "git", List.of("status", "--short"));
             if (!status.success()) {
                 return Optional.of(report(requirement, at,
@@ -247,11 +247,11 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                                          String objectiveId) {
         if (!Files.isDirectory(workspaces.resolve(workspace, ".git"), LinkOption.NOFOLLOW_LINKS)) return List.of();
         WorkerExecutionSandboxService.SandboxResult count = sandbox.run(
-                GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                 objectiveId, "git", List.of("rev-list", "--count", "HEAD"));
         if (count.success() && parsePositiveInt(count.output()) >= 2) {
             WorkerExecutionSandboxService.SandboxResult delta = sandbox.run(
-                    GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                    workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                     objectiveId, "git", List.of("diff", "--name-only", "HEAD^", "HEAD", "--"));
             if (delta.success() && !delta.output().isBlank()) {
                 return delta.output().lines().map(String::trim)
@@ -259,7 +259,7 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
             }
         }
         WorkerExecutionSandboxService.SandboxResult status = sandbox.run(
-                GeneralWorkspaceAutonomousCapability.WORKER_ID,
+                workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                 objectiveId, "git", List.of("status", "--porcelain"));
         if (!status.success() || status.output().isBlank()) return List.of();
         return status.output().lines()
