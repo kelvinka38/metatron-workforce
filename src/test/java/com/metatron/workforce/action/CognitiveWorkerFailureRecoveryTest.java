@@ -148,6 +148,53 @@ class CognitiveWorkerFailureRecoveryTest {
         assertTrue(outcome.summary().contains("bounded retry exhausted"));
     }
 
+    @Test
+    void circuitBreakerSummarySurfacesTheRealSandboxFailureDetailNotJustAGenericMessage() {
+        // Production incident (2026-09-22): workspace.dependencies.install kept reaching this exact
+        // breaker, but the Objective's durable BLOCKED reason -- the only thing a Human or this session
+        // could see without raw sandbox access -- was always the generic "failed identically twice"
+        // message. The real npm/pip error text was captured in the sandboxed action's own
+        // ActionObservation.outputs() but discarded before it ever reached that reason string, making
+        // the actual root cause undiagnosable from anywhere durable.
+        String realNpmError = "npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@metatron%2fmissing-package\nnpm ERR! 404 '@metatron/missing-package@^1.0.0' is not in this registry.";
+        AtomicInteger invocations = new AtomicInteger();
+        ActionFabric fabric = new ActionFabric(List.of(
+                action("workspace.dependencies.install", request -> {
+                    invocations.incrementAndGet();
+                    return new ActionFabric.ActionObservation("workspace.dependencies.install", false,
+                            "sandbox command failed",
+                            Map.of("exitCode", "1", "output", realNpmError),
+                            List.of("worker-sandbox:executable=npm:exit=1"), java.time.Instant.now());
+                })));
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, ActionJournal.noop(), 20);
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-dependencies", "install dependencies", "fixture", "test.recovery",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("dependencies installed"), List.of("install evidence"));
+
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
+                WORKER, "assignment-dependencies", AUTH, "objective-dependencies", work, "dependencies-key",
+                new CognitiveWorkerRuntime.Brain() {
+                    @Override
+                    public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                        return new CognitiveWorkerRuntime.Thought(
+                                "workspace.dependencies.install", Map.of(), "retry dependency install");
+                    }
+
+                    @Override
+                    public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                      ActionFabric.ActionObservation observation) {
+                        return CognitiveWorkerRuntime.Reflection.continueWith("keep retrying");
+                    }
+                });
+
+        assertTrue(outcome.success() == false);
+        assertEquals(2, invocations.get());
+        assertTrue(outcome.summary().contains("npm ERR! 404"),
+                "the real npm error must be visible in the durable failure summary -- a Human reading the "
+                        + "BLOCKED reason must be able to see WHY it failed, not just THAT it failed twice");
+    }
+
     private static ActionFabric.Action action(
             String ref,
             java.util.function.Function<ActionFabric.ActionRequest, ActionFabric.ActionObservation> invocation) {
