@@ -242,6 +242,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
             plan = normalizeGatewayDirectorAppointmentTargets(normalized, plan);
             plan = normalizeCognitionAssuranceTargets(plan);
+            plan = normalizeGeneralWorkspaceTargets(normalized, plan);
             validate(plan);
 
 
@@ -297,6 +298,7 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
                 plan = reconcileSingleRepositoryAudit(normalized, availableExecutionCapabilities, plan);
                 plan = normalizeGatewayDirectorAppointmentTargets(normalized, plan);
                 plan = normalizeCognitionAssuranceTargets(plan);
+                plan = normalizeGeneralWorkspaceTargets(normalized, plan);
                 validate(plan);
 
 
@@ -523,6 +525,81 @@ public final class ExecutionWorkPlanner implements ExecutionPlanProposalService 
             }
         }
         return List.copyOf(normalized);
+    }
+
+    /**
+     * Root-cause fix (2026-09-22, found live in production, Telegram update 103337959): the frontier
+     * planner may select {@code execution.general.workspace} entirely on its own -- without the Human
+     * ever naming WORKER-GENERAL-ENGINEERING -- exactly as it independently selects Gateway Director or
+     * cognition assurance capabilities above. When it does, it has no way to know the literal governed
+     * authority target General Workspace mutation requires (a canonical {@code repository:owner/repo}
+     * string that {@link com.metatron.workforce.execution.governance.AuthorityManifestCatalog}'s
+     * {@code repository:*} wildcard resolves) and guesses a plausible-sounding placeholder instead
+     * (observed live: target="workspace"), which the authority catalog then rejects with
+     * AUTHORITY_UNRESOLVED before any work begins -- the same class of defect already fixed above for
+     * Gateway Director and cognition assurance targets.
+     *
+     * <p>This reuses the exact governed-repository-target derivation
+     * {@link FounderWorkerExecutionPlanProposalService#governedRepositoryTarget(String)} already uses
+     * for an explicitly-Worker-addressed request, rather than inventing a second competing slug/
+     * repository algorithm: an explicit repository named in the Objective is preserved verbatim; a
+     * brand-new named application derives its Founder-owned destination repository (never an existing
+     * unrelated repository such as kelvinka38/metatron-workforce) and carries the
+     * {@code workspace-source:fresh-new-application} evidence marker so the Worker starts from an empty
+     * Objective workspace instead of attempting to materialize a repository that does not exist yet.</p>
+     *
+     * <p>A step whose target already resolves under the authority contract (the canonical
+     * {@code repository:owner/repo} shape) is left untouched. When no governed target can be derived at
+     * all, this is a planning defect: the plan is rejected here, before it is ever recorded, rather than
+     * being handed to execution to guarantee-fail with AUTHORITY_UNRESOLVED.</p>
+     */
+    private static final java.util.regex.Pattern GOVERNED_REPOSITORY_TARGET = java.util.regex.Pattern.compile(
+            "^repository:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+
+    private static List<ExecutionWorkSpec> normalizeGeneralWorkspaceTargets(
+            NormalizedRequest normalized, List<ExecutionWorkSpec> plan) {
+        if (plan.isEmpty()) return plan;
+        boolean needsNormalization = plan.stream().anyMatch(step ->
+                GENERAL_WORKSPACE.equals(step.requiredCapability())
+                        && !isGovernedGeneralWorkspaceTarget(step.target()));
+        if (!needsNormalization) return plan;
+
+        FounderWorkerExecutionPlanProposalService.GovernedRepository governed =
+                FounderWorkerExecutionPlanProposalService.governedRepositoryTarget(normalized.objective());
+        if (governed.repository().isBlank()) {
+            throw new IllegalStateException(
+                    "execution_planning_defect:execution.general.workspace step has an invalid authority "
+                            + "target and no governed repository target could be derived from the Objective");
+        }
+        String target = "repository:" + governed.repository();
+
+        List<ExecutionWorkSpec> normalized2 = new ArrayList<>();
+        for (ExecutionWorkSpec step : plan) {
+            if (GENERAL_WORKSPACE.equals(step.requiredCapability()) && !isGovernedGeneralWorkspaceTarget(step.target())) {
+                List<String> evidenceRequirements = governed.existingSourceExpected()
+                        ? step.evidenceRequirements()
+                        : withFreshApplicationMarker(step.evidenceRequirements());
+                normalized2.add(new ExecutionWorkSpec(
+                        step.stepId(), step.objective(), target, step.requiredCapability(),
+                        step.dependsOn(), step.consequence(), step.acceptanceCriteria(), evidenceRequirements));
+            } else {
+                normalized2.add(step);
+            }
+        }
+        return List.copyOf(normalized2);
+    }
+
+    private static boolean isGovernedGeneralWorkspaceTarget(String target) {
+        return target != null && GOVERNED_REPOSITORY_TARGET.matcher(target.trim()).matches();
+    }
+
+    private static List<String> withFreshApplicationMarker(List<String> evidenceRequirements) {
+        if (evidenceRequirements.stream().anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase)) {
+            return evidenceRequirements;
+        }
+        List<String> merged = new ArrayList<>(evidenceRequirements);
+        merged.add("workspace-source:fresh-new-application");
+        return List.copyOf(merged);
     }
 
     private static List<ExecutionWorkSpec> reconcileCompositeCapabilities(
