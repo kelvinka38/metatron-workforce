@@ -75,6 +75,16 @@ public final class ExecutionWorkspaceManager {
 
     public synchronized Optional<ExecutionWorkspaceBinding> get(String attemptId){return Optional.ofNullable(bindings.get(attemptId));}
 
+    /** Read-only: the existing (never re-allocated) workspace binding of the most recent SUCCEEDED
+     * attempt for a logical objective+step, for callers that must inspect completed work without
+     * claiming current attempt ownership (allocate() requires an active attempt and rejects terminal
+     * ones by design). */
+    public synchronized Optional<ExecutionWorkspaceBinding> latestBindingForStep(String objectiveId,String stepId,String workerId){
+        ExecutionAttempt attempt=attempts.latestSucceededForStep(objectiveId,stepId).orElse(null);
+        if(attempt==null||!attempt.workerId().equals(workerId)) return Optional.empty();
+        return get(attempt.attemptId());
+    }
+
     public synchronized ExecutionWorkspaceBinding requireActive(String attemptId,long attemptFence,Instant at){
         attempts.requireCurrent(attemptId,attemptFence,Objects.requireNonNull(at,"at"));
         ExecutionWorkspaceBinding binding=requireBinding(attemptId);
