@@ -2,6 +2,7 @@ package com.metatron.workforce.action;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner;
 import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import org.junit.jupiter.api.Test;
 
@@ -195,6 +196,47 @@ class GeneralEngineeringFreshApplicationMaterializationTest {
                 GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context);
         assertEquals("workspace.repository.materialize", thought.actionRef());
         assertEquals("kelvinka38/metatron-workforce-control-center", thought.inputs().get("repository"));
+    }
+
+    @Test
+    void verifyPhaseTestPreconditionFiresWithoutMaterializationEvenThoughTheActionRemainsOffered() {
+        // Root-cause fix (2026-09-22, discovered by a real end-to-end acceptance run): for ANY phased
+        // Objective (not just a fresh application), materialization belongs exclusively to PRODUCE --
+        // requiresRepositoryMaterialization() already returns false for every later phase. But
+        // governedTestPrecondition() unconditionally required materializationSatisfied() regardless of
+        // whether materialization was ever actually required, and materializationSatisfied() itself
+        // returns false whenever workspace.repository.materialize is merely offered in the catalog and
+        // has not been successfully invoked -- true for every phased VERIFY, since the action stays in
+        // the general-workspace catalog throughout. The precondition therefore permanently returned null
+        // for VERIFY's own governed test step, forcing cognition to reach the exact same decision on its
+        // own every cycle with no deterministic backstop.
+        ExecutionWorkSpec verify = new ExecutionWorkSpec(
+                "general-engineering-workspace-execution-verify",
+                "VERIFY PHASE. Verify the carried workspace from the completed production phase.",
+                "repository:kelvinka38/metatron-workforce-control-center",
+                "execution.general.workspace",
+                List.of("general-engineering-workspace-execution-prepare"),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("governed build succeeds", "governed tests succeed"),
+                List.of(GeneralWorkspacePhasePlanner.PHASE_VERIFY, GeneralWorkspacePhasePlanner.REQUIRE_BUILD,
+                        GeneralWorkspacePhasePlanner.REQUIRE_TEST, "workspace-source:fresh-new-application"));
+        CognitiveWorkerRuntime.Cycle buildSucceeded = new CognitiveWorkerRuntime.Cycle(
+                1,
+                new CognitiveWorkerRuntime.Thought("workspace.build.run", Map.of(), "build"),
+                ActionFabric.ActionObservation.success("workspace.build.run", "build ok", Map.of(), List.of()),
+                CognitiveWorkerRuntime.Reflection.continueWith("continue to test"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", verify, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.build.run", "workspace.test.run",
+                        "workspace.process.run"),
+                List.of(buildSucceeded), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = GeneralCognitiveWorkerBrain.governedTestPrecondition(context);
+
+        assertEquals("workspace.test.run", thought.actionRef(),
+                "governedTestPrecondition must deterministically fire once build has succeeded, even though "
+                        + "workspace.repository.materialize is still offered and was never invoked -- "
+                        + "materialization is never required outside PRODUCE for a phased Objective");
     }
 
     @Test

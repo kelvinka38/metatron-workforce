@@ -118,7 +118,8 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
         }
 
         // For code/file/git outcomes, inspect durable Git state. A clean working tree can still contain
-        // a valid committed work product, so inspect HEAD^..HEAD before falling back to working-tree state.
+        // a valid committed work product, so inspect the latest commit's own changed paths before falling
+        // back to working-tree state.
         if (Files.exists(workspaces.resolve(workspace, ".git"))) {
             WorkerExecutionSandboxService.SandboxResult head = sandbox.run(
                     workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
@@ -136,10 +137,18 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
                     requirement.objectiveId(), "git", List.of("rev-list", "--count", "HEAD"));
             int commits = parsePositiveInt(commitCount.output());
             String committedDelta = "";
-            if (commitCount.success() && commits >= 2) {
+            // Root-cause fix (2026-09-22): a genuinely fresh workspace's very first commit has no HEAD^,
+            // so "diff HEAD^ HEAD" always failed/produced nothing here, and independent Observation
+            // reported the real, just-created single commit as having no observable change at all --
+            // exactly the same class of fresh-new-application gap already fixed elsewhere in this codebase
+            // (materialization, the repeated-failure circuit breaker). "diff-tree ... --root HEAD" reports
+            // the same changed-path list either way: against the parent for an ordinary commit, and against
+            // the empty tree for the root commit, so one command now covers both cases.
+            if (commitCount.success() && commits >= 1) {
                 WorkerExecutionSandboxService.SandboxResult delta = sandbox.run(
                         workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
-                        requirement.objectiveId(), "git", List.of("diff", "--name-only", "HEAD^", "HEAD", "--"));
+                        requirement.objectiveId(), "git",
+                        List.of("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"));
                 if (delta.success()) {
                     committedDelta = delta.output().trim();
                     evidence.add("observation-git-commit-delta:workspace=" + delta.workspaceKey()
@@ -249,10 +258,13 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
         WorkerExecutionSandboxService.SandboxResult count = sandbox.run(
                 workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
                 objectiveId, "git", List.of("rev-list", "--count", "HEAD"));
-        if (count.success() && parsePositiveInt(count.output()) >= 2) {
+        if (count.success() && parsePositiveInt(count.output()) >= 1) {
+            // Same root-cause fix as observe(): --root makes this correct for a fresh workspace's first
+            // commit (no HEAD^ to diff against) as well as any later commit.
             WorkerExecutionSandboxService.SandboxResult delta = sandbox.run(
                     workspace, GeneralWorkspaceAutonomousCapability.WORKER_ID,
-                    objectiveId, "git", List.of("diff", "--name-only", "HEAD^", "HEAD", "--"));
+                    objectiveId, "git",
+                    List.of("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"));
             if (delta.success() && !delta.output().isBlank()) {
                 return delta.output().lines().map(String::trim)
                         .filter(value -> !value.isBlank()).distinct().limit(50).toList();

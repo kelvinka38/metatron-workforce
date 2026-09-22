@@ -476,7 +476,17 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     && !successfulAction(context, "workspace.dependencies.install")) return null;
             if (requiresGovernedBuild(context) && !successfulAction(context, "workspace.build.run")) return null;
         }
-        if (!materializationSatisfied(context)) return null;
+        // Root-cause fix (2026-09-22): this materialization gate is only meaningful when this Work
+        // genuinely requires a materialized baseline before testing (an existing-repository objective).
+        // requiresRepositoryMaterialization() already encodes exactly when that is true -- notably never
+        // during phased VERIFY, since a phased Objective's materialization (if any) belongs exclusively
+        // to its PRODUCE phase. The old unconditional check instead demanded materializationSatisfied()
+        // for every phased VERIFY, including a genuinely fresh new-application Objective that correctly
+        // never materializes anything: governedTestPrecondition then permanently returned null, so
+        // cognition was asked to pick VERIFY's remaining action every cycle without ever being offered a
+        // deterministic path to workspace.test.run, and the required-action completion guard kept
+        // rejecting completion for a missing successful test that no deterministic path could ever supply.
+        if (requiresRepositoryMaterialization(context) && !materializationSatisfied(context)) return null;
         if (!hasMarker(context, GeneralWorkspacePhasePlanner.PHASE_VERIFY)
                 && context.workSpec().consequence()
                 == com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec.Consequence.MUTATING
