@@ -91,6 +91,62 @@ final class AutonomousManagementRunnerLeaseRenewalTest {
                 "the escalation reason must be durably recorded and diagnosable");
     }
 
+    @Test
+    void singleSlowAttemptThatAloneOutlastsTheLeaseIsStillDurablyEscalated() {
+        // Production incident (2026-09-22, second occurrence): a single dispatch attempt -- one
+        // cognitive-provider call, not a sequence of several -- took longer than DEFAULT_LEASE (5
+        // minutes) all by itself before failing. A renewal placed only AFTER await() returns is
+        // already too late in that case: by the time it runs, the lease acquired at the top of the
+        // pass has already lapsed, so the renewal call itself throws the very "missing, expired, or
+        // stale management lease" failure it exists to prevent -- reproducing the identical symptom
+        // (an unpersisted blocker, and the next poll re-dispatching the same failing step forever)
+        // that the first lease-renewal fix addressed for the multi-attempt case.
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-22T02:40:00Z"));
+        AtomicInteger attempts = new AtomicInteger();
+
+        AutonomousExecutionCapability workspace = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return GeneralWorkspaceAutonomousCapability.CAPABILITY; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                int attempt = attempts.incrementAndGet();
+                // Longer than the 5-minute lease below, on a SINGLE attempt -- unlike the sibling test,
+                // which only exceeds the lease cumulatively across several shorter attempts.
+                clock.advance(Duration.ofMinutes(6));
+                throw new IllegalStateException(
+                        "invalid Intelligence cognitive JSON: cognitive provider returned no JSON object, attempt="
+                                + attempt);
+            }
+        };
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management, (caseId, normalized, available) -> normalized.executionWorkPlan(),
+                List.of(workspace), coordination, clock,
+                "runner-lease-renewal-single-slow", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+
+        management.acceptHumanObjective(
+                "objective-lease-renewal-single-slow", "worker-head", "org-metatron",
+                "Create and deliver a small runnable web application",
+                "human:founder", "request-admission:lease-renewal-single-slow", "case-lease-renewal-single-slow",
+                "conversation-lease-renewal-single-slow", "message-lease-renewal-single-slow", "telegram",
+                singleStepRequest(), clock.instant());
+
+        runner.runOnce();
+
+        assertEquals(3, attempts.get(),
+                "all 3 bounded-retry attempts must actually run -- a lease that lapses mid-await on a "
+                        + "single slow attempt previously aborted the pass after only 1 attempt");
+        assertEquals(ManagementObjective.Status.ESCALATED,
+                management.get("objective-lease-renewal-single-slow").status(),
+                "exhausting the bound must durably escalate for Human review; a single attempt that "
+                        + "alone outlasts the lease previously left the Objective silently stuck EXECUTING");
+        assertTrue(management.history("objective-lease-renewal-single-slow").stream()
+                        .filter(event -> event.type() == ManagementAutonomyService.ManagementEvent.Type.ESCALATED)
+                        .anyMatch(event -> event.detail().contains("bounded-local-retry-exhausted")),
+                "the escalation reason must be durably recorded and diagnosable");
+    }
+
     private static NormalizedRequest singleStepRequest() {
         ExecutionWorkSpec verify = new ExecutionWorkSpec(
                 "verify", "Verify build and tests", "target",
