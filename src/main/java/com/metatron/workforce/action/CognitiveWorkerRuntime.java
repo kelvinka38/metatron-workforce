@@ -185,10 +185,17 @@ public final class CognitiveWorkerRuntime {
                         "repeated identical failing action blocked after 2 attempts with no state change; "
                                 + "a deterministic repair or Human diagnosis is required",
                         List.of("action-repeated-failure-circuit-breaker:" + thought.actionRef()));
+                // Surface the real underlying error (e.g. the actual npm/pip stderr from a sandboxed
+                // dependency-install failure) rather than only this generic breaker message: production
+                // incidents (2026-09-22) repeatedly reached this breaker with no diagnosable reason ever
+                // visible to a Human, because the last failing observation's own detail -- captured in
+                // ActionObservation.outputs()/summary() -- was discarded here instead of being carried
+                // into the reflection that Humans and BLOCKED/ESCALATED reasons are built from.
                 Reflection breakerReflection = Reflection.failed(
                         "Deterministic action " + thought.actionRef()
                                 + " failed identically twice with no intervening state change; "
-                                + "bounded retry exhausted, a repair or Human diagnosis is required.");
+                                + "bounded retry exhausted, a repair or Human diagnosis is required. "
+                                + "Last failure detail: " + diagnosticExcerpt(history.get(history.size() - 1).observation()));
                 Cycle cycle = new Cycle(cycleNumber, thought, blocked, breakerReflection);
                 history.add(cycle);
                 evidence.addAll(blocked.evidenceReferences());
@@ -296,6 +303,19 @@ public final class CognitiveWorkerRuntime {
         return !cycle.observation().success()
                 && cycle.thought().actionRef().equals(thought.actionRef())
                 && cycle.thought().inputs().equals(thought.inputs());
+    }
+
+    private static final int DIAGNOSTIC_EXCERPT_MAX_CHARS = 600;
+
+    /** A bounded, diagnosable excerpt of what an action actually failed with, preferring a sandboxed
+     * command's real captured output (the tail, where the actual error line usually is) over the
+     * generic summary any caller can otherwise only see as "sandbox command failed". */
+    private static String diagnosticExcerpt(ActionFabric.ActionObservation observation) {
+        String output = observation.outputs().getOrDefault("output", "");
+        String detail = output.isBlank() ? observation.summary() : output;
+        detail = detail.strip();
+        if (detail.length() <= DIAGNOSTIC_EXCERPT_MAX_CHARS) return detail;
+        return "..." + detail.substring(detail.length() - DIAGNOSTIC_EXCERPT_MAX_CHARS);
     }
 
     private ExecutionPermit authorizeMutationIfRequired(ActionFabric.ActionRequest request,
