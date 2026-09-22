@@ -116,6 +116,68 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
         }
     }
 
+    @Test
+    void blankWorkingDirectoryForANestedProjectResolvesToTheRealDeterministicProjectDirectoryNotRoot() throws Exception {
+        // Production incident (case-757e8972, 2026-09-22): the prior fix (#503) only overrode an
+        // absolute/invalid cognition-supplied workingDirectory; a BLANK input still returned the workspace
+        // root unconditionally. When cognition (correctly, this time) supplied no workingDirectory at all
+        // for a project that actually lives in a nested directory, dependenciesInstall/build/test inspected
+        // only the workspace root, found nothing, and threw "workspace dependency system not detected" --
+        // a second, distinct instance of "cognition is not authoritative for filesystem/project-root
+        // identity" surfacing right after the absolute-path case was fixed.
+        try (Harness harness = new Harness(temp.resolve("blank-nested"))) {
+            harness.workspaces.write(harness.workspace, "web/package.json",
+                    "{\"scripts\":{\"build\":\"node build.js\",\"test\":\"node test.js\"}}");
+            harness.workspaces.write(harness.workspace, "web/package-lock.json", "{}");
+
+            harness.execute("workspace.dependencies.install", Map.of());
+            harness.execute("workspace.build.run", Map.of());
+            harness.execute("workspace.test.run", Map.of());
+
+            assertEquals(3, harness.requests.size());
+            assertCommand(harness.requests.get(0), "web", "npm", List.of("ci"));
+            assertCommand(harness.requests.get(1), "web", "npm", List.of("run", "build"));
+            assertCommand(harness.requests.get(2), "web", "npm", List.of("run", "test"));
+        }
+    }
+
+    @Test
+    void blankWorkingDirectoryForARootProjectResolvesToTheWorkspaceRoot() throws Exception {
+        try (Harness harness = new Harness(temp.resolve("blank-root"))) {
+            harness.workspaces.write(harness.workspace, "package.json",
+                    "{\"scripts\":{\"build\":\"node build.js\",\"test\":\"node test.js\"}}");
+            harness.workspaces.write(harness.workspace, "package-lock.json", "{}");
+
+            harness.execute("workspace.dependencies.install", Map.of());
+            harness.execute("workspace.build.run", Map.of());
+            harness.execute("workspace.test.run", Map.of());
+
+            assertEquals(3, harness.requests.size());
+            assertCommand(harness.requests.get(0), "", "npm", List.of("ci"));
+            assertCommand(harness.requests.get(1), "", "npm", List.of("run", "build"));
+            assertCommand(harness.requests.get(2), "", "npm", List.of("run", "test"));
+        }
+    }
+
+    @Test
+    void runtimeVerificationViaProcessRunWithBlankWorkingDirectoryUsesTheSameResolvedProjectDirectory() throws Exception {
+        // "Runtime verification" has no dedicated action; it runs through workspace.process.run /
+        // workspace.shell.run. Those must resolve the same project directory as dependencies/build/test
+        // rather than defaulting to the workspace root unconditionally (their prior, unvalidated behavior).
+        try (Harness harness = new Harness(temp.resolve("runtime-nested"))) {
+            harness.workspaces.write(harness.workspace, "web/package.json",
+                    "{\"scripts\":{\"start\":\"node server.js\"}}");
+            harness.workspaces.write(harness.workspace, "web/server.js", "console.log('listening');\n");
+
+            ActionFabric.ActionObservation observation = harness.invokeDirect(
+                    "workspace.process.run", Map.of("executable", "node", "argsJson", "[\"server.js\"]"));
+
+            assertTrue(observation.success());
+            assertEquals(1, harness.requests.size());
+            assertCommand(harness.requests.get(0), "web", "node", List.of("server.js"));
+        }
+    }
+
     private static void assertCommand(JsonNode request, String cwd, String executable, List<String> args) {
         ObjectMapper json = new ObjectMapper();
         assertEquals(cwd, request.path("workingDirectory").asText());
