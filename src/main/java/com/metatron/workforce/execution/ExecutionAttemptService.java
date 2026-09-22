@@ -71,6 +71,17 @@ public final class ExecutionAttemptService {
     public synchronized Optional<ExecutionAttempt> find(String id){return Optional.ofNullable(attempts.get(id));}
     public synchronized List<ExecutionAttempt> all(){return List.copyOf(attempts.values());}
 
+    /** Read-only lookup of the most recent SUCCEEDED attempt for a logical objective+step, for callers
+     * (e.g. independent Observation) that must locate a completed attempt's durable workspace without
+     * claiming current ownership of it. */
+    public synchronized Optional<ExecutionAttempt> latestSucceededForStep(String objectiveId,String stepId){
+        String logical=logical(objectiveId,stepId);
+        return attempts.values().stream()
+                .filter(a->logical(a.objectiveId(),a.stepId()).equals(logical))
+                .filter(a->a.status()==ExecutionAttempt.Status.SUCCEEDED)
+                .max(Comparator.comparingLong(ExecutionAttempt::fencingToken));
+    }
+
     /**
      * Shared current-attempt validation used by workspace/resource substrates. This extends the
      * existing attempt authority; callers must not reproduce fencing logic independently.

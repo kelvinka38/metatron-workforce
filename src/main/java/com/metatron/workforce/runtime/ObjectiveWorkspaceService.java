@@ -61,6 +61,32 @@ public final class ObjectiveWorkspaceService {
         return provisionLegacy(objectiveId, workerId);
     }
 
+    /**
+     * Root-cause fix for independent Observation always finding a completed Objective's durable
+     * workspace empty (production incident, case-bb53389d, 2026-09-22): {@link #provision} resolves
+     * the attempt-scoped workspace only while a matching {@link ExecutionAttemptContext} is bound on the
+     * calling thread. Real execution (DELIVER etc.) runs inside that binding, but independent Observation
+     * always runs later, on a separate poll cycle, with no binding present -- so it silently fell through
+     * to the legacy per-objective+worker directory, which the real attempt never wrote to. Re-binding and
+     * calling provision() again is not an option: {@link ExecutionWorkspaceManager#allocate} requires the
+     * attempt to still be current and explicitly rejects a terminal one. This is a pure read of the
+     * already-allocated binding for the most recent SUCCEEDED attempt of the given objective+step --
+     * never allocates, never mutates attempt or workspace state. Returns empty when no execution-attempt
+     * workspace is configured or no matching SUCCEEDED attempt exists, so callers can fall back to
+     * provision()'s legacy behavior unchanged.
+     */
+    public synchronized java.util.Optional<ObjectiveWorkspace> resolveExecuted(String objectiveId, String stepId, String workerId) {
+        require(objectiveId, "objectiveId"); require(stepId, "stepId"); require(workerId, "workerId");
+        if (executionWorkspaces == null) return java.util.Optional.empty();
+        return executionWorkspaces.latestBindingForStep(objectiveId, stepId, workerId).map(binding -> {
+            Path executionRoot = Path.of(binding.rootPath()).toAbsolutePath().normalize();
+            String executionKey = executionRoot.getFileName().toString();
+            Path path = executionRoot.resolve("repos").resolve("primary").normalize();
+            if (!path.startsWith(executionRoot)) throw new SecurityException("execution compatibility workspace escaped root");
+            return new ObjectiveWorkspace(binding.workspaceId() + ":component:primary", executionKey, objectiveId, workerId, path, Instant.now());
+        });
+    }
+
     public synchronized ObjectiveWorkspace provisionForAttempt(String attemptId, long attemptFence, String objectiveId, String workerId) {
         if (executionWorkspaces == null) throw new IllegalStateException("execution workspace manager not configured");
         ExecutionWorkspaceBinding binding = executionWorkspaces.allocate(attemptId, attemptFence, Instant.now());

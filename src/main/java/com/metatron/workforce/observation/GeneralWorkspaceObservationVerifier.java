@@ -62,8 +62,10 @@ public final class GeneralWorkspaceObservationVerifier implements ObservationVer
         if (researchRequirement(requirement)) {
             return Optional.of(observeResearch(requirement, executionEvidenceReferences, at));
         }
-        ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(
-                requirement.objectiveId(), GeneralWorkspaceAutonomousCapability.WORKER_ID);
+        ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces
+                .resolveExecuted(requirement.objectiveId(), requirement.stepId(), GeneralWorkspaceAutonomousCapability.WORKER_ID)
+                .orElseGet(() -> workspaces.provision(
+                        requirement.objectiveId(), GeneralWorkspaceAutonomousCapability.WORKER_ID));
         List<String> paths = workspaces.list(workspace, "").stream()
                 .filter(path -> !path.equals(".metatron-workspace"))
                 .toList();
