@@ -422,6 +422,69 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void realisticVerifyPhaseFirstAttemptFitsInsideThePromptBudgetWithNoHistoryToCompact() {
+        // Production incident (2026-09-22, case-757e8972): VERIFY's very first cognitive request -- no
+        // recentCycles yet, so the existing history-compaction stages had nothing to trim -- rendered to
+        // 8,753 chars against the old 7,000-char budget and was rejected with
+        // worker-cognition-request-context-budget-exceeded, then blindly retried by the bounded-retry
+        // policy against the identical, deterministically oversized request. This reproduces that shape
+        // (a full VERIFY-phase available-action catalog plus realistic acceptance/evidence/memory content,
+        // zero history) and asserts it now fits.
+        AtomicInteger calls = new AtomicInteger();
+        WorkerIntelligenceService intelligence = request -> {
+            calls.incrementAndGet();
+            return new WorkerIntelligenceService.Response(
+                    "intelligence-verify-first-attempt",
+                    "{\"actionRef\":\"workspace.dependencies.install\",\"inputs\":{},\"rationale\":\"install before build\"}",
+                    List.of("intelligence-provider:test"));
+        };
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "general-engineering-workspace-execution-verify",
+                "Verify the carried workspace from the completed production phase. Do not deliver until "
+                        + "governed build, governed tests and governed runtime verification all succeed "
+                        + "against the produced workspace, and only within this Objective's isolated "
+                        + "execution workspace.",
+                "repository:kelvinka38/metatron-workforce-control-center", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("governed build succeeds against the produced workspace",
+                        "governed tests succeed against the produced workspace",
+                        "governed runtime verification succeeds against the produced workspace"),
+                List.of("build output evidence", "test output evidence", "runtime verification evidence"));
+        // No "workspace.repository.materialize" and no PHASE_VERIFY evidenceRequirements marker: this
+        // deliberately avoids GeneralCognitiveWorkerBrain's deterministic governed*Precondition fast paths
+        // (which only fire once VERIFY's phase marker and materialization evidence are present) so the
+        // request genuinely reaches cognition action-selection, exactly like the production request that
+        // overflowed the budget.
+        List<String> availableActions = List.of(
+                "workspace.file.read", "workspace.file.list",
+                "workspace.file.search", "workspace.file.patch", "workspace.file.write",
+                "workspace.project.prepare", "workspace.dependencies.install", "workspace.process.run",
+                "workspace.shell.run", "workspace.git.status", "workspace.git.diff", "workspace.git.run",
+                "workspace.github.proposal", "workspace.build.run", "workspace.test.run");
+        Map<String, String> memory = new java.util.LinkedHashMap<>();
+        memory.put("workerConstitution",
+                "WORKER_COGNITION_CONTEXT_V1=assignment-scoped bounded projection\n"
+                        + "source_snapshot_ref=worker-constitution-runtime:general-engineering\n"
+                        + "assignment=assignment-verify:authority=policy:bounded:general-engineering\n"
+                        + "x".repeat(2_500));
+        memory.put("workspaceManifestPreview", "{\"name\":\"metatron-workforce-control-center\","
+                + "\"scripts\":{\"build\":\"vite build\",\"test\":\"node --test test/*.test.js\"}}"
+                + "x".repeat(1_500));
+        memory.put("workspaceFileInventory", "src/App.jsx,src/main.jsx,index.html,package.json,"
+                + "package-lock.json,test/app.test.js" + ",x".repeat(600));
+
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "WORKER-GENERAL-ENGINEERING", "assignment-verify", "auth-verify", "objective-verify",
+                work, "idem-verify", availableActions, List.of(), memory);
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals(1, calls.get());
+        assertEquals("workspace.dependencies.install", thought.actionRef());
+    }
+
+    @Test
     void repeatedLargeCycleInputsCompactToLatestCycleInsidePromptBudget() {
         WorkerIntelligenceService intelligence = request -> {
             assertTrue(request.context().length() <= GeneralCognitiveWorkerBrain.MAX_CONTEXT_PROMPT_CHARS);
