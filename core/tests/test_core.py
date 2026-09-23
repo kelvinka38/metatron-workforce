@@ -368,5 +368,22 @@ class TelegramPolling(unittest.TestCase):
         self.assertEqual(offset, 6)
 
 
+class GeminiRequest(unittest.TestCase):
+    def _config(self, model):
+        seen = {}
+
+        def post(url, body, headers, timeout):
+            seen.update(body)
+            return {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
+
+        with mock.patch("metatron_core.llm._post", post):
+            Gemini("gemini", key="k", model=model).complete([], 64)
+        return seen["generationConfig"]
+
+    def test_thinking_is_capped_for_every_model(self):
+        self.assertEqual(self._config("gemini-2.5-flash")["thinkingConfig"], {"thinkingBudget": 1024})
+        self.assertEqual(self._config("gemini-3.8-flash")["thinkingConfig"], {"thinkingLevel": "low"})
+
+
 if __name__ == "__main__":
     unittest.main()

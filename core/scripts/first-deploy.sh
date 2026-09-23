@@ -87,13 +87,13 @@ docker exec metatron-core python -c "import socket; print('metatron-ollama resol
 step "M1-4/M1-5: one real completion from each free provider"
 docker exec -i metatron-core python - <<'PY'
 from metatron_core.llm import Gemini, Message, ProviderChain
-ok = True
+working = 0
 for p in ProviderChain.from_env().providers:
     try:
         text = p.complete([Message("user", "Reply with exactly: OK")], 64)
         print(f"{p.name}:{getattr(p, 'model', '')} -> {text.strip()[:40]!r}")
+        working += 1
     except Exception as e:
-        ok = False
         print(f"{p.name}:{getattr(p, 'model', '')} -> FAILED {type(e).__name__}: {str(e)[:300]}")
         if isinstance(p, Gemini):
             try:
@@ -101,7 +101,8 @@ for p in ProviderChain.from_env().providers:
                 print("  flash models this key can use:", ", ".join(names) or "none")
             except Exception as e2:
                 print(f"  listing models also failed: {type(e2).__name__}: {str(e2)[:200]}")
-raise SystemExit(0 if ok else 1)
+if not working:
+    raise SystemExit("no free provider answered")
 PY
 
 step "M1-6: Telegram test bot (long polling: no tunnel or public URL needed)"

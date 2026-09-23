@@ -113,7 +113,8 @@ class Gemini(Provider):
             # 2.5 models count thinking against maxOutputTokens; cap it so the answer is not starved.
             config = {"maxOutputTokens": max_tokens + 1024, "thinkingConfig": {"thinkingBudget": 1024}}
         else:
-            config = {"maxOutputTokens": max_tokens + 2048}  # room for default thinking on newer models
+            # Newer models think by default and can be slow on the free tier: ask for light thinking.
+            config = {"maxOutputTokens": max_tokens + 2048, "thinkingConfig": {"thinkingLevel": "low"}}
         body = {"contents": contents, "generationConfig": config}
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
