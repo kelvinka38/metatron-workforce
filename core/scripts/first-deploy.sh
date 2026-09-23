@@ -70,9 +70,17 @@ step "M1-3: full test suite as root inside the image (runs the agent-user isolat
 docker run --rm -v "$SRC/core:/src:ro" -w /src -e PYTHONDONTWRITEBYTECODE=1 metatron-core:latest \
   python -m unittest discover -s tests -t .
 
+step "M1-4: Ollama reachable from Core"
+if ! docker inspect -f '{{json .NetworkSettings.Networks}}' metatron-ollama | grep -q '"metatron-workforce"'; then
+  docker network connect metatron-workforce metatron-ollama
+  echo "attached metatron-ollama to network metatron-workforce (it keeps its other networks)"
+fi
+docker exec metatron-core python -c "import socket; print('metatron-ollama resolves to', socket.gethostbyname('metatron-ollama'))" \
+  || fail "Core still cannot resolve metatron-ollama"
+
 step "M1-4/M1-5: one real completion from each free provider"
 docker exec -i metatron-core python - <<'PY'
-from metatron_core.llm import Message, ProviderChain
+from metatron_core.llm import Gemini, Message, ProviderChain
 ok = True
 for p in ProviderChain.from_env().providers:
     try:
@@ -81,6 +89,12 @@ for p in ProviderChain.from_env().providers:
     except Exception as e:
         ok = False
         print(f"{p.name}:{getattr(p, 'model', '')} -> FAILED {type(e).__name__}: {str(e)[:300]}")
+        if isinstance(p, Gemini):
+            try:
+                names = [m["name"] for m in p._list_models() if "flash" in m.get("name", "")]
+                print("  flash models this key can use:", ", ".join(names) or "none")
+            except Exception as e2:
+                print(f"  listing models also failed: {type(e2).__name__}: {str(e2)[:200]}")
 raise SystemExit(0 if ok else 1)
 PY
 

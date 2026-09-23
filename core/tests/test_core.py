@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from metatron_core.agent import Agent, invalid_reply_hint, parse_action
-from metatron_core.llm import (FOREVER, EmptyReply, LlmUnavailable, Provider, ProviderChain, cooldown_for,
-                                gemini_text)
+from metatron_core.llm import (FOREVER, EmptyReply, Gemini, LlmUnavailable, Provider, ProviderChain,
+                                cooldown_for, gemini_text, pick_flash_model)
 from metatron_core.store import Store
 from metatron_core.tools import Workspace, agent_uid_for
 
@@ -298,6 +298,39 @@ class GeminiReplies(unittest.TestCase):
         chain = ProviderChain([Blocked("gemini"), Ok("ollama")])
         self.assertEqual(chain.complete([]), "fine")
         self.assertTrue(chain.providers[0].available())
+
+
+def _model(name, *methods):
+    return {"name": f"models/{name}", "supportedGenerationMethods": list(methods or ["generateContent"])}
+
+
+class GeminiModelChoice(unittest.TestCase):
+    def test_newest_stable_flash_wins(self):
+        models = [_model("gemini-2.5-flash"), _model("gemini-3.5-flash"), _model("gemini-3-flash"),
+                  _model("gemini-4-flash-preview-06"), _model("gemini-3.5-flash-lite"),
+                  _model("gemini-9-flash", "embedContent"), _model("gemini-3.5-pro")]
+        self.assertEqual(pick_flash_model(models), "gemini-3.5-flash")
+
+    def test_alias_when_no_stable_flash(self):
+        self.assertEqual(pick_flash_model([_model("gemini-flash-latest"), _model("gemini-3-pro")]),
+                         "gemini-flash-latest")
+        self.assertEqual(pick_flash_model([_model("gemini-3-pro")]), "")
+
+    def test_retired_model_switches_once(self):
+        g = Gemini("gemini", key="k", model="gemini-2.5-flash")
+        calls = []
+
+        def generate(messages, max_tokens):
+            calls.append(g.model)
+            if g.model == "gemini-2.5-flash":
+                raise urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO(b""))
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), \
+                mock.patch.object(g, "_list_models", return_value=[_model("gemini-3-flash")]):
+            self.assertEqual(g.complete([], 10), "OK")
+        self.assertEqual(calls, ["gemini-2.5-flash", "gemini-3-flash"])
+        self.assertEqual(g.model, "gemini-3-flash")
 
 
 if __name__ == "__main__":

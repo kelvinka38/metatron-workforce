@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -91,18 +92,52 @@ class Gemini(Provider):
     model: str = "gemini-2.5-flash"
 
     def complete(self, messages, max_tokens):
+        try:
+            return self._generate(messages, max_tokens)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            # Google retires model names; switch once to the newest stable Flash this key can use.
+            newest = pick_flash_model(self._list_models())
+            if not newest or newest == self.model:
+                raise
+            print(f"gemini: model {self.model} not found, switching to {newest}", flush=True)
+            self.model = newest
+            return self._generate(messages, max_tokens)
+
+    def _generate(self, messages, max_tokens):
         system, rest = _split_system(messages)
         contents = [{"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}
                     for m in rest]
-        config = {"maxOutputTokens": max_tokens}
         if self.model.startswith("gemini-2.5"):
             # 2.5 models count thinking against maxOutputTokens; cap it so the answer is not starved.
             config = {"maxOutputTokens": max_tokens + 1024, "thinkingConfig": {"thinkingBudget": 1024}}
+        else:
+            config = {"maxOutputTokens": max_tokens + 2048}  # room for default thinking on newer models
         body = {"contents": contents, "generationConfig": config}
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        url = f"{GEMINI_API}/models/{self.model}:generateContent"
         return gemini_text(_post(url, body, {"x-goog-api-key": self.key}, timeout=120))
+
+    def _list_models(self) -> list[dict]:
+        req = urllib.request.Request(f"{GEMINI_API}/models?pageSize=1000", headers={"x-goog-api-key": self.key})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read()).get("models", [])
+
+
+GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
+_STABLE_FLASH = re.compile(r"gemini-(\d+(?:\.\d+)?)-flash")
+
+
+def pick_flash_model(models: list[dict]) -> str:
+    """Newest stable 'gemini-<version>-flash' that supports generateContent, else the flash alias."""
+    names = [m.get("name", "").removeprefix("models/") for m in models
+             if "generateContent" in m.get("supportedGenerationMethods", [])]
+    stable = [(float(m.group(1)), n) for n in names if (m := _STABLE_FLASH.fullmatch(n))]
+    if stable:
+        return max(stable)[1]
+    return "gemini-flash-latest" if "gemini-flash-latest" in names else ""
 
 
 def gemini_text(data: dict) -> str:
