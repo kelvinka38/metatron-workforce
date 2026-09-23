@@ -290,6 +290,18 @@ public final class ExecutionWorkspaceManager {
      * workspace before it is returned. Attempts for different Objectives or different Workers remain
      * fully isolated, and an Objective's first attempt behaves exactly as before (no prior binding to
      * carry forward from).
+     *
+     * <p>Production incident (2026-09-23): {@code allocate()} always runs {@link
+     * #carryForwardSuccessfulPrimaryWorkspace} immediately before this method, and for the default/only
+     * repository component ({@code PRIMARY_COMPONENT = "primary"}) both target the exact same destination
+     * ({@code repos/primary}). Once a component reaches COMMITTED (i.e. every DELIVER attempt allocated
+     * after a preceding step's Git commit -- the very case this method exists for), this method's own
+     * {@link #copyTree} ran second over files {@code carryForwardSuccessfulPrimaryWorkspace} had just
+     * placed there, without {@code REPLACE_EXISTING}, so it deterministically threw
+     * FileAlreadyExistsException ("cannot carry forward committed repository component: primary") on
+     * every phased Objective. {@link #copyTree} now replaces existing files, matching {@link
+     * #copyPrimaryTree}'s existing behavior, so the second, more specific commit-tracked copy is a safe,
+     * idempotent overwrite instead of a collision.</p>
      */
     private List<ExecutionRepositoryComponent> carryForwardCommittedComponents(String objectiveId,String workerId,Path newRoot){
         ExecutionWorkspaceBinding source=null;
@@ -325,7 +337,7 @@ public final class ExecutionWorkspaceManager {
                 Path relative=from.relativize(source);
                 Path target=to.resolve(relative);
                 if(Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(target);
-                else { Files.createDirectories(target.getParent()); Files.copy(source,target,StandardCopyOption.COPY_ATTRIBUTES); }
+                else { Files.createDirectories(target.getParent()); Files.copy(source,target,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES); }
             }
         }
     }

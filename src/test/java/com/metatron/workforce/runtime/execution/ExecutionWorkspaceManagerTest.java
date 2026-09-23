@@ -88,6 +88,46 @@ class ExecutionWorkspaceManagerTest {
         assertFalse(java.nio.file.Files.exists(Path.of(after.rootPath()).resolve("repos").resolve("primary").resolve("unsafe.txt")));
     }
 
+    /**
+     * Production incident (2026-09-23): a real phased general-engineering Objective (PRODUCE/PREPARE/
+     * VERIFY/DELIVER as separate governed ExecutionAttempts) reached DELIVER with all three prior phases
+     * SUCCEEDED and a committed "primary" repository component, then permanently blocked with
+     * "cannot carry forward committed repository component: primary" on every one of its 3 bounded-retry
+     * attempts. allocate() always runs carryForwardSuccessfulPrimaryWorkspace immediately before
+     * carryForwardCommittedComponents, and for the default "primary" component both copy into the exact
+     * same repos/primary destination -- the second copy collided with files the first copy had just
+     * placed, because only the first used REPLACE_EXISTING.
+     */
+    @Test void deliverAttemptAllocationSucceedsWhenAPriorStepAlreadyCommittedThePrimaryComponent(){
+        Instant t=Instant.parse("2026-09-23T00:00:00Z");
+        ExecutionAttemptService attempts=new ExecutionAttemptService();
+        ExecutionWorkspaceManager manager=new ExecutionWorkspaceManager(temp,attempts,new InMemoryExecutionWorkspaceBindingStore());
+
+        ExecutionAttempt verify=attempts.begin("d-verify","objective:control-center","verify","worker","assignment:verify","auth","runtime:verify",1,Duration.ofHours(1),t);
+        ExecutionWorkspaceBinding verified=manager.allocate(verify.attemptId(),verify.fencingToken(),t.plusSeconds(1));
+        Path primary=Path.of(verified.rootPath()).resolve("repos").resolve("primary");
+        try{
+            java.nio.file.Files.createDirectories(primary.resolve(".git"));
+            java.nio.file.Files.writeString(primary.resolve("package.json"), "{\"scripts\":{\"test\":\"echo ok\"}}");
+            java.nio.file.Files.writeString(primary.resolve(".git").resolve("HEAD"), "ref: refs/heads/main\n");
+        }catch(java.io.IOException e){throw new AssertionError(e);}
+        manager.registerRepository(verify.attemptId(),verify.fencingToken(),"kelvinka38/metatron-workforce-control-center","main","primary","metatron/attempt-verify",t.plusSeconds(2));
+        manager.markMaterialized(verify.attemptId(),verify.fencingToken(),"primary",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","1111111111111111111111111111111111111111",t.plusSeconds(3));
+        manager.markCommitted(verify.attemptId(),verify.fencingToken(),"primary","3333333333333333333333333333333333333333",t.plusSeconds(4));
+        attempts.succeed(verify.attemptId(),verify.fencingToken(),t.plusSeconds(5));
+
+        ExecutionAttempt deliver=attempts.begin("d-deliver","objective:control-center","deliver","worker","assignment:deliver","auth","runtime:deliver",1,Duration.ofHours(1),t.plusSeconds(6));
+        ExecutionWorkspaceBinding delivered=manager.allocate(deliver.attemptId(),deliver.fencingToken(),t.plusSeconds(7));
+
+        assertEquals(1,delivered.repositories().size());
+        assertEquals(ExecutionRepositoryComponent.Status.COMMITTED,delivered.requireComponent("primary").status());
+        Path carried=Path.of(delivered.rootPath()).resolve("repos").resolve("primary");
+        assertTrue(java.nio.file.Files.isRegularFile(carried.resolve("package.json")),
+                "committed source must still be present in the DELIVER attempt's workspace");
+        assertTrue(java.nio.file.Files.isRegularFile(carried.resolve(".git").resolve("HEAD")));
+    }
+
     @Test void reclaimOrphanedDisposesBindingWithNoBackingAttempt(){
         Instant t=Instant.parse("2026-09-12T00:00:00Z");
         ExecutionAttemptService attempts=new ExecutionAttemptService();
