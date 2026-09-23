@@ -23,6 +23,8 @@ Working rules:
 - If the task names a repository, clone it first. Explore before editing (list_dir, read_file, run grep).
 - Follow the repository guidance (AGENTS.md, CONTRIBUTING.md, README) shown after cloning.
 - After changing code, run the project's build/tests. If they fail, read the error, fix, re-run.
+- To fix a failing test, fix the code under test. Never change a test's expected values, skip it or
+  delete it unless the task explicitly asks for that.
 - Never claim success you have not verified by running something. Say plainly what you could not verify.
 - Only call finish with open_pr=true when there are real changes and the checks you could run pass.
 - If the task is a question (no code change needed), answer it via finish(summary=..., open_pr=false).

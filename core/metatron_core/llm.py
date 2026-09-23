@@ -230,9 +230,12 @@ class ProviderChain:
         for p in self.providers:
             if not p.available():
                 continue
+            began = time.time()
             try:
                 out = p.complete(messages, max_tokens)
                 self.last_used = f"{p.name}:{getattr(p, 'model', '')}"
+                if time.time() - began > 30:
+                    print(f"llm: {self.last_used} took {time.time() - began:.0f}s", flush=True)
                 return out
             except urllib.error.HTTPError as e:
                 try:
@@ -246,4 +249,7 @@ class ProviderChain:
             except Exception as e:  # timeout, bad payload, connection refused
                 p.cool_down(120)
                 errors.append(f"{p.name}: {type(e).__name__}: {e}")
+            if errors:
+                print(f"llm: {errors[-1][:200]} after {time.time() - began:.0f}s; trying the next provider",
+                      flush=True)
         raise LlmUnavailable("; ".join(errors) or "no provider available")

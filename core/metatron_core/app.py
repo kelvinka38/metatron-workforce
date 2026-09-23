@@ -99,6 +99,8 @@ def process(task: dict) -> None:
     agent = Agent(llm, audit)
     out = agent.run(task["request"], ws, should_stop)
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
+    print(f"task #{tid} agent finished after {out['steps']} steps: failed={bool(out.get('failed'))} "
+          f"open_pr={bool(out.get('open_pr'))}", flush=True)
 
     if out.get("retry"):
         attempts = int(task.get("attempts") or 0) + 1
@@ -122,9 +124,11 @@ def process(task: dict) -> None:
         try:
             url = ws.open_pull_request(title, f"{out['summary']}\n\nRequest:\n> {task['request']}\n\nTask #{tid}")
         except Exception as e:
+            print(f"task #{tid} open PR failed: {str(e)[:300]}", flush=True)
             audit("error", f"open PR failed: {e}")
             fields["result"] = f"{out['summary']}\n\n(PR could not be opened: {e})"
         else:
+            print(f"task #{tid} PR opened: {url}", flush=True)
             store.update(tid, status="awaiting_approval", pr_url=url, **fields)
             send(chat, f"📬 Task #{tid}: PR opened, waiting for its CI\n{url}")
             ci = follow_ci(tid, chat, task, ws, agent, should_stop, audit, title)
