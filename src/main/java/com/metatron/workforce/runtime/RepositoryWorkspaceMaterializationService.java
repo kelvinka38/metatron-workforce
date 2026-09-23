@@ -121,10 +121,7 @@ public final class RepositoryWorkspaceMaterializationService {
 
     /** Never called for an explicitly-named repository -- only for a planner-derived fresh-application destination. */
     private void ensureRepositoryExists(String repo)throws IOException,InterruptedException{
-        HttpResponse<String> existing=sendAuthenticated("repos/"+repo);
-        if(existing.statusCode()==200)return;
-        if(existing.statusCode()==401||existing.statusCode()==403)throw repositoryControlPlaneUnavailable("repository-existence-check-http-"+existing.statusCode());
-        if(existing.statusCode()!=404)throw new IllegalStateException("repository existence check HTTP "+existing.statusCode());
+        if(checkRepositoryExists(repo))return;
         String name=repo.substring(repo.indexOf('/')+1);
         ObjectNode body=json.createObjectNode();
         body.put("name",name);
@@ -136,7 +133,44 @@ public final class RepositoryWorkspaceMaterializationService {
                 .build();
         HttpResponse<String> response=http.send(request,HttpResponse.BodyHandlers.ofString());
         if(response.statusCode()==401||response.statusCode()==403)throw repositoryControlPlaneUnavailable("repository-creation-http-"+response.statusCode());
-        if(response.statusCode()!=201)throw new IllegalStateException("repository creation HTTP "+response.statusCode()+": "+response.body());
+        boolean created=response.statusCode()==201;
+        // Production incident (2026-09-23, case build-and-deliver "Metatron Workforce Control Center"):
+        // the existence check above raced GitHub's own read replication and saw 404 for a repository a
+        // prior bounded-local-retry attempt had already created, so this method tried to create it again
+        // and got exactly this 422 back. Treat it as the repository already existing rather than a real
+        // failure -- the alternative is failing closed on our own retry racing our own prior success.
+        boolean racedAlreadyExists=response.statusCode()==422
+                &&response.body()!=null&&response.body().toLowerCase(java.util.Locale.ROOT).contains("already exists");
+        if(!created&&!racedAlreadyExists)throw new IllegalStateException("repository creation HTTP "+response.statusCode()+": "+response.body());
+        awaitRepositoryReadable(repo);
+    }
+
+    /** True once {@code GET repos/{repo}} answers 200; false only on a definitive 404 (repository does not exist). */
+    private boolean checkRepositoryExists(String repo)throws IOException,InterruptedException{
+        HttpResponse<String> existing=sendAuthenticated("repos/"+repo);
+        if(existing.statusCode()==200)return true;
+        if(existing.statusCode()==401||existing.statusCode()==403)throw repositoryControlPlaneUnavailable("repository-existence-check-http-"+existing.statusCode());
+        if(existing.statusCode()!=404)throw new IllegalStateException("repository existence check HTTP "+existing.statusCode());
+        return false;
+    }
+
+    /**
+     * GitHub's repository-creation write path is strongly consistent, but reads -- including the very
+     * next calls {@link #materialize} makes (commit resolution, archive download) -- can lag behind it by
+     * a few seconds. The same production incident referenced above burned all
+     * {@code MAX_MUTATING_DISPATCH_ATTEMPTS} (3, roughly 15s apart at the outer step-retry cadence) while
+     * GitHub was still catching up, which permanently blocked the Objective. Absorb that propagation
+     * window here, inside the single create attempt, with a short bounded backoff instead.
+     */
+    private void awaitRepositoryReadable(String repo)throws IOException,InterruptedException{
+        long delayMs=500L;
+        for(int attempt=0;attempt<5;attempt++){
+            if(checkRepositoryExists(repo))return;
+            Thread.sleep(delayMs);
+            delayMs=Math.min(delayMs*2,4000L);
+        }
+        if(!checkRepositoryExists(repo))throw new IllegalStateException(
+                "repository "+repo+" not readable after creation (GitHub propagation lag exceeded bound)");
     }
 
     private String resolveCommit(String repo,String ref)throws IOException,InterruptedException{
