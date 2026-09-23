@@ -28,6 +28,10 @@ class LlmUnavailable(RuntimeError):
     pass
 
 
+class EmptyReply(RuntimeError):
+    """The provider answered but gave no text (e.g. a safety block). Try the next one, no cool-down."""
+
+
 FOREVER = 10 ** 9
 # A 400 carrying one of these is about the account, not the request: never retry it.
 ACCOUNT_ERRORS = ("API_KEY_INVALID", "API key not valid", "FAILED_PRECONDITION", "billing", "credit")
@@ -90,13 +94,28 @@ class Gemini(Provider):
         system, rest = _split_system(messages)
         contents = [{"role": "model" if m.role == "assistant" else "user", "parts": [{"text": m.content}]}
                     for m in rest]
-        body = {"contents": contents, "generationConfig": {"maxOutputTokens": max_tokens}}
+        config = {"maxOutputTokens": max_tokens}
+        if self.model.startswith("gemini-2.5"):
+            # 2.5 models count thinking against maxOutputTokens; cap it so the answer is not starved.
+            config = {"maxOutputTokens": max_tokens + 1024, "thinkingConfig": {"thinkingBudget": 1024}}
+        body = {"contents": contents, "generationConfig": config}
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        data = _post(url, body, {"x-goog-api-key": self.key}, timeout=120)
-        parts = data["candidates"][0]["content"].get("parts", [])
-        return "".join(p.get("text", "") for p in parts)
+        return gemini_text(_post(url, body, {"x-goog-api-key": self.key}, timeout=120))
+
+
+def gemini_text(data: dict) -> str:
+    """The answer text of a generateContent response; EmptyReply when blocked or empty."""
+    candidates = data.get("candidates") or []
+    if not candidates:
+        reason = (data.get("promptFeedback") or {}).get("blockReason", "no candidates")
+        raise EmptyReply(f"gemini returned no candidates ({reason})")
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    if not text.strip():
+        raise EmptyReply(f"gemini returned no text (finishReason={candidates[0].get('finishReason')})")
+    return text
 
 
 @dataclass
@@ -186,6 +205,8 @@ class ProviderChain:
                     detail = ""
                 p.cool_down(cooldown_for(e.code, detail, e.headers.get("Retry-After") if e.headers else None))
                 errors.append(f"{p.name}: HTTP {e.code} {detail[:200]}".rstrip())
+            except EmptyReply as e:
+                errors.append(f"{p.name}: {e}")
             except Exception as e:  # timeout, bad payload, connection refused
                 p.cool_down(120)
                 errors.append(f"{p.name}: {type(e).__name__}: {e}")

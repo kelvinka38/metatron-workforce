@@ -9,8 +9,9 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from metatron_core.agent import Agent, parse_action
-from metatron_core.llm import FOREVER, LlmUnavailable, Provider, ProviderChain, cooldown_for
+from metatron_core.agent import Agent, invalid_reply_hint, parse_action
+from metatron_core.llm import (FOREVER, EmptyReply, LlmUnavailable, Provider, ProviderChain, cooldown_for,
+                                gemini_text)
 from metatron_core.store import Store
 from metatron_core.tools import Workspace, agent_uid_for
 
@@ -221,6 +222,82 @@ class AgentUser(unittest.TestCase):
             self.assertEqual((ws.dir / "a.txt").stat().st_uid, self.UID)
             ws.run(f"ln -s {d}/core.db link")
             self.assertRaises(ValueError, ws.read_file, "link")
+
+
+# M1-7: replies free-tier models really send. Each parses to the expected tool, or None = rejected cleanly.
+EDGE_CASES = [
+    ('{"thought":"x","tool":"run","args":{"command":"ls"}}', "run"),
+    ('```json\n{"tool":"finish","args":{}}\n```', "finish"),
+    ('```\n{"tool":"finish","args":{}}\n```', "finish"),
+    ('Sure! Here is my next step:\n{"tool":"read_file","args":{"path":"a"}}\nLet me know.', "read_file"),
+    ('{"tool":"run","args":"{\\"command\\": \\"ls\\"}"}', "run"),
+    ('{"tool":"finish"}', "finish"),
+    ('{"tool":"finish","args":null}', "finish"),
+    ('{"tool":" run ","args":{"command":"ls"}}', "run"),
+    ('{"thought":"plan"}\n{"tool":"run","args":{"command":"ls"}}', "run"),
+    ('{"tool":"write_file","args":{"path":"a.py","content":"def f():\\n    return {1: 2}"}}', "write_file"),
+    ('I think {curly} braces are fine. {"tool":"list_dir","args":{"path":"repo"}}', "list_dir"),
+    ('{"tool":"run","args":{"command":"ls"}} {"tool":"finish","args":{}}', "run"),
+    ('{"tool":"write_file","args":{"path":"a.py","content":"def f():\\n  retu', None),
+    ('', None),
+    ('   \n  ', None),
+    ('I will now run the tests.', None),
+    ('{"thought":"no tool here"}', None),
+    ('{"tool":"","args":{}}', None),
+    ('{"tool":"run","args":["ls"]}', None),
+    ('{"tool":"run","args":"not json"}', None),
+]
+
+
+class ReplyParsing(unittest.TestCase):
+    def test_twenty_edge_cases(self):
+        self.assertEqual(len(EDGE_CASES), 20)
+        for reply, tool in EDGE_CASES:
+            with self.subTest(reply=reply):
+                if tool is None:
+                    self.assertRaises(ValueError, parse_action, reply)
+                else:
+                    action = parse_action(reply)
+                    self.assertEqual(action["tool"], tool)
+                    self.assertIsInstance(action["args"], dict)
+
+    def test_truncated_reply_gets_a_useful_hint(self):
+        self.assertIn("cut off", invalid_reply_hint('{"tool":"write_file","args":{"content":"abc'))
+        self.assertIn("empty", invalid_reply_hint(""))
+
+    def test_invalid_count_resets_after_a_good_reply(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 6, github_token="")
+            llm = ScriptedLlm(["bad", "bad", act("list_dir", path="."), "bad", "bad",
+                               act("finish", summary="ok", open_pr=False)])
+            out = Agent(llm, audit=lambda *a: None).run("x", ws)
+            self.assertEqual(out["summary"], "ok")
+
+
+class GeminiReplies(unittest.TestCase):
+    def test_safety_block_and_empty_text_raise_empty_reply(self):
+        self.assertRaises(EmptyReply, gemini_text, {"promptFeedback": {"blockReason": "SAFETY"}})
+        self.assertRaises(EmptyReply, gemini_text, {"candidates": [{"finishReason": "SAFETY"}]})
+        self.assertRaises(EmptyReply, gemini_text,
+                          {"candidates": [{"content": {"parts": [{"text": "hmm", "thought": True}]}}]})
+
+    def test_thought_parts_are_dropped(self):
+        data = {"candidates": [{"content": {"parts": [{"text": "thinking", "thought": True},
+                                                      {"text": '{"tool":"finish"}'}]}}]}
+        self.assertEqual(gemini_text(data), '{"tool":"finish"}')
+
+    def test_empty_reply_moves_on_without_cooldown(self):
+        class Blocked(Provider):
+            def complete(self, messages, max_tokens):
+                raise EmptyReply("blocked")
+
+        class Ok(Provider):
+            def complete(self, messages, max_tokens):
+                return "fine"
+
+        chain = ProviderChain([Blocked("gemini"), Ok("ollama")])
+        self.assertEqual(chain.complete([]), "fine")
+        self.assertTrue(chain.providers[0].available())
 
 
 if __name__ == "__main__":

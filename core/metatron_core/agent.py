@@ -6,7 +6,6 @@ and keeps editing/running until it can honestly call finish().
 from __future__ import annotations
 
 import json
-import re
 
 from .llm import LlmUnavailable, Message, ProviderChain
 from .tools import TOOL_SPEC, Workspace
@@ -29,21 +28,42 @@ Working rules:
 - Keep the summary short, concrete, and in the same language the user wrote in.
 """
 
-JSON_BLOCK = re.compile(r"\{.*\}", re.S)
+_DECODER = json.JSONDecoder()
 
 
 def parse_action(text: str) -> dict:
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.find("{"):]
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = JSON_BLOCK.search(text)
-        if not m:
-            raise
-        return json.loads(m.group(0))
+    """The first JSON object with a 'tool' in a model reply, ignoring prose and code fences around it.
+
+    Raises ValueError when there is none, or when 'args' is not an object.
+    """
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = _DECODER.raw_decode(text, i)
+        except json.JSONDecodeError:
+            continue
+        if not (isinstance(obj, dict) and isinstance(obj.get("tool"), str) and obj["tool"].strip()):
+            continue
+        args = obj.get("args") or {}
+        if isinstance(args, str):  # some models send args as a JSON string
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                raise ValueError("'args' is not a JSON object") from None
+        if not isinstance(args, dict):
+            raise ValueError("'args' is not a JSON object")
+        return {**obj, "tool": obj["tool"].strip(), "args": args}
+    raise ValueError("no JSON object with a 'tool' field")
+
+
+def invalid_reply_hint(reply: str) -> str:
+    if not reply.strip():
+        return "Your reply was empty."
+    if "{" in reply and not reply.rstrip().rstrip("`").rstrip().endswith("}"):
+        return ("Your reply was cut off before the JSON ended. Keep each reply short: use "
+                "replace_in_file for edits, or write large files in smaller parts.")
+    return "Your reply had no valid action."
 
 
 class Agent:
@@ -67,15 +87,16 @@ class Agent:
             messages.append(Message("assistant", reply))
             try:
                 action = parse_action(reply)
-                tool, args = action["tool"], action.get("args", {}) or {}
-            except Exception:
+                tool, args = action["tool"], action["args"]
+            except ValueError:
                 bad_replies += 1
                 if bad_replies >= 3:
                     return {"summary": "Stopped: the model kept replying in an invalid format.",
                             "open_pr": False, "steps": step, "failed": True}
-                messages.append(Message("user", "Invalid reply. Reply with exactly ONE JSON object "
-                                                '{"thought":..., "tool":..., "args":{...}}.'))
+                messages.append(Message("user", invalid_reply_hint(reply) + " Reply with exactly ONE JSON "
+                                                'object {"thought":..., "tool":..., "args":{...}}.'))
                 continue
+            bad_replies = 0
 
             if tool == "finish":
                 return {"summary": str(args.get("summary", "")).strip() or "(no summary)",
