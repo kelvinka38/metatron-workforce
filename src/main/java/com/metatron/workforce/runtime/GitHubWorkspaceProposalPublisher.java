@@ -83,7 +83,8 @@ public final class GitHubWorkspaceProposalPublisher {
         this(http, token, workspaces, sandbox, json, URI.create("https://api.github.com/"));
     }
 
-    GitHubWorkspaceProposalPublisher(HttpClient http,
+    /** Public so a real-execution acceptance test can point this at a local GitHub API stub instead of the live API. */
+    public GitHubWorkspaceProposalPublisher(HttpClient http,
                                      String token,
                                      ObjectiveWorkspaceService workspaces,
                                      WorkerExecutionSandboxService sandbox,

@@ -97,6 +97,51 @@ class GeneralCognitiveWorkerBrainPreconditionTest {
     }
 
     @Test
+    void freshNewApplicationWorkMustMaterializeADeterministicallyCreatedDestinationBeforeProducing() {
+        // Root-cause fix (2026-09-23, Founder-reported): materialization used to be skipped entirely for
+        // fresh new-application work since the derived destination repository never existed yet. That
+        // left GitHubWorkspaceProposalPublisher.publish() permanently unable to run (no .metatron-repository
+        // provenance), so a completed fresh-app Objective had no possible path to Human-visible output.
+        // Materialization is now required, with createIfMissing=true so the destination is created first.
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "general-engineering-workspace-execution-produce",
+                "PRODUCE PHASE. Create the requested source/work product for the Objective. "
+                        + "Original Objective: Build and deliver a complete runnable web application called Acme.",
+                "repository:kelvinka38/acme",
+                "execution.general.workspace",
+                List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("requested source/work product exists in the Objective workspace"),
+                List.of("workspace-phase:produce", "workspace-source:fresh-new-application"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.file.write"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context);
+
+        assertEquals("workspace.repository.materialize", thought.actionRef());
+        assertEquals("kelvinka38/acme", thought.inputs().get("repository"));
+        assertEquals("true", thought.inputs().get("createIfMissing"));
+    }
+
+    @Test
+    void explicitlyNamedExistingRepositoryMaterializationNeverAutoCreates() {
+        // Safety invariant: createIfMissing must never be set for an Objective-named existing repository
+        // -- a typo in the repository name must keep failing closed, not silently stand up a new empty
+        // repository under the mistyped name.
+        ExecutionWorkSpec work = exactSnapshotWork();
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker", "assignment", "authorization", "objective", work, "idempotency",
+                List.of("workspace.repository.materialize", "workspace.git.run"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(context);
+
+        assertNull(thought.inputs().get("createIfMissing"));
+    }
+
+    @Test
     void singleStepMutatingRepositoryWorkMustMaterializeBeforeEditing() {
         ExecutionWorkSpec work = new ExecutionWorkSpec(
                 "repair",

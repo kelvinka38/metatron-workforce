@@ -102,7 +102,13 @@ class GeneralWorkspaceCrossStepContinuityTest {
     }
 
     @Test
-    void freshNewApplicationRemovesMaterializeActionBeforeFirstCognitionTurn() {
+    void freshNewApplicationOffersMaterializeActionBeforeFirstCognitionTurn() {
+        // Root-cause fix (2026-09-23, Founder-reported): a fresh new-application's derived destination
+        // repository now materializes too (with createIfMissing=true), so DELIVER can later publish a
+        // real, Human-visible GitHub PR against it -- see GeneralCognitiveWorkerBrain
+        // .requiresRepositoryMaterialization(). Hiding workspace.repository.materialize here (as the
+        // superseded version of this test asserted) would make the deterministic materialize precondition
+        // permanently unreachable for exactly this work.
         ExecutionWorkSpec fresh = new ExecutionWorkSpec(
                 "general-engineering-workspace-execution",
                 "Build and deliver a complete runnable web application called Metatron Workforce Control Center",
@@ -120,8 +126,9 @@ class GeneralWorkspaceCrossStepContinuityTest {
                 fresh, Map.of(GeneralWorkspaceAutonomousCapability.MEMORY_WORKSPACE_MATERIALIZED, "false"));
 
         List<String> refs = filtered.stream().map(ActionFabric.Action::actionRef).toList();
-        assertFalse(refs.contains("workspace.repository.materialize"),
-                "a destination repository for a fresh application must not be exposed as a source-checkout action");
+        assertTrue(refs.contains("workspace.repository.materialize"),
+                "a fresh application's derived destination repository must still be materialized so DELIVER "
+                        + "can later publish a real GitHub PR against it");
         assertTrue(refs.contains("workspace.file.write"));
         assertTrue(refs.contains("workspace.build.run"));
         assertTrue(refs.contains("workspace.test.run"));

@@ -76,17 +76,34 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * ({@link GeneralWorkspaceObservationVerifier}) re-deriving PASS from the same real workspace/sandbox,
  * never from the Objective's own self-reported evidence -&gt; Objective graph terminal completion.
  *
- * <p>The only test seam is the LLM boundary itself ({@link WorkerIntelligenceService}), scripted here
- * deterministically rather than calling a live provider (a required CI gate cannot depend on network
- * access to a paid model). This is the same seam every other cognition-level test in this codebase
- * already uses (e.g. {@code GeneralCognitiveWorkerBrainClosureTest}); it is not the execution capability
- * this acceptance floor is about, and every governed action the script selects still runs for real
- * through the identical fabric/permit/sandbox chain production uses. Attempt-scoped (vs. legacy)
- * workspace resolution is a separate, already-covered concern
+ * <p>The only test seams are the LLM boundary itself ({@link WorkerIntelligenceService}, scripted here
+ * deterministically rather than calling a live provider -- a required CI gate cannot depend on network
+ * access to a paid model) and the live GitHub REST API ({@code FakeGitHubApiServer}, a second local
+ * {@code HttpServer} stub -- a required CI gate cannot depend on network access to github.com either).
+ * Neither is the execution capability this acceptance floor is about, and every governed action the
+ * script selects still runs for real through the identical fabric/permit/sandbox chain production uses,
+ * including the real local {@code git} commit DELIVER creates and genuinely publishes. Attempt-scoped
+ * (vs. legacy) workspace resolution is a separate, already-covered concern
  * (see {@code GeneralWorkspaceObservationVerifierExecutionAttemptWorkspaceTest}): outside the full
  * production actor-supervisor wiring no {@code ExecutionAttemptContext} is ever bound, so, exactly like
  * every other capability-level test in this suite, workspace resolution here is the legacy
  * per-objective+worker path -- still a real, non-fabricated, on-disk workspace.
+ *
+ * <p>Root-cause fix (2026-09-23, Founder-reported): a fresh new-application Objective now always
+ * requires a real materialized destination and a real published GitHub PR (see
+ * {@code GeneralWorkspacePhasePlanner}/{@code GeneralCognitiveWorkerBrain.requiresRepositoryMaterialization}) --
+ * otherwise completed work has no possible path to Human-visible output. Real repository
+ * materialization over the live GitHub API cannot be exercised offline at all: the archive-download step
+ * deliberately pins its redirect to the real {@code codeload.github.com} host as a security control
+ * ({@code RepositoryWorkspaceMaterializationService.resolveArchiveLocation}), which this test must not
+ * weaken just for testability. Materialization is instead exercised through its own already-real,
+ * already-tested reuse path: the destination repository's provenance is pre-seeded on disk exactly as a
+ * prior successful {@code workspace.repository.materialize} attempt would have left it (see
+ * {@code GeneralWorkspaceActionCatalog.existingMaterialization}), so PRODUCE's materialize action
+ * genuinely reuses it rather than fabricating success. DELIVER's publish step has no such host-pinned
+ * security control, so it runs for real against {@code FakeGitHubApiServer}, and this test asserts on
+ * the real {@code Publication} evidence the governed action actually returns -- no self-reported
+ * evidence anywhere in this path.</p>
  *
  * <p>Requires {@code git} and {@code node}/{@code npm} on PATH; skips (not fails) if either is absent so
  * this remains runnable in a stripped-down environment, while the required CI runner -- which already
@@ -142,6 +159,7 @@ class GeneralEngineeringRealExecutionEndToEndAcceptanceTest {
 
         // 4. REAL EXECUTION CHAIN WIRING: real workspace, real sandbox boundary, real action catalog.
         RealProcessSandboxServer sandbox = new RealProcessSandboxServer(temp.resolve("sandbox-root"));
+        FakeGitHubApiServer github = new FakeGitHubApiServer("kelvinka38/metatron-workforce-control-center");
         try {
             ObjectiveWorkspaceService workspaces = new ObjectiveWorkspaceService(temp.resolve("sandbox-root"));
             WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
@@ -152,10 +170,15 @@ class GeneralEngineeringRealExecutionEndToEndAcceptanceTest {
             WorkerExecutionSandboxService sandboxClient = new WorkerExecutionSandboxService(
                     http, URI.create("http://127.0.0.1:" + sandbox.port()), RealProcessSandboxServer.TOKEN,
                     profiles, workspaces, json);
+            // Real materialization over the live GitHub API is not exercised here (see class javadoc):
+            // this service's own default apiBase is left untouched, and its reuse-if-already-materialized
+            // path (GeneralWorkspaceActionCatalog.existingMaterialization) means it is never actually
+            // called at all once the destination's provenance is pre-seeded below.
             RepositoryWorkspaceMaterializationService repositories =
-                    new RepositoryWorkspaceMaterializationService(http, "", workspaces, json);
-            GitHubWorkspaceProposalPublisher proposals =
-                    new GitHubWorkspaceProposalPublisher(http, "", workspaces, sandboxClient, json);
+                    new RepositoryWorkspaceMaterializationService(http, "test-github-token", workspaces, json);
+            GitHubWorkspaceProposalPublisher proposals = new GitHubWorkspaceProposalPublisher(
+                    http, "test-github-token", workspaces, sandboxClient, json,
+                    URI.create("http://127.0.0.1:" + github.port() + "/"));
             GeneralWorkspaceActionCatalog catalog = new GeneralWorkspaceActionCatalog(
                     workspaces, sandboxClient, profiles, repositories, proposals, json);
             AtomicInteger intelligenceCalls = new AtomicInteger();
@@ -188,16 +211,22 @@ class GeneralEngineeringRealExecutionEndToEndAcceptanceTest {
                         "human-primary", "metatron", "case-real-execution-acceptance",
                         "conversation-real-execution-acceptance", "message-real-execution-acceptance",
                         "workplace", requestWithExactPlan(plan));
-                runner.runOnce();
                 objectiveId = receipt.objectiveId();
+                // Pre-seed the destination's materialization provenance exactly as a prior successful
+                // workspace.repository.materialize attempt would have left it on disk (see class javadoc):
+                // the deterministic PRODUCE-phase materialize precondition then genuinely reuses it
+                // (GeneralWorkspaceActionCatalog.existingMaterialization) instead of calling the live
+                // GitHub archive-download API this offline test cannot reach.
+                seedMaterializedRepositoryProvenance(workspaces, objectiveId, github.repository(), github.baseSha());
+                runner.runOnce();
 
                 // Every phase (PRODUCE/PREPARE/VERIFY/DELIVER) must have completed for real through the
-                // real ActionFabric/CognitiveWorkerRuntime/sandbox chain. The Objective's own graph-level
-                // terminal COMPLETED status additionally requires production's separate Highway-Conformance
-                // release-evidence CompletionGate (AutonomyCoordinationService/GovernanceStateStore/
-                // ObservationClosureService, requiring exact source/tested/approved/deployed/observed SHA
-                // correlation) -- a distinct, already-covered subsystem this Objective does not request (no
-                // remote publication, no deploy) and does not configure here, exactly as
+                // real ActionFabric/CognitiveWorkerRuntime/sandbox chain, DELIVER's real GitHub publish
+                // included. The Objective's own graph-level terminal COMPLETED status additionally requires
+                // production's separate Highway-Conformance release-evidence CompletionGate
+                // (AutonomyCoordinationService/GovernanceStateStore/ObservationClosureService, requiring
+                // exact source/tested/approved/deployed/observed SHA correlation) -- a distinct,
+                // already-covered subsystem this Objective does not configure here, exactly as
                 // GeneralEngineeringFullCompositionAcceptanceTest's own doc comment already establishes for
                 // the identical Objective. This test does not weaken, bypass, or fake that separate gate; it
                 // is simply not what this real-execution acceptance floor is about.
@@ -221,6 +250,9 @@ class GeneralEngineeringRealExecutionEndToEndAcceptanceTest {
             String gitStatus = runGit(root, "status", "--short");
             assertTrue(gitStatus.isBlank(),
                     "the real committed tree must leave a clean working directory: " + gitStatus);
+            assertEquals(1, github.pullRequestsCreated(),
+                    "DELIVER must have genuinely called the governed publish action, which itself made a "
+                            + "real (stubbed) GitHub pull-request-creation HTTP call -- not a self-reported claim");
 
             // 6. INDEPENDENT OBSERVATION: re-derive PASS from the same real workspace/sandbox, never from
             // the Objective's own self-reported evidence.
@@ -252,7 +284,18 @@ class GeneralEngineeringRealExecutionEndToEndAcceptanceTest {
                             + gitReport.observedState());
         } finally {
             sandbox.stop();
+            github.stop();
         }
+    }
+
+    /** Pre-seeds destination-repository provenance exactly as a prior successful materialize would leave it. */
+    private static void seedMaterializedRepositoryProvenance(
+            ObjectiveWorkspaceService workspaces, String objectiveId, String repository, String baseSha) throws Exception {
+        ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(objectiveId, WORKER_ID);
+        Files.writeString(workspace.path().resolve(".metatron-repository"),
+                "repository=" + repository + "\nrequestedRef=main\ncommitSha=" + baseSha + "\ncomponentId=primary\n");
+        Files.writeString(workspace.path().resolve("README.md"),
+                "# Metatron Workforce Control Center\n\nAuto-initialized destination repository.\n");
     }
 
     private static String runGit(Path root, String... args) throws Exception {
@@ -529,6 +572,112 @@ class GeneralEngineeringRealExecutionEndToEndAcceptanceTest {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             stream.transferTo(buffer);
             return buffer.toString(StandardCharsets.UTF_8);
+        }
+    }
+
+    /**
+     * A local stub for exactly the live GitHub REST API surface DELIVER's real
+     * {@code workspace.github.pr.publish} action calls (see class javadoc): default-branch/base-SHA
+     * lookup, blob/tree/commit/ref creation, and pull-request lookup/creation. It does not model the full
+     * GitHub API, only this one governed action's exact, already-read call sequence
+     * ({@code GitHubWorkspaceProposalPublisher.publish}); anything outside that sequence gets a 500 so a
+     * drift between this stub and that real call sequence fails loudly rather than silently.
+     */
+    private static final class FakeGitHubApiServer {
+        private final HttpServer server;
+        private final String reposPrefix;
+        private final String baseSha = hex40("fake-base-commit");
+        private final String treeSha = hex40("fake-base-tree");
+        private final AtomicInteger fakeShaCounter = new AtomicInteger();
+        private final AtomicInteger pullRequestsCreated = new AtomicInteger();
+        private final ObjectMapper json = new ObjectMapper();
+
+        FakeGitHubApiServer(String repository) throws Exception {
+            this.reposPrefix = "/repos/" + repository;
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/", exchange -> {
+                try {
+                    String method = exchange.getRequestMethod();
+                    String path = exchange.getRequestURI().getPath();
+                    if ("GET".equals(method) && path.equals(reposPrefix)) {
+                        respond(exchange, 200, Map.of("default_branch", "main"));
+                    } else if ("GET".equals(method) && path.equals(reposPrefix + "/git/ref/heads/main")) {
+                        respond(exchange, 200, Map.of("object", Map.of("sha", baseSha)));
+                    } else if ("GET".equals(method) && path.startsWith(reposPrefix + "/git/ref/heads/")) {
+                        respondEmpty(exchange, 404);
+                    } else if ("GET".equals(method) && path.equals(reposPrefix + "/git/commits/" + baseSha)) {
+                        respond(exchange, 200, Map.of("tree", Map.of("sha", treeSha)));
+                    } else if ("POST".equals(method) && path.equals(reposPrefix + "/git/blobs")) {
+                        respond(exchange, 201, Map.of("sha", hex40("blob-" + fakeShaCounter.incrementAndGet())));
+                    } else if ("POST".equals(method) && path.equals(reposPrefix + "/git/trees")) {
+                        respond(exchange, 201, Map.of("sha", hex40("tree-" + fakeShaCounter.incrementAndGet())));
+                    } else if ("POST".equals(method) && path.equals(reposPrefix + "/git/commits")) {
+                        respond(exchange, 201, Map.of("sha", hex40("commit-" + fakeShaCounter.incrementAndGet())));
+                    } else if ("POST".equals(method) && path.equals(reposPrefix + "/git/refs")) {
+                        respond(exchange, 201, Map.of());
+                    } else if ("GET".equals(method) && path.equals(reposPrefix + "/pulls")) {
+                        respond(exchange, 200, List.of());
+                    } else if ("POST".equals(method) && path.equals(reposPrefix + "/pulls")) {
+                        pullRequestsCreated.incrementAndGet();
+                        respond(exchange, 201, Map.of(
+                                "number", 1,
+                                "html_url", "http://127.0.0.1:" + port() + "/pr/1",
+                                "merged", false));
+                    } else {
+                        respondEmpty(exchange, 404);
+                    }
+                } catch (Exception failure) {
+                    try {
+                        respondEmpty(exchange, 500);
+                    } catch (Exception ignored) {
+                        // best-effort error response only
+                    }
+                } finally {
+                    exchange.close();
+                }
+            });
+            server.start();
+        }
+
+        private void respond(com.sun.net.httpserver.HttpExchange exchange, int status, Object body) throws Exception {
+            byte[] bytes = json.writeValueAsBytes(body);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+        }
+
+        private void respondEmpty(com.sun.net.httpserver.HttpExchange exchange, int status) throws Exception {
+            exchange.sendResponseHeaders(status, -1);
+        }
+
+        private static String hex40(String seed) {
+            try {
+                java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+                byte[] hash = digest.digest(seed.getBytes(StandardCharsets.UTF_8));
+                return java.util.HexFormat.of().formatHex(hash).substring(0, 40);
+            } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+            }
+        }
+
+        int port() {
+            return server.getAddress().getPort();
+        }
+
+        String repository() {
+            return reposPrefix.substring("/repos/".length());
+        }
+
+        String baseSha() {
+            return baseSha;
+        }
+
+        int pullRequestsCreated() {
+            return pullRequestsCreated.get();
+        }
+
+        void stop() {
+            server.stop(0);
         }
     }
 }

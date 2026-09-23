@@ -61,16 +61,23 @@ public final class GeneralWorkspacePhasePlanner {
                 || semantic.contains("verify git")
                 || semantic.contains("verify the commit")
                 || semantic.contains("verify commit");
+        boolean fresh = base.evidenceRequirements().stream()
+                .anyMatch(value -> "workspace-source:fresh-new-application".equalsIgnoreCase(value));
+        // Root-cause fix (2026-09-23, Founder-reported): a brand-new named application has no existing
+        // repository or PR the Human can already look at, so completion is invisible/unusable to them
+        // unless a governed GitHub PR is opened -- regardless of whether the Objective text happened to
+        // use the words "pull request"/"publish"+"github". Gating this on wording alone is exactly the
+        // keyword-heuristic pattern AGENTS.md warns against for Human-language routing; the deterministic,
+        // planner-derived `fresh` signal (set only when FounderWorkerExecutionPlanProposalService itself
+        // derived a brand-new destination, never for ordinary existing-repository work) is used instead.
         boolean publish = semantic.contains("pull request")
                 || semantic.contains("open pr")
                 || semantic.contains("proposal branch")
-                || semantic.contains("publish") && semantic.contains("github");
+                || semantic.contains("publish") && semantic.contains("github")
+                || fresh;
 
         boolean lifecycleHeavy = sourceWork && (build || test || runtime || commit || publish);
         if (!lifecycleHeavy) return List.of(base);
-
-        boolean fresh = base.evidenceRequirements().stream()
-                .anyMatch(value -> "workspace-source:fresh-new-application".equalsIgnoreCase(value));
 
         List<String> prepareRequirements = fresh && (build || test || runtime)
                 ? List.of(REQUIRE_MANIFEST) : List.of();
