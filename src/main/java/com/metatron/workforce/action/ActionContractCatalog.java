@@ -45,7 +45,10 @@ public final class ActionContractCatalog {
                     "materialize an immutable repository snapshot into this Objective workspace",
                     Map.of(
                             "repository", requiredString("required owner/name"),
-                            "ref", optionalString("optional branch/tag/SHA; default main")))),
+                            "ref", optionalString("optional branch/tag/SHA; default main"),
+                            "createIfMissing", optionalString(
+                                    "optional \"true\" -- only ever set by the brain for a planner-derived "
+                                            + "fresh-new-application destination, never an explicitly-named repository")))),
             Map.entry("workspace.file.read", contract(
                     "read one UTF-8 workspace file",
                     Map.of("path", requiredString("required workspace-relative path")))),

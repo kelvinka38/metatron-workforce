@@ -241,7 +241,12 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 List.of(GeneralWorkspaceAutonomousCapability.CAPABILITY,
                         FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY));
 
-        assertEquals(3, plan.size());
+        // Root-cause fix (2026-09-23, Founder-reported): a fresh new-application Objective now always
+        // gets a DELIVER phase requiring a real published GitHub PR (see GeneralWorkspacePhasePlanner),
+        // regardless of whether this Objective's own text happened to say "commit"/"publish" -- otherwise
+        // completed work would have no possible path to Human-visible output. PRODUCE/PREPARE/VERIFY plus
+        // this new DELIVER phase is 4 steps, not 3.
+        assertEquals(4, plan.size());
         assertTrue(plan.stream().allMatch(work ->
                 "repository:kelvinka38/kitchen-companion".equals(work.target())));
         assertTrue(plan.stream().noneMatch(work ->
@@ -249,6 +254,9 @@ class FounderWorkerExecutionPlanningAcceptanceTest {
                 "an unrelated new app must never be silently pointed at the existing Workforce repository");
         assertEquals(List.of(plan.get(0).stepId()), plan.get(1).dependsOn());
         assertEquals(List.of(plan.get(1).stepId()), plan.get(2).dependsOn());
+        assertEquals(List.of(plan.get(2).stepId()), plan.get(3).dependsOn());
+        assertTrue(plan.get(3).evidenceRequirements().contains(GeneralWorkspacePhasePlanner.REQUIRE_GITHUB_PR),
+                "the unrelated new app's DELIVER phase must require a real published GitHub PR");
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.metatron.workforce.runtime;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.metatron.workforce.execution.ExecutionAttemptContext;
 import com.metatron.workforce.execution.governance.GovernanceDeniedException;
 import com.metatron.workforce.runtime.execution.ExecutionWorkspaceManager;
@@ -68,15 +69,36 @@ public final class RepositoryWorkspaceMaterializationService {
     public boolean provisioned(){return !githubToken.isBlank();}
 
     public MaterializedRepository materialize(String workerId,String objectiveId,String repository,String ref){
-        return materialize(workerId,objectiveId,repository,ref,PRIMARY_COMPONENT);
+        return materialize(workerId,objectiveId,repository,ref,PRIMARY_COMPONENT,false);
+    }
+
+    public MaterializedRepository materialize(String workerId,String objectiveId,String repository,String ref,boolean createIfMissing){
+        return materialize(workerId,objectiveId,repository,ref,PRIMARY_COMPONENT,createIfMissing);
     }
 
     public MaterializedRepository materialize(String workerId,String objectiveId,String repository,String ref,String componentId){
+        return materialize(workerId,objectiveId,repository,ref,componentId,false);
+    }
+
+    /**
+     * {@code createIfMissing} closes the gap between {@link CanonicalRepositoryScope} deriving a
+     * dedicated destination repository name for a brand-new named application
+     * (FounderWorkerExecutionPlanProposalService.governedRepositoryTarget) and nothing ever actually
+     * creating that repository on GitHub: without it, materialization -- and therefore the durable
+     * provenance {@link GitHubWorkspaceProposalPublisher} requires to open a reviewable PR -- always
+     * failed closed with a 404 for genuinely new work, leaving a completed Objective with no possible
+     * path to Human-visible output. Only the caller may set this true, and only when it already knows
+     * (via the planner's fresh-new-application evidence sentinel) that this is a derived destination the
+     * Objective never explicitly named -- an explicitly-named existing repository must keep failing
+     * closed on a typo rather than silently standing up a new empty repository under that name.
+     */
+    public MaterializedRepository materialize(String workerId,String objectiveId,String repository,String ref,String componentId,boolean createIfMissing){
         if(!provisioned())throw repositoryControlPlaneUnavailable("credential-not-provisioned");
         String repo=normalizeRepository(repository);String requestedRef=normalizeRef(ref);
         ObjectiveWorkspaceService.ObjectiveWorkspace workspace=workspaces.provision(objectiveId,workerId);
         ensureWorkspaceAvailable(workspace);
         try{
+            if(createIfMissing)ensureRepositoryExists(repo);
             String resolvedSha=resolveCommit(repo,requestedRef);
             registerAttemptComponent(repo,requestedRef,componentId);
             URI archive=resolveArchiveLocation(repo,resolvedSha);byte[] zip=downloadArchive(archive);Extraction extraction=extract(zip,workspace);
@@ -95,6 +117,26 @@ public final class RepositoryWorkspaceMaterializationService {
     private void registerAttemptComponent(String repository,String requestedRef,String componentId){
         if(executionWorkspaces==null)return;
         ExecutionAttemptContext.current().ifPresent(ctx->executionWorkspaces.registerRepository(ctx.attemptId(),ctx.fencingToken(),repository,requestedRef,componentId,"metatron/"+safeBranchToken(ctx.attemptId()),Instant.now()));
+    }
+
+    /** Never called for an explicitly-named repository -- only for a planner-derived fresh-application destination. */
+    private void ensureRepositoryExists(String repo)throws IOException,InterruptedException{
+        HttpResponse<String> existing=sendAuthenticated("repos/"+repo);
+        if(existing.statusCode()==200)return;
+        if(existing.statusCode()==401||existing.statusCode()==403)throw repositoryControlPlaneUnavailable("repository-existence-check-http-"+existing.statusCode());
+        if(existing.statusCode()!=404)throw new IllegalStateException("repository existence check HTTP "+existing.statusCode());
+        String name=repo.substring(repo.indexOf('/')+1);
+        ObjectNode body=json.createObjectNode();
+        body.put("name",name);
+        body.put("private",true);
+        body.put("auto_init",true);
+        HttpRequest request=authenticatedRequest(apiBase.resolve("user/repos"))
+                .header("Content-Type","application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)))
+                .build();
+        HttpResponse<String> response=http.send(request,HttpResponse.BodyHandlers.ofString());
+        if(response.statusCode()==401||response.statusCode()==403)throw repositoryControlPlaneUnavailable("repository-creation-http-"+response.statusCode());
+        if(response.statusCode()!=201)throw new IllegalStateException("repository creation HTTP "+response.statusCode()+": "+response.body());
     }
 
     private String resolveCommit(String repo,String ref)throws IOException,InterruptedException{

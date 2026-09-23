@@ -81,11 +81,12 @@ public final class GeneralWorkspaceActionCatalog {
         return action("workspace.repository.materialize", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             String repository = input(request, "repository").trim();
             String ref = request.inputs().getOrDefault("ref", "main").trim();
+            boolean createIfMissing = "true".equalsIgnoreCase(request.inputs().getOrDefault("createIfMissing", "false"));
             RepositoryWorkspaceMaterializationService.MaterializedRepository materialized =
                     existingMaterialization(workspaces, workspace, repository, ref);
             boolean reused = materialized != null;
             if (!reused) {
-                materialized = repositories.materialize(worker, objectiveId, repository, ref);
+                materialized = repositories.materialize(worker, objectiveId, repository, ref, createIfMissing);
             }
 
             String localBaseline = RepositoryWorkspaceMaterializationState.completedBaselineSha(workspaces, workspace);

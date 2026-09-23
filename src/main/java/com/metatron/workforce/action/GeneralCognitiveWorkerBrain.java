@@ -233,6 +233,9 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         inputs.put("repository", repository);
         String exactRef = exactRef(context);
         if (!exactRef.isBlank()) inputs.put("ref", exactRef);
+        // Only ever set for a planner-derived brand-new destination (never an Objective-named existing
+        // repository) -- see RepositoryWorkspaceMaterializationService.materialize(..., createIfMissing).
+        if (isFreshNewApplicationWork(context)) inputs.put("createIfMissing", "true");
         Map<String, String> finalInputs = Map.copyOf(inputs);
 
         // Anti-livelock: a deterministic required-action precondition must not blindly force the exact
@@ -646,12 +649,20 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
      * authority-target fix, target() is always repository-shaped, including for a brand-new application
      * that has no existing source yet. Explicit materialize/snapshot/checkout/exact-SHA intent in the
      * Work text always requires real materialization and fails closed if the source cannot be obtained
-     * -- that governs regardless of repository-shape. Absent that explicit intent, a Work the planner has
-     * marked as fresh new-application work (NEW_APPLICATION_WORKSPACE_EVIDENCE) starts from an empty
-     * isolated Objective workspace instead of requiring checkout of a repository that was only just
-     * derived as a destination, not an existing source. This is a deterministic planning-time signal, not
-     * an inference from a runtime 404: a genuinely required existing repository still materializes and
-     * fails closed exactly as before.
+     * -- that governs regardless of repository-shape.
+     *
+     * <p>Root-cause fix (2026-09-23, Founder-reported): a Work the planner has marked as fresh
+     * new-application work (NEW_APPLICATION_WORKSPACE_EVIDENCE) previously skipped materialization
+     * entirely, because the derived destination repository did not exist yet and materializing a
+     * nonexistent repository always failed closed with a 404. That made {@code .metatron-repository}
+     * provenance -- the one thing {@link com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher}
+     * requires to open a reviewable PR -- impossible to ever establish for exactly the kind of Work whose
+     * completion the Human most needs to see: a completed Objective had no possible path to visible
+     * output. Materialization is now required here too; {@link #repositoryMaterializationPrecondition}
+     * passes {@code createIfMissing=true} only for this fresh-application case, so the destination
+     * repository is created (empty, auto-initialized) before it is materialized. An explicitly-named
+     * existing repository is unaffected: it still materializes and fails closed exactly as before, and
+     * never auto-creates on a typo.</p>
      */
     private static boolean requiresRepositoryMaterialization(CognitiveWorkerRuntime.CognitiveContext context) {
         if (phased(context)
@@ -665,7 +676,6 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                 || text.contains("git rev-parse")
                 || EXACT_GIT_SHA.matcher(text).find();
         if (explicitMaterializationIntent) return true;
-        if (isFreshNewApplicationWork(context)) return false;
         return !repositoryFromTarget(context.workSpec().target()).isBlank();
     }
 

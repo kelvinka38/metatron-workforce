@@ -25,16 +25,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * action, which failed identically with GitHub 404 every time, because
  * repositoryMaterializationPrecondition() never checked whether the same action had already failed.
  *
- * These tests prove: (1) a planner-marked fresh-new-application Objective never forces materialization
- * of a repository that does not exist yet; (2) a genuinely existing-repository Objective is unaffected
- * and still requires real materialization; (3) a required materialization that genuinely fails
- * terminates truthfully after two cycles instead of burning the entire cognitive cycle budget.
+ * These tests prove: (1) [superseded, see below] (2) a genuinely existing-repository Objective is
+ * unaffected and still requires real materialization; (3) a required materialization that genuinely
+ * fails terminates truthfully after two cycles instead of burning the entire cognitive cycle budget.
+ *
+ * <p>Root-cause fix (2026-09-23, Founder-reported): claim (1) above is superseded. Never materializing a
+ * fresh-new-application's derived destination meant {@code .metatron-repository} provenance -- the one
+ * thing {@code GitHubWorkspaceProposalPublisher.publish()} requires to open a reviewable PR -- could
+ * never be established for exactly this kind of Work, so a completed fresh-app Objective had no possible
+ * path to Human-visible output ("if it can not work end to end, it still stupid"). Materialization is now
+ * required for fresh-new-application work too, with a new {@code createIfMissing=true} input the brain
+ * sets only for this planner-derived-destination case (never for an Objective-named existing repository,
+ * which must keep failing closed on a typo): see {@code RepositoryWorkspaceMaterializationService
+ * .materialize(..., createIfMissing)} and {@code GeneralWorkspacePhasePlanner}'s broadened publish
+ * requirement. The anti-livelock backoff this incident fix introduced (claim 3) is untouched and still
+ * applies identically to a fresh-app materialization that genuinely fails.</p>
  */
 class GeneralEngineeringFreshApplicationMaterializationTest {
     private static final String SHA = "3e86d4e2876a90c580383d5c1de48360b5049b3b";
 
     @Test
-    void freshNewApplicationWorkNeverForcesMaterializationOfANonexistentSourceRepository() {
+    void freshNewApplicationWorkMaterializesADeterministicallyCreatedDestinationInsteadOfSkippingIt() {
+        // Superseded (see class javadoc): a brand-new application's derived repository target now
+        // materializes with createIfMissing=true, so a real destination gets created rather than
+        // permanently blocking DELIVER's later GitHub publish for lack of provenance.
         ExecutionWorkSpec work = freshNewApplicationWork();
         CognitiveWorkerRuntime.CognitiveContext freshContext = new CognitiveWorkerRuntime.CognitiveContext(
                 "worker", "assignment", "authorization", "objective", work, "idempotency",
@@ -42,9 +56,12 @@ class GeneralEngineeringFreshApplicationMaterializationTest {
                         "workspace.test.run", "workspace.process.run", "workspace.git.run"),
                 List.of(), Map.of());
 
-        assertNull(GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(freshContext),
-                "a brand-new application's derived repository target must never force checkout of a "
-                        + "repository that does not exist yet");
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(freshContext);
+
+        assertEquals("workspace.repository.materialize", thought.actionRef());
+        assertEquals("kelvinka38/metatron-workforce-control-center", thought.inputs().get("repository"));
+        assertEquals("true", thought.inputs().get("createIfMissing"));
     }
 
     @Test
@@ -170,8 +187,13 @@ class GeneralEngineeringFreshApplicationMaterializationTest {
                 List.of("workspace.repository.materialize", "workspace.file.write"),
                 List.of(wroteSource), Map.of());
 
-        assertNull(GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(sourceCreated),
-                "materialization must remain unnecessary after the fresh application source is created");
+        // Superseded (see class javadoc): materialization is no longer skipped for fresh-app work, so it
+        // still fires here since it has not yet succeeded in this context's history -- source having been
+        // written does not substitute for it.
+        CognitiveWorkerRuntime.Thought thought =
+                GeneralCognitiveWorkerBrain.repositoryMaterializationPrecondition(sourceCreated);
+        assertEquals("workspace.repository.materialize", thought.actionRef());
+        assertEquals("true", thought.inputs().get("createIfMissing"));
     }
 
     @Test

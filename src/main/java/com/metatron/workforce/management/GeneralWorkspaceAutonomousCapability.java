@@ -333,13 +333,13 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
         }
         List<ActionFabric.Action> phaseScoped = phaseScopedActions(candidates, workSpec);
         boolean alreadyMaterialized = "true".equalsIgnoreCase(memory.getOrDefault(MEMORY_WORKSPACE_MATERIALIZED, "false"));
-        boolean freshNewApplication = workSpec.evidenceRequirements().stream()
-                .anyMatch("workspace-source:fresh-new-application"::equalsIgnoreCase);
-        if (freshNewApplication && !requiresRepositoryMaterialization(workSpec)) {
-            return phaseScoped.stream()
-                    .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))
-                    .toList();
-        }
+        // Root-cause fix (2026-09-23, Founder-reported): a fresh new-application Objective no longer skips
+        // materialization (see GeneralCognitiveWorkerBrain.requiresRepositoryMaterialization) -- it now
+        // materializes a real, created-if-missing destination so DELIVER can later publish a real,
+        // Human-visible GitHub PR. This catalog-availability filter must offer workspace.repository.materialize
+        // for exactly the same cases the brain's own deterministic precondition requires it, so a previous
+        // fresh-application-specific carve-out that always hid the action here is removed; the remaining
+        // "not yet materialized" check below already covers it.
         if (!alreadyMaterialized || requiresRepositoryMaterialization(workSpec)) return List.copyOf(phaseScoped);
         return phaseScoped.stream()
                 .filter(action -> !"workspace.repository.materialize".equals(action.actionRef()))

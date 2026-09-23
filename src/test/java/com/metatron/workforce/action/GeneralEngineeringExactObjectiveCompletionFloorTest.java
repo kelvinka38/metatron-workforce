@@ -102,8 +102,13 @@ class GeneralEngineeringExactObjectiveCompletionFloorTest {
         // governed test must be the most recent such action observed -- exactly as it already must be
         // after any other mutation. Ordering runtime verification before the final test still proves every
         // one of the six requested phases (source, build, test, runtime, Git) is present.
+        //
+        // Root-cause fix (2026-09-23, Founder-reported): this flat fresh-new-application Work now also
+        // requires a successful workspace.repository.materialize (createIfMissing=true) before completion,
+        // exactly like a phased fresh-app Objective's PRODUCE phase -- otherwise DELIVER's later GitHub
+        // publish would have no provenance and completed work would have no path to Human-visible output.
         List<CognitiveWorkerRuntime.Cycle> history = List.of(
-                sourceWritten(), buildSucceeded(), runtimeVerified(), testsPassed(), gitAdded(), gitCommitted());
+                materialized(), sourceWritten(), buildSucceeded(), runtimeVerified(), testsPassed(), gitAdded(), gitCommitted());
         CognitiveWorkerRuntime.CognitiveContext context = contextWithHistory(history);
 
         CognitiveWorkerRuntime.Reflection guarded = GeneralCognitiveWorkerBrain.enforceRequiredActionCompletion(
@@ -120,6 +125,11 @@ class GeneralEngineeringExactObjectiveCompletionFloorTest {
                 List.of("workspace.repository.materialize", "workspace.file.write", "workspace.build.run",
                         "workspace.test.run", "workspace.process.run", "workspace.git.run", "workspace.git.status"),
                 history, Map.of());
+    }
+
+    private static CognitiveWorkerRuntime.Cycle materialized() {
+        return successfulCycle(1, "workspace.repository.materialize",
+                Map.of("repository", "kelvinka38/metatron-workforce-control-center", "createIfMissing", "true"));
     }
 
     private static CognitiveWorkerRuntime.Cycle sourceWritten() {
