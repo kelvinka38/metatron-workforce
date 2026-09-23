@@ -34,6 +34,15 @@ Leave that unset.
 
 ## Deploy (on the host)
 
+First time (builds the image, pulls the Ollama model, checks toolchains, runs the tests inside the
+image and makes one real call to each free provider):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kelvinka38/metatron-workforce/metatron/objective-50334c388a41-aea68111/core/scripts/first-deploy.sh | sudo bash
+```
+
+By hand:
+
 ```sh
 cd /opt/metatron/metatron-workforce/core
 docker compose --env-file ../deploy/.env --env-file /opt/metatron/metatron-core.env up -d --build

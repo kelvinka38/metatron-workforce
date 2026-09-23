@@ -31,3 +31,18 @@ jobs:
       - name: Isolation tests (root)
         working-directory: core
         run: sudo env "PATH=$PATH" python -m unittest discover -s tests -t . -v
+
+  image:
+    # The same image the host runs: toolchains present, tests (incl. agent-user isolation) pass inside it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        run: docker build -t metatron-core:ci core
+      - name: Toolchains
+        run: docker run --rm metatron-core:ci sh -c 'java -version 2>&1 | head -1; node --version; git --version; python --version'
+      - name: Tests inside the image
+        run: docker run --rm -v "$PWD/core:/src:ro" -w /src -e PYTHONDONTWRITEBYTECODE=1 metatron-core:ci python -m unittest discover -s tests -t . -v
+      - name: Deploy script syntax
+        run: bash -n core/scripts/first-deploy.sh
