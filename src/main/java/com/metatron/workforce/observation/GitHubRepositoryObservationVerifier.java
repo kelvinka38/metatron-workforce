@@ -89,13 +89,24 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
             }
             return Optional.of(observeReadOnly(requirement, executionEvidenceReferences, repo, at));
         } catch (Exception failure) {
+            // Root-cause fix (2026-09-23): AutonomousManagementRunner.observationFailureDetail() surfaces
+            // report.observedState() to the Human as the whole diagnostic for a BLOCKED Objective -- every
+            // other ObservationVerifier in this package puts its actual diagnostic there (see
+            // GeneralWorkspaceObservationVerifier.report(), AutonomyRecoveryProbeObservationVerifier
+            // .inconclusive()). This verifier instead hardcoded a generic "GitHub verification failed"
+            // into observedState and buried the real exception message in variance(), a field nothing
+            // reads. Every GitHub-observation INCONCLUSIVE therefore showed only that generic string,
+            // never the actual HTTP status or exception -- the exact detail a Human needs to tell a
+            // transient propagation-lag failure from a genuine mismatch was silently discarded.
+            String diagnostic = failure.getClass().getSimpleName()
+                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
             return Optional.of(new ObservationReport(
                     "observation:github:" + requirement.requirementId() + ":failed",
                     requirement.requirementId(), requirement.objectiveId(), requirement.target(),
-                    "GitHub verification failed", "authoritative-github-api-read", at, at,
+                    "GitHub verification failed: " + diagnostic, "authoritative-github-api-read", at, at,
                     List.of("observation-error:" + failure.getClass().getSimpleName()), 0.0,
                     ObservationReport.Quality.INSUFFICIENT,
-                    String.valueOf(failure.getMessage()), ObservationReport.CriterionResult.INCONCLUSIVE));
+                    diagnostic, ObservationReport.CriterionResult.INCONCLUSIVE));
         }
     }
 
