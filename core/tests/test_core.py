@@ -385,5 +385,28 @@ class GeminiRequest(unittest.TestCase):
         self.assertEqual(self._config("gemini-3.8-flash")["thinkingConfig"], {"thinkingLevel": "low"})
 
 
+class StepLimit(unittest.TestCase):
+    def test_model_is_told_to_finish_and_summary_names_last_actions(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 8, github_token="")
+            llm = ScriptedLlm([act("list_dir", path=".")] * 5)
+            out = Agent(llm, audit=lambda *a: None, max_steps=5).run("x", ws)
+            self.assertTrue(out["failed"])
+            self.assertIn("Last actions: list_dir", out["summary"])
+            self.assertIn("step(s) left. Call finish now", llm.seen[-1])
+            self.assertNotIn("step(s) left", llm.seen[1])
+
+    def test_log_command_shows_recent_audit(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.dict(os.environ, {"CORE_DATA_DIR": d, "TELEGRAM_ALLOWED_USER_ID": "42"}):
+            import importlib
+            import metatron_core.app as app
+            app = importlib.reload(app)
+            tid = app.store.create_task("42", "x")
+            app.store.audit(tid, "tool", "list_dir({}) -> README.md")
+            self.assertIn("[tool] list_dir", app.handle_text("42", f"/log {tid}"))
+            self.assertEqual(app.handle_text("42", "/log x"), "Usage: /log <task id>")
+
+
 if __name__ == "__main__":
     unittest.main()

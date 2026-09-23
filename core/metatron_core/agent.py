@@ -76,6 +76,7 @@ class Agent:
         """Returns {'summary', 'open_pr', 'pr_title', 'steps'}."""
         messages = [Message("system", SYSTEM), Message("user", f"Task:\n{request}")]
         bad_replies = 0
+        recent_tools: list[str] = []
         for step in range(1, self.max_steps + 1):
             self._compact(messages)
             try:
@@ -106,9 +107,16 @@ class Agent:
 
             result = self._call(ws, tool, args)
             self.audit("tool", f"{tool}({json.dumps(args)[:500]}) -> {result[:1500]}")
-            messages.append(Message("user", f"Result of {tool}:\n{result}"))
+            recent_tools.append(tool)
+            left = self.max_steps - step
+            note = ""
+            if 0 < left <= 3:
+                note = (f"\n\n[{left} step(s) left. Call finish now: say what you did, what you found, and "
+                        "what you could not do. If the task cannot be done as asked, say why.]")
+            messages.append(Message("user", f"Result of {tool}:\n{result}{note}"))
 
-        return {"summary": f"Stopped after {self.max_steps} steps without finishing.",
+        return {"summary": f"Stopped after {self.max_steps} steps without finishing. "
+                           f"Last actions: {', '.join(recent_tools[-5:]) or 'none'}.",
                 "open_pr": False, "steps": self.max_steps, "failed": True}
 
     @staticmethod

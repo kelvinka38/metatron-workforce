@@ -102,10 +102,17 @@ def handle_text(chat_id: str, text: str) -> str | None:
     if text in ("/start", "/help"):
         return ("Send me any task in plain language, e.g.\n"
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
-                "/status — recent tasks\n/approve <id> — merge a task's PR\n/reject <id> — close it")
+                "/status — recent tasks\n/log <id> — a task's last steps\n"
+                "/approve <id> — merge a task's PR\n/reject <id> — close it")
     if text.startswith("/status"):
         rows = store.recent(10)
         return "\n".join(f"#{r['id']} [{r['status']}] {r['request'][:60]}" for r in rows) or "No tasks yet."
+    if text.startswith("/log"):
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            return "Usage: /log <task id>"
+        rows = store.audit_tail(int(parts[1]))
+        return "\n\n".join(f"[{r['kind']}] {r['detail'][:300]}" for r in rows) or "No log for that task."
     if text.startswith("/approve") or text.startswith("/reject"):
         parts = text.split()
         if len(parts) != 2 or not parts[1].isdigit():

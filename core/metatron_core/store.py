@@ -75,6 +75,12 @@ class Store:
         with self._tx() as c:
             return [dict(r) for r in c.execute("SELECT * FROM tasks ORDER BY id DESC LIMIT ?", (limit,))]
 
+    def audit_tail(self, task_id: int, limit: int = 8):
+        with self._tx() as c:
+            rows = c.execute("SELECT kind, detail FROM audit WHERE task_id=? ORDER BY id DESC LIMIT ?",
+                             (task_id, limit)).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
     def audit(self, task_id, kind: str, detail: str):
         with self._tx() as c:
             c.execute("INSERT INTO audit(task_id, at, kind, detail) VALUES (?,?,?,?)",
