@@ -39,7 +39,8 @@ fi
 chmod 600 "$CORE_ENV"
 
 step "M1-4: ollama pull qwen2.5-coder:7b (about 4.7 GB, first time only)"
-docker exec metatron-ollama ollama pull qwen2.5-coder:7b >/dev/null
+docker exec metatron-ollama ollama pull qwen2.5-coder:7b >/dev/null 2>&1 \
+  || fail "ollama pull failed"
 docker exec metatron-ollama ollama list | grep -E 'NAME|qwen2.5-coder:7b'
 
 step "M1-3: build and start metatron-core"
@@ -61,7 +62,7 @@ docker run --rm -v "$SRC/core:/src:ro" -w /src -e PYTHONDONTWRITEBYTECODE=1 meta
   python -m unittest discover -s tests -t .
 
 step "M1-4/M1-5: one real completion from each free provider"
-docker exec metatron-core python - <<'PY'
+docker exec -i metatron-core python - <<'PY'
 from metatron_core.llm import Message, ProviderChain
 ok = True
 for p in ProviderChain.from_env().providers:
