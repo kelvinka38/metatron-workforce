@@ -129,6 +129,52 @@ def handle_text(chat_id: str, text: str) -> str | None:
     return f"📥 Task #{tid} queued. I'll message you when it's done."
 
 
+# ---------------- telegram ----------------
+def handle_update(update: dict) -> None:
+    """One Telegram update, from the webhook or from polling. Only the founder's messages count."""
+    msg = update.get("message") or {}
+    user = str((msg.get("from") or {}).get("id", ""))
+    chat = str((msg.get("chat") or {}).get("id", ""))
+    if msg.get("text") and ALLOWED_USER and user == ALLOWED_USER:
+        reply = handle_text(chat, msg["text"])
+        if reply:
+            send(chat, reply)
+
+
+def telegram(method: str, body: dict, token: str, timeout: float = 30) -> dict:
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def poll_once(offset: int, token: str, call=telegram) -> int:
+    """Fetch waiting updates (long poll, 50 s), handle them, return the next offset."""
+    result = call("getUpdates", {"offset": offset, "timeout": 50, "allowed_updates": ["message"]},
+                  token, timeout=60).get("result", [])
+    for update in result:
+        offset = max(offset, int(update["update_id"]) + 1)
+        try:
+            handle_update(update)
+        except Exception:
+            print(f"telegram update failed: {traceback.format_exc()}", flush=True)
+    return offset
+
+
+def poll_loop(token: str) -> None:
+    """Long polling: no public URL, tunnel or open port needed. Only for Core's own bot."""
+    telegram("deleteWebhook", {}, token)
+    me = telegram("getMe", {}, token).get("result", {})
+    print(f"telegram: polling as @{me.get('username', '?')}", flush=True)
+    offset = 0
+    while True:
+        try:
+            offset = poll_once(offset, token)
+        except Exception as e:
+            print(f"telegram poll failed: {type(e).__name__}: {str(e).replace(token, '***')[:300]}", flush=True)
+            time.sleep(5)
+
+
 # ---------------- http ----------------
 class Handler(BaseHTTPRequestHandler):
     def _json(self, code: int, obj) -> None:
@@ -157,14 +203,9 @@ class Handler(BaseHTTPRequestHandler):
             got = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if not WEBHOOK_SECRET or not hmac.compare_digest(got, WEBHOOK_SECRET):
                 return self._json(401, {})
-            msg = (self._body().get("message") or {})
-            user = str((msg.get("from") or {}).get("id", ""))
-            chat = str((msg.get("chat") or {}).get("id", ""))
+            update = self._body()
             self._json(200, {})  # ack fast; Telegram retries otherwise
-            if msg.get("text") and user == ALLOWED_USER:
-                reply = handle_text(chat, msg["text"])
-                if reply:
-                    send(chat, reply)
+            handle_update(update)
             return
         if self.path == "/tasks" and self._api_ok():
             reply = handle_text("api", self._body().get("request", ""))
@@ -183,6 +224,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     threading.Thread(target=worker_loop, daemon=True, name="worker").start()
+    core_bot = os.environ.get("CORE_TELEGRAM_BOT_TOKEN", "")
+    if core_bot and os.environ.get("CORE_TELEGRAM_MODE", "poll") == "poll":
+        # Never the main bot's token here: deleteWebhook would cut off the old Workforce.
+        threading.Thread(target=poll_loop, args=(core_bot,), daemon=True, name="telegram").start()
     port = int(os.environ.get("PORT", "8095"))
     print(f"metatron-core listening on :{port}, providers={[p.name for p in llm.providers]}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

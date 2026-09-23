@@ -333,5 +333,36 @@ class GeminiModelChoice(unittest.TestCase):
         self.assertEqual(g.model, "gemini-3-flash")
 
 
+class TelegramPolling(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        env = {"CORE_DATA_DIR": self.tmp.name, "TELEGRAM_ALLOWED_USER_ID": "42"}
+        with mock.patch.dict(os.environ, env):
+            import importlib
+            import metatron_core.app as app
+            self.app = importlib.reload(app)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _update(self, uid, user, text):
+        return {"update_id": uid, "message": {"text": text, "from": {"id": user}, "chat": {"id": user}}}
+
+    def test_only_founder_messages_become_tasks_and_offset_advances(self):
+        updates = [self._update(7, 42, "In o/r fix it"), self._update(8, 99, "stranger task")]
+        sent = []
+        with mock.patch.object(self.app, "send", lambda chat, text: sent.append((chat, text))):
+            offset = self.app.poll_once(0, "T", call=lambda *a, **k: {"result": updates})
+        self.assertEqual(offset, 9)
+        self.assertEqual([r["request"] for r in self.app.store.recent()], ["In o/r fix it"])
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0], "42")
+
+    def test_bad_update_does_not_stop_polling(self):
+        with mock.patch.object(self.app, "handle_update", side_effect=RuntimeError("boom")):
+            offset = self.app.poll_once(5, "T", call=lambda *a, **k: {"result": [{"update_id": 5}]})
+        self.assertEqual(offset, 6)
+
+
 if __name__ == "__main__":
     unittest.main()

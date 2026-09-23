@@ -98,6 +98,19 @@ for p in ProviderChain.from_env().providers:
 raise SystemExit(0 if ok else 1)
 PY
 
+step "M1-6: Telegram test bot (long polling: no tunnel or public URL needed)"
+docker exec metatron-core python -c "import os,sys; sys.exit(0 if os.environ.get('TELEGRAM_ALLOWED_USER_ID') else 1)" \
+  || fail "TELEGRAM_ALLOWED_USER_ID is not set: Core would ignore every message. Save it with set-secret.sh."
+if has CORE_TELEGRAM_BOT_TOKEN; then
+  line=""
+  for _ in $(seq 1 15); do
+    line=$(docker logs metatron-core 2>&1 | grep -E 'telegram: polling as|telegram poll failed' | tail -1) && [ -n "$line" ] && break
+    sleep 2
+  done
+  echo "${line:-no telegram line in the logs yet}"
+  case "$line" in *"polling as"*) echo "Send /help to that bot from your own Telegram account.";; esac
+fi
+
 step "Done"
 echo "metatron-core is running on 127.0.0.1:8095 beside Workforce."
 has CORE_TELEGRAM_BOT_TOKEN \
