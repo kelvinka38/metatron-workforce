@@ -17,14 +17,17 @@ concurrency:
 
 jobs:
   test:
-    # Self-hosted: no GitHub-hosted minutes. Runs unprivileged only - never sudo on the prod host.
-    # The root-only agent-user isolation tests are skipped here and run inside the Core container (M1-3).
-    runs-on: [self-hosted, linux, x64, metatron-prod]
+    # GitHub-hosted (free for public repos). Never the self-hosted prod runner: forks can open PRs.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Unit tests
         working-directory: core
-        run: |
-          python3 --version
-          python3 -B -m unittest discover -s tests -t . -v
+        run: python -m unittest discover -s tests -t . -v
+      - name: Isolation tests (root)
+        working-directory: core
+        run: sudo env "PATH=$PATH" python -m unittest discover -s tests -t . -v
