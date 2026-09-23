@@ -264,16 +264,51 @@ public final class ExecutionWorkspaceManager {
     private static void copyPrimaryTree(Path from,Path to)throws IOException{
         try(var stream=Files.walk(from)){
             for(Path source:stream.sorted().toList()){
-                if(Files.isSymbolicLink(source)) throw new SecurityException("carry-forward source contains symlink: "+source);
                 Path relative=from.relativize(source);
                 if(relative.toString().equals(".metatron-workspace")) continue;
                 Path target=to.resolve(relative);
+                if(Files.isSymbolicLink(source)){ copySymlinkContent(from,source,target); continue; }
                 if(Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(target);
                 else{
                     Files.createDirectories(target.getParent());
                     Files.copy(source,target,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES);
                 }
             }
+        }
+    }
+
+    /**
+     * Production incident (2026-09-23): a real Node.js "primary" workspace's {@code node_modules/.bin}
+     * -- created by every plain {@code npm install} for any installed package with a CLI binary -- is
+     * made entirely of symlinks (e.g. {@code node_modules/.bin/esbuild -> ../esbuild/bin/esbuild}). The
+     * blanket "reject any symlink" check below unconditionally threw a SecurityException the first time
+     * carry-forward walked such a tree, which made it structurally impossible to ever carry a Node.js
+     * project's installed dependencies into a later attempt -- guaranteed to recur for any Objective
+     * whose stack uses npm. Carry-forward must still never let a symlink smuggle content from outside the
+     * source tree into a later attempt's workspace (e.g. a symlink to another execution's workspace or a
+     * host path), so a symlink is now allowed only when its fully resolved real target stays inside the
+     * same {@code from} tree, and only its resolved file/directory *content* is copied -- the destination
+     * workspace never contains a live symlink, only plain files, so nothing carried forward can itself
+     * later be used to escape a workspace boundary.
+     */
+    private static void copySymlinkContent(Path from,Path source,Path target)throws IOException{
+        Path resolved;
+        try{ resolved=source.toRealPath(); }
+        catch(IOException broken){ throw new SecurityException("carry-forward source contains a broken symlink: "+source,broken); }
+        if(!resolved.startsWith(from)) throw new SecurityException("carry-forward source contains symlink escaping the source workspace: "+source);
+        if(Files.isDirectory(resolved,LinkOption.NOFOLLOW_LINKS)){
+            if(from.startsWith(resolved)) throw new SecurityException("carry-forward symlink target contains the source workspace root: "+source);
+            try(var nested=Files.walk(resolved)){
+                for(Path nestedSource:nested.sorted().toList()){
+                    Path nestedTarget=target.resolve(resolved.relativize(nestedSource));
+                    if(Files.isSymbolicLink(nestedSource)){ copySymlinkContent(from,nestedSource,nestedTarget); continue; }
+                    if(Files.isDirectory(nestedSource,LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(nestedTarget);
+                    else{ Files.createDirectories(nestedTarget.getParent()); Files.copy(nestedSource,nestedTarget,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES); }
+                }
+            }
+        } else {
+            Files.createDirectories(target.getParent());
+            Files.copy(resolved,target,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES);
         }
     }
 
@@ -333,9 +368,9 @@ public final class ExecutionWorkspaceManager {
     private static void copyTree(Path from,Path to)throws IOException{
         try(var stream=Files.walk(from)){
             for(Path source:stream.sorted().toList()){
-                if(Files.isSymbolicLink(source)) throw new SecurityException("carry-forward source contains symlink: "+source);
                 Path relative=from.relativize(source);
                 Path target=to.resolve(relative);
+                if(Files.isSymbolicLink(source)){ copySymlinkContent(from,source,target); continue; }
                 if(Files.isDirectory(source,LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(target);
                 else { Files.createDirectories(target.getParent()); Files.copy(source,target,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.COPY_ATTRIBUTES); }
             }

@@ -128,6 +128,68 @@ class ExecutionWorkspaceManagerTest {
         assertTrue(java.nio.file.Files.isRegularFile(carried.resolve(".git").resolve("HEAD")));
     }
 
+    /**
+     * Production incident (2026-09-23), discovered immediately after the DELIVER-collision fix above
+     * shipped and a real Node.js "Metatron Workforce Control Center" Objective's carry-forward reached a
+     * real {@code node_modules/.bin} directory: every plain {@code npm install} creates such entries as
+     * symlinks (e.g. {@code node_modules/.bin/esbuild -> ../esbuild/bin/esbuild}), and the carry-forward
+     * walker rejected ANY symlink outright with "carry-forward source contains symlink: ...", making it
+     * structurally impossible to ever carry forward a Node.js project's installed dependencies -- this
+     * would have blocked every Node-based Objective, permanently, at this exact step.
+     */
+    @Test void relativeSymlinkInsideTheCarriedTreeIsResolvedAndCopiedInsteadOfRejected(){
+        Instant t=Instant.parse("2026-09-23T00:00:00Z");
+        ExecutionAttemptService attempts=new ExecutionAttemptService();
+        ExecutionWorkspaceManager manager=new ExecutionWorkspaceManager(temp,attempts,new InMemoryExecutionWorkspaceBindingStore());
+
+        ExecutionAttempt produce=attempts.begin("d-npm-produce","objective:npm-app","produce","worker","assignment:produce","auth","runtime:produce",1,Duration.ofHours(1),t);
+        ExecutionWorkspaceBinding produced=manager.allocate(produce.attemptId(),produce.fencingToken(),t.plusSeconds(1));
+        Path primary=Path.of(produced.rootPath()).resolve("repos").resolve("primary");
+        try{
+            Path esbuildPackageBin=primary.resolve("node_modules").resolve("esbuild").resolve("bin");
+            java.nio.file.Files.createDirectories(esbuildPackageBin);
+            java.nio.file.Files.writeString(esbuildPackageBin.resolve("esbuild"), "#!/bin/sh\necho esbuild\n");
+            Path dotBin=primary.resolve("node_modules").resolve(".bin");
+            java.nio.file.Files.createDirectories(dotBin);
+            // Exactly npm's own convention: a relative symlink from node_modules/.bin into the package it wraps.
+            java.nio.file.Files.createSymbolicLink(dotBin.resolve("esbuild"), Path.of("..", "esbuild", "bin", "esbuild"));
+        }catch(java.io.IOException e){throw new AssertionError(e);}
+        attempts.succeed(produce.attemptId(),produce.fencingToken(),t.plusSeconds(2));
+
+        ExecutionAttempt verify=attempts.begin("d-npm-verify","objective:npm-app","verify","worker","assignment:verify","auth","runtime:verify",1,Duration.ofHours(1),t.plusSeconds(3));
+        ExecutionWorkspaceBinding verified=manager.allocate(verify.attemptId(),verify.fencingToken(),t.plusSeconds(4));
+        Path carriedBin=Path.of(verified.rootPath()).resolve("repos").resolve("primary").resolve("node_modules").resolve(".bin").resolve("esbuild");
+
+        assertTrue(java.nio.file.Files.exists(carriedBin),"the symlinked binary's content must still be carried forward");
+        assertFalse(java.nio.file.Files.isSymbolicLink(carriedBin),
+                "the destination workspace must never contain a live symlink -- only dereferenced content");
+        try{
+            assertEquals("#!/bin/sh\necho esbuild\n", java.nio.file.Files.readString(carriedBin));
+        }catch(java.io.IOException e){throw new AssertionError(e);}
+    }
+
+    @Test void symlinkResolvingOutsideTheCarriedTreeIsStillRejected(){
+        Instant t=Instant.parse("2026-09-23T00:00:00Z");
+        ExecutionAttemptService attempts=new ExecutionAttemptService();
+        ExecutionWorkspaceManager manager=new ExecutionWorkspaceManager(temp,attempts,new InMemoryExecutionWorkspaceBindingStore());
+
+        ExecutionAttempt produce=attempts.begin("d-escape-produce","objective:escape","produce","worker","assignment:produce","auth","runtime:produce",1,Duration.ofHours(1),t);
+        ExecutionWorkspaceBinding produced=manager.allocate(produce.attemptId(),produce.fencingToken(),t.plusSeconds(1));
+        Path primary=Path.of(produced.rootPath()).resolve("repos").resolve("primary");
+        try{
+            java.nio.file.Files.createDirectories(primary);
+            Path outsideSecret=temp.resolve("outside-secret.txt");
+            java.nio.file.Files.writeString(outsideSecret,"must-not-leak");
+            java.nio.file.Files.createSymbolicLink(primary.resolve("escape"), outsideSecret);
+        }catch(java.io.IOException e){throw new AssertionError(e);}
+        attempts.succeed(produce.attemptId(),produce.fencingToken(),t.plusSeconds(2));
+
+        ExecutionAttempt verify=attempts.begin("d-escape-verify","objective:escape","verify","worker","assignment:verify","auth","runtime:verify",1,Duration.ofHours(1),t.plusSeconds(3));
+        assertThrows(SecurityException.class,
+                ()->manager.allocate(verify.attemptId(),verify.fencingToken(),t.plusSeconds(4)),
+                "a symlink resolving outside the carried source tree must still fail closed");
+    }
+
     @Test void reclaimOrphanedDisposesBindingWithNoBackingAttempt(){
         Instant t=Instant.parse("2026-09-12T00:00:00Z");
         ExecutionAttemptService attempts=new ExecutionAttemptService();
