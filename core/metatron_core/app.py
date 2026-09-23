@@ -135,10 +135,15 @@ def handle_update(update: dict) -> None:
     msg = update.get("message") or {}
     user = str((msg.get("from") or {}).get("id", ""))
     chat = str((msg.get("chat") or {}).get("id", ""))
-    if msg.get("text") and ALLOWED_USER and user == ALLOWED_USER:
-        reply = handle_text(chat, msg["text"])
-        if reply:
-            send(chat, reply)
+    if not msg.get("text"):
+        return
+    if not ALLOWED_USER or user != ALLOWED_USER:
+        # Only the numeric id is logged, never the text: lets the founder find their own id.
+        print(f"telegram: ignored a message from user id {user} (not TELEGRAM_ALLOWED_USER_ID)", flush=True)
+        return
+    reply = handle_text(chat, msg["text"])
+    if reply:
+        send(chat, reply)
 
 
 def telegram(method: str, body: dict, token: str, timeout: float = 30) -> dict:

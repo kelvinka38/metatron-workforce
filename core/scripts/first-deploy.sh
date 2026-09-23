@@ -106,7 +106,7 @@ PY
 
 step "M1-6: Telegram test bot (long polling: no tunnel or public URL needed)"
 docker exec metatron-core python -c "import os,sys; sys.exit(0 if os.environ.get('TELEGRAM_ALLOWED_USER_ID','').isdigit() else 1)" \
-  || fail "TELEGRAM_ALLOWED_USER_ID is missing or not a number: Core would ignore every message. Save your numeric id with set-secret.sh TELEGRAM_ALLOWED_USER_ID."
+  || fail "TELEGRAM_ALLOWED_USER_ID is missing or not a number. Send any message to the test bot, then run: docker logs metatron-core 2>&1 | grep 'ignored a message' - the number shown is your id."
 if has CORE_TELEGRAM_BOT_TOKEN; then
   line=""
   for _ in $(seq 1 15); do

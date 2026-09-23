@@ -351,12 +351,15 @@ class TelegramPolling(unittest.TestCase):
     def test_only_founder_messages_become_tasks_and_offset_advances(self):
         updates = [self._update(7, 42, "In o/r fix it"), self._update(8, 99, "stranger task")]
         sent = []
-        with mock.patch.object(self.app, "send", lambda chat, text: sent.append((chat, text))):
+        with mock.patch.object(self.app, "send", lambda chat, text: sent.append((chat, text))), \
+                mock.patch("builtins.print") as printed:
             offset = self.app.poll_once(0, "T", call=lambda *a, **k: {"result": updates})
         self.assertEqual(offset, 9)
         self.assertEqual([r["request"] for r in self.app.store.recent()], ["In o/r fix it"])
         self.assertEqual(len(sent), 1)
         self.assertEqual(sent[0][0], "42")
+        self.assertIn("user id 99", printed.call_args[0][0])
+        self.assertNotIn("stranger task", printed.call_args[0][0])
 
     def test_bad_update_does_not_stop_polling(self):
         with mock.patch.object(self.app, "handle_update", side_effect=RuntimeError("boom")), \
