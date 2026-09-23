@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id     TEXT NOT NULL,
   request     TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'queued',   -- queued|running|done|failed|awaiting_approval|merged
+  status      TEXT NOT NULL DEFAULT 'queued',   -- queued|running|cancelling|cancelled|done|failed|awaiting_approval|merged
   result      TEXT,
   pr_url      TEXT,
   repo        TEXT,
@@ -35,9 +35,15 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
+        for column in ("attempts INTEGER NOT NULL DEFAULT 0", "not_before REAL NOT NULL DEFAULT 0"):
+            try:  # added after the first deploy; existing databases get them here
+                self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass
         self._lock = threading.Lock()
         # Crash recovery: anything left 'running' by a dead process goes back to the queue.
         self._conn.execute("UPDATE tasks SET status='queued' WHERE status='running'")
+        self._conn.execute("UPDATE tasks SET status='cancelled' WHERE status='cancelling'")
 
     @contextmanager
     def _tx(self):
@@ -53,7 +59,8 @@ class Store:
 
     def claim_next(self):
         with self._tx() as c:
-            row = c.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
+            row = c.execute("SELECT * FROM tasks WHERE status='queued' AND not_before <= ? ORDER BY id LIMIT 1",
+                            (time.time(),)).fetchone()
             if row:
                 c.execute("UPDATE tasks SET status='running', updated_at=? WHERE id=?", (time.time(), row["id"]))
             return dict(row) if row else None
@@ -74,6 +81,22 @@ class Store:
     def recent(self, limit: int = 10):
         with self._tx() as c:
             return [dict(r) for r in c.execute("SELECT * FROM tasks ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def tasks_since(self, since: float):
+        with self._tx() as c:
+            return [dict(r) for r in c.execute("SELECT * FROM tasks WHERE created_at >= ? ORDER BY id DESC",
+                                               (since,))]
+
+    def llm_calls_since(self, since: float):
+        """(task_id, 'provider:model') for every model reply recorded since the given time."""
+        with self._tx() as c:
+            rows = c.execute("SELECT task_id, detail FROM audit WHERE kind='llm' AND at >= ?", (since,)).fetchall()
+        out = []
+        for r in rows:
+            detail = r["detail"]
+            if detail.startswith("[") and "]" in detail:
+                out.append((r["task_id"], detail[1:detail.index("]")]))
+        return out
 
     def audit_tail(self, task_id: int, limit: int = 8):
         with self._tx() as c:

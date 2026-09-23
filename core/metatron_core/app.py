@@ -8,6 +8,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import shutil
 import threading
 import time
 import traceback
@@ -74,35 +75,125 @@ def progress_audit(tid: int, chat: str):
     return audit
 
 
+TASK_TIME_LIMIT = 45 * 60      # M2-4
+RETRY_DELAY = 15 * 60          # M2-5: every free provider cooling down
+MAX_ATTEMPTS = 8
+CI_FIX_ROUNDS = 2              # M2-2
+WORKSPACE_MAX_AGE = 3 * 86400  # M2-6
+
+
 def process(task: dict) -> None:
     tid, chat = task["id"], task["chat_id"]
     audit = progress_audit(tid, chat)
+    started = time.time()
+
+    def should_stop():
+        if (store.get(tid) or {}).get("status") == "cancelling":
+            return "Cancelled by the founder."
+        if time.time() - started > TASK_TIME_LIMIT:
+            return f"Stopped: the {TASK_TIME_LIMIT // 60}-minute limit per task was reached."
+        return None
+
     send(chat, f"▶️ Task #{tid} started. I'll post progress every {PROGRESS_EVERY} steps.")
     ws = Workspace(DATA / "work", tid, GITHUB_TOKEN, agent_uid_for(tid))
-    out = Agent(llm, audit).run(task["request"], ws)
+    agent = Agent(llm, audit)
+    out = agent.run(task["request"], ws, should_stop)
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
 
+    if out.get("retry"):
+        attempts = int(task.get("attempts") or 0) + 1
+        if attempts < MAX_ATTEMPTS:
+            store.update(tid, status="queued", attempts=attempts, not_before=time.time() + RETRY_DELAY,
+                         steps=out["steps"])
+            send(chat, f"⏸ Task #{tid} paused: no free model is available right now. "
+                       f"I'll retry in {RETRY_DELAY // 60} minutes (attempt {attempts + 1} of {MAX_ATTEMPTS}).")
+            return
+    if out.get("stopped"):
+        cancelled = (store.get(tid) or {}).get("status") == "cancelling"
+        store.update(tid, status="cancelled" if cancelled else "failed", **fields)
+        send(chat, f"🛑 Task #{tid} stopped\n{out['summary']}")
+        return
     if out.get("failed"):
         store.update(tid, status="failed", **fields)
         send(chat, f"❌ Task #{tid} failed\n{out['summary']}")
         return
     if out.get("open_pr") and ws.repo:
+        title = out.get("pr_title") or f"Metatron task #{tid}"
         try:
-            title = out.get("pr_title") or f"Metatron task #{tid}"
             url = ws.open_pull_request(title, f"{out['summary']}\n\nRequest:\n> {task['request']}\n\nTask #{tid}")
-            store.update(tid, status="awaiting_approval", pr_url=url, **fields)
-            send(chat, f"✅ Task #{tid} done — PR opened\n{url}\n\n{out['summary']}\n\n"
-                       f"Reply /approve {tid} to merge, /reject {tid} to close it.")
-            return
         except Exception as e:
             audit("error", f"open PR failed: {e}")
             fields["result"] = f"{out['summary']}\n\n(PR could not be opened: {e})"
+        else:
+            store.update(tid, status="awaiting_approval", pr_url=url, **fields)
+            send(chat, f"📬 Task #{tid}: PR opened, waiting for its CI\n{url}")
+            ci = follow_ci(tid, chat, task, ws, agent, should_stop, audit, title)
+            send(chat, f"✅ Task #{tid} done — {ci}\n{url}\n\n{out['summary']}\n\n"
+                       f"Reply /approve {tid} to merge, /reject {tid} to leave it open.")
+            return
     store.update(tid, status="done", **fields)
     send(chat, f"✅ Task #{tid} done\n{fields['result']}")
 
 
+def follow_ci(tid, chat, task, ws, agent, should_stop, audit, title) -> str:
+    """Wait for the PR's CI; on failure give the logs back to the agent, up to CI_FIX_ROUNDS times."""
+    for fix_round in range(CI_FIX_ROUNDS + 1):
+        try:
+            state, details = ws.wait_for_ci()
+        except Exception as e:
+            audit("error", f"CI check failed: {e}")
+            return f"CI state unknown ({type(e).__name__})"
+        audit("info", f"CI {state}: {details[:1500]}")
+        if state == "success":
+            return "CI green"
+        if state == "none":
+            return "no CI checks ran on this repo"
+        if state == "timeout":
+            return "CI did not finish within 20 minutes"
+        if fix_round == CI_FIX_ROUNDS:
+            return f"CI still failing after {CI_FIX_ROUNDS} fix rounds:\n{details[:800]}"
+        send(chat, f"🔧 Task #{tid}: CI failed, fix round {fix_round + 1} of {CI_FIX_ROUNDS}")
+        before = ws.head_sha
+        out = agent.run(f"{task['request']}\n\nYou already changed ./repo and opened a pull request. Its CI "
+                        f"failed:\n{details[:6000]}\n\nFix the cause in ./repo (do not clone again), run the "
+                        "checks you can, then call finish with open_pr=true.", ws, should_stop, allow_clone=False)
+        if out.get("failed"):
+            return f"CI failed and the fix round stopped: {out['summary']}"
+        try:
+            ws.publish_branch(title)
+        except Exception as e:
+            return f"CI failed and the fix could not be pushed: {e}"
+        if ws.head_sha == before:
+            return f"CI failed and the fix round changed nothing:\n{details[:800]}"
+    return "CI state unknown"
+
+
+def cleanup_workspaces(now: float | None = None) -> int:
+    """Delete task workspaces untouched for WORKSPACE_MAX_AGE, except for tasks still running (M2-6)."""
+    now = now or time.time()
+    removed = 0
+    for d in (DATA / "work").glob("task-*"):
+        tid = d.name.removeprefix("task-")
+        task = store.get(int(tid)) if tid.isdigit() else None
+        if task and task["status"] in ("running", "cancelling"):
+            continue
+        try:
+            if now - d.stat().st_mtime > WORKSPACE_MAX_AGE:
+                shutil.rmtree(d)
+                removed += 1
+        except OSError as e:
+            print(f"cleanup of {d.name} failed: {e}", flush=True)
+    return removed
+
+
 def worker_loop() -> None:
+    last_cleanup = 0.0
     while True:
+        if time.time() - last_cleanup > 3600:
+            last_cleanup = time.time()
+            removed = cleanup_workspaces()
+            if removed:
+                print(f"cleanup: removed {removed} old workspaces", flush=True)
         task = store.claim_next()
         if not task:
             wake.wait(30)
@@ -123,11 +214,27 @@ def handle_text(chat_id: str, text: str) -> str | None:
     if text in ("/start", "/help"):
         return ("Send me any task in plain language, e.g.\n"
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
-                "/status — recent tasks\n/log <id> — a task's last steps\n"
-                "/approve <id> — merge a task's PR\n/reject <id> — close it")
+                "/status — recent tasks\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
+                "/report — last 7 days\n/approve <id> — merge a task's PR\n/reject <id> — leave it open")
     if text.startswith("/status"):
         rows = store.recent(10)
         return "\n".join(f"#{r['id']} [{r['status']}] {r['request'][:60]}" for r in rows) or "No tasks yet."
+    if text.startswith("/cancel"):
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            return "Usage: /cancel <task id>"
+        task = store.get(int(parts[1]))
+        if not task:
+            return "No such task."
+        if task["status"] == "queued":
+            store.update(task["id"], status="cancelled")
+            return f"Task #{task['id']} cancelled before it started."
+        if task["status"] == "running":
+            store.update(task["id"], status="cancelling")
+            return f"Stopping task #{task['id']} after its current step."
+        return f"Task #{task['id']} is {task['status']}; nothing to cancel."
+    if text.startswith("/report"):
+        return weekly_report()
     if text.startswith("/log"):
         parts = text.split()
         if len(parts) != 2 or not parts[1].isdigit():
@@ -155,6 +262,33 @@ def handle_text(chat_id: str, text: str) -> str | None:
     tid = store.create_task(chat_id, text)
     wake.set()
     return f"📥 Task #{tid} queued. I'll message you when it's done."
+
+
+def weekly_report(days: int = 7) -> str:
+    """M3-3: tasks, success rate and which model did the work. Paid providers must stay at zero."""
+    since = time.time() - days * 86400
+    tasks = store.tasks_since(since)
+    counts: dict[str, int] = {}
+    for t in tasks:
+        counts[t["status"]] = counts.get(t["status"], 0) + 1
+    ok = sum(counts.get(s, 0) for s in ("done", "awaiting_approval", "merged"))
+    finished = ok + counts.get("failed", 0)
+    rate = f"{100 * ok // finished}%" if finished else "n/a"
+    per_task: dict[int, dict[str, int]] = {}
+    totals: dict[str, int] = {}
+    for tid, model in store.llm_calls_since(since):
+        per_task.setdefault(tid, {})
+        per_task[tid][model] = per_task[tid].get(model, 0) + 1
+        totals[model] = totals.get(model, 0) + 1
+    paid = sum(n for m, n in totals.items() if m.split(":")[0] in ("anthropic", "openai"))
+    lines = [f"Last {days} days: {len(tasks)} tasks, success rate {rate} ({ok} of {finished} finished).",
+             "By status: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "none"),
+             "Model calls: " + (", ".join(f"{m} ×{n}" for m, n in sorted(totals.items())) or "none"),
+             f"Paid-provider calls: {paid}" + (" ✅" if paid == 0 else " ⚠️ zero-cost rule broken")]
+    for t in tasks[:10]:
+        used = ", ".join(f"{m} ×{n}" for m, n in sorted(per_task.get(t["id"], {}).items())) or "no model calls"
+        lines.append(f"#{t['id']} [{t['status']}] {used}")
+    return "\n".join(lines)
 
 
 # ---------------- telegram ----------------

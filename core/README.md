@@ -62,7 +62,21 @@ with the secret token.
 
 ## Use
 
-Send the bot a task in plain words, e.g. "In kelvinka38/bios fix the failing test".
-`/status` lists recent tasks, `/approve <id>` merges a task's PR, `/reject <id>` leaves it open.
+Send the bot a task in plain words, e.g. "In kelvinka38/bios fix the failing test". Core posts
+when it starts, every 5 steps, and when it opens a PR. It then waits for the PR's CI and, if CI
+fails, gives the logs back to the agent for up to 2 fix rounds.
+
+| Command | Does |
+| --- | --- |
+| `/status` | Recent tasks |
+| `/log <id>` | A task's last 8 steps |
+| `/cancel <id>` | Stop a queued or running task |
+| `/report` | Last 7 days: tasks, success rate, model calls, paid-provider calls (must be 0) |
+| `/approve <id>` | Merge the task's PR |
+| `/reject <id>` | Leave the PR open |
+
+Limits: 40 steps and 45 minutes per task. When every free model is cooling down, the task waits
+15 minutes and retries (8 attempts). Workspaces untouched for 3 days are deleted.
+
 Local API: `POST /tasks {"request": "..."}` and `GET /tasks/<id>`, both with
 `Authorization: Bearer $CORE_API_TOKEN`.

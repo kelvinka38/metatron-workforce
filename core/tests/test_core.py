@@ -427,5 +427,167 @@ class Progress(unittest.TestCase):
             self.assertIn("run(", sent[0])
 
 
+def _fresh_app(d):
+    import importlib
+    with mock.patch.dict(os.environ, {"CORE_DATA_DIR": d, "TELEGRAM_ALLOWED_USER_ID": "42"}):
+        import metatron_core.app as app  # first import must already see the temp data dir
+        return importlib.reload(app)
+
+
+class RepoGuidance(unittest.TestCase):  # M2-1
+    def test_clone_shows_agents_md_and_skips_symlinks(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "src"
+            src.mkdir()
+            _git(src, "init", "-q", "-b", "main")
+            (src / "AGENTS.md").write_text("Run make test before finishing.")
+            (src / "README.md").write_text("Hello")
+            (src / "CONTRIBUTING.md").symlink_to("/etc/hostname")
+            _git(src, "add", "-A")
+            _git(src, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
+            remote = Path(d) / "remote" / "o"
+            remote.mkdir(parents=True)
+            _git(Path(d), "clone", "-q", "--bare", str(src), str(remote / "r.git"))
+            ws = Workspace(Path(d) / "work", 9, github_token="")
+            ws.remote_base = f"file://{Path(d) / 'remote'}"
+            out = ws.clone_repo("o/r")
+            self.assertIn("guidance from AGENTS.md", out)
+            self.assertIn("Run make test", out)
+            self.assertIn("Also present: README.md", out)
+            self.assertNotIn("CONTRIBUTING", out)
+
+
+class WaitForCi(unittest.TestCase):  # M2-2
+    def _ws(self, d):
+        ws = Workspace(Path(d), 10, github_token="t")
+        ws.repo, ws.head_sha, ws._sleep = "o/r", "abc", lambda s: None
+        return ws
+
+    def test_pending_then_failure_includes_log_tail(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = self._ws(d)
+            pending = {"check_runs": [{"id": 1, "status": "in_progress"}]}
+            failed = {"check_runs": [{"id": 7, "name": "test", "status": "completed", "conclusion": "failure",
+                                      "output": {"title": "1 failed"}, "app": {"slug": "github-actions"}}]}
+            with mock.patch("metatron_core.tools._github_api", side_effect=[pending, failed]), \
+                    mock.patch("metatron_core.tools._github_text", return_value="line\nAssertionError: 5 != -1"):
+                state, details = ws.wait_for_ci()
+            self.assertEqual(state, "failure")
+            self.assertIn("AssertionError: 5 != -1", details)
+            self.assertIn("## test: failure", details)
+
+    def test_no_checks_and_success(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = self._ws(d)
+            with mock.patch("metatron_core.tools._github_api", return_value={"check_runs": []}):
+                self.assertEqual(ws.wait_for_ci(grace=0)[0], "none")
+            ok = {"check_runs": [{"status": "completed", "conclusion": "success"},
+                                 {"status": "completed", "conclusion": "skipped"}]}
+            with mock.patch("metatron_core.tools._github_api", return_value=ok):
+                self.assertEqual(ws.wait_for_ci()[0], "success")
+
+
+class CiFixRounds(unittest.TestCase):  # M2-2
+    def test_failure_then_green_after_one_fix(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            ws = mock.Mock(head_sha="a")
+            ws.wait_for_ci.side_effect = [("failure", "boom"), ("success", "")]
+            ws.publish_branch.side_effect = lambda title: setattr(ws, "head_sha", "b")
+            agent = mock.Mock()
+            agent.run.return_value = {"summary": "fixed", "open_pr": True, "steps": 3}
+            with mock.patch.object(app, "send"):
+                result = app.follow_ci(1, "42", {"request": "fix"}, ws, agent, None, lambda *a: None, "t")
+            self.assertEqual(result, "CI green")
+            self.assertFalse(agent.run.call_args.kwargs["allow_clone"])
+            self.assertIn("boom", agent.run.call_args.args[0])
+
+    def test_gives_up_after_two_rounds(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            ws = mock.Mock(head_sha="a")
+            ws.wait_for_ci.return_value = ("failure", "still red")
+            counter = iter("bcd")
+            ws.publish_branch.side_effect = lambda title: setattr(ws, "head_sha", next(counter))
+            agent = mock.Mock()
+            agent.run.return_value = {"summary": "tried", "open_pr": True, "steps": 3}
+            with mock.patch.object(app, "send"):
+                result = app.follow_ci(1, "42", {"request": "fix"}, ws, agent, None, lambda *a: None, "t")
+            self.assertIn("still failing after 2 fix rounds", result)
+            self.assertEqual(agent.run.call_count, 2)
+
+
+class CancelAndLimits(unittest.TestCase):  # M2-4
+    def test_should_stop_ends_the_loop(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 11, github_token="")
+            llm = ScriptedLlm([act("list_dir", path=".")] * 5)
+            reasons = iter([None, None, "Cancelled by the founder."])
+            out = Agent(llm, audit=lambda *a: None).run("x", ws, should_stop=lambda: next(reasons))
+            self.assertTrue(out["stopped"])
+            self.assertEqual(out["steps"], 2)
+
+    def test_cancel_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            queued = app.store.create_task("42", "a")
+            running = app.store.create_task("42", "b")
+            app.store.update(running, status="running")
+            self.assertIn("cancelled before it started", app.handle_text("42", f"/cancel {queued}"))
+            self.assertIn("Stopping task", app.handle_text("42", f"/cancel {running}"))
+            self.assertEqual(app.store.get(running)["status"], "cancelling")
+            self.assertEqual(app.store.claim_next(), None)
+
+
+class QuotaRetry(unittest.TestCase):  # M2-5
+    def test_no_free_model_requeues_later(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            tid = app.store.create_task("42", "x")
+            task = app.store.claim_next()
+            out = {"summary": "no model", "open_pr": False, "steps": 1, "failed": True, "retry": True}
+            with mock.patch.object(app, "send"), mock.patch.object(app.Agent, "run", return_value=out):
+                app.process(task)
+            row = app.store.get(tid)
+            self.assertEqual((row["status"], row["attempts"]), ("queued", 1))
+            self.assertGreater(row["not_before"], time.time() + 60)
+            self.assertIsNone(app.store.claim_next())  # not before the retry delay
+
+
+class WorkspaceCleanup(unittest.TestCase):  # M2-6
+    def test_old_idle_workspaces_go_running_ones_stay(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            old = app.store.create_task("42", "old")
+            live = app.store.create_task("42", "live")
+            app.store.update(live, status="running")
+            for tid in (old, live):
+                w = Path(d) / "work" / f"task-{tid}"
+                w.mkdir(parents=True)
+                os.utime(w, (time.time() - 5 * 86400,) * 2)
+            self.assertEqual(app.cleanup_workspaces(), 1)
+            self.assertFalse((Path(d) / "work" / f"task-{old}").exists())
+            self.assertTrue((Path(d) / "work" / f"task-{live}").exists())
+
+
+class Report(unittest.TestCase):  # M3-3
+    def test_report_counts_models_and_flags_paid_use(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            a = app.store.create_task("42", "a")
+            b = app.store.create_task("42", "b")
+            app.store.update(a, status="merged")
+            app.store.update(b, status="failed")
+            app.store.audit(a, "llm", "[gemini:gemini-3.8-flash] {}")
+            app.store.audit(a, "llm", "[gemini:gemini-3.8-flash] {}")
+            app.store.audit(b, "llm", "[ollama:qwen2.5-coder:7b] {}")
+            text = app.handle_text("42", "/report")
+            self.assertIn("2 tasks, success rate 50%", text)
+            self.assertIn("gemini:gemini-3.8-flash ×2", text)
+            self.assertIn("Paid-provider calls: 0 ✅", text)
+            app.store.audit(b, "llm", "[anthropic:claude] {}")
+            self.assertIn("zero-cost rule broken", app.handle_text("42", "/report"))
+
+
 if __name__ == "__main__":
     unittest.main()

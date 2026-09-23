@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -40,12 +41,24 @@ def agent_uid_for(task_id: int) -> int | None:
     return int(base) + int(task_id)
 
 
-def _github_api(method: str, url: str, token: str, body: dict) -> dict:
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), method=method,
+def _github_api(method: str, url: str, token: str, body: dict | None) -> dict:
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(), method=method,
                                  headers={"Authorization": f"Bearer {token}",
                                           "Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         return json.loads(resp.read() or b"{}")
+
+
+def _github_text(url: str, token: str) -> str:
+    """A plain-text GitHub download (job logs). The token is not forwarded to the storage redirect."""
+    req = urllib.request.Request(url)
+    req.add_unredirected_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.read().decode(errors="replace")
+
+
+GUIDANCE_FILES = ("AGENTS.md", "CONTRIBUTING.md", "README.md")
+CI_OK = ("success", "skipped", "neutral")
 
 
 def merge_pull_request(pr_url: str, token: str) -> None:
@@ -65,6 +78,8 @@ class Workspace:
         self.repo: str | None = None
         self.base_branch = ""
         self.base_sha = ""
+        self.head_sha = ""
+        self._sleep = time.sleep
         self.dir.mkdir(parents=True, exist_ok=True)
         if self.uid is not None:
             os.chmod(root, 0o711)                 # traversable, not listable
@@ -157,9 +172,20 @@ class Workspace:
             self.base_sha = self._git("rev-parse", "HEAD").strip()
         except RuntimeError as e:
             return f"error: {e}"
+        guidance = self._guidance(target)  # read before the agent user owns (and could swap) the files
         self._give_to_agent(target)
         self.repo = repo
-        return f"cloned {repo} into ./repo"
+        return f"cloned {repo} into ./repo" + guidance
+
+    @staticmethod
+    def _guidance(repo_dir: Path) -> str:
+        """The repo's own instructions for contributors, shown to the agent right after cloning (M2-1)."""
+        found = [n for n in GUIDANCE_FILES if (repo_dir / n).is_file() and not (repo_dir / n).is_symlink()]
+        if not found:
+            return "\nNo AGENTS.md, CONTRIBUTING.md or README.md at the repo root."
+        text = (repo_dir / found[0]).read_text(errors="replace")[:3000]
+        others = f" Also present: {', '.join(found[1:])}." if found[1:] else ""
+        return f"\nRepository guidance from {found[0]} (follow it):{others}\n---\n{text}\n---"
 
     def list_dir(self, path: str = "repo") -> str:
         return self._file_op("list_dir", path)
@@ -213,6 +239,7 @@ class Workspace:
             self._git("commit", "-q", "-m", title, as_agent=True)
         if int(self._git("rev-list", "--count", f"{self.base_sha}..HEAD", as_agent=True)) == 0:
             raise RuntimeError("no changes to publish")
+        self.head_sha = self._git("rev-parse", "HEAD", as_agent=True).strip()
         self._reset_git_config(git_dir)
         self._git("push", "--force", f"{self.remote_base}/{self.repo}.git", f"HEAD:refs/heads/{branch}",
                   auth=True)
@@ -223,6 +250,38 @@ class Workspace:
         pr = _github_api("POST", f"https://api.github.com/repos/{self.repo}/pulls", self._token,
                          {"title": title, "head": branch, "base": self.base_branch, "body": body})
         return pr["html_url"]
+
+
+    def wait_for_ci(self, timeout: float = 1200, poll: float = 30, grace: float = 120) -> tuple[str, str]:
+        """Wait for the pushed commit's checks (M2-2): ('success'|'failure'|'none'|'timeout', details)."""
+        start = time.time()
+        while True:
+            runs = _github_api("GET", f"https://api.github.com/repos/{self.repo}/commits/{self.head_sha}"
+                                      "/check-runs?per_page=100", self._token, None).get("check_runs", [])
+            waited = time.time() - start
+            if runs and all(r.get("status") == "completed" for r in runs):
+                bad = [r for r in runs if r.get("conclusion") not in CI_OK]
+                return ("failure", self._ci_failures(bad)) if bad else ("success", "")
+            if not runs and waited >= grace:
+                return "none", ""
+            if waited >= timeout:
+                return "timeout", ""
+            self._sleep(poll)
+
+    def _ci_failures(self, runs: list[dict]) -> str:
+        parts = []
+        for r in runs[:3]:
+            out = r.get("output") or {}
+            part = f"## {r.get('name')}: {r.get('conclusion')}\n{(out.get('title') or '')}\n{(out.get('summary') or '')[:800]}"
+            if (r.get("app") or {}).get("slug") == "github-actions":
+                try:
+                    log = _github_text(f"https://api.github.com/repos/{self.repo}/actions/jobs/{r['id']}/logs",
+                                       self._token)
+                    part += "\nLog tail:\n" + "\n".join(log.splitlines()[-80:])
+                except Exception as e:
+                    part += f"\n(log unavailable: {type(e).__name__})"
+            parts.append(part)
+        return _clip("\n\n".join(parts))
 
 
 TOOL_SPEC = """

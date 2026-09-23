@@ -21,6 +21,7 @@ Protocol - every reply is exactly ONE JSON object and nothing else:
 
 Working rules:
 - If the task names a repository, clone it first. Explore before editing (list_dir, read_file, run grep).
+- Follow the repository guidance (AGENTS.md, CONTRIBUTING.md, README) shown after cloning.
 - After changing code, run the project's build/tests. If they fail, read the error, fix, re-run.
 - Never claim success you have not verified by running something. Say plainly what you could not verify.
 - Only call finish with open_pr=true when there are real changes and the checks you could run pass.
@@ -72,18 +73,22 @@ class Agent:
         self.audit = audit          # callable(kind, detail)
         self.max_steps = max_steps
 
-    def run(self, request: str, ws: Workspace) -> dict:
-        """Returns {'summary', 'open_pr', 'pr_title', 'steps'}."""
+    def run(self, request: str, ws: Workspace, should_stop=None, allow_clone: bool = True) -> dict:
+        """Returns {'summary', 'open_pr', 'pr_title', 'steps'}, plus 'failed' and, when no free model
+        was reachable, 'retry'; 'stopped' when should_stop() gave a reason (cancel, time limit)."""
         messages = [Message("system", SYSTEM), Message("user", f"Task:\n{request}")]
         bad_replies = 0
         recent_tools: list[str] = []
         for step in range(1, self.max_steps + 1):
+            reason = should_stop() if should_stop else None
+            if reason:
+                return {"summary": reason, "open_pr": False, "steps": step - 1, "failed": True, "stopped": True}
             self._compact(messages)
             try:
                 reply = self.llm.complete(messages, max_tokens=4096)
             except LlmUnavailable as e:
                 return {"summary": f"Stopped: no free LLM available right now ({e}).",
-                        "open_pr": False, "steps": step, "failed": True}
+                        "open_pr": False, "steps": step, "failed": True, "retry": True}
             self.audit("llm", f"[{self.llm.last_used}] {reply[:1500]}")
             messages.append(Message("assistant", reply))
             try:
@@ -105,7 +110,7 @@ class Agent:
                         "pr_title": str(args.get("pr_title") or "")[:120],
                         "steps": step}
 
-            result = self._call(ws, tool, args)
+            result = self._call(ws, tool, args, allow_clone)
             self.audit("tool", f"{tool}({json.dumps(args)[:500]}) -> {result[:1500]}")
             recent_tools.append(tool)
             left = self.max_steps - step
@@ -120,8 +125,10 @@ class Agent:
                 "open_pr": False, "steps": self.max_steps, "failed": True}
 
     @staticmethod
-    def _call(ws: Workspace, tool: str, args: dict) -> str:
-        allowed = {"clone_repo", "list_dir", "read_file", "write_file", "replace_in_file", "run"}
+    def _call(ws: Workspace, tool: str, args: dict, allow_clone: bool = True) -> str:
+        allowed = {"list_dir", "read_file", "write_file", "replace_in_file", "run"}
+        if allow_clone:
+            allowed.add("clone_repo")
         if tool not in allowed:
             return f"error: unknown tool '{tool}'. Allowed: {sorted(allowed)} or finish"
         try:
