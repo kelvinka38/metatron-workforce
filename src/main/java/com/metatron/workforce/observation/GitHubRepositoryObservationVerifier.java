@@ -36,6 +36,18 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
     private static final Pattern GS2_BRANCH = Pattern.compile("autonomy/gs2-([0-9a-f]{16})");
     private static final String UNSET_SENTINEL = "GS2_AUTONOMOUS_PROBE=UNSET";
     private static final String PROBE_PREFIX = "GS2_AUTONOMOUS_PROBE=";
+    /**
+     * Production incident (2026-09-23), same case build-and-deliver "Metatron Workforce Control Center":
+     * the general-workspace DELIVER step successfully published a real reviewable PR
+     * (workspace.github.pr.publish PASS), but this verifier's own independent fresh reads of that
+     * just-created PR -- issued within seconds of publish, at Observation's own retry cadence -- hit
+     * GitHub's read-after-write propagation lag on the PR/commit/files endpoints (the same class of lag
+     * fixed for repository creation in the PRODUCE step's RepositoryWorkspaceMaterializationService, now
+     * showing up one step later against a different endpoint). With zero retry inside a single {@link
+     * #get} call, all of Observation's own outer bounded attempts (3) were exhausted purely on transient
+     * 404s, permanently blocking an Objective whose delivery had genuinely and correctly succeeded.
+     */
+    private static final long[] READ_LAG_BACKOFF_MS = {500L, 1000L, 2000L};
 
     private final HttpClient http;
     private final ObjectMapper json;
@@ -305,6 +317,10 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
     }
 
     private JsonNode get(String path) throws Exception {
+        return get(path, 0);
+    }
+
+    private JsonNode get(String path, int attempt) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(apiBase + path))
                 .timeout(Duration.ofSeconds(20))
                 .header("Accept", "application/vnd.github+json")
@@ -312,6 +328,15 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
                 .header("User-Agent", "metatron-workforce-observation");
         if (!token.isBlank()) request.header("Authorization", "Bearer " + token);
         HttpResponse<String> response = http.send(request.GET().build(), HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 && attempt < READ_LAG_BACKOFF_MS.length) {
+            try {
+                Thread.sleep(READ_LAG_BACKOFF_MS[attempt]);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw interrupted;
+            }
+            return get(path, attempt + 1);
+        }
         if (response.statusCode() != 200) throw new IllegalStateException("GitHub observation HTTP " + response.statusCode());
         return json.readTree(response.body());
     }
