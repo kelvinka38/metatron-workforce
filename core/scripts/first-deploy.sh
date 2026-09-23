@@ -46,6 +46,12 @@ if has GEMINI_API_KEY; then echo "Gemini key: from $CORE_ENV"
 else echo "Gemini key: from $WF_ENV (save a free-tier key with set-secret.sh GEMINI_API_KEY)"; fi
 if has CORE_TELEGRAM_BOT_TOKEN; then echo "Telegram test bot token: set"
 else echo "Telegram test bot token: NOT set yet (M1-6)"; fi
+# Shape checks only; values are never printed.
+grep -q '^CORE_TELEGRAM_BOT_TOKEN=' "$CORE_ENV" && ! grep -qE '^CORE_TELEGRAM_BOT_TOKEN=[0-9]+:[A-Za-z0-9_-]{30,}$' "$CORE_ENV" \
+  && fail "CORE_TELEGRAM_BOT_TOKEN does not look like a bot token (123456789:AA...). Save it again with set-secret.sh."
+grep -q '^TELEGRAM_ALLOWED_USER_ID=' "$CORE_ENV" && ! grep -qE '^TELEGRAM_ALLOWED_USER_ID=[0-9]{4,15}$' "$CORE_ENV" \
+  && fail "TELEGRAM_ALLOWED_USER_ID in $CORE_ENV is not a numeric user id (a bot token pasted there?). Fix: set-secret.sh --unset TELEGRAM_ALLOWED_USER_ID, or save the right number."
+true
 
 step "M1-4: ollama pull qwen2.5-coder:7b (about 4.7 GB, first time only)"
 docker exec metatron-ollama ollama pull qwen2.5-coder:7b >/dev/null 2>&1 \
@@ -99,8 +105,8 @@ raise SystemExit(0 if ok else 1)
 PY
 
 step "M1-6: Telegram test bot (long polling: no tunnel or public URL needed)"
-docker exec metatron-core python -c "import os,sys; sys.exit(0 if os.environ.get('TELEGRAM_ALLOWED_USER_ID') else 1)" \
-  || fail "TELEGRAM_ALLOWED_USER_ID is not set: Core would ignore every message. Save it with set-secret.sh."
+docker exec metatron-core python -c "import os,sys; sys.exit(0 if os.environ.get('TELEGRAM_ALLOWED_USER_ID','').isdigit() else 1)" \
+  || fail "TELEGRAM_ALLOWED_USER_ID is missing or not a number: Core would ignore every message. Save your numeric id with set-secret.sh TELEGRAM_ALLOWED_USER_ID."
 if has CORE_TELEGRAM_BOT_TOKEN; then
   line=""
   for _ in $(seq 1 15); do

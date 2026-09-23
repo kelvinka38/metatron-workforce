@@ -326,7 +326,7 @@ class GeminiModelChoice(unittest.TestCase):
                 raise urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO(b""))
             return "OK"
 
-        with mock.patch.object(g, "_generate", side_effect=generate), \
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"), \
                 mock.patch.object(g, "_list_models", return_value=[_model("gemini-3-flash")]):
             self.assertEqual(g.complete([], 10), "OK")
         self.assertEqual(calls, ["gemini-2.5-flash", "gemini-3-flash"])
@@ -359,7 +359,8 @@ class TelegramPolling(unittest.TestCase):
         self.assertEqual(sent[0][0], "42")
 
     def test_bad_update_does_not_stop_polling(self):
-        with mock.patch.object(self.app, "handle_update", side_effect=RuntimeError("boom")):
+        with mock.patch.object(self.app, "handle_update", side_effect=RuntimeError("boom")), \
+                mock.patch("builtins.print"):
             offset = self.app.poll_once(5, "T", call=lambda *a, **k: {"result": [{"update_id": 5}]})
         self.assertEqual(offset, 6)
 
