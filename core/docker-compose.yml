@@ -1,0 +1,43 @@
+# Metatron Core - runs beside the old Workforce, touches none of its state.
+# Start:  cd /opt/metatron/metatron-workforce/core && \
+#         docker compose --env-file ../deploy/.env --env-file /opt/metatron/metatron-core.env up -d --build
+services:
+  core:
+    build: .
+    image: metatron-core:latest
+    container_name: metatron-core
+    restart: unless-stopped
+    mem_limit: 1536m
+    cpus: 2.0
+    pids_limit: 512
+    ports:
+      - "127.0.0.1:8095:8095"
+    environment:
+      # LLM: Gemini free tier -> Ollama. Anthropic/OpenAI stay locked (zero-pay rule).
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      CORE_GEMINI_MODEL: "${CORE_GEMINI_MODEL:-gemini-2.5-flash}"
+      OPENROUTER_FREE_API_KEY: "${OPENROUTER_FREE_API_KEY:-}"
+      OPENROUTER_FREE_MODEL: "${OPENROUTER_FREE_MODEL:-}"
+      OLLAMA_URL: "${CORE_OLLAMA_URL:-http://metatron-ollama:11434}"
+      CORE_OLLAMA_MODEL: "${CORE_OLLAMA_MODEL:-qwen2.5-coder:7b}"
+      # Telegram: a separate test bot until cutover, then the main bot.
+      CORE_TELEGRAM_BOT_TOKEN: "${CORE_TELEGRAM_BOT_TOKEN:-}"
+      CORE_TELEGRAM_WEBHOOK_SECRET: "${CORE_TELEGRAM_WEBHOOK_SECRET:-}"
+      TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID:-}"
+      CORE_API_TOKEN: "${CORE_API_TOKEN:-}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+    volumes:
+      - core-data:/data
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - workforce
+
+volumes:
+  core-data:
+    name: metatron-core-data
+
+networks:
+  workforce:
+    external: true
+    name: metatron-workforce
