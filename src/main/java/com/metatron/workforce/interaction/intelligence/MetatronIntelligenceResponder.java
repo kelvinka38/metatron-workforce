@@ -31,10 +31,19 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /** Channel-neutral Human intelligence boundary. */
 public final class MetatronIntelligenceResponder {
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(MetatronIntelligenceResponder.class);
+    // Narrow, bounded confirmation signal for a SPECIFIC pending question this responder itself just
+    // asked (see AWAITING_EXECUTION_CONFIRMATION below) -- not a general Human-language understanding
+    // heuristic. The semantic content of the objective itself was already understood by the frontier
+    // pass in the turn that produced the pending confirmation; this pattern only recognizes "yes" to
+    // that already-understood, already-displayed question.
+    private static final Pattern AFFIRMATIVE_EXECUTION_CONFIRMATION = Pattern.compile(
+            "(?iU)^\\s*(yes|yeah|yep|yup|confirm(?:ed)?|okay|ok|go\\s*ahead|do\\s*it|start\\s*it|proceed|"
+                    + "ừ|vâng|được|đồng\\s*ý|xác\\s*nhận|làm\\s*đi|ok\\s*đi)\\b");
     private static final String SYSTEM_CONTEXT = """
             You are Metatron Workforce's intelligence layer.
             Answer the Human directly and naturally in the Human's language.
@@ -221,6 +230,20 @@ public final class MetatronIntelligenceResponder {
             IntelligenceCase activeCase = caseStore.findActive(conversationId)
                     .filter(item -> item.status() != IntelligenceCaseStatus.RESOLVED)
                     .orElse(null);
+
+            if (activeCase != null && activeCase.status() == IntelligenceCaseStatus.AWAITING_EXECUTION_CONFIRMATION) {
+                if (isAffirmativeExecutionConfirmation(text)) {
+                    route = "execution-objective-chat-confirmed";
+                    return admitChatConfirmedExecution(humanId, organizationContextId, conversationId,
+                            externalMessageReference, channel, activeCase);
+                }
+                // Not an affirmation of THIS specific pending question: abandon it and let this message
+                // be interpreted fresh below, rather than silently dropping it or forcing it to answer a
+                // question the Human may not even have seen as a question.
+                caseStore.save(activeCase.transition(IntelligenceCaseStatus.RESOLVED));
+                activeCase = null;
+            }
+
             NormalizedRequest normalized;
             boolean deterministicControl = false;
             String deterministicControlRoute = "";
@@ -311,13 +334,17 @@ public final class MetatronIntelligenceResponder {
                 }
                 if (!shouldAdmitExecution(deterministicControl,
                         semanticExecutionHandoffEnabled || executionSurfaceAuthorized)) {
-                    route = "semantic-execution-objective-handoff-disabled";
-                    caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.WAITING_ON_EXTERNAL_STATE));
-                    return "METATRON WORK NOT ADMITTED"
-                            + "\nreason=SEMANTIC_CHAT_TO_WORKFORCE_DISABLED"
-                            + "\ncase_id=" + intelligenceCase.caseId()
-                            + "\nobjective=" + normalized.objective()
-                            + "\nnext=Use the explicit Work/Objective control surface for durable execution";
+                    // Root-cause fix (2026-09-23, Founder-directed): the frontier pass already understood
+                    // this as a real execution request -- Chat still never admits durable Work
+                    // automatically (AGENTS.md), but the Human should not have to already know and type
+                    // the canonical control grammar for that to be recognized at all. A single explicit
+                    // "yes" from the Human (isolated to this specific pending question, not general
+                    // language routing) is the Human act that admits it, via the same
+                    // CanonicalObjectiveControlInterpreter/ExecutionObjectiveHandoff path an explicit
+                    // control message already uses.
+                    route = "semantic-execution-objective-confirmation-required";
+                    caseStore.save(intelligenceCase.transition(IntelligenceCaseStatus.AWAITING_EXECUTION_CONFIRMATION));
+                    return executionConfirmationRequiredResponse(intelligenceCase, normalized.objective());
                 }
                 ExecutionObjectiveHandoff.HandoffReceipt handoff = executionObjectiveHandoff.submit(
                         humanId, organizationContextId, intelligenceCase.caseId(), conversationId,
@@ -427,6 +454,45 @@ public final class MetatronIntelligenceResponder {
         }
     }
 
+    /**
+     * The Human's explicit "yes" to a specific pending {@code AWAITING_EXECUTION_CONFIRMATION} question
+     * is the act that admits durable Work here -- not the original ordinary-chat message. Reuses the
+     * exact same synthetic-canonical-control-string pattern
+     * {@code WorkplaceMeetingService.handoffFollowUp} already uses for a meeting-derived handoff, rather
+     * than inventing a second normalization path: the already-frontier-understood objective text is
+     * wrapped in the canonical grammar and re-interpreted deterministically.
+     */
+    String admitChatConfirmedExecution(String humanId, String organizationContextId, String conversationId,
+                                       String externalMessageReference, String channel,
+                                       IntelligenceCase pending) {
+        NormalizedRequest confirmed = CanonicalObjectiveControlInterpreter
+                .interpret("Take ownership of one governed objective: " + pending.objective())
+                .orElseThrow(() -> new IllegalStateException("chat-confirmed objective normalization failed"));
+        IntelligenceCase resolved = pending.transition(IntelligenceCaseStatus.RESOLVED);
+        ExecutionObjectiveHandoff.HandoffReceipt handoff = executionObjectiveHandoff.submit(
+                humanId, organizationContextId, pending.caseId(), conversationId,
+                externalMessageReference, channel, confirmed);
+        caseStore.save(resolved);
+        if (!handoff.accepted()) {
+            return "METATRON EXECUTION BLOCKED\nreason=" + handoff.reason()
+                    + "\ncase_id=" + pending.caseId()
+                    + "\nobjective=" + pending.objective();
+        }
+        String terminalLabel = "COMPLETED".equals(handoff.executionAdmissionState())
+                ? "METATRON WORK COMPLETED"
+                : ("BLOCKED".equals(handoff.objectiveStatus()) || "ESCALATED".equals(handoff.objectiveStatus()))
+                ? "METATRON WORK BLOCKED"
+                : "METATRON WORK ACCEPTED";
+        return terminalLabel
+                + "\ncase_id=" + pending.caseId()
+                + "\nobjective_id=" + handoff.objectiveId()
+                + "\nowner_worker=" + handoff.ownerWorkerId()
+                + "\nqueue_item=" + handoff.queueItemId()
+                + "\nobjective_status=" + handoff.objectiveStatus()
+                + "\nexecution_state=" + handoff.executionAdmissionState()
+                + "\nreason=" + handoff.reason();
+    }
+
     static IntelligenceCase bindInteractionProvenance(IntelligenceCase intelligenceCase,
                                                        String channel,
                                                        String externalMessageReference) {
@@ -461,6 +527,18 @@ public final class MetatronIntelligenceResponder {
     static boolean shouldAdmitExecution(boolean deterministicControl,
                                         boolean semanticExecutionHandoffEnabled) {
         return deterministicControl || semanticExecutionHandoffEnabled;
+    }
+
+    static boolean isAffirmativeExecutionConfirmation(String text) {
+        return text != null && AFFIRMATIVE_EXECUTION_CONFIRMATION.matcher(text.trim()).find();
+    }
+
+    static String executionConfirmationRequiredResponse(IntelligenceCase intelligenceCase, String objective) {
+        return "METATRON WORK PENDING CONFIRMATION"
+                + "\ncase_id=" + intelligenceCase.caseId()
+                + "\nobjective=" + objective
+                + "\nReply 'yes' to start this now as a real governed Objective, or send anything "
+                + "else to change or drop it.";
     }
 
     static NormalizedRequest asApprovalGatedPlanning(NormalizedRequest request) {
