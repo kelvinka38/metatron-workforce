@@ -1,0 +1,28 @@
+name: core-ci
+
+on:
+  pull_request:
+    paths: ["core/**", ".github/workflows/core-ci.yml"]
+  push:
+    branches: [main]
+    paths: ["core/**", ".github/workflows/core-ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        working-directory: core
+        run: python -m unittest discover -s tests -t . -v
+      # Agent-user isolation tests are skipped unless root.
+      - name: Isolation tests (root)
+        working-directory: core
+        run: sudo env "PATH=$PATH" python -m unittest discover -s tests -t . -v

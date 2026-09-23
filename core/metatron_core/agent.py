@@ -111,3 +111,5 @@ class Agent:
         for m in messages[2:-keep_recent]:
             if m.role == "user" and len(m.content) > 600:
                 m.content = m.content[:300] + "\n...[old output trimmed]..."
+            elif m.role == "assistant" and len(m.content) > 2000:  # e.g. an old write_file body
+                m.content = m.content[:1000] + "\n...[old action trimmed]..."

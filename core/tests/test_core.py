@@ -1,14 +1,18 @@
+import io
 import json
 import os
+import subprocess
 import tempfile
+import time
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
 from metatron_core.agent import Agent, parse_action
-from metatron_core.llm import ProviderChain
+from metatron_core.llm import FOREVER, LlmUnavailable, Provider, ProviderChain, cooldown_for
 from metatron_core.store import Store
-from metatron_core.tools import Workspace
+from metatron_core.tools import Workspace, agent_uid_for
 
 
 class ScriptedLlm:
@@ -28,7 +32,8 @@ def act(tool, **args):
     return json.dumps({"thought": "", "tool": tool, "args": args})
 
 
-CHECK = "python3 -c 'import calc; assert calc.add(2,3)==5'"
+# -B: no .pyc, or a same-size edit within the same second reuses stale bytecode.
+CHECK = "python3 -B -c 'import calc; assert calc.add(2,3)==5'"
 
 
 class ZeroCostRule(unittest.TestCase):
@@ -92,6 +97,130 @@ class StoreRecovery(unittest.TestCase):
             tid = s.create_task("c", "do x")
             s.claim_next()
             self.assertEqual(Store(f"{d}/t.db").get(tid)["status"], "queued")
+
+
+class FailingProvider(Provider):
+    def __init__(self, name, code, body=b"", headers=None):
+        super().__init__(name)
+        self.code, self.body, self.headers = code, body, headers or {}
+
+    def complete(self, messages, max_tokens):
+        raise urllib.error.HTTPError("u", self.code, "x", self.headers, io.BytesIO(self.body))
+
+
+class Cooldowns(unittest.TestCase):
+    def test_bad_request_is_not_permanent(self):
+        self.assertEqual(cooldown_for(400, "Request payload size exceeds the limit", None), 120)
+
+    def test_account_errors_disable_for_good(self):
+        self.assertEqual(cooldown_for(400, '{"reason": "API_KEY_INVALID"}', None), FOREVER)
+        self.assertEqual(cooldown_for(403, "", None), FOREVER)
+
+    def test_rate_limits_are_short_unless_daily(self):
+        self.assertEqual(cooldown_for(429, "GenerateRequestsPerMinute", None), 60)
+        self.assertEqual(cooldown_for(429, "GenerateRequestsPerDayPerProject", None), 3600)
+        self.assertEqual(cooldown_for(429, "", "17"), 17)
+
+    def test_chain_falls_through_and_reports(self):
+        chain = ProviderChain([FailingProvider("gemini", 400, b"too large")])
+        with self.assertRaises(LlmUnavailable) as ctx:
+            chain.complete([])
+        self.assertIn("HTTP 400 too large", str(ctx.exception))
+        self.assertLess(chain.providers[0].cooldown_until, time.time() + 1000)
+
+
+class Confinement(unittest.TestCase):
+    def test_sibling_workspace_blocked(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "task-10").mkdir()
+            (Path(d) / "task-10" / "secret.txt").write_text("other task")
+            ws = Workspace(Path(d), 1, github_token="")
+            with self.assertRaises(ValueError):
+                ws.read_file("../task-10/secret.txt")
+
+    def test_no_agent_user_outside_root(self):
+        with mock.patch.dict(os.environ, {"CORE_AGENT_UID_BASE": "20000"}):
+            expected = 20007 if os.geteuid() == 0 else None
+            self.assertEqual(agent_uid_for(7), expected)
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+class Publish(unittest.TestCase):
+    def _workspace(self, d):
+        ws = Workspace(Path(d) / "work", 5, github_token="")
+        repo = ws.dir / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "f.txt").write_text("a\n")
+        _git(repo, "add", "f.txt")
+        _git(repo, "commit", "-qm", "init")
+        upstream = Path(d) / "remote" / "o" / "r.git"
+        _git(Path(d), "init", "-q", "--bare", str(upstream))
+        ws.remote_base = f"file://{Path(d) / 'remote'}"
+        ws.repo, ws.base_branch = "o/r", "main"
+        ws.base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                                     capture_output=True, text=True).stdout.strip()
+        return ws, upstream
+
+    def test_agent_committed_work_is_published(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, upstream = self._workspace(d)
+            ws.run("echo b >> f.txt && git commit -qam 'agent commit'")
+            self.assertEqual(ws.publish_branch("t"), "metatron/task-5")
+            log = subprocess.run(["git", "--git-dir", str(upstream), "log", "--format=%s", "metatron/task-5"],
+                                 check=True, capture_output=True, text=True).stdout
+            self.assertIn("agent commit", log)
+
+    def test_agent_hooks_do_not_run_on_publish(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, _ = self._workspace(d)
+            ws.run("mkdir -p h && printf '#!/bin/sh\\ntouch ../pwned\\n' > h/pre-push && chmod +x h/pre-push "
+                   "&& git config core.hooksPath h && echo c >> f.txt")
+            ws.publish_branch("t")
+            self.assertFalse((ws.dir / "pwned").exists())
+
+    def test_nothing_to_publish(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, _ = self._workspace(d)
+            with self.assertRaises(RuntimeError):
+                ws.publish_branch("t")
+
+
+@unittest.skipUnless(os.geteuid() == 0, "agent-user isolation needs root (CI runs this with sudo)")
+class AgentUser(unittest.TestCase):
+    UID = 65534  # nobody
+
+    def test_agent_cannot_read_core_env_or_data(self):
+        core = subprocess.Popen(["sleep", "30"], env={"GEMINI_API_KEY": "S3CRET"})  # stands in for Core
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                os.chmod(d, 0o711)
+                Path(d, "core.db").write_text("S3CRET")
+                os.chmod(Path(d, "core.db"), 0o600)
+                ws = Workspace(Path(d) / "work", 1, github_token="", agent_uid=self.UID)
+                out = ws.run(f"id -u; cat /proc/{core.pid}/environ; cat {d}/core.db")
+                self.assertIn(f"exit=1\n--- stdout ---\n{self.UID}", out)
+                self.assertNotIn("S3CRET", out)
+        finally:
+            core.kill()
+            core.wait()
+
+    def test_file_tools_run_as_agent(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.chmod(d, 0o711)
+            Path(d, "core.db").write_text("S3CRET")
+            os.chmod(Path(d, "core.db"), 0o600)
+            ws = Workspace(Path(d) / "work", 1, github_token="", agent_uid=self.UID)
+            self.assertIn("wrote", ws.write_file("a.txt", "hi"))
+            self.assertEqual(ws.read_file("a.txt"), "hi")
+            self.assertEqual((ws.dir / "a.txt").stat().st_uid, self.UID)
+            ws.run(f"ln -s {d}/core.db link")
+            self.assertRaises(ValueError, ws.read_file, "link")
 
 
 if __name__ == "__main__":

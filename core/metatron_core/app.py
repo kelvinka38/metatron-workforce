@@ -18,7 +18,7 @@ from pathlib import Path
 from .agent import Agent
 from .llm import ProviderChain
 from .store import Store
-from .tools import Workspace
+from .tools import Workspace, agent_uid_for, merge_pull_request
 
 DATA = Path(os.environ.get("CORE_DATA_DIR", "/data"))
 BOT_TOKEN = os.environ.get("CORE_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -27,7 +27,13 @@ ALLOWED_USER = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "")
 API_TOKEN = os.environ.get("CORE_API_TOKEN", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
+if os.geteuid() == 0:
+    os.umask(0o077)  # core.db and audit data stay unreadable to the per-task agent users
 DATA.mkdir(parents=True, exist_ok=True)
+(DATA / "work").mkdir(exist_ok=True)
+if os.geteuid() == 0:
+    os.chmod(DATA, 0o711)
+    os.chmod(DATA / "work", 0o711)
 store = Store(str(DATA / "core.db"))
 llm = ProviderChain.from_env()
 wake = threading.Event()
@@ -51,7 +57,7 @@ def send(chat_id: str, text: str) -> None:
 def process(task: dict) -> None:
     tid, chat = task["id"], task["chat_id"]
     audit = lambda kind, detail: store.audit(tid, kind, detail)  # noqa: E731
-    ws = Workspace(DATA / "work", tid, GITHUB_TOKEN)
+    ws = Workspace(DATA / "work", tid, GITHUB_TOKEN, agent_uid_for(tid))
     out = Agent(llm, audit).run(task["request"], ws)
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
 
@@ -112,7 +118,7 @@ def handle_text(chat_id: str, text: str) -> str | None:
             store.audit(task["id"], "approval", "rejected by founder")
             return f"Task #{task['id']} rejected. PR left open for you to close or edit: {task['pr_url']}"
         try:
-            Workspace(DATA / "work", task["id"], GITHUB_TOKEN).merge_pull_request(task["pr_url"])
+            merge_pull_request(task["pr_url"], GITHUB_TOKEN)
         except Exception as e:
             return f"Merge failed: {e}"
         store.update(task["id"], status="merged")
@@ -141,12 +147,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             return self._json(200, {"ok": True, "providers": [p.name for p in llm.providers]})
         if self.path.startswith("/tasks/") and self._api_ok():
-            task = store.get(int(self.path.split("/")[2]))
+            tid = self.path.split("/")[2]
+            task = store.get(int(tid)) if tid.isdigit() else None
             return self._json(200 if task else 404, task or {})
         self._json(404, {})
 
     def do_POST(self):
-        if self.path == "/telegram":
+        if self.path in ("/telegram", "/core/telegram"):  # tunnel may keep the /core prefix
             got = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if not WEBHOOK_SECRET or not hmac.compare_digest(got, WEBHOOK_SECRET):
                 return self._json(401, {})

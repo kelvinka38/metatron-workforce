@@ -10,8 +10,9 @@ Enforced in code, not in documents:
   * The Gemini key MUST belong to an AI Studio project with NO billing account attached.
 
 Order: gemini -> (anthropic, openai if allowed) -> openrouter -> ollama.
-A provider that returns 429/5xx/timeout is skipped for a cool-down and the next is tried.
-Insufficient-credit errors (400/401/402/403) disable that provider for the process lifetime.
+A provider that returns 429/5xx/timeout, or rejects one request (400), is skipped for a
+cool-down and the next is tried. Key, credit and billing errors (401/402/403, or a 400 that names
+the key or billing) disable that provider for the process lifetime.
 """
 from __future__ import annotations
 
@@ -25,6 +26,24 @@ from dataclasses import dataclass, field
 
 class LlmUnavailable(RuntimeError):
     pass
+
+
+FOREVER = 10 ** 9
+# A 400 carrying one of these is about the account, not the request: never retry it.
+ACCOUNT_ERRORS = ("API_KEY_INVALID", "API key not valid", "FAILED_PRECONDITION", "billing", "credit")
+
+
+def cooldown_for(code: int, detail: str, retry_after: str | None) -> float:
+    """Seconds to skip a provider after an HTTP error. Free-tier 429s are mostly per-minute limits."""
+    if code in (401, 402, 403):
+        return FOREVER
+    if code == 400:
+        return FOREVER if any(m.lower() in detail.lower() for m in ACCOUNT_ERRORS) else 120
+    if code == 429:
+        if retry_after and retry_after.strip().isdigit():
+            return int(retry_after)
+        return 3600 if "perday" in detail.lower().replace(" ", "") else 60
+    return 120
 
 
 @dataclass
@@ -161,11 +180,12 @@ class ProviderChain:
                 self.last_used = f"{p.name}:{getattr(p, 'model', '')}"
                 return out
             except urllib.error.HTTPError as e:
-                if e.code in (400, 401, 402, 403):
-                    p.cool_down(10 ** 9)  # bad key / no credit: never retry this process
-                else:
-                    p.cool_down(3600 if e.code == 429 else 120)
-                errors.append(f"{p.name}: HTTP {e.code}")
+                try:
+                    detail = e.read().decode(errors="replace")[:2000]
+                except Exception:
+                    detail = ""
+                p.cool_down(cooldown_for(e.code, detail, e.headers.get("Retry-After") if e.headers else None))
+                errors.append(f"{p.name}: HTTP {e.code} {detail[:200]}".rstrip())
             except Exception as e:  # timeout, bad payload, connection refused
                 p.cool_down(120)
                 errors.append(f"{p.name}: {type(e).__name__}: {e}")

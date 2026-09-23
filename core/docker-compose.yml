@@ -30,6 +30,9 @@ services:
       - core-data:/data
     security_opt:
       - no-new-privileges:true
+    # Just enough root to hand each task its own Unix user and workspace, nothing more.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL]
     networks:
       - workforce
 
