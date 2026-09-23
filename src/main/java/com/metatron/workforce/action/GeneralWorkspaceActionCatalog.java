@@ -746,7 +746,8 @@ public final class GeneralWorkspaceActionCatalog {
             }
             return new BuildCommand("python3", args);
         }
-        throw new IllegalStateException("workspace build system not detected");
+        throw new IllegalStateException("workspace build system not detected"
+                + diagnosticSuffix(workspace, workingDirectory));
     }
 
     private BuildCommand dependencyCommand(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
@@ -771,7 +772,33 @@ public final class GeneralWorkspaceActionCatalog {
             return new BuildCommand("python3",
                     List.of("-m", "pip", "install", "--disable-pip-version-check", "-e", "."));
         }
-        throw new IllegalStateException("workspace dependency system not detected");
+        throw new IllegalStateException("workspace dependency system not detected"
+                + diagnosticSuffix(workspace, workingDirectory));
+    }
+
+    /**
+     * Diagnostic-only detail (2026-09-23): a real production Objective (case-6419a010) hit this exact
+     * "not detected" failure on a resumed VERIFY dispatch even though the preceding PREPARE step had
+     * already written a manifest for the same objective+worker -- and every hypothesis tested so far
+     * (ephemeral storage, workspace-init volume handling, execution-attempt persistence, attempt-scoped
+     * carry-forward across a real actor-lane thread hop) was individually disproven with a live
+     * reproduction. This appends the resolved working directory and a bounded listing of what the
+     * workspace actually contains to the exception message, which the repeated-failure circuit breaker
+     * (CognitiveWorkerRuntime.repeatsFailingWithoutStateChange) already surfaces verbatim as "Last
+     * failure detail" into the Human-visible BLOCKER text -- so the next real occurrence carries the
+     * exact evidence needed to find the true root cause, instead of requiring another round of
+     * container-log archaeology.
+     */
+    private String diagnosticSuffix(ObjectiveWorkspaceService.ObjectiveWorkspace workspace, String workingDirectory) {
+        String resolvedDirectory = workingDirectory == null || workingDirectory.isBlank() ? "<workspace-root>" : workingDirectory;
+        String entries;
+        try {
+            List<String> listed = workspaces.list(workspace, "");
+            entries = listed.isEmpty() ? "<empty>" : String.join(";", listed.subList(0, Math.min(listed.size(), 20)));
+        } catch (RuntimeException unavailable) {
+            entries = "<listing-unavailable:" + unavailable.getClass().getSimpleName() + ">";
+        }
+        return ":workingDirectory=" + resolvedDirectory + ":workspaceEntries=" + entries;
     }
 
     private static final List<String> PROJECT_MANIFEST_FILENAMES = List.of(

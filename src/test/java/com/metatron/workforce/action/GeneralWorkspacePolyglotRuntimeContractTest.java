@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeneralWorkspacePolyglotRuntimeContractTest {
@@ -175,6 +176,28 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
             assertTrue(observation.success());
             assertEquals(1, harness.requests.size());
             assertCommand(harness.requests.get(0), "web", "node", List.of("server.js"));
+        }
+    }
+
+    @Test
+    void unresolvedDependencySystemCarriesTheActualWorkspaceContentsInTheFailureMessage() throws Exception {
+        // Diagnostic-instrumentation regression (2026-09-23): a real production Objective (case-6419a010)
+        // hit "workspace dependency system not detected" on a resumed VERIFY dispatch with no way to tell,
+        // from the Human-visible BLOCKER text alone, what the workspace actually contained at that moment.
+        // The exception message now carries the resolved working directory and a bounded listing of the
+        // workspace's real contents, which CognitiveWorkerRuntime's repeated-failure circuit breaker
+        // already surfaces verbatim as "Last failure detail" -- so the next real occurrence is diagnosable
+        // without another round of container-log archaeology.
+        try (Harness harness = new Harness(temp.resolve("unresolved-dependency-system"))) {
+            harness.workspaces.write(harness.workspace, "notes.txt", "no manifest here");
+
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> harness.invokeDirect("workspace.dependencies.install", Map.of()));
+
+            assertTrue(failure.getMessage().contains("workspace dependency system not detected"));
+            assertTrue(failure.getMessage().contains("workingDirectory=<workspace-root>"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("workspaceEntries=") && failure.getMessage().contains("notes.txt"),
+                    failure.getMessage());
         }
     }
 
