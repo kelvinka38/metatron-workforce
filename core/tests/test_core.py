@@ -408,5 +408,24 @@ class StepLimit(unittest.TestCase):
             self.assertEqual(app.handle_text("42", "/log x"), "Usage: /log <task id>")
 
 
+class Progress(unittest.TestCase):
+    def test_ping_every_five_tool_steps(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.dict(os.environ, {"CORE_DATA_DIR": d, "TELEGRAM_ALLOWED_USER_ID": "42"}):
+            import importlib
+            import metatron_core.app as app
+            app = importlib.reload(app)
+            sent = []
+            with mock.patch.object(app, "send", lambda chat, text: sent.append(text)), \
+                    mock.patch("builtins.print"):
+                audit = app.progress_audit(3, "42")
+                audit("llm", "thinking")
+                for i in range(10):
+                    audit("tool", f'run({{"command": "pytest"}}) -> exit={i}')
+            self.assertEqual(len(sent), 2)
+            self.assertIn("step 10", sent[1])
+            self.assertIn("run(", sent[0])
+
+
 if __name__ == "__main__":
     unittest.main()

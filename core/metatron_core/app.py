@@ -54,9 +54,30 @@ def send(chat_id: str, text: str) -> None:
 
 
 # ---------------- worker ----------------
+PROGRESS_EVERY = 5
+
+
+def progress_audit(tid: int, chat: str):
+    """Audit to the DB, one log line per step, and a Telegram progress ping every few tool steps."""
+    steps = {"n": 0}
+
+    def audit(kind: str, detail: str) -> None:
+        store.audit(tid, kind, detail)
+        if kind != "tool":
+            return
+        steps["n"] += 1
+        action = detail.split(" -> ", 1)[0][:100]
+        print(f"task #{tid} step {steps['n']}: {action}", flush=True)
+        if steps["n"] % PROGRESS_EVERY == 0:
+            send(chat, f"⏳ Task #{tid} still working, step {steps['n']}: {action}")
+
+    return audit
+
+
 def process(task: dict) -> None:
     tid, chat = task["id"], task["chat_id"]
-    audit = lambda kind, detail: store.audit(tid, kind, detail)  # noqa: E731
+    audit = progress_audit(tid, chat)
+    send(chat, f"▶️ Task #{tid} started. I'll post progress every {PROGRESS_EVERY} steps.")
     ws = Workspace(DATA / "work", tid, GITHUB_TOKEN, agent_uid_for(tid))
     out = Agent(llm, audit).run(task["request"], ws)
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
