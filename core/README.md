@@ -41,6 +41,12 @@ image and makes one real call to each free provider):
 curl -fsSL https://raw.githubusercontent.com/kelvinka38/metatron-workforce/metatron/objective-50334c388a41-aea68111/core/scripts/first-deploy.sh | sudo bash
 ```
 
+Secrets go in with `set-secret.sh`, which hides what you paste and keeps it out of shell history:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kelvinka38/metatron-workforce/metatron/objective-50334c388a41-aea68111/core/scripts/set-secret.sh | sudo bash -s CORE_TELEGRAM_BOT_TOKEN
+```
+
 By hand:
 
 ```sh

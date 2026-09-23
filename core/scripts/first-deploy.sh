@@ -23,20 +23,29 @@ git -C "$SRC" fetch -q origin "$REF"
 git -C "$SRC" checkout -q --detach FETCH_HEAD
 git -C "$SRC" log --oneline -1
 
-step "Env file $CORE_ENV"
-if [ ! -f "$CORE_ENV" ]; then
-  umask 077
-  cat > "$CORE_ENV" <<EOF
-# Fill CORE_TELEGRAM_BOT_TOKEN after creating the test bot with BotFather (M1-6), then re-run this script.
-CORE_TELEGRAM_BOT_TOKEN=
-CORE_TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 24)
-CORE_API_TOKEN=$(openssl rand -hex 24)
-EOF
-  echo "created (mode 600)"
-else
-  echo "kept existing"
-fi
+step "Env file $CORE_ENV (values are never printed)"
+umask 077
+touch "$CORE_ENV"
 chmod 600 "$CORE_ENV"
+has() { grep -q "^$1=." "$CORE_ENV"; }
+for name in CORE_TELEGRAM_WEBHOOK_SECRET CORE_API_TOKEN; do
+  if ! has "$name"; then
+    sed -i "/^$name=/d" "$CORE_ENV"
+    echo "$name=$(openssl rand -hex 24)" >> "$CORE_ENV"
+    echo "generated $name"
+  fi
+done
+# A key saved as GEMINI_FREE_API_KEY is the free-tier one: Core uses it instead of Workforce's key.
+free=$(grep '^GEMINI_FREE_API_KEY=' "$CORE_ENV" | grep -v '=your_key$' | tail -1 | cut -d= -f2- || true)
+if [ -n "$free" ] && ! has GEMINI_API_KEY; then
+  echo "GEMINI_API_KEY=$free" >> "$CORE_ENV"
+  echo "Core will use GEMINI_FREE_API_KEY as its Gemini key"
+fi
+unset free
+if has GEMINI_API_KEY; then echo "Gemini key: from $CORE_ENV"
+else echo "Gemini key: from $WF_ENV (save a free-tier key with set-secret.sh GEMINI_API_KEY)"; fi
+if has CORE_TELEGRAM_BOT_TOKEN; then echo "Telegram test bot token: set"
+else echo "Telegram test bot token: NOT set yet (M1-6)"; fi
 
 step "M1-4: ollama pull qwen2.5-coder:7b (about 4.7 GB, first time only)"
 docker exec metatron-ollama ollama pull qwen2.5-coder:7b >/dev/null 2>&1 \
@@ -77,5 +86,5 @@ PY
 
 step "Done"
 echo "metatron-core is running on 127.0.0.1:8095 beside Workforce."
-grep -q '^CORE_TELEGRAM_BOT_TOKEN=.\+' "$CORE_ENV" \
-  || echo "Next (M1-6): create the test bot in BotFather, put its token in $CORE_ENV, re-run this script."
+has CORE_TELEGRAM_BOT_TOKEN \
+  || echo "Next (M1-6): create the test bot in BotFather, save its token with set-secret.sh CORE_TELEGRAM_BOT_TOKEN, re-run this script."
