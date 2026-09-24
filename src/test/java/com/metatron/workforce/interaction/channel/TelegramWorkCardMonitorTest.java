@@ -145,6 +145,54 @@ final class TelegramWorkCardMonitorTest {
         assertEquals(20, gateway.editCalls.size());
     }
 
+    @Test
+    void telegramFloodControlIsHonoredWithoutBurningTheReplacementOrGivingUp() {
+        // Production 2026-09-24: every refresh hit "429 Too Many Requests: retry after N", the monitor
+        // kept calling every 5 s (extending the ban), spent its one-time replacement on a 429 as well,
+        // and the Work Cards stayed stale.
+        RecordingGateway gateway = new RecordingGateway();
+        gateway.editFailure = new IllegalStateException(
+                "telegram_send_failed:telegram_error=429:Too Many Requests: retry after 37");
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        List<String> stoppedReasons = new ArrayList<>();
+        TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
+                gateway, "chat-1", "objective-1", 1000L,
+                () -> "card text", () -> false, stoppedReasons::add, now::get);
+
+        monitor.tick();
+        for (int i = 0; i < 7; i++) {          // 35 s of 5 s ticks, all inside the 37 s wait
+            now.addAndGet(5_000L);
+            monitor.tick();
+        }
+        assertEquals(1, gateway.editCalls.size(), "no Telegram call may be made during the retry-after window");
+        assertEquals(0, gateway.sendCalls.size(), "flood control must never spend the one-time replacement");
+        assertFalse(monitor.stopped());
+
+        gateway.editFailure = null;
+        now.addAndGet(5_000L);                  // 40 s: wait elapsed
+        monitor.tick();
+        assertEquals(2, gateway.editCalls.size(), "refresh resumes once the retry-after window has elapsed");
+        assertEquals(1000L, monitor.activeMessageId(), "the original card is still edited in place");
+        assertTrue(stoppedReasons.isEmpty());
+    }
+
+    @Test
+    void aRateLimitedEditNeverSendsAReplacementCard() {
+        RecordingGateway gateway = new RecordingGateway();
+        gateway.editFailure = new IllegalStateException(
+                "telegram_send_failed:telegram_error=429:Too Many Requests: retry after 43");
+        List<String> stoppedReasons = new ArrayList<>();
+        TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
+                gateway, "chat-1", "objective-1", 1000L,
+                () -> "card text", () -> false, stoppedReasons::add);
+
+        for (int i = 0; i < 30; i++) monitor.tick();
+
+        assertEquals(0, gateway.sendCalls.size(), "a 429 is not an uneditable card and must not trigger a replacement");
+        assertEquals(1, gateway.editCalls.size(), "no further edit may be attempted inside the retry-after window");
+        assertFalse(monitor.stopped(), "flood control must not count toward giving up");
+    }
+
     private static IllegalStateException telegramCantBeEditedFailure() {
         return new IllegalStateException(
                 "telegram_send_failed:telegram_error=400:Bad Request: message can't be edited");

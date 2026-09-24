@@ -2,7 +2,10 @@ package com.metatron.workforce.interaction.channel;
 
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Bounded live Work Card refresh/failure/replacement policy for exactly one Objective's Telegram
@@ -31,6 +34,9 @@ final class TelegramWorkCardMonitor {
     static final int MAX_CONSECUTIVE_FAILURES = 20;
     /** At most one replacement Work Card is ever sent for the lifetime of one monitor. */
     static final int MAX_REPLACEMENTS = 1;
+    /** Upper bound on one honored Telegram flood-control wait, so a malformed value cannot park a monitor for hours. */
+    static final long MAX_RATE_LIMIT_WAIT_SECONDS = 600;
+    private static final Pattern RETRY_AFTER = Pattern.compile("(?i)\\b429\\b.*retry after (\\d+)");
 
     /** The exact two Telegram operations this policy needs; kept minimal for direct test doubles. */
     interface Gateway {
@@ -44,8 +50,10 @@ final class TelegramWorkCardMonitor {
     private final Supplier<String> render;
     private final Supplier<Boolean> terminal;
     private final Consumer<String> onStop;
+    private final LongSupplier clockMillis;
 
     private volatile long activeMessageId;
+    private long rateLimitedUntilMillis;
     private int consecutiveFailures;
     private int replacementsUsed;
     private volatile boolean stopped;
@@ -58,6 +66,19 @@ final class TelegramWorkCardMonitor {
             Supplier<String> render,
             Supplier<Boolean> terminal,
             Consumer<String> onStop) {
+        this(gateway, chatId, objectiveId, initialMessageId, render, terminal, onStop, System::currentTimeMillis);
+    }
+
+    TelegramWorkCardMonitor(
+            Gateway gateway,
+            String chatId,
+            String objectiveId,
+            long initialMessageId,
+            Supplier<String> render,
+            Supplier<Boolean> terminal,
+            Consumer<String> onStop,
+            LongSupplier clockMillis) {
+        this.clockMillis = Objects.requireNonNull(clockMillis, "clockMillis");
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.chatId = Objects.requireNonNull(chatId, "chatId");
         this.objectiveId = Objects.requireNonNull(objectiveId, "objectiveId");
@@ -74,6 +95,10 @@ final class TelegramWorkCardMonitor {
     /** One refresh cycle. A no-op once this monitor has already stopped itself. */
     void tick() {
         if (stopped) return;
+        // Honor Telegram flood control: calling again before "retry after" elapses only extends the
+        // ban (production 2026-09-24: two monitors retried every 5 s through 429s, so every Work Card
+        // stayed stale for minutes and the one-time replacement was burned on a 429 too).
+        if (clockMillis.getAsLong() < rateLimitedUntilMillis) return;
         try {
             gateway.editWorkCard(chatId, activeMessageId, render.get());
             consecutiveFailures = 0;
@@ -86,6 +111,15 @@ final class TelegramWorkCardMonitor {
     }
 
     private void onEditFailure(RuntimeException failure) {
+        long retryAfterSeconds = retryAfterSeconds(failure);
+        if (retryAfterSeconds > 0) {
+            // Flood control is a transient rate limit, not an uneditable message: never spend the
+            // one-time replacement on it and never count it toward giving up.
+            rateLimitedUntilMillis = clockMillis.getAsLong() + retryAfterSeconds * 1000L;
+            LOG.warn("telegram_monitor_rate_limited objective_id={} chat={} retry_after_seconds={}",
+                    objectiveId, chatId, retryAfterSeconds);
+            return;
+        }
         LOG.warn("telegram_monitor_refresh_failed objective_id={} chat={} message_id={} reason={}",
                 objectiveId, chatId, activeMessageId, failure.getMessage());
         // The success path already checks terminal() to decide whether to stop; the failure path
@@ -121,6 +155,18 @@ final class TelegramWorkCardMonitor {
         // sending a second replacement message or retrying forever.
         if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
             stop("refresh-failed-consecutive-limit");
+        }
+    }
+
+    static long retryAfterSeconds(RuntimeException failure) {
+        String message = failure == null ? null : failure.getMessage();
+        if (message == null) return 0;
+        Matcher matcher = RETRY_AFTER.matcher(message);
+        if (!matcher.find()) return 0;
+        try {
+            return Math.min(MAX_RATE_LIMIT_WAIT_SECONDS, Math.max(1, Long.parseLong(matcher.group(1))));
+        } catch (NumberFormatException overflow) {
+            return MAX_RATE_LIMIT_WAIT_SECONDS;
         }
     }
 
