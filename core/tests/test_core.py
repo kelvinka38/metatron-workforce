@@ -644,5 +644,22 @@ class RepeatedActions(unittest.TestCase):
             self.assertIn("hi", ws.run("cat repo/x.txt"))
 
 
+class GeminiOverload(unittest.TestCase):
+    def test_503_tries_the_next_model(self):
+        g = Gemini("gemini", key="k", model="gemini-3.7-flash")
+        seen = []
+
+        def generate(messages, max_tokens):
+            seen.append(g.model)
+            if g.model == "gemini-3.7-flash":
+                raise urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b"overloaded"))
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"), \
+                mock.patch.object(g, "_list_models", return_value=GeminiQuota.MODELS):
+            self.assertEqual(g.complete([], 10), "OK")
+        self.assertEqual(seen, ["gemini-3.7-flash", "gemini-3.8-flash"])
+
+
 if __name__ == "__main__":
     unittest.main()

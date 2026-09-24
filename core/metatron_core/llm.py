@@ -94,23 +94,25 @@ class Gemini(Provider):
     exhausted: dict = field(default_factory=dict)  # model -> time it may be tried again
 
     def complete(self, messages, max_tokens):
-        """Each free model has its own daily quota: on a retired model (404) or a used-up daily quota
-        (429 per day), move to the next free Flash model instead of giving up on Gemini."""
+        """Each free model has its own daily quota and capacity: on a retired model (404), a used-up
+        daily quota (429 per day) or an overloaded model (5xx), move to the next free Flash model
+        instead of giving up on Gemini."""
         for _ in range(4):
             try:
                 return self._generate(messages, max_tokens)
             except urllib.error.HTTPError as e:
-                if e.code not in (404, 429):
+                if e.code not in (404, 429) and e.code < 500:
                     raise
                 body = e.read()
                 if e.code == 429 and not is_daily_quota(body.decode(errors="replace")):
                     raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
-                self.exhausted[self.model] = time.time() + (6 * 3600 if e.code == 429 else FOREVER)
+                pause = {404: FOREVER, 429: 6 * 3600}.get(e.code, 600)  # 5xx: overloaded for now
+                self.exhausted[self.model] = time.time() + pause
                 nxt = next((m for m in flash_candidates(self._list_models())
                             if self.exhausted.get(m, 0) <= time.time()), "")
                 if not nxt:
                     raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
-                why = "not found" if e.code == 404 else "out of daily free quota"
+                why = {404: "not found", 429: "out of daily free quota"}.get(e.code, f"overloaded ({e.code})")
                 print(f"gemini: model {self.model} {why}, switching to {nxt}", flush=True)
                 self.model = nxt
         return self._generate(messages, max_tokens)
