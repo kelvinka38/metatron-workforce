@@ -86,8 +86,11 @@ class GeneralWorkspaceGitIdentityAutoConfigurationTest {
                     harness.permit("workspace.git.run", Map.of("argsJson", "[\"add\",\"-A\"]")));
 
             assertTrue(observation.success());
-            assertEquals(1, recorded.size(), "only the requested command should run for a non-init git action");
-            assertEquals(List.of("add", "-A"), recorded.get(0).getValue());
+            assertEquals(3, recorded.size(),
+                    "broad add must install local excludes, update tracked paths and discover safe new source");
+            assertEquals(List.of("rev-parse", "--git-path", "info/exclude"), recorded.get(0).getValue());
+            assertEquals(List.of("add", "-u", "--", "."), recorded.get(1).getValue());
+            assertEquals(List.of("ls-files", "--others", "--exclude-standard", "-z"), recorded.get(2).getValue());
         } finally {
             server.stop(0);
             ExecutionAttemptContext.clear();
@@ -107,7 +110,8 @@ class GeneralWorkspaceGitIdentityAutoConfigurationTest {
             body.put("exitCode", 0);
             body.put("timedOut", false);
             body.put("outputTruncated", false);
-            body.put("output", "");
+            body.put("output", args.equals(List.of("rev-parse", "--git-path", "info/exclude"))
+                    ? ".git/info/exclude\n" : "");
             body.put("workspaceKey", request.path("workspaceKey").asText());
             body.put("executable", request.path("executable").asText());
             body.put("durationMillis", 10);

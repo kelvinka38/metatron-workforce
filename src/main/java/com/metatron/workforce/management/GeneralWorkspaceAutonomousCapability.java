@@ -12,6 +12,7 @@ import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
 import com.metatron.workforce.interaction.intelligence.GeneralWorkspacePhasePlanner;
 import com.metatron.workforce.operating.WorkerConstitutionRuntimeMaterializer;
 import com.metatron.workforce.operating.WorkerCognitionContextProjector;
+import com.metatron.workforce.runtime.GeneratedWorkspaceArtifactPolicy;
 import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -261,10 +262,7 @@ public final class GeneralWorkspaceAutonomousCapability implements AutonomousExe
                         .filter(path -> {
                             String rel = workspace.path().relativize(path).toString().replace('\\', '/');
                             return !rel.startsWith(".git/")
-                                    && !rel.startsWith("node_modules/")
-                                    && !rel.startsWith("build/")
-                                    && !rel.startsWith("dist/")
-                                    && !rel.startsWith(".gradle/")
+                                    && !GeneratedWorkspaceArtifactPolicy.isGeneratedUntrackedPath(rel)
                                     && !rel.equals(".metatron-workspace")
                                     && !rel.equals(".metatron-repository");
                         })
