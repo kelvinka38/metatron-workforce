@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -76,6 +77,15 @@ def merge_pull_request(pr_url: str, token: str) -> None:
 
 def close_pull_request(pr_url: str, token: str) -> None:
     _github_api("PATCH", _pr_api(pr_url), token, {"state": "closed"})
+
+
+def _killpg(pgid: int) -> bool:
+    """SIGKILL a process group; True if anything was still in it."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        return True
+    except ProcessLookupError:
+        return False
 
 
 class Workspace:
@@ -253,16 +263,25 @@ class Workspace:
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         timeout = min(int(timeout), 1200)
         # Same base as the file tools: the repo root once a repo is cloned or created.
-        proc = subprocess.Popen(["bash", "-lc", command], cwd=self.base, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, env=env, start_new_session=True,
-                                **self._as_agent())
-        try:
-            out, err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            return f"error: timed out after {timeout}s"
-        return _clip(f"exit={proc.returncode}\n--- stdout ---\n{out}\n--- stderr ---\n{err}")
+        # Output goes to files, not pipes: a background process (`node server.js &`) would keep a
+        # pipe open and the call would hang until the timeout although the shell already exited.
+        with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+            proc = subprocess.Popen(["bash", "-lc", command], cwd=self.base, stdout=out, stderr=err,
+                                    stdin=subprocess.DEVNULL, text=True, env=env, start_new_session=True,
+                                    **self._as_agent())
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _killpg(proc.pid)
+                proc.wait()
+                return f"error: timed out after {timeout}s"
+            note = ""
+            if _killpg(proc.pid):
+                note = ("\n[note] background processes this command started were stopped. Do not start "
+                        "servers to check them: run the tests, or e.g. `timeout 15 node server.js & sleep 5; "
+                        "curl -s localhost:PORT/...`. The founder sees the running app with /preview.")
+            out.seek(0), err.seek(0)
+            return _clip(f"exit={proc.returncode}\n--- stdout ---\n{out.read()}\n--- stderr ---\n{err.read()}") + note
 
     # ---------- used by core only, after the agent finishes ----------
     def _reset_git_config(self, git_dir: Path) -> None:

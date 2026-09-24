@@ -1108,3 +1108,24 @@ class LocalModel(unittest.TestCase):
             self.assertEqual(chain.complete([Message("user", "hi")]), "done")
         self.assertEqual(slept, [])
         self.assertEqual(chain.last_used, "ollama:qwen2.5-coder:7b")
+
+
+class BackgroundCommands(unittest.TestCase):
+    def test_a_server_started_in_the_background_does_not_hang_the_call(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, _ = Publish()._workspace(d)
+            began = time.time()
+            out = ws.run("sleep 300 & echo started", timeout=60)
+            self.assertLess(time.time() - began, 10)
+            self.assertIn("exit=0", out)
+            self.assertIn("started", out)
+            self.assertIn("background processes", out)
+
+    def test_plain_commands_get_no_note(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, _ = Publish()._workspace(d)
+            out = ws.run("echo hi; echo oops >&2; exit 3")
+            self.assertIn("exit=3", out)
+            self.assertIn("hi", out)
+            self.assertIn("oops", out)
+            self.assertNotIn("[note]", out)
