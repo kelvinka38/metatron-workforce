@@ -1010,5 +1010,34 @@ class OpenRouterFreeOnly(unittest.TestCase):
         self.assertEqual(seen, ["qwen/qwen3-coder:free", "big/general:free"])
 
 
+class ProviderPersistence(unittest.TestCase):
+    def test_gemini_walks_past_four_bad_models(self):
+        models = [_model(n) for n in ("gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
+                                      "gemini-3.5-flash", "gemini-3.5-flash-lite")]
+        g = Gemini("gemini", key="k", model="gemini-2.5-flash")
+
+        def generate(messages, max_tokens):
+            if g.model != "gemini-3.5-flash-lite":
+                raise urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b"busy"))
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"), \
+                mock.patch.object(g, "_list_models", return_value=models):
+            self.assertEqual(g.complete([], 10), "OK")
+
+    def test_openrouter_empty_reply_moves_on(self):
+        r = OpenRouterFree("openrouter", key="k")
+
+        def post(url, body, headers, timeout):
+            if body["model"] == "qwen/qwen3-coder:free":
+                return {"choices": [{"message": {"content": "", "reasoning": "thinking..."}}]}
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+        with mock.patch("metatron_core.llm._post", post), mock.patch("builtins.print"), \
+                mock.patch.object(r, "_models", return_value=OpenRouterFreeOnly.MODELS):
+            self.assertEqual(r.complete([], 10), "OK")
+        self.assertEqual(r.model, "big/general:free")
+
+
 if __name__ == "__main__":
     unittest.main()

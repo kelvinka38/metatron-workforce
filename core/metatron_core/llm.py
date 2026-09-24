@@ -98,7 +98,7 @@ class Gemini(Provider):
         """Each free model has its own daily quota and capacity: on a retired model (404), a used-up
         daily quota (429 per day) or an overloaded model (5xx), move to the next free Flash model
         instead of giving up on Gemini."""
-        for _ in range(4):
+        for _ in range(16):  # enough to walk every free Flash / Flash-Lite model
             try:
                 return self._generate(messages, max_tokens)
             except EmptyReply as e:
@@ -276,10 +276,11 @@ class OpenRouterFree(Provider):
     def complete(self, messages, max_tokens):
         if not self.model:
             self.model = self._next_model()
-        for _ in range(4):
+        for _ in range(8):
             if not self.model.endswith(":free"):
                 raise ValueError(f"OpenRouter model '{self.model}' is not ':free' - refusing (zero-cost rule)")
-            body = {"model": self.model, "max_tokens": max_tokens,
+            # Room for reasoning models, which spend part of the budget thinking before they answer.
+            body = {"model": self.model, "max_tokens": max_tokens + 2048,
                     "messages": [{"role": m.role, "content": m.content} for m in messages]}
             try:
                 data = _post(f"{OPENROUTER_API}/chat/completions", body,
@@ -295,9 +296,15 @@ class OpenRouterFree(Provider):
                 self.model = nxt
                 continue
             text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-            if not text.strip():
+            if text.strip():
+                return text
+            # No answer text (e.g. all thinking): rest this model and try the next free one.
+            self.exhausted[self.model] = time.time() + 1800
+            nxt = self._next_model()
+            if not nxt:
                 raise EmptyReply(f"openrouter {self.model} returned no text")
-            return text
+            print(f"openrouter: {self.model} gave no text, switching to {nxt}", flush=True)
+            self.model = nxt
         raise LlmUnavailable("openrouter: no free model answered")
 
 
