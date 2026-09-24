@@ -58,6 +58,8 @@ public final class TelegramWebhookController {
     private static final int INTERACTION_QUEUE = 64;
     private static final int MAX_PROCESSING_ATTEMPTS = 3;
     private static final long MONITOR_REFRESH_SECONDS = 5L;
+    /** Flood-control dead letters newer than this are revived for Work Card delivery on startup. */
+    private static final Duration FLOOD_CONTROL_REVIVAL_WINDOW = Duration.ofHours(6);
     private static final Pattern OBJECTIVE_ID = Pattern.compile("(?m)^objective_id=([^\\s]+)$");
     /**
      * Sent once, independently of the live Work Card, whenever monitoring starts. It exists solely
@@ -142,6 +144,9 @@ public final class TelegramWebhookController {
         this.monitorExecutor = Executors.newScheduledThreadPool(2, namedDaemonThreads("telegram-monitor-"));
         this.receiptStore = new TelegramIngressReceiptStore(Path.of(ingressPath.trim()), objectMapper);
         this.channelObjectiveHandoffEnabled = channelObjectiveHandoffEnabled;
+        int revived = receiptStore.reviveFloodControlDeadLetters(
+                System.currentTimeMillis() - FLOOD_CONTROL_REVIVAL_WINDOW.toMillis());
+        if (revived > 0) LOG.warn("telegram_flood_control_dead_letters_revived count={}", revived);
         recoverPendingReceipts();
     }
 
@@ -339,6 +344,15 @@ public final class TelegramWebhookController {
             LOG.info("telegram_send_success update_id={} telegram_user={} chat={} response_bytes={} objective_id={}",
                     updateId, receipt.telegramUserId(), receipt.chatId(), delivery.length(), objectiveId);
         } catch (RuntimeException failure) {
+            TelegramIngressReceiptStore.Receipt current = receiptStore.find(updateId);
+            if (deferDeliveryForFloodControl(current, failure)) {
+                long delayMillis = floodControlReplayDelayMillis(gateway.floodBlockedRemainingMillis());
+                receiptStore.deliveryDeferred(updateId, failure);
+                monitorExecutor.schedule(() -> scheduleReceipt(updateId), delayMillis, TimeUnit.MILLISECONDS);
+                LOG.warn("telegram_delivery_deferred update_id={} objective_id={} replay_in_ms={} reason={}",
+                        updateId, current.objectiveId(), delayMillis, failure.getMessage());
+                return;
+            }
             LOG.error("telegram_interaction_failed update_id=" + updateId, failure);
             TelegramIngressReceiptStore.Receipt failed = receiptStore.failed(
                     updateId, failure, MAX_PROCESSING_ATTEMPTS);
@@ -374,6 +388,20 @@ public final class TelegramWebhookController {
      */
     static String deliveryReplayObjectiveId(TelegramIngressReceiptStore.Receipt receipt) {
         return receipt == null ? "" : receipt.objectiveId();
+    }
+
+    /**
+     * Telegram flood control on an already-admitted Objective is a delivery delay, not an interaction
+     * failure: the Work Card is replayed after the window instead of consuming the bounded attempts.
+     */
+    static boolean deferDeliveryForFloodControl(TelegramIngressReceiptStore.Receipt receipt, RuntimeException failure) {
+        return !deliveryReplayObjectiveId(receipt).isBlank()
+                && TelegramIngressReceiptStore.isFloodControlFailure(failure.getMessage());
+    }
+
+    /** Replays just after the flood-control window; never sooner than 5 s so a stale gate cannot spin. */
+    static long floodControlReplayDelayMillis(long floodBlockedRemainingMillis) {
+        return Math.max(5_000L, floodBlockedRemainingMillis + 1_000L);
     }
 
     /**
