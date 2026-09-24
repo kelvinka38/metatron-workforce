@@ -313,21 +313,49 @@ class OpenRouterFree(Provider):
 class Ollama(Provider):
     url: str = "http://metatron-ollama:11434"
     model: str = "qwen2.5-coder:7b"
+    # Ollama's default context is small and it silently drops the start of a longer prompt, i.e.
+    # the system rules and the task. Ask for a bigger window and trim the history to fit it.
+    num_ctx: int = 16384
 
     def complete(self, messages, max_tokens):
-        body = {"model": self.model, "stream": False, "options": {"num_predict": max_tokens},
-                "messages": [{"role": m.role, "content": m.content} for m in messages]}
-        data = _post(f"{self.url}/api/chat", body, {}, timeout=600)
+        max_tokens = min(max_tokens, self.num_ctx // 4)
+        fitted = self.fit(messages, (self.num_ctx - max_tokens) * 3)  # about 3 chars per token
+        body = {"model": self.model, "stream": False, "keep_alive": "30m",
+                "options": {"num_predict": max_tokens, "num_ctx": self.num_ctx},
+                "messages": [{"role": m.role, "content": m.content} for m in fitted]}
+        data = _post(f"{self.url}/api/chat", body, {}, timeout=900)
         return data["message"]["content"]
+
+    @staticmethod
+    def fit(messages: list[Message], budget_chars: int) -> list[Message]:
+        """System prompt and task always stay; then as many recent turns as fit, old outputs cut."""
+        head, rest = messages[:2], messages[2:]
+        left = budget_chars - sum(len(m.content) for m in head)
+        kept: list[Message] = []
+        for i, m in enumerate(reversed(rest)):
+            text = m.content
+            if i >= 4 and len(text) > 1500:
+                text = text[:1000] + "\n...[trimmed]..."
+            if len(text) > left:
+                if i < 2 and left > 500:  # the latest turn must go in, even cut down
+                    kept.append(Message(m.role, text[:left - 100] + "\n...[trimmed]..."))
+                break
+            kept.append(Message(m.role, text))
+            left -= len(text)
+        kept.reverse()
+        dropped = len(rest) - len(kept)
+        if dropped:
+            kept.insert(0, Message("user", f"[{dropped} earlier messages left out to fit the local model]"))
+        return head + kept
 
 
 @dataclass
 class ProviderChain:
     providers: list[Provider] = field(default_factory=list)
     last_used: str = ""
-    # The local model is weak and slow for coding: when free Gemini is only briefly unavailable
-    # (overload, per-minute limits), wait for it up to this long before falling back.
-    fallback_wait: float = 300
+    # When the free cloud models are only briefly busy (per-minute limits), wait this long for
+    # them before using the local model, which takes minutes per step on this CPU.
+    fallback_wait: float = 60
     sleep: object = time.sleep
 
     @classmethod
@@ -351,8 +379,9 @@ class ProviderChain:
                 raise ValueError(f"OpenRouter model '{model}' is not ':free' - refusing (zero-cost rule)")
             chain.append(OpenRouterFree("openrouter", key=env["OPENROUTER_FREE_API_KEY"], model=model))
         chain.append(Ollama("ollama", url=env.get("OLLAMA_URL", "http://metatron-ollama:11434"),
-                            model=env.get("CORE_OLLAMA_MODEL", "qwen2.5-coder:7b")))
-        return cls(chain)
+                            model=env.get("CORE_OLLAMA_MODEL", "qwen2.5-coder:7b"),
+                            num_ctx=int(env.get("CORE_OLLAMA_NUM_CTX", "16384"))))
+        return cls(chain, fallback_wait=float(env.get("CORE_FREE_WAIT_SECONDS", "60")))
 
     def complete(self, messages: list[Message], max_tokens: int = 4096) -> str:
         errors: list[str] = []

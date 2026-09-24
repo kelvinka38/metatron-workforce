@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from metatron_core.agent import Agent, invalid_reply_hint, parse_action
-from metatron_core.llm import (FOREVER, EmptyReply, Gemini, LlmUnavailable, OpenRouterFree, Provider,
+from metatron_core.llm import (FOREVER, EmptyReply, Gemini, LlmUnavailable, Message, Ollama, OpenRouterFree, Provider,
                                 ProviderChain, cooldown_for, flash_candidates, gemini_text,
                                 openrouter_free_candidates, pick_flash_model)
 from metatron_core.store import Store
@@ -936,7 +936,7 @@ class WaitBeforeLocalModel(unittest.TestCase):
             naps.append(seconds)
             gemini.cooldown_until = 0  # Gemini is back after the nap
 
-        chain = ProviderChain([gemini, local], sleep=nap)
+        chain = ProviderChain([gemini, local], fallback_wait=300, sleep=nap)
         with mock.patch("builtins.print"):
             self.assertEqual(chain.complete([]), "from gemini")
         self.assertEqual(len(naps), 1)
@@ -1075,3 +1075,36 @@ class RepoPrivacyAndRestrictedModels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocalModel(unittest.TestCase):
+    def test_request_sets_a_context_window_big_enough_for_the_prompt(self):
+        sent = {}
+
+        def post(url, body, headers, timeout):
+            sent.update(body)
+            return {"message": {"content": "ok"}}
+
+        with mock.patch("metatron_core.llm._post", post):
+            Ollama("ollama", num_ctx=16384).complete([Message("system", "rules"), Message("user", "task")], 4096)
+        self.assertEqual(sent["options"]["num_ctx"], 16384)
+        self.assertEqual(sent["messages"][0]["content"], "rules")
+
+    def test_long_history_keeps_rules_task_and_latest_turns(self):
+        history = [Message("system", "RULES"), Message("user", "TASK")]
+        for i in range(60):
+            history += [Message("assistant", f"step {i}"), Message("user", f"output {i} " + "x" * 3000)]
+        fitted = Ollama.fit(history, 20_000)
+        self.assertLessEqual(sum(len(m.content) for m in fitted), 20_000)
+        self.assertEqual([m.content for m in fitted[:2]], ["RULES", "TASK"])
+        self.assertIn("left out", fitted[2].content)
+        self.assertTrue(fitted[-1].content.startswith("output 59"))
+
+    def test_no_wait_before_the_local_model_when_configured(self):
+        slept = []
+        busy = FailingProvider("gemini", 429, b"quota")
+        chain = ProviderChain([busy, Ollama("ollama")], fallback_wait=0, sleep=slept.append)
+        with mock.patch("metatron_core.llm._post", lambda *a, **k: {"message": {"content": "done"}}):
+            self.assertEqual(chain.complete([Message("user", "hi")]), "done")
+        self.assertEqual(slept, [])
+        self.assertEqual(chain.last_used, "ollama:qwen2.5-coder:7b")

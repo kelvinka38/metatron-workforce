@@ -23,6 +23,8 @@ CI (`.github/workflows/core-ci.yml`) runs both on every PR that touches `core/`.
 | `CORE_GEMINI_MODEL` | no | Default `gemini-2.5-flash` |
 | `OPENROUTER_FREE_API_KEY`, `OPENROUTER_FREE_MODEL` | no | Model must end in `:free`, or Core refuses to start |
 | `OLLAMA_URL`, `CORE_OLLAMA_MODEL` | no | Default `http://metatron-ollama:11434`, `qwen2.5-coder:7b` |
+| `CORE_OLLAMA_NUM_CTX` | no | Local model context window in tokens, default 16384 |
+| `CORE_FREE_WAIT_SECONDS` | no | How long to wait for a briefly busy free cloud model before using Ollama, default 60 (0 = never wait) |
 | `CORE_TELEGRAM_BOT_TOKEN`, `CORE_TELEGRAM_WEBHOOK_SECRET` | yes | Test bot until cutover |
 | `TELEGRAM_ALLOWED_USER_ID` | yes | The only Telegram user Core obeys |
 | `CORE_API_TOKEN` | yes | Bearer token for the local API |
@@ -77,8 +79,9 @@ fails, gives the logs back to the agent for up to 2 fix rounds.
 | `/approve <id>` | Merge the task's PR |
 | `/reject <id>` | Leave the PR open |
 
-Limits: 40 steps and 45 minutes per task. When every free model is cooling down, the task waits
-15 minutes and retries (8 attempts). Workspaces untouched for 3 days are deleted.
+Limits: 40 steps and 45 minutes per task. When the free cloud models are unavailable, Core uses the
+local Ollama model (slower, but it never runs out). Only if Ollama also fails does the task wait
+15 minutes and retry (8 attempts). Workspaces untouched for 3 days are deleted.
 
 Local API: `POST /tasks {"request": "..."}` and `GET /tasks/<id>`, both with
 `Authorization: Bearer $CORE_API_TOKEN`.
