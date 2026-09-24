@@ -6,6 +6,7 @@ const {
   boundedFetch,
   callGemini,
   callOllama,
+  configFromEnv,
   createServer,
   providerList,
   runProviderChain,
@@ -138,7 +139,7 @@ test('all provider payloads enforce configured output token cap', async () => {
   }
 
   assert.equal(bodies[0].options.num_predict, 256);
-  assert.equal(bodies[0].options.num_ctx, undefined, 'unset OLLAMA_NUM_CTX keeps the model default context');
+  assert.equal(bodies[0].options.num_ctx, undefined, 'a config without ollamaNumCtx sends no num_ctx');
   assert.equal(bodies[1].generationConfig.maxOutputTokens, 256);
   assert.equal(bodies[2].options.num_ctx, 8192, 'OLLAMA_NUM_CTX sizes the Ollama context window');
 });
@@ -278,4 +279,25 @@ test('ollama provider leaves thinking unchanged outside worker cognition unless 
   }
   assert.equal(Object.hasOwn(bodies[0], 'think'), false);
   assert.equal(bodies[1].think, false);
+});
+
+test('default Ollama model and context fit the CPU-only 8 GB host', async () => {
+  const originalFetch = global.fetch;
+  const originalEnv = { ...process.env };
+  delete process.env.OLLAMA_MODEL;
+  delete process.env.OLLAMA_NUM_CTX;
+  let body;
+  global.fetch = async (_url, options) => {
+    body = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
+  };
+  try {
+    const result = await callOllama('p', 50, configFromEnv());
+    assert.equal(result.model, 'qwen3:4b');
+  } finally {
+    global.fetch = originalFetch;
+    process.env = originalEnv;
+  }
+  assert.equal(body.model, 'qwen3:4b');
+  assert.equal(body.options.num_ctx, 8192);
 });

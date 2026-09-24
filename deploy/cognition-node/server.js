@@ -14,6 +14,12 @@ function optionalBoolean(value) {
   return undefined;
 }
 
+// Founder decision (2026-09-24): no paid LLM, CPU-only 4-vCPU / 8-GB host. qwen3:8b (~5 GB) left too little
+// memory and read Worker prompts at ~20 tokens/s, so requests exceeded the 150 s Ollama budget; qwen3:4b
+// (~2.5 GB) is roughly twice as fast and leaves headroom. OLLAMA_MODEL still overrides.
+const DEFAULT_OLLAMA_MODEL = 'qwen3:4b';
+const DEFAULT_OLLAMA_NUM_CTX = 8192;
+
 function configFromEnv() {
   return {
     auth: process.env.METATRON_COGNITION_AUTH || '',
@@ -30,9 +36,9 @@ function configFromEnv() {
     // bounded even if a caller is misconfigured or compromised.
     maxOutputTokensCeiling: positiveInt(process.env.COGNITION_MAX_OUTPUT_TOKENS_CEILING, 8192),
     ollamaThink: optionalBoolean(process.env.OLLAMA_THINK),
-    // Ollama's default context is 4096 tokens; a larger Worker prompt is silently truncated. Unset keeps
-    // the model default; size it to the host's free memory (the KV cache grows with the context).
-    ollamaNumCtx: positiveInt(process.env.OLLAMA_NUM_CTX, 0),
+    // Ollama's default context is 4096 tokens; a larger Worker prompt is silently truncated. 8192 fits the
+    // default qwen3:4b's KV cache on the current 4-vCPU / 8-GB host; size it to free host memory.
+    ollamaNumCtx: positiveInt(process.env.OLLAMA_NUM_CTX, DEFAULT_OLLAMA_NUM_CTX),
   };
 }
 
@@ -65,7 +71,7 @@ async function boundedFetch(url, options, timeoutMs, provider) {
 
 async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   const base = process.env.OLLAMA_URL || 'http://metatron-ollama:11434';
-  const model = process.env.OLLAMA_MODEL || 'llama3.2:1b';
+  const model = process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
   const options = { num_predict: cfg.maxOutputTokens };
   if (cfg.ollamaNumCtx > 0) options.num_ctx = cfg.ollamaNumCtx;
   const body = { model, prompt, stream: false, options };
@@ -196,7 +202,7 @@ function createServer(cfg = configFromEnv()) {
       return send(res, 200, {
         status: 'ok',
         revision: cfg.revision,
-        model: process.env.OLLAMA_MODEL || 'llama3.2:1b',
+        model: process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL,
         totalTimeoutMs: cfg.totalTimeoutMs,
         ollamaTimeoutMs: cfg.ollamaTimeoutMs,
         frontierTimeoutMs: cfg.frontierTimeoutMs,

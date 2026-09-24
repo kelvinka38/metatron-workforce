@@ -687,7 +687,7 @@ public final class MetatronIntelligenceResponder {
             case OPENAI -> defaultModel(openAiModel, "gpt-4.1-mini");
             case GOOGLE -> defaultModel(googleModel, "gemini-3.7-flash");
             case ANTHROPIC -> defaultModel(anthropicModel, "claude-sonnet-4-20250514");
-            case OLLAMA -> "qwen3:8b";
+            case OLLAMA -> "qwen3:4b";
         };
 
     }
