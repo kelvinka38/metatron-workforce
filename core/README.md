@@ -72,6 +72,7 @@ fails, gives the logs back to the agent for up to 2 fix rounds.
 | `/log <id>` | A task's last 8 steps |
 | `/cancel <id>` | Stop a queued or running task |
 | `/retry <id>` | Redo a task on the latest code (closes its old PR), e.g. after a merge conflict |
+| `/preview <id>` / `/preview stop` | Run a task's app live at https://preview.metatron.vn (one at a time, 2 h, founder-only login) |
 | `/report` | Last 7 days: tasks, success rate, model calls, paid-provider calls (must be 0) |
 | `/approve <id>` | Merge the task's PR |
 | `/reject <id>` | Leave the PR open |

@@ -6,6 +6,7 @@ PR by itself. Merging needs the founder's '/approve <id>' in Telegram.
 from __future__ import annotations
 
 import hmac
+import http.client
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import preview as previews
 from .agent import Agent
 from .llm import ProviderChain
 from .store import Store
@@ -40,6 +42,8 @@ if os.geteuid() == 0:
 store = Store(str(DATA / "core.db"))
 llm = ProviderChain.from_env()
 wake = threading.Event()
+PREVIEW_HOST = os.environ.get("CORE_PREVIEW_HOST", "").lower()  # e.g. preview.metatron.vn
+preview = previews.Preview(DATA / "previews", notify=lambda text: send(ALLOWED_USER, text))
 
 
 def send(chat_id: str, text: str) -> None:
@@ -137,11 +141,15 @@ def process(task: dict) -> None:
             store.update(tid, status="awaiting_approval")
             files = ws.change_summary()
             repo_url = f"https://github.com/{ws.repo}"
+            live = ""
+            if PREVIEW_HOST and previews.detect(ws.dir / "repo"):
+                preview.start(ws, tid)
+                live = f"🖥 Live preview: https://{PREVIEW_HOST} (starting; I'll message you when it's ready)\n"
             send(chat, f"✅ Task #{tid} done — {ci}\n\n"
                        f"📝 What was done:\n{out['summary']}\n\n"
                        f"📂 Files changed:\n{files or '(see the PR)'}\n\n"
                        f"🔗 Pull request (view the code and diff): {url}\n"
-                       f"📦 Repo: {repo_url}\n\n"
+                       f"📦 Repo: {repo_url}\n{live}\n"
                        f"Reply /approve {tid} to merge, /reject {tid} to leave it open.")
             return
     if out.get("open_pr") and not ws.repo:
@@ -195,7 +203,7 @@ def cleanup_workspaces(now: float | None = None) -> int:
     for d in (DATA / "work").glob("task-*"):
         tid = d.name.removeprefix("task-")
         task = store.get(int(tid)) if tid.isdigit() else None
-        if task and task["status"] in ("running", "cancelling"):
+        if task and (task["status"] in ("running", "cancelling") or task["id"] == preview.running_task()):
             continue
         try:
             if now - d.stat().st_mtime > WORKSPACE_MAX_AGE:
@@ -214,6 +222,7 @@ def worker_loop() -> None:
             removed = cleanup_workspaces()
             if removed:
                 print(f"cleanup: removed {removed} old workspaces", flush=True)
+        preview.expire()
         task = store.claim_next()
         if not task:
             wake.wait(30)
@@ -235,7 +244,7 @@ def handle_text(chat_id: str, text: str) -> str | None:
         return ("Send me any task in plain language, e.g.\n"
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
                 "/status — recent tasks\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
-                "/retry <id> — redo a task on the latest code\n"
+                "/retry <id> — redo a task on the latest code\n/preview <id> — open a task's app live\n"
                 "/report — last 7 days\n/approve <id> — merge a task's PR\n/reject <id> — leave it open")
     if text.startswith("/status"):
         rows = store.recent(10)
@@ -274,6 +283,25 @@ def handle_text(chat_id: str, text: str) -> str | None:
         new = store.create_task(chat_id, task["request"])
         wake.set()
         return f"🔁 Task #{task['id']} queued again as #{new} on the latest code.{note}"
+    if text.startswith("/preview"):
+        parts = text.split()
+        if not PREVIEW_HOST:
+            return "Previews are not set up (CORE_PREVIEW_HOST)."
+        if len(parts) == 2 and parts[1] == "stop":
+            return "Preview stopped." if preview.stop() else "No preview is running."
+        if len(parts) != 2 or not parts[1].isdigit():
+            running = preview.running_task()
+            state = f"showing task #{running}" if running else "nothing running"
+            return f"Usage: /preview <task id> or /preview stop ({state}: https://{PREVIEW_HOST})"
+        task = store.get(int(parts[1]))
+        ws_dir = DATA / "work" / f"task-{parts[1]}"
+        if not task or not (ws_dir / "repo").is_dir():
+            return "That task's files are gone (workspaces are kept 3 days). Send /retry to rebuild it."
+        ws = Workspace(DATA / "work", task["id"], GITHUB_TOKEN, agent_uid_for(task["id"]))
+        result = preview.start(ws, task["id"])
+        if result != "starting":
+            return f"Can't preview task #{task['id']}: {result}."
+        return f"🖥 Starting a preview of task #{task['id']}: https://{PREVIEW_HOST} (I'll message you when it's ready)"
     if text.startswith("/report"):
         return weekly_report()
     if text.startswith("/log"):
@@ -406,7 +434,53 @@ def poll_loop(token: str) -> None:
 
 
 # ---------------- http ----------------
+HOP_HEADERS = {"connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer"}
+
+
 class Handler(BaseHTTPRequestHandler):
+    def _is_preview(self) -> bool:
+        return bool(PREVIEW_HOST) and self.headers.get("Host", "").split(":")[0].lower() == PREVIEW_HOST
+
+    def _proxy(self) -> None:
+        """Everything on the preview host goes to the running preview app, never to Core's own routes."""
+        port = preview.port
+        if not port or not previews.port_open(port):
+            body = (b"<h2>No preview is running.</h2><p>Send <code>/preview &lt;task id&gt;</code> to the bot.</p>")
+            self.send_response(503)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        data = self.rfile.read(length) if length else None
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS}
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        try:
+            conn.request(self.command, self.path, body=data, headers=headers)
+            resp = conn.getresponse()
+            payload = resp.read()
+            self.send_response(resp.status)
+            for k, v in resp.getheaders():
+                if k.lower() not in HOP_HEADERS and k.lower() != "content-length":
+                    self.send_header(k, v)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(payload)
+        except OSError as e:
+            self._json(502, {"error": f"preview app did not answer: {type(e).__name__}"})
+        finally:
+            conn.close()
+
+    def do_PUT(self):
+        return self._proxy() if self._is_preview() else self._json(404, {})
+
+    do_PATCH = do_DELETE = do_OPTIONS = do_PUT
+
+    def do_HEAD(self):
+        return self._proxy() if self._is_preview() else self._json(404, {})
+
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
@@ -420,6 +494,8 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
 
     def do_GET(self):
+        if self._is_preview():
+            return self._proxy()
         if self.path == "/health":
             return self._json(200, {"ok": True, "providers": [p.name for p in llm.providers]})
         if self.path.startswith("/tasks/") and self._api_ok():
@@ -429,6 +505,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {})
 
     def do_POST(self):
+        if self._is_preview():
+            return self._proxy()
         if self.path in ("/telegram", "/core/telegram"):  # tunnel may keep the /core prefix
             got = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if not WEBHOOK_SECRET or not hmac.compare_digest(got, WEBHOOK_SECRET):

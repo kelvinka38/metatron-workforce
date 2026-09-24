@@ -44,6 +44,10 @@ fi
 unset free
 if has GEMINI_API_KEY; then echo "Gemini key: from $CORE_ENV"
 else echo "Gemini key: from $WF_ENV (save a free-tier key with set-secret.sh GEMINI_API_KEY)"; fi
+if ! grep -q '^CORE_PREVIEW_HOST=' "$CORE_ENV"; then
+  echo "CORE_PREVIEW_HOST=preview.metatron.vn" >> "$CORE_ENV"
+  echo "live previews: https://preview.metatron.vn"
+fi
 if has CORE_TELEGRAM_BOT_TOKEN; then echo "Telegram test bot token: set"
 else echo "Telegram test bot token: NOT set yet (M1-6)"; fi
 # Shape checks only; values are never printed.
@@ -83,6 +87,15 @@ if ! docker inspect -f '{{json .NetworkSettings.Networks}}' metatron-ollama | gr
 fi
 docker exec metatron-core python -c "import socket; print('metatron-ollama resolves to', socket.gethostbyname('metatron-ollama'))" \
   || fail "Core still cannot resolve metatron-ollama"
+
+step "Live previews: let the Cloudflare tunnel reach Core"
+for c in $(docker ps --format '{{.Names}} {{.Image}}' | awk '$2 ~ /cloudflared/ {print $1}'); do
+  for net in $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c"); do
+    if ! docker inspect -f '{{json .NetworkSettings.Networks}}' metatron-core | grep -q "\"$net\""; then
+      docker network connect --alias metatron-core "$net" metatron-core && echo "connected metatron-core to $net (for $c)"
+    fi
+  done
+done
 
 step "M1-4/M1-5: one real completion from each free provider"
 docker exec -i metatron-core python - <<'PY'

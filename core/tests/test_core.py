@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -834,6 +835,65 @@ class ChangeSummary(unittest.TestCase):
             summary = ws.change_summary()
             self.assertIn("• app.py (+2 −0)", summary)
             self.assertIn("• f.txt (+1 −0)", summary)
+
+
+def _free_port():
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+class PreviewApps(unittest.TestCase):
+    def test_detects_node_python_and_static_apps(self):
+        from metatron_core.preview import detect
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            self.assertIsNone(detect(repo))
+            (repo / "public").mkdir()
+            (repo / "public" / "index.html").write_text("<h1>hi</h1>")
+            self.assertIn("cd public && python3 -m http.server", detect(repo))
+            (repo / "app.py").write_text("print(1)")
+            self.assertEqual(detect(repo), "python3 app.py")
+            (repo / "package.json").write_text('{"scripts": {"start": "node server.js"}}')
+            self.assertTrue(detect(repo).endswith("npm start"))
+
+    def test_static_site_starts_is_proxied_and_stops(self):
+        import http.client
+        import http.server
+        from metatron_core import preview as previews
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            ws = Workspace(Path(d) / "work", 20, github_token="")
+            (ws.dir / "repo").mkdir()
+            (ws.dir / "repo" / "index.html").write_text("<h1>Control Center</h1>")
+            notes = []
+            port = _free_port()
+            pv = previews.Preview(Path(d) / "previews", notify=notes.append, port=port, ready_timeout=20)
+            self.assertEqual(pv.start(ws, 20), "starting")
+            for _ in range(100):
+                if pv.port:
+                    break
+                time.sleep(0.2)
+            self.assertEqual(pv.port, port)
+            self.assertIn("ready", notes[-1])
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with mock.patch.object(app, "PREVIEW_HOST", "preview.example"), \
+                        mock.patch.object(app, "preview", pv):
+                    conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+                    conn.request("GET", "/", headers={"Host": "preview.example"})
+                    self.assertIn(b"Control Center", conn.getresponse().read())
+                    conn.request("GET", "/health", headers={"Host": "preview.example"})
+                    self.assertNotIn(b"providers", conn.getresponse().read())  # Core routes stay hidden
+                    conn.request("GET", "/health", headers={"Host": "127.0.0.1"})
+                    self.assertIn(b"providers", conn.getresponse().read())
+            finally:
+                server.shutdown()
+            self.assertTrue(pv.stop())
+            self.assertFalse(previews.port_open(port))
+            self.assertIsNone(pv.running_task())
 
 
 if __name__ == "__main__":
