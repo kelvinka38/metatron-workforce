@@ -716,5 +716,25 @@ class ApproveWaitsForCi(unittest.TestCase):
             merge.assert_not_called()
 
 
+class GeminiMalformed(unittest.TestCase):
+    def test_malformed_reply_moves_to_next_model_but_safety_block_does_not(self):
+        g = Gemini("gemini", key="k", model="gemini-3.5-flash-lite")
+        seen = []
+
+        def generate(messages, max_tokens):
+            seen.append(g.model)
+            if g.model == "gemini-3.5-flash-lite":
+                raise EmptyReply("gemini returned no text (finishReason=MALFORMED_RESPONSE)")
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"), \
+                mock.patch.object(g, "_list_models", return_value=GeminiQuota.MODELS):
+            self.assertEqual(g.complete([], 10), "OK")
+        self.assertEqual(seen, ["gemini-3.5-flash-lite", "gemini-3.8-flash"])
+        blocked = Gemini("gemini", key="k", model="gemini-3.8-flash")
+        with mock.patch.object(blocked, "_generate", side_effect=EmptyReply("no candidates (SAFETY)")):
+            self.assertRaises(EmptyReply, blocked.complete, [], 10)
+
+
 if __name__ == "__main__":
     unittest.main()

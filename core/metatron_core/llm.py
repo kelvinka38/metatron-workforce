@@ -101,6 +101,18 @@ class Gemini(Provider):
         for _ in range(4):
             try:
                 return self._generate(messages, max_tokens)
+            except EmptyReply as e:
+                if "MALFORMED" not in str(e):
+                    raise  # a safety block is about the request, not the model
+                # This model keeps answering in a broken format: rest it and use the next one.
+                self.exhausted[self.model] = time.time() + 1800
+                nxt = next((m for m in flash_candidates(self._list_models())
+                            if self.exhausted.get(m, 0) <= time.time()), "")
+                if not nxt:
+                    raise
+                print(f"gemini: model {self.model} gave a malformed reply, switching to {nxt}", flush=True)
+                self.model = nxt
+                continue
             except urllib.error.HTTPError as e:
                 if e.code not in (404, 429) and e.code < 500:
                     raise
