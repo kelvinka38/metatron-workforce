@@ -636,10 +636,27 @@ class GeminiQuota(unittest.TestCase):
             self.assertEqual(g.complete([], 10), "OK")
         self.assertEqual((waits, g.model), ([24], "gemini-3.8-flash"))
 
-    def test_long_per_minute_wait_is_left_to_the_chain(self):
+    def test_long_quota_wait_moves_to_the_next_model(self):
+        g = Gemini("gemini", key="k", model="gemini-3.8-flash")
+        seen = []
+
+        def generate(messages, max_tokens):
+            seen.append(g.model)
+            if g.model == "gemini-3.8-flash":
+                raise self._err(429, b'{"message": "You exceeded your current quota", "retryDelay": "3000s"}')
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"), \
+                mock.patch.object(g, "_list_models", return_value=self.MODELS):
+            self.assertEqual(g.complete([], 10), "OK")
+        self.assertEqual(seen, ["gemini-3.8-flash", "gemini-3.5-flash"])
+        self.assertGreater(g.exhausted["gemini-3.8-flash"], time.time() + 2900)
+
+    def test_quota_on_every_model_is_left_to_the_chain(self):
         g = Gemini("gemini", key="k", model="gemini-3.8-flash")
         err = self._err(429, b'{"quotaId": "GenerateRequestsPerMinute", "retryDelay": "300s"}')
-        with mock.patch.object(g, "_generate", side_effect=err):
+        with mock.patch.object(g, "_generate", side_effect=err), mock.patch("builtins.print"), \
+                mock.patch.object(g, "_list_models", return_value=[_model("gemini-3.8-flash")]):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 g.complete([], 10)
         self.assertIn(b"PerMinute", ctx.exception.read())
@@ -889,6 +906,7 @@ class PreviewApps(unittest.TestCase):
                     self.assertNotIn(b"providers", conn.getresponse().read())  # Core routes stay hidden
                     conn.request("GET", "/health", headers={"Host": "127.0.0.1"})
                     self.assertIn(b"providers", conn.getresponse().read())
+                    conn.close()
             finally:
                 server.shutdown()
             self.assertTrue(pv.stop())

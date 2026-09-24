@@ -118,6 +118,7 @@ class Gemini(Provider):
                     raise
                 body = e.read()
                 text = body.decode(errors="replace")
+                pause = {404: FOREVER, 429: 6 * 3600}.get(e.code, 600)  # 5xx: overloaded for now
                 if e.code == 429 and not is_daily_quota(text):
                     # Per-minute limit: a short wait beats a slow local model for this step.
                     wait = retry_delay(text)
@@ -125,14 +126,13 @@ class Gemini(Provider):
                         print(f"gemini: {self.model} per-minute limit, waiting {wait}s", flush=True)
                         self.sleep(wait)
                         continue
-                    raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
-                pause = {404: FOREVER, 429: 6 * 3600}.get(e.code, 600)  # 5xx: overloaded for now
+                    pause = max(wait, 300)  # quotas are per model: try the next one meanwhile
                 self.exhausted[self.model] = time.time() + pause
                 nxt = next((m for m in flash_candidates(self._list_models())
                             if self.exhausted.get(m, 0) <= time.time()), "")
                 if not nxt:
                     raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
-                why = {404: "not found", 429: "out of daily free quota"}.get(e.code, f"overloaded ({e.code})")
+                why = {404: "not found", 429: "out of free quota"}.get(e.code, f"overloaded ({e.code})")
                 print(f"gemini: model {self.model} {why}, switching to {nxt}", flush=True)
                 self.model = nxt
         return self._generate(messages, max_tokens)
