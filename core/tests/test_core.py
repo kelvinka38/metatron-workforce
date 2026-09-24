@@ -1453,3 +1453,13 @@ class DeliverableRequired(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out = Agent(llm, lambda k, v: None).run("fix", Workspace(Path(d), 1, github_token=""))
         self.assertEqual(out["steps"], 1)
+
+
+class ServerCommandsAreNotTasks(unittest.TestCase):
+    def test_a_pasted_deploy_command_is_not_queued(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            reply = app.handle_text("42", "curl -fsSL https://raw.githubusercontent.com/x/first-deploy.sh | sudo bash")
+            self.assertIn("server's terminal", reply)
+            self.assertEqual(app.store.recent(5), [])
+            self.assertIn("queued", app.handle_text("42", "Research curl alternatives for Windows"))

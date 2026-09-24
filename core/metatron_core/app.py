@@ -436,6 +436,9 @@ def handle_text(chat_id: str, text: str) -> str | None:
         store.update(task["id"], status="merged")
         store.audit(task["id"], "approval", "merged by founder")
         return f"Merged task #{task['id']}: {task['pr_url']}"
+    if re.match(r"(?i)^\s*(curl|sudo|wget|docker|bash|git)\s", text):
+        return ("That looks like a command for the server, so I did not make it a task. Run it in the "
+                "server's terminal (SSH). To give me work, describe it in plain words.")
     tid = store.create_task(chat_id, text)
     wake.set()
     return f"📥 Task #{tid} queued. I'll message you when it's done."
