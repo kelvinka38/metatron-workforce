@@ -138,6 +138,13 @@ def process(task: dict) -> None:
             send(chat, f"✅ Task #{tid} done — {ci}\n{url}\n\n{out['summary']}\n\n"
                        f"Reply /approve {tid} to merge, /reject {tid} to leave it open.")
             return
+    if out.get("open_pr") and not ws.repo:
+        # The agent wanted a PR but never cloned or created a GitHub repo: its files are not on GitHub.
+        fields["result"] = (f"{out['summary']}\n\n⚠️ No PR: the work was not in a GitHub repo (nothing was "
+                            "cloned or created). Ask again naming an existing repo, or a new project name.")
+        store.update(tid, status="failed", **fields)
+        send(chat, f"❌ Task #{tid} could not publish\n{fields['result']}")
+        return
     store.update(tid, status="done", **fields)
     send(chat, f"✅ Task #{tid} done\n{fields['result']}")
 

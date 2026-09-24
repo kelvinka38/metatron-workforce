@@ -21,6 +21,9 @@ Protocol - every reply is exactly ONE JSON object and nothing else:
 
 Working rules:
 - If the task names a repository, clone it first. Explore before editing (list_dir, read_file, run grep).
+- If the task asks for a new project or the named repo does not exist, call create_repo instead of
+  making a local folder: work outside a cloned or created repo is lost. Write large files in parts
+  (write_file, then replace_in_file to add more) to keep each reply short.
 - Follow the repository guidance (AGENTS.md, CONTRIBUTING.md, README) shown after cloning.
 - After changing code, run the project's build/tests. If they fail, read the error, fix, re-run.
 - To fix a failing test, fix the code under test. Never change a test's expected values, skip it or
@@ -137,7 +140,7 @@ class Agent:
     def _call(ws: Workspace, tool: str, args: dict, allow_clone: bool = True) -> str:
         allowed = {"list_dir", "read_file", "write_file", "replace_in_file", "run"}
         if allow_clone:
-            allowed.add("clone_repo")
+            allowed |= {"clone_repo", "create_repo"}
         if tool not in allowed:
             return f"error: unknown tool '{tool}'. Allowed: {sorted(allowed)} or finish"
         try:

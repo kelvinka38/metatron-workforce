@@ -780,5 +780,49 @@ class WebhookTakeover(unittest.TestCase):
             self.assertEqual(sleeps, [60, 60])
 
 
+class CreateRepo(unittest.TestCase):
+    def test_creates_private_repo_on_token_owner_then_clones(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 15, github_token="t")
+            ws._sleep = lambda s: None
+            calls = []
+
+            def api(method, url, token, body):
+                calls.append((method, url, body))
+                return {"login": "kelvinka38"} if url.endswith("/user") else {}
+
+            with mock.patch("metatron_core.tools._github_api", side_effect=api), \
+                    mock.patch.object(ws, "clone_repo", return_value="cloned") as clone:
+                self.assertEqual(ws.create_repo("metatron-ai/control-center"), "cloned")
+            self.assertEqual(calls[1], ("POST", "https://api.github.com/user/repos",
+                                        {"name": "control-center", "private": True, "auto_init": True}))
+            clone.assert_called_once_with("kelvinka38/control-center")
+
+    def test_bad_name_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 16, github_token="t")
+            self.assertIn("error", ws.create_repo("bad name!"))
+
+    def test_create_repo_not_allowed_in_ci_fix_rounds(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 17, github_token="t")
+            self.assertIn("unknown tool", Agent._call(ws, "create_repo", {"name": "x"}, allow_clone=False))
+
+
+class NoRepoNoSilentSuccess(unittest.TestCase):
+    def test_pr_wanted_without_repo_is_reported_as_failed(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            tid = app.store.create_task("42", "build an app")
+            task = app.store.claim_next()
+            out = {"summary": "built it", "open_pr": True, "steps": 5}
+            sent = []
+            with mock.patch.object(app, "send", lambda chat, text: sent.append(text)), \
+                    mock.patch.object(app.Agent, "run", return_value=out), mock.patch("builtins.print"):
+                app.process(task)
+            self.assertEqual(app.store.get(tid)["status"], "failed")
+            self.assertIn("not in a GitHub repo", sent[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

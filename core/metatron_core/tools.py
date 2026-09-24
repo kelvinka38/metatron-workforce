@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -198,6 +199,22 @@ class Workspace:
         others = f" Also present: {', '.join(found[1:])}." if found[1:] else ""
         return f"\nRepository guidance from {found[0]} (follow it):{others}\n---\n{text}\n---"
 
+    def create_repo(self, name: str, private: bool = True) -> str:
+        """Create a new repo on the token owner's account, starting from a README so the normal
+        branch + PR + /approve flow works, then clone it into ./repo."""
+        name = name.split("/")[-1].strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name):
+            return "error: repo name may only use letters, digits, '.', '_' and '-'"
+        owner = _github_api("GET", "https://api.github.com/user", self._token, None)["login"]
+        try:
+            _github_api("POST", "https://api.github.com/user/repos", self._token,
+                        {"name": name, "private": bool(private), "auto_init": True})
+        except urllib.error.HTTPError as e:
+            if e.code != 422:  # 422: it already exists; then just clone it
+                return f"error: could not create {owner}/{name}: HTTP {e.code}"
+        self._sleep(2)  # the new repo takes a moment to accept clones
+        return self.clone_repo(f"{owner}/{name}")
+
     def list_dir(self, path: str = "repo") -> str:
         return self._file_op("list_dir", path)
 
@@ -316,6 +333,8 @@ class Workspace:
 
 TOOL_SPEC = """
 clone_repo(repo, branch?)          clone GitHub repo 'owner/name' into ./repo
+create_repo(name, private?)        create a NEW repo on the founder's GitHub (private unless private=false)
+                                   and clone it into ./repo; only when the task asks for a new project
 list_dir(path)                     list a directory (paths are relative to the workspace, e.g. "repo/src")
 read_file(path)                    read a file
 write_file(path, content)          create or overwrite a file
