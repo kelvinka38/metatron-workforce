@@ -1039,5 +1039,39 @@ class ProviderPersistence(unittest.TestCase):
         self.assertEqual(r.model, "big/general:free")
 
 
+class RepoPrivacyAndRestrictedModels(unittest.TestCase):
+    def _create(self, ws, **kw):
+        calls = []
+
+        def api(method, url, token, body):
+            calls.append(body)
+            return {"login": "me"} if url.endswith("/user") else {}
+
+        ws._sleep = lambda s: None
+        with mock.patch("metatron_core.tools._github_api", side_effect=api), \
+                mock.patch.object(ws, "clone_repo", return_value="cloned"):
+            ws.create_repo("app", **kw)
+        return calls[1]["private"]
+
+    def test_model_cannot_make_a_repo_public_on_its_own(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 22, github_token="t")
+            self.assertTrue(self._create(ws, private=False))
+            ws.allow_public = True
+            self.assertFalse(self._create(ws, private=False))
+
+    def test_restricted_openrouter_model_is_skipped_not_fatal(self):
+        r = OpenRouterFree("openrouter", key="k")
+
+        def post(url, body, headers, timeout):
+            if body["model"] == "qwen/qwen3-coder:free":
+                raise urllib.error.HTTPError(url, 403, "only on agentic harnesses", {}, io.BytesIO(b""))
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+        with mock.patch("metatron_core.llm._post", post), mock.patch("builtins.print"), \
+                mock.patch.object(r, "_models", return_value=OpenRouterFreeOnly.MODELS):
+            self.assertEqual(r.complete([], 10), "OK")
+
+
 if __name__ == "__main__":
     unittest.main()

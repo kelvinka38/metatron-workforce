@@ -286,9 +286,10 @@ class OpenRouterFree(Provider):
                 data = _post(f"{OPENROUTER_API}/chat/completions", body,
                              {"Authorization": f"Bearer {self.key}"}, timeout=120)
             except urllib.error.HTTPError as e:
-                if e.code not in (404, 429) and e.code < 500:
+                # 401 is the key itself; 403/404 are about this model (restricted, removed), 429/5xx busy.
+                if e.code not in (403, 404, 429) and e.code < 500:
                     raise
-                self.exhausted[self.model] = time.time() + (FOREVER if e.code == 404 else 900)
+                self.exhausted[self.model] = time.time() + (FOREVER if e.code in (403, 404) else 900)
                 nxt = self._next_model()
                 if not nxt:
                     raise

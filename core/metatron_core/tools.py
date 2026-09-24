@@ -91,6 +91,7 @@ class Workspace:
         self.head_sha = ""
         self.written: set[str] = set()   # repo-relative files the agent wrote on purpose
         self.left_out: list[str] = []    # new files found at publish but not written on purpose
+        self.allow_public = False         # set when the founder's request itself asks for a public repo
         self._sleep = time.sleep
         self.dir.mkdir(parents=True, exist_ok=True)
         if self.uid is not None:
@@ -213,7 +214,9 @@ class Workspace:
 
     def create_repo(self, name: str, private: bool = True) -> str:
         """Create a new repo on the token owner's account, starting from a README so the normal
-        branch + PR + /approve flow works, then clone it into ./repo."""
+        branch + PR + /approve flow works, then clone it. Always private unless the founder's own
+        request says public (allow_public), whatever the model passes."""
+        private = bool(private) or not self.allow_public
         name = name.split("/")[-1].strip()
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name):
             return "error: repo name may only use letters, digits, '.', '_' and '-'"

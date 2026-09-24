@@ -102,6 +102,7 @@ def process(task: dict) -> None:
 
     send(chat, f"▶️ Task #{tid} started. I'll post progress every {PROGRESS_EVERY} steps.")
     ws = Workspace(DATA / "work", tid, GITHUB_TOKEN, agent_uid_for(tid))
+    ws.allow_public = "public" in task["request"].lower()
     agent = Agent(llm, audit)
     out = agent.run(task["request"], ws, should_stop)
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
