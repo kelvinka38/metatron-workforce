@@ -31,10 +31,15 @@ put() {  # put NAME VALUE -> replace NAME in Core's env file
 
 if [ "${1:-}" = "--rollback" ]; then
   test_token=$(value CORE_TELEGRAM_TEST_BOT_TOKEN "$CORE_ENV")
-  [ -n "$test_token" ] || fail "no saved test bot token (CORE_TELEGRAM_TEST_BOT_TOKEN)"
-  put CORE_TELEGRAM_BOT_TOKEN "$test_token"
+  if [ -n "$test_token" ]; then
+    put CORE_TELEGRAM_BOT_TOKEN "$test_token"
+    echo "Core is back on the test bot."
+  else
+    # No separate test bot was ever used: stop Core polling the main bot at all.
+    sed -i "/^CORE_TELEGRAM_BOT_TOKEN=/d" "$CORE_ENV"
+    echo "Core no longer polls Telegram."
+  fi
   unset test_token
-  echo "Core is back on the test bot."
   deploy
   echo
   echo "Last step: re-register the main bot's webhook for the old Workforce"
