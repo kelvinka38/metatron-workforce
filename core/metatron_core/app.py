@@ -182,8 +182,8 @@ def follow_ci(tid, chat, task, ws, agent, should_stop, audit, title) -> str:
             return f"CI still failing after {CI_FIX_ROUNDS} fix rounds:\n{details[:800]}"
         send(chat, f"🔧 Task #{tid}: CI failed, fix round {fix_round + 1} of {CI_FIX_ROUNDS}")
         before = ws.head_sha
-        out = agent.run(f"{task['request']}\n\nYou already changed ./repo and opened a pull request. Its CI "
-                        f"failed:\n{details[:6000]}\n\nFix the cause in ./repo (do not clone again), run the "
+        out = agent.run(f"{task['request']}\n\nYou already changed the repository and opened a pull request. Its CI "
+                        f"failed:\n{details[:6000]}\n\nFix the cause (do not clone again), run the "
                         "checks you can, then call finish with open_pr=true.", ws, should_stop, allow_clone=False)
         if out.get("failed"):
             return f"CI failed and the fix round stopped: {out['summary']}"

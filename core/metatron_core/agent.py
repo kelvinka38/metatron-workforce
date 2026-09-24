@@ -118,10 +118,15 @@ class Agent:
                         "pr_title": str(args.get("pr_title") or "")[:120],
                         "steps": step}
 
-            result = self._call(ws, tool, args, allow_clone)
+            key = json.dumps([tool, args], sort_keys=True)
+            if recent_actions[-8:].count(key) >= 3:
+                result = ("error: refused - you already made this exact call 3 times and it gives the same "
+                          "result. Change approach, or call finish and say what is blocking you.")
+            else:
+                result = self._call(ws, tool, args, allow_clone)
             self.audit("tool", f"{tool}({json.dumps(args)[:500]}) -> {result[:1500]}")
             recent_tools.append(tool)
-            recent_actions.append(json.dumps([tool, args], sort_keys=True))
+            recent_actions.append(key)
             left = self.max_steps - step
             note = ""
             if recent_actions[-8:].count(recent_actions[-1]) >= 3:

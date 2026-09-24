@@ -124,7 +124,7 @@ class Cooldowns(unittest.TestCase):
         self.assertEqual(cooldown_for(429, "", "17"), 17)
 
     def test_chain_falls_through_and_reports(self):
-        chain = ProviderChain([FailingProvider("gemini", 400, b"too large")])
+        chain = ProviderChain([FailingProvider("gemini", 400, b"too large")], fallback_wait=0)
         with self.assertRaises(LlmUnavailable) as ctx:
             chain.complete([])
         self.assertIn("HTTP 400 too large", str(ctx.exception))
@@ -172,7 +172,7 @@ class Publish(unittest.TestCase):
     def test_agent_committed_work_is_published(self):
         with tempfile.TemporaryDirectory() as d:
             ws, upstream = self._workspace(d)
-            ws.run("cd repo && echo b >> f.txt && git commit -qam 'agent commit'")
+            ws.run("echo b >> f.txt && git commit -qam 'agent commit'")
             self.assertEqual(ws.publish_branch("t"), "metatron/task-5")
             log = subprocess.run(["git", "--git-dir", str(upstream), "log", "--format=%s", "metatron/task-5"],
                                  check=True, capture_output=True, text=True).stdout
@@ -181,7 +181,7 @@ class Publish(unittest.TestCase):
     def test_agent_hooks_do_not_run_on_publish(self):
         with tempfile.TemporaryDirectory() as d:
             ws, _ = self._workspace(d)
-            ws.run("cd repo && mkdir -p h && printf '#!/bin/sh\\ntouch ../pwned\\n' > h/pre-push && chmod +x h/pre-push "
+            ws.run("mkdir -p h && printf '#!/bin/sh\\ntouch ../pwned\\n' > h/pre-push && chmod +x h/pre-push "
                    "&& git config core.hooksPath h && echo c >> f.txt")
             ws.publish_branch("t")
             self.assertFalse((ws.dir / "pwned").exists())
@@ -683,7 +683,7 @@ class PublishSkipsJunk(unittest.TestCase):
     def test_cache_files_stay_out_of_the_pr(self):
         with tempfile.TemporaryDirectory() as d:
             ws, upstream = Publish()._workspace(d)
-            ws.run("cd repo && mkdir -p __pycache__ && echo x > __pycache__/f.cpython-312.pyc "
+            ws.run("mkdir -p __pycache__ && echo x > __pycache__/f.cpython-312.pyc "
                    "&& git add -A && git commit -qm 'agent commit with junk' && echo b >> f.txt")
             ws.publish_branch("t")
             files = subprocess.run(["git", "--git-dir", str(upstream), "ls-tree", "-r", "--name-only",
@@ -697,7 +697,7 @@ class PublishOnlyIntendedFiles(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             ws, upstream = Publish()._workspace(d)
             ws.write_file("repo/new_module.py", "X = 1\n")
-            ws.run("cd repo && echo '{}' > .acceptance_observed.json && echo b >> f.txt")
+            ws.run("echo '{}' > .acceptance_observed.json && echo b >> f.txt")
             ws.publish_branch("t")
             files = subprocess.run(["git", "--git-dir", str(upstream), "ls-tree", "-r", "--name-only",
                                     "metatron/task-5"], check=True, capture_output=True, text=True).stdout
@@ -830,7 +830,7 @@ class ChangeSummary(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             ws, _ = Publish()._workspace(d)
             ws.write_file("repo/app.py", "print(1)\nprint(2)\n")
-            ws.run("cd repo && echo b >> f.txt")
+            ws.run("echo b >> f.txt")
             ws.publish_branch("t")
             summary = ws.change_summary()
             self.assertIn("• app.py (+2 −0)", summary)
@@ -894,6 +894,68 @@ class PreviewApps(unittest.TestCase):
             self.assertTrue(pv.stop())
             self.assertFalse(previews.port_open(port))
             self.assertIsNone(pv.running_task())
+
+
+class WaitBeforeLocalModel(unittest.TestCase):
+    def test_busy_gemini_is_waited_for_before_ollama(self):
+        gemini = FailingProvider("gemini", 503, b"overloaded")
+        answers = iter([urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b"busy")), "from gemini"])
+
+        def complete(messages, max_tokens):
+            item = next(answers)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        gemini.complete = complete
+        local = mock.Mock(spec=["complete", "available", "cool_down", "name", "cooldown_until"])
+        local.name, local.cooldown_until = "ollama", 0
+        local.available.return_value = True
+        naps = []
+
+        def nap(seconds):
+            naps.append(seconds)
+            gemini.cooldown_until = 0  # Gemini is back after the nap
+
+        chain = ProviderChain([gemini, local], sleep=nap)
+        with mock.patch("builtins.print"):
+            self.assertEqual(chain.complete([]), "from gemini")
+        self.assertEqual(len(naps), 1)
+        local.complete.assert_not_called()
+
+    def test_no_wait_when_gemini_is_out_for_the_day(self):
+        gemini = FailingProvider("gemini", 403, b"key")
+        local = mock.Mock(spec=["complete", "available", "cool_down", "name", "cooldown_until"])
+        local.name, local.cooldown_until = "ollama", 0
+        local.available.return_value = True
+        local.complete.return_value = "from ollama"
+        chain = ProviderChain([gemini, local], sleep=lambda s: self.fail("should not wait"))
+        with mock.patch("builtins.print"):
+            self.assertEqual(chain.complete([]), "from ollama")
+
+
+class RepoRootPaths(unittest.TestCase):
+    def test_paths_and_commands_start_in_the_repo_after_clone(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, _ = Publish()._workspace(d)
+            ws.write_file("package.json", "{}")
+            ws.write_file("repo/src/app.js", "1")
+            self.assertTrue((ws.dir / "repo" / "package.json").is_file())
+            self.assertTrue((ws.dir / "repo" / "src" / "app.js").is_file())
+            self.assertEqual(ws.written, {"package.json", "src/app.js"})
+            self.assertIn("f.txt", ws.run("ls"))
+            self.assertIn("package.json", ws.list_dir("."))
+            self.assertRaises(ValueError, ws.read_file, "../../etc/passwd")
+
+    def test_fourth_identical_call_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 21, github_token="")
+            calls = []
+            with mock.patch.object(Agent, "_call", side_effect=lambda *a: calls.append(1) or "same"):
+                llm = ScriptedLlm([act("list_dir", path=".")] * 4 + [act("finish", summary="s", open_pr=False)])
+                Agent(llm, audit=lambda *a: None).run("x", ws)
+            self.assertEqual(len(calls), 3)
+            self.assertIn("refused", llm.seen[4])
 
 
 if __name__ == "__main__":

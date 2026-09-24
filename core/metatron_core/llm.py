@@ -254,6 +254,10 @@ class Ollama(Provider):
 class ProviderChain:
     providers: list[Provider] = field(default_factory=list)
     last_used: str = ""
+    # The local model is weak and slow for coding: when free Gemini is only briefly unavailable
+    # (overload, per-minute limits), wait for it up to this long before falling back.
+    fallback_wait: float = 300
+    sleep: object = time.sleep
 
     @classmethod
     def from_env(cls) -> "ProviderChain":
@@ -281,30 +285,55 @@ class ProviderChain:
         return cls(chain)
 
     def complete(self, messages: list[Message], max_tokens: int = 4096) -> str:
-        errors = []
-        for p in self.providers:
-            if not p.available():
-                continue
-            began = time.time()
-            try:
-                out = p.complete(messages, max_tokens)
-                self.last_used = f"{p.name}:{getattr(p, 'model', '')}"
-                if time.time() - began > 30:
-                    print(f"llm: {self.last_used} took {time.time() - began:.0f}s", flush=True)
-                return out
-            except urllib.error.HTTPError as e:
-                try:
-                    detail = e.read().decode(errors="replace")[:2000]
-                except Exception:
-                    detail = ""
-                p.cool_down(cooldown_for(e.code, detail, e.headers.get("Retry-After") if e.headers else None))
-                errors.append(f"{p.name}: HTTP {e.code} {detail[:200]}".rstrip())
-            except EmptyReply as e:
-                errors.append(f"{p.name}: {e}")
-            except Exception as e:  # timeout, bad payload, connection refused
-                p.cool_down(120)
-                errors.append(f"{p.name}: {type(e).__name__}: {e}")
-            if errors:
-                print(f"llm: {errors[-1][:200]} after {time.time() - began:.0f}s; trying the next provider",
+        errors: list[str] = []
+        primary = [p for p in self.providers if p.name != "ollama"]
+        last_resort = [p for p in self.providers if p.name == "ollama"]
+        deadline = time.time() + self.fallback_wait
+        told = False
+        while primary:
+            for p in primary:
+                if p.available():
+                    out = self._try(p, messages, max_tokens, errors)
+                    if out is not None:
+                        return out
+            if any(p.available() for p in primary):
+                break  # a free provider answered badly for this request: waiting will not help
+            wait = min(p.cooldown_until for p in primary) - time.time()
+            if time.time() + wait > deadline:
+                break  # none of them is back before the deadline (daily quota, bad key)
+            if not told:
+                print(f"llm: free models busy, waiting up to {self.fallback_wait:.0f}s before the local model",
                       flush=True)
+                told = True
+            self.sleep(max(1.0, min(wait, 30.0)))
+        for p in last_resort:
+            if p.available():
+                out = self._try(p, messages, max_tokens, errors)
+                if out is not None:
+                    return out
         raise LlmUnavailable("; ".join(errors) or "no provider available")
+
+    def _try(self, p: Provider, messages, max_tokens, errors: list[str]) -> str | None:
+        """One provider attempt: its text, or None after recording why it failed."""
+        began = time.time()
+        try:
+            out = p.complete(messages, max_tokens)
+            self.last_used = f"{p.name}:{getattr(p, 'model', '')}"
+            if time.time() - began > 30:
+                print(f"llm: {self.last_used} took {time.time() - began:.0f}s", flush=True)
+            return out
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode(errors="replace")[:2000]
+            except Exception:
+                detail = ""
+            p.cool_down(cooldown_for(e.code, detail, e.headers.get("Retry-After") if e.headers else None))
+            errors.append(f"{p.name}: HTTP {e.code} {detail[:200]}".rstrip())
+        except EmptyReply as e:
+            errors.append(f"{p.name}: {e}")
+        except Exception as e:  # timeout, bad payload, connection refused
+            p.cool_down(120)
+            errors.append(f"{p.name}: {type(e).__name__}: {e}")
+        print(f"llm: {errors[-1][:200]} after {time.time() - began:.0f}s; trying the next provider",
+              flush=True)
+        return None

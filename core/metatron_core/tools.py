@@ -99,8 +99,20 @@ class Workspace:
             os.chmod(self.dir, 0o700)
 
     # ---------- helpers ----------
+    @property
+    def base(self) -> Path:
+        """Where paths and commands start: the repo once one is cloned or created, else the workspace."""
+        return self.dir / "repo" if self.repo else self.dir
+
     def _path(self, rel: str) -> Path:
-        p = (self.dir / rel).resolve()
+        rel = str(rel).strip()
+        if self.repo:  # models often still write "repo/x" or "./repo/x"; both mean the repo root
+            for prefix in ("./repo/", "repo/"):
+                if rel.startswith(prefix):
+                    rel = rel[len(prefix):]
+            if rel in ("repo", "./repo"):
+                rel = "."
+        p = (self.base / rel).resolve()
         if not p.is_relative_to(self.dir.resolve()):
             raise ValueError(f"path escapes workspace: {rel}")
         return p
@@ -187,7 +199,7 @@ class Workspace:
         guidance = self._guidance(target)  # read before the agent user owns (and could swap) the files
         self._give_to_agent(target)
         self.repo = repo
-        return f"cloned {repo} into ./repo" + guidance
+        return f"cloned {repo}; paths and commands now start at its root" + guidance
 
     @staticmethod
     def _guidance(repo_dir: Path) -> str:
@@ -223,9 +235,10 @@ class Workspace:
 
     def write_file(self, path: str, content: str) -> str:
         out = self._file_op("write_file", path, content=content)
-        rel = self._path(path).relative_to(self.dir.resolve())
-        if rel.parts[:1] == ("repo",) and len(rel.parts) > 1:
-            self.written.add("/".join(rel.parts[1:]))
+        target = self._path(path)
+        repo_root = (self.dir / "repo").resolve()
+        if self.repo and target.is_relative_to(repo_root) and target != repo_root:
+            self.written.add(target.relative_to(repo_root).as_posix())
         return out
 
     def replace_in_file(self, path: str, old: str, new: str) -> str:
@@ -236,8 +249,8 @@ class Workspace:
         env["HOME"] = str(self.dir)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         timeout = min(int(timeout), 1200)
-        # Same base as the file tools, so "repo/x.py" means the same file everywhere.
-        proc = subprocess.Popen(["bash", "-lc", command], cwd=self.dir, stdout=subprocess.PIPE,
+        # Same base as the file tools: the repo root once a repo is cloned or created.
+        proc = subprocess.Popen(["bash", "-lc", command], cwd=self.base, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, env=env, start_new_session=True,
                                 **self._as_agent())
         try:
@@ -345,14 +358,14 @@ class Workspace:
 
 
 TOOL_SPEC = """
-clone_repo(repo, branch?)          clone GitHub repo 'owner/name' into ./repo
+clone_repo(repo, branch?)          clone GitHub repo 'owner/name'; afterwards you work in its root
 create_repo(name, private?)        create a NEW repo on the founder's GitHub (private unless private=false)
-                                   and clone it into ./repo; only when the task asks for a new project
-list_dir(path)                     list a directory (paths are relative to the workspace, e.g. "repo/src")
+                                   and clone it; only when the task asks for a new project
+list_dir(path)                     list a directory; after clone_repo/create_repo every path is relative
+                                   to the repository root (e.g. "src", "package.json")
 read_file(path)                    read a file
 write_file(path, content)          create or overwrite a file
 replace_in_file(path, old, new)    replace one exact unique snippet in a file (prefer this for small edits)
-run(command, timeout?)             run a bash command in the workspace root, where the repo is ./repo:
-                                   use "cd repo && ..." for builds, tests, grep, git diff
+run(command, timeout?)             run a bash command in the repository root (build, test, grep, git diff)
 finish(summary, open_pr, pr_title?) end the task. open_pr=true publishes your changes as a pull request.
 """.strip()
