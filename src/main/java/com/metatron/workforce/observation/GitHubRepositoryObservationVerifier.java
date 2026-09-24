@@ -80,12 +80,27 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         String repo = repository(requirement.target());
         if (repo == null) return Optional.empty();
         try {
-            PullEvidence pull = pullEvidence(executionEvidenceReferences);
-            if (pull != null) {
+            List<PullEvidence> pulls = pullEvidences(executionEvidenceReferences);
+            if (!pulls.isEmpty()) {
                 if (executionEvidenceReferences.stream().anyMatch("github-general-proposal:true"::equals)) {
+                    // Production incident (2026-09-24, case build-and-deliver "Metatron Workforce Control
+                    // Center"): the Objective-wide evidence list is not only this Objective's own publication
+                    // -- it also carries e.g. the Worker's runtime-constitution/standing references, which can
+                    // name a PR the same Worker authored for an earlier, unrelated Objective in another
+                    // repository. Taking the FIRST github-pr reference therefore bound Observation to that
+                    // foreign PR and failed deterministically with a repository mismatch, even though the real
+                    // proposal PR existed in the target repository. Bind to the most recent PR in the target.
+                    PullEvidence pull = null;
+                    for (PullEvidence candidate : pulls) {
+                        if (candidate.repository().equalsIgnoreCase(repo)) pull = candidate;
+                    }
+                    if (pull == null) {
+                        throw new SecurityException("general proposal evidence repository does not match Observation target: target="
+                                + repo + " evidence=" + pulls.stream().map(PullEvidence::repository).distinct().toList());
+                    }
                     return Optional.of(observeGeneralPull(requirement, executionEvidenceReferences, pull, at));
                 }
-                return Optional.of(observePull(requirement, executionEvidenceReferences, pull, at));
+                return Optional.of(observePull(requirement, executionEvidenceReferences, pulls.getFirst(), at));
             }
             return Optional.of(observeReadOnly(requirement, executionEvidenceReferences, repo, at));
         } catch (Exception failure) {
@@ -160,10 +175,13 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         String head = pr.at("/head/ref").asText();
         String headSha = pr.at("/head/sha").asText();
 
-        String expectedBase = evidenceValue(executionEvidenceReferences, "github-base-branch:");
-        String expectedBranch = evidenceValue(executionEvidenceReferences, "github-branch:");
-        String expectedSource = evidenceValue(executionEvidenceReferences, "github-source-sha:");
-        String expectedRemoteCommit = evidenceValue(executionEvidenceReferences, "github-remote-commit:");
+        // Each fact is checked against the Objective's own attested values (not the first occurrence), for
+        // the same reason the PR itself is bound to the target repository above: a foreign reference that
+        // merely appears earlier in the Objective-wide evidence must never decide Observation.
+        Set<String> expectedBases = evidenceValues(executionEvidenceReferences, "github-base-branch:");
+        Set<String> expectedBranches = evidenceValues(executionEvidenceReferences, "github-branch:");
+        Set<String> expectedSources = evidenceValues(executionEvidenceReferences, "github-source-sha:");
+        Set<String> expectedRemoteCommits = evidenceValues(executionEvidenceReferences, "github-remote-commit:");
         Set<String> expectedPaths = evidenceValues(executionEvidenceReferences, "github-changed-path:");
         boolean noMergeClaim = executionEvidenceReferences.stream().anyMatch("github-merge-performed:false"::equals);
 
@@ -180,12 +198,11 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
             }
         }
 
-        boolean sourceBound = expectedSource.matches("[0-9a-f]{40}") && expectedSource.equals(parentSha);
-        boolean remoteCommitBound = expectedRemoteCommit.matches("[0-9a-f]{40}")
-                && expectedRemoteCommit.equals(headSha);
-        boolean branchBound = !expectedBranch.isBlank() && expectedBranch.equals(head)
+        boolean sourceBound = parentSha.matches("[0-9a-f]{40}") && expectedSources.contains(parentSha);
+        boolean remoteCommitBound = headSha.matches("[0-9a-f]{40}") && expectedRemoteCommits.contains(headSha);
+        boolean branchBound = !head.isBlank() && expectedBranches.contains(head)
                 && head.startsWith("metatron/objective-");
-        boolean baseBound = !expectedBase.isBlank() && expectedBase.equals(base);
+        boolean baseBound = !base.isBlank() && expectedBases.contains(base);
         boolean pathsBound = !expectedPaths.isEmpty() && expectedPaths.size() <= 50
                 && expectedPaths.equals(actualPaths);
         boolean pass = open && unmerged && sourceBound && remoteCommitBound && branchBound
@@ -297,13 +314,6 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         return count;
     }
 
-    private static String evidenceValue(List<String> evidence, String prefix) {
-        for (String value : evidence) {
-            if (value != null && value.startsWith(prefix)) return value.substring(prefix.length()).trim();
-        }
-        return "";
-    }
-
     private static Set<String> evidenceValues(List<String> evidence, String prefix) {
         Set<String> values = new LinkedHashSet<>();
         for (String value : evidence) {
@@ -315,12 +325,13 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         return Set.copyOf(values);
     }
 
-    private PullEvidence pullEvidence(List<String> evidence) {
+    private List<PullEvidence> pullEvidences(List<String> evidence) {
+        List<PullEvidence> pulls = new ArrayList<>();
         for (String value : evidence) {
             Matcher matcher = PR_EVIDENCE.matcher(value == null ? "" : value.trim());
-            if (matcher.matches()) return new PullEvidence(matcher.group(1), Integer.parseInt(matcher.group(2)));
+            if (matcher.matches()) pulls.add(new PullEvidence(matcher.group(1), Integer.parseInt(matcher.group(2))));
         }
-        return null;
+        return pulls;
     }
 
     private static String probeEvidence(List<String> evidence) {
