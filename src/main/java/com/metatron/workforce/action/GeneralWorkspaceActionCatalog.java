@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -370,7 +371,13 @@ public final class GeneralWorkspaceActionCatalog {
         }
 
         SourceFile source = primarySourceFile(workspace);
-        if (source == null) throw new IllegalStateException("project preparation requires a supported source file");
+        if (source == null) {
+            // A "web application" PRODUCE phase commonly yields a self-contained HTML page (inline CSS/JS) and
+            // no .js/.py file; production 2026-09-24 (case-394285d9) then failed every PREPARE attempt here.
+            String html = primaryHtmlFile(workspace);
+            if (html != null) return prepareStaticWebScaffold(workspace, html);
+            throw new IllegalStateException("project preparation requires a supported source file");
+        }
         String lowerPath = source.path().toLowerCase(java.util.Locale.ROOT);
         String lowerContent = source.content().toLowerCase(java.util.Locale.ROOT);
         boolean javascript = lowerPath.endsWith(".js") || lowerPath.endsWith(".jsx")
@@ -472,6 +479,87 @@ public final class GeneralWorkspaceActionCatalog {
                         + "  }\n"
                         + "}\n", written);
         return new ProjectScaffold("node", "package.json", List.copyOf(written), false);
+    }
+
+    private ProjectScaffold prepareStaticWebScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
+                                                     String htmlPath) {
+        List<String> written = new ArrayList<>();
+        writeIfMissing(workspace, ".gitignore", GeneratedWorkspaceArtifactPolicy.scaffoldGitignore(), written);
+        String escapedSingle = htmlPath.replace("\\", "\\\\").replace("'", "\\'");
+        writeIfMissing(workspace, "server.js",
+                "import { createServer } from 'node:http';\n"
+                        + "import { readFile } from 'node:fs/promises';\n"
+                        + "import { extname, join, normalize } from 'node:path';\n"
+                        + "import { fileURLToPath } from 'node:url';\n\n"
+                        + "const root = fileURLToPath(new URL('.', import.meta.url));\n"
+                        + "const entry = '" + escapedSingle + "';\n"
+                        + "const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript',"
+                        + " '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };\n\n"
+                        + "export const server = createServer(async (req, res) => {\n"
+                        + "  const url = new URL(req.url, 'http://localhost');\n"
+                        + "  const relative = url.pathname === '/' ? entry : normalize(decodeURIComponent(url.pathname)).replace(/^([/\\\\])+/, '');\n"
+                        + "  if (relative.startsWith('..')) { res.writeHead(403); res.end(); return; }\n"
+                        + "  try {\n"
+                        + "    const body = await readFile(join(root, relative));\n"
+                        + "    res.writeHead(200, { 'content-type': types[extname(relative)] || 'application/octet-stream' });\n"
+                        + "    res.end(body);\n"
+                        + "  } catch {\n"
+                        + "    res.writeHead(404); res.end('not found');\n"
+                        + "  }\n"
+                        + "});\n\n"
+                        + "if (process.argv[1] === fileURLToPath(import.meta.url)) {\n"
+                        + "  const port = Number(process.env.PORT || 3000);\n"
+                        + "  server.listen(port, () => console.log('listening on ' + port));\n"
+                        + "}\n", written);
+        writeIfMissing(workspace, "test/scaffold.test.js",
+                "import test from 'node:test';\n"
+                        + "import assert from 'node:assert/strict';\n"
+                        + "import { server } from '../server.js';\n\n"
+                        + "test('the web application entry page is served', async () => {\n"
+                        + "  await new Promise((resolve) => server.listen(0, resolve));\n"
+                        + "  try {\n"
+                        + "    const response = await fetch('http://127.0.0.1:' + server.address().port + '/');\n"
+                        + "    assert.equal(response.status, 200);\n"
+                        + "    assert.match(await response.text(), /<html/i);\n"
+                        + "  } finally {\n"
+                        + "    server.close();\n"
+                        + "  }\n"
+                        + "});\n", written);
+        writeIfMissing(workspace, "package.json",
+                "{\n"
+                        + "  \"name\": \"metatron-generated-web-app\",\n"
+                        + "  \"version\": \"1.0.0\",\n"
+                        + "  \"private\": true,\n"
+                        + "  \"type\": \"module\",\n"
+                        + "  \"scripts\": {\n"
+                        + "    \"build\": \"node --check server.js\",\n"
+                        + "    \"test\": \"node --test test/*.test.js\",\n"
+                        + "    \"start\": \"node server.js\"\n"
+                        + "  }\n"
+                        + "}\n", written);
+        return new ProjectScaffold("node", "package.json", List.copyOf(written), false);
+    }
+
+    private String primaryHtmlFile(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        try (var stream = Files.walk(workspace.path(), 5)) {
+            List<String> candidates = stream
+                    .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> !Files.isSymbolicLink(path))
+                    .map(path -> workspace.path().relativize(path).toString().replace('\\', '/'))
+                    .filter(rel -> {
+                        String lower = rel.toLowerCase(java.util.Locale.ROOT);
+                        return (lower.endsWith(".html") || lower.endsWith(".htm"))
+                                && !lower.startsWith("test/") && !lower.startsWith("tests/")
+                                && !GeneratedWorkspaceArtifactPolicy.isGeneratedUntrackedPath(lower);
+                    })
+                    .sorted(Comparator.comparing((String rel) -> !rel.equalsIgnoreCase("index.html"))
+                            .thenComparing((String rel) -> !rel.toLowerCase(java.util.Locale.ROOT).endsWith("/index.html"))
+                            .thenComparing(Comparator.naturalOrder()))
+                    .toList();
+            return candidates.isEmpty() ? null : candidates.getFirst();
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot inspect Objective workspace source", e);
+        }
     }
 
     private ProjectScaffold preparePythonScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,

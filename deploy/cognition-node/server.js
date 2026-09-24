@@ -120,6 +120,7 @@ async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   if (cfg.ollamaNumCtx > 0) options.num_ctx = cfg.ollamaNumCtx;
   const body = { model, prompt, stream: false, options };
   if (cfg.ollamaThink !== undefined) body.think = cfg.ollamaThink;
+  if (cfg.ollamaJsonFormat) body.format = 'json';
   const r = await postJsonWithoutHiddenDeadline(base + '/api/generate', body, timeoutMs, 'ollama');
   if (r.status < 200 || r.status >= 300) throw classifiedError('http_' + r.status, 'ollama_http_' + r.status);
   let data;
@@ -193,10 +194,13 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
     const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, remainingMs));
     const attemptStart = performance.now();
     try {
-      const providerConfig = name === 'ollama'
-        && requestOptions.capability === 'worker.cognition'
-        && cfg.ollamaThink === undefined
-        ? { ...cfg, ollamaThink: false }
+      // Worker cognition always parses a JSON object (GeneralCognitiveWorkerBrain.completeObject). Even with
+      // thinking off, qwen3:4b sometimes answered in prose ("We are given a complex objective ...") and the
+      // step failed with "cognitive provider returned no JSON object" (production 2026-09-24, case-394285d9
+      // PREPARE). Ollama's JSON mode constrains decoding to a valid JSON value.
+      const workerCognition = name === 'ollama' && requestOptions.capability === 'worker.cognition';
+      const providerConfig = workerCognition
+        ? { ...cfg, ollamaThink: cfg.ollamaThink === undefined ? false : cfg.ollamaThink, ollamaJsonFormat: true }
         : cfg;
       const result = await fn(prompt, timeoutMs, providerConfig);
       if (!result.text) throw classifiedError('empty_response', name + '_empty_response');
