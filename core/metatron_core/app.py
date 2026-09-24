@@ -175,7 +175,8 @@ def process(task: dict, slot: dict | None = None) -> None:
     ws = Workspace(DATA / "work", tid, GITHUB_TOKEN, agent_uid_for(tid))
     ws.allow_public = "public" in task["request"].lower()
     agent = Agent(llm, audit, persona=workforce.persona(worker))
-    out = agent.run(task["request"], ws, should_stop)
+    research = workforce.required_capability(task["request"]) == "research"
+    out = agent.run(task["request"], ws, should_stop, deliverable="report.md" if research else "")
     report = ws.report()
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo, "report": report or None}
     print(f"task #{tid} agent finished after {out['steps']} steps: failed={bool(out.get('failed'))} "
@@ -233,7 +234,7 @@ def process(task: dict, slot: dict | None = None) -> None:
         send(chat, f"❌ Task #{tid} could not publish\n{fields['result']}")
         return
     store.update(tid, status="done", **fields)
-    if not report and workforce.required_capability(task["request"]) == "research":
+    if not report and research:
         fields["result"] += "\n\n⚠️ No report.md was delivered, so there is nothing sourced to check."
         store.update(tid, result=fields["result"])
     send(chat, f"✅ Task #{tid} done{by}\n{fields['result']}\n\n{deliver_report(chat, tid, report)}".rstrip())

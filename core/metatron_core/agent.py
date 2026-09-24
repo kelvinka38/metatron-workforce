@@ -86,9 +86,14 @@ class Agent:
         self.max_steps = max_steps
         self.persona = persona      # the Worker this run works for (Workforce Core)
 
-    def run(self, request: str, ws: Workspace, should_stop=None, allow_clone: bool = True) -> dict:
+    def run(self, request: str, ws: Workspace, should_stop=None, allow_clone: bool = True,
+            deliverable: str = "") -> dict:
         """Returns {'summary', 'open_pr', 'pr_title', 'steps'}, plus 'failed' and, when no free model
-        was reachable, 'retry'; 'stopped' when should_stop() gave a reason (cancel, time limit)."""
+        was reachable, 'retry'; 'stopped' when should_stop() gave a reason (cancel, time limit).
+
+        deliverable="report.md": finish is refused until that file exists (Work closes on evidence,
+        not on the model saying it is done), and once more if it cites no web source."""
+        refused_missing = refused_unsourced = 0
         system = f"{self.persona}\n\n{SYSTEM}" if self.persona else SYSTEM
         messages = [Message("system", system), Message("user", f"Task:\n{request}")]
         bad_replies = 0
@@ -119,6 +124,27 @@ class Agent:
                 continue
             bad_replies = 0
 
+            if tool == "finish" and deliverable:
+                report = ws.report()
+                problem = ""
+                if not report.strip():
+                    refused_missing += 1
+                    if refused_missing > 2:
+                        return {"summary": f"Failed: no {deliverable} was written, so there is nothing to deliver. "
+                                           f"Model's last summary: {str(args.get('summary', ''))[:300]}",
+                                "open_pr": False, "steps": step, "failed": True}
+                    problem = (f"Refused: this task's deliverable is {deliverable} in the workspace root and it "
+                               f"does not exist yet. Write the full report there with write_file (findings, "
+                               f"comparison table, source URLs), then call finish.")
+                elif "http" not in report and refused_unsourced == 0:
+                    refused_unsourced += 1
+                    problem = (f"Refused once: {deliverable} cites no web sources. Use web_search and fetch_url, "
+                               "add the URL behind each figure, or say explicitly in the report that no source "
+                               "could be found. Then call finish again.")
+                if problem:
+                    self.audit("tool", f"finish refused -> {problem}")
+                    messages.append(Message("user", problem))
+                    continue
             if tool == "finish":
                 return {"summary": str(args.get("summary", "")).strip() or "(no summary)",
                         "open_pr": bool(args.get("open_pr")),

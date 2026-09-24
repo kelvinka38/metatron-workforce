@@ -1419,3 +1419,37 @@ class ReportDelivery(unittest.TestCase):
                 resp, data = room._call(port, "GET", "/api/state", auth)
                 self.assertTrue(json.loads(data)["tasks"][0]["has_report"])
                 room.doCleanups()
+
+
+class DeliverableRequired(unittest.TestCase):
+    FINISH = '{"thought": "done", "tool": "finish", "args": {"summary": "Report complete"}}'
+
+    def test_finish_waits_for_a_sourced_report(self):
+        llm = ScriptedLlm([
+            self.FINISH,  # claims done with no file: refused
+            '{"thought": "w", "tool": "write_file", "args": {"path": "report.md", "content": "C.P. leads."}}',
+            self.FINISH,  # file exists but cites nothing: refused once
+            '{"thought": "w", "tool": "write_file", "args": {"path": "report.md", '
+            '"content": "C.P. leads ([tepbac](https://tepbac.com/a))."}}',
+            self.FINISH])
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 1, github_token="")
+            out = Agent(llm, lambda k, v: None).run("research", ws, deliverable="report.md")
+        self.assertFalse(out.get("failed"))
+        self.assertEqual(out["steps"], 5)
+        self.assertIn("does not exist yet", llm.seen[1])
+        self.assertIn("cites no web sources", llm.seen[3])
+
+    def test_no_report_at_all_fails_the_task(self):
+        llm = ScriptedLlm([self.FINISH] * 3)
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 1, github_token="")
+            out = Agent(llm, lambda k, v: None).run("research", ws, deliverable="report.md")
+        self.assertTrue(out["failed"])
+        self.assertIn("no report.md was written", out["summary"])
+
+    def test_code_tasks_finish_as_before(self):
+        llm = ScriptedLlm([self.FINISH])
+        with tempfile.TemporaryDirectory() as d:
+            out = Agent(llm, lambda k, v: None).run("fix", Workspace(Path(d), 1, github_token=""))
+        self.assertEqual(out["steps"], 1)
