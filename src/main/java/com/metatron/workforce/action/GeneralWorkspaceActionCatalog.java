@@ -7,6 +7,7 @@ import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationService;
 import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher;
+import com.metatron.workforce.runtime.GeneratedWorkspaceArtifactPolicy;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
@@ -61,7 +62,7 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, shell(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, gitStatus(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitDiff(workerId, authorizationReference, objectiveId));
-        add(profile, actions, gitRun(workerId, authorizationReference, objectiveId));
+        add(profile, actions, gitRun(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, githubProposal(workerId, authorizationReference, objectiveId));
         add(profile, actions, build(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, test(workerId, authorizationReference, objectiveId, workspace));
@@ -276,9 +277,7 @@ public final class GeneralWorkspaceActionCatalog {
                     if (matches.size() >= maxMatches) break;
                     String relative = workspace.path().relativize(candidate).toString().replace('\\', '/');
                     if (relative.equals(".git") || relative.startsWith(".git/")
-                            || relative.startsWith(".gradle/") || relative.startsWith("node_modules/")
-                            || relative.contains("/node_modules/") || relative.startsWith("build/")
-                            || relative.contains("/build/")) continue;
+                            || GeneratedWorkspaceArtifactPolicy.isGeneratedUntrackedPath(relative)) continue;
                     if (Files.size(candidate) > 1_000_000L) continue;
                     List<String> lines;
                     try {
@@ -391,6 +390,7 @@ public final class GeneralWorkspaceActionCatalog {
     private ProjectScaffold prepareReactScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
                                                    SourceFile source) {
         List<String> written = new ArrayList<>();
+        writeIfMissing(workspace, ".gitignore", GeneratedWorkspaceArtifactPolicy.scaffoldGitignore(), written);
         String componentPath = source.path();
         String lower = componentPath.toLowerCase(java.util.Locale.ROOT);
         boolean jsxSyntax = source.content().contains("<") && source.content().contains(">");
@@ -450,6 +450,7 @@ public final class GeneralWorkspaceActionCatalog {
     private ProjectScaffold prepareNodeScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
                                                   SourceFile source) {
         List<String> written = new ArrayList<>();
+        writeIfMissing(workspace, ".gitignore", GeneratedWorkspaceArtifactPolicy.scaffoldGitignore(), written);
         String escaped = source.path().replace("\\", "\\\\").replace("\"", "\\\"");
         String escapedSingle = source.path().replace("\\", "\\\\").replace("'", "\\'");
         writeIfMissing(workspace, "test/scaffold.test.js",
@@ -476,6 +477,7 @@ public final class GeneralWorkspaceActionCatalog {
     private ProjectScaffold preparePythonScaffold(ObjectiveWorkspaceService.ObjectiveWorkspace workspace,
                                                     SourceFile source) {
         List<String> written = new ArrayList<>();
+        writeIfMissing(workspace, ".gitignore", GeneratedWorkspaceArtifactPolicy.scaffoldGitignore(), written);
         String escaped = source.path().replace("\\", "\\\\").replace("'", "\\'");
         writeIfMissing(workspace, "tests/test_scaffold.py",
                 "import py_compile\n\n"
@@ -510,7 +512,7 @@ public final class GeneralWorkspaceActionCatalog {
                         return (rel.endsWith(".js") || rel.endsWith(".jsx") || rel.endsWith(".ts")
                                 || rel.endsWith(".tsx") || rel.endsWith(".py"))
                                 && !rel.startsWith("test/") && !rel.startsWith("tests/")
-                                && !rel.startsWith("node_modules/") && !rel.startsWith("dist/");
+                                && !GeneratedWorkspaceArtifactPolicy.isGeneratedUntrackedPath(rel);
                     })
                     .sorted()
                     .toList();
@@ -606,11 +608,14 @@ public final class GeneralWorkspaceActionCatalog {
                         sandbox.run(worker, objectiveId, "git", List.of("diff", "--no-ext-diff"))));
     }
 
-    private ActionFabric.Action gitRun(String worker, String auth, String objectiveId) {
+    private ActionFabric.Action gitRun(String worker, String auth, String objectiveId,
+                                       ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         return action("workspace.git.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             List<String> args = stringList(input(request, "argsJson"));
             if (args.isEmpty()) throw new IllegalArgumentException("git args required");
-            WorkerExecutionSandboxService.SandboxResult result = sandbox.run(worker, objectiveId, "git", args);
+            WorkerExecutionSandboxService.SandboxResult result = isBroadGitAdd(args)
+                    ? stageGovernedSourceDelta(worker, objectiveId, workspace)
+                    : sandbox.run(worker, objectiveId, "git", args);
             if (result.success() && !args.isEmpty() && "init".equals(args.get(0))) {
                 // Deterministic infrastructure, not a cognitive decision: a freshly initialized repository
                 // has no author identity, so the very next `git commit` fails identically every time until
@@ -621,6 +626,78 @@ public final class GeneralWorkspaceActionCatalog {
             }
             return sandboxObservation(request.actionRef(), result);
         });
+    }
+
+    /**
+     * A broad governed source commit must not equate every physical workspace path with deliverable
+     * source. Update every tracked path first (Git tracking remains authoritative even for a path named
+     * dist/build/target), then add only non-generated untracked paths. The local exclude block keeps the
+     * verified workspace clean even for an existing project that has no .gitignore; generated scaffolds
+     * additionally receive a source-controlled .gitignore for normal project hygiene.
+     */
+    private WorkerExecutionSandboxService.SandboxResult stageGovernedSourceDelta(
+            String worker,
+            String objectiveId,
+            ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        installGeneratedArtifactExcludes(worker, objectiveId, workspace);
+        WorkerExecutionSandboxService.SandboxResult result = runOrThrow(
+                worker, objectiveId, "git", List.of("add", "-u", "--", "."), "git tracked-source add");
+        String untracked = runOrThrow(
+                worker, objectiveId, "git",
+                List.of("ls-files", "--others", "--exclude-standard", "-z"),
+                "git untracked-source discovery").output();
+
+        List<String> sourcePaths = new ArrayList<>();
+        for (String path : untracked.split("\\u0000", -1)) {
+            if (path.isBlank() || path.equals(".metatron-workspace") || path.equals(".metatron-repository")
+                    || path.equals(".git") || path.startsWith(".git/")
+                    || GeneratedWorkspaceArtifactPolicy.isGeneratedUntrackedPath(path)) continue;
+            sourcePaths.add(path);
+        }
+        for (int offset = 0; offset < sourcePaths.size(); offset += 100) {
+            List<String> args = new ArrayList<>(List.of("add", "--"));
+            args.addAll(sourcePaths.subList(offset, Math.min(sourcePaths.size(), offset + 100)));
+            result = runOrThrow(worker, objectiveId, "git", args, "git new-source add");
+        }
+        return result;
+    }
+
+    private void installGeneratedArtifactExcludes(
+            String worker,
+            String objectiveId,
+            ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        String gitPath = runOrThrow(
+                worker, objectiveId, "git", List.of("rev-parse", "--git-path", "info/exclude"),
+                "git exclude-path discovery").output().trim();
+        if (gitPath.isBlank()) throw new IllegalStateException("git exclude path is blank");
+        Path exclude = Path.of(gitPath);
+        if (!exclude.isAbsolute()) exclude = workspace.path().resolve(exclude);
+        exclude = exclude.normalize();
+        Path root = workspace.path().toAbsolutePath().normalize();
+        if (!exclude.toAbsolutePath().normalize().startsWith(root)) {
+            throw new SecurityException("git exclude path escaped Objective workspace");
+        }
+        try {
+            Files.createDirectories(exclude.getParent());
+            String existing = Files.exists(exclude, LinkOption.NOFOLLOW_LINKS)
+                    ? Files.readString(exclude) : "";
+            String block = GeneratedWorkspaceArtifactPolicy.localGitExcludeBlock();
+            if (!existing.contains(GeneratedWorkspaceArtifactPolicy.EXCLUDE_MARKER)) {
+                String separator = existing.isEmpty() || existing.endsWith("\n") ? "" : "\n";
+                Files.writeString(exclude, separator + block,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND);
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException("cannot install generated-artifact Git excludes", failure);
+        }
+    }
+
+    private static boolean isBroadGitAdd(List<String> args) {
+        if (args.isEmpty() || !"add".equals(args.get(0))) return false;
+        if (args.stream().anyMatch(arg -> "-A".equals(arg) || "--all".equals(arg))) return true;
+        List<String> operands = args.stream().skip(1).filter(arg -> !"--".equals(arg)).toList();
+        return operands.equals(List.of(".")) || operands.equals(List.of(":/"));
     }
 
     private void configureGitIdentity(String worker, String objectiveId) {
