@@ -30,6 +30,9 @@ function configFromEnv() {
     // bounded even if a caller is misconfigured or compromised.
     maxOutputTokensCeiling: positiveInt(process.env.COGNITION_MAX_OUTPUT_TOKENS_CEILING, 8192),
     ollamaThink: optionalBoolean(process.env.OLLAMA_THINK),
+    // Ollama's default context is 4096 tokens; a larger Worker prompt is silently truncated. Unset keeps
+    // the model default; size it to the host's free memory (the KV cache grows with the context).
+    ollamaNumCtx: positiveInt(process.env.OLLAMA_NUM_CTX, 0),
   };
 }
 
@@ -63,7 +66,9 @@ async function boundedFetch(url, options, timeoutMs, provider) {
 async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   const base = process.env.OLLAMA_URL || 'http://metatron-ollama:11434';
   const model = process.env.OLLAMA_MODEL || 'llama3.2:1b';
-  const body = { model, prompt, stream: false, options: { num_predict: cfg.maxOutputTokens } };
+  const options = { num_predict: cfg.maxOutputTokens };
+  if (cfg.ollamaNumCtx > 0) options.num_ctx = cfg.ollamaNumCtx;
+  const body = { model, prompt, stream: false, options };
   if (cfg.ollamaThink !== undefined) body.think = cfg.ollamaThink;
   const r = await boundedFetch(base + '/api/generate', {
     method: 'POST',
@@ -103,46 +108,15 @@ async function callGemini(prompt, timeoutMs, cfg = configFromEnv()) {
   return { text, model, inputTokens: usage.promptTokenCount || 0, outputTokens: usage.candidatesTokenCount || 0, endpointId: 'gemini' };
 }
 
-async function callOpenAi(prompt, timeoutMs, cfg = configFromEnv()) {
-  const key = process.env.OPENAI_API_KEY || '';
-  if (!key) throw classifiedError('not_configured', 'openai_not_configured');
-  const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
-  const url = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
-  const r = await boundedFetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
-    body: JSON.stringify({ model, max_tokens: cfg.maxOutputTokens, messages: [{ role: 'user', content: prompt }] }),
-  }, timeoutMs, 'openai');
-  if (!r.ok) throw classifiedError('http_' + r.status, 'openai_http_' + r.status);
-  const data = await r.json();
-  const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
-  const usage = data.usage || {};
-  return { text, model: data.model || model, inputTokens: usage.prompt_tokens || 0, outputTokens: usage.completion_tokens || 0, endpointId: 'openai' };
-}
-
-async function callAnthropic(prompt, timeoutMs, cfg = configFromEnv()) {
-  const key = process.env.ANTHROPIC_API_KEY || '';
-  if (!key) throw classifiedError('not_configured', 'anthropic_not_configured');
-  const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
-  const url = process.env.ANTHROPIC_API_URL || 'https://api.anthropic.com/v1/messages';
-  const r = await boundedFetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model, max_tokens: cfg.maxOutputTokens, messages: [{ role: 'user', content: prompt }] }),
-  }, timeoutMs, 'anthropic');
-  if (!r.ok) throw classifiedError('http_' + r.status, 'anthropic_http_' + r.status);
-  const data = await r.json();
-  const text = (Array.isArray(data.content) && data.content[0] && data.content[0].text) || '';
-  const usage = data.usage || {};
-  return { text, model: data.model || model, inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0, endpointId: 'anthropic' };
-}
-
+// Founder rule (2026-09-24): no LLM that requires paid credit. OpenAI and Anthropic are credit-billed and
+// are therefore not part of this chain at all (not merely unconfigured), matching the ratified
+// WORKER_ORIGINATED_PAID_EXTERNAL_INFERENCE = 0 / "no paid frontier credentials in the Cognition Node"
+// contract (docs/ARCHITECTURE/INTELLIGENCE/12). Gemini stays only as a free-tier fallback and is skipped
+// when GEMINI_API_KEY is unset.
 function providerList() {
   return [
     ['ollama', callOllama],
     ['gemini', callGemini],
-    ['openai', callOpenAi],
-    ['anthropic', callAnthropic],
   ];
 }
 
@@ -270,10 +244,8 @@ if (require.main === module) {
 module.exports = {
   boundedFetch,
   buildPrompt,
-  callAnthropic,
   callGemini,
   callOllama,
-  callOpenAi,
   configFromEnv,
   createServer,
   providerList,

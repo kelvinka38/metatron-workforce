@@ -2,10 +2,14 @@
 
 Dependency-free Node.js front door for Metatron-owned cognition. The provider order is intentionally:
 
-1. Ollama / `qwen3:8b` (primary)
-2. Gemini
-3. OpenAI
-4. Anthropic
+1. Ollama / `qwen3:8b` (primary, self-hosted)
+2. Gemini (free tier only; skipped when `GEMINI_API_KEY` is unset)
+
+Credit-billed providers (OpenAI, Anthropic) are not part of the chain at all: Founder rule, no LLM spend
+(`WORKER_ORIGINATED_PAID_EXTERNAL_INFERENCE = 0`).
+
+`OLLAMA_NUM_CTX` optionally sets Ollama's context window (model default is 4096 tokens; a longer Worker
+prompt is silently truncated). Size it to free host memory: the KV cache grows with the context.
 
 ## Reliability envelope
 
@@ -15,6 +19,7 @@ The node treats one cognition request as a single bounded transaction:
 - `OLLAMA_TIMEOUT_MS=150000`
 - `FRONTIER_PROVIDER_TIMEOUT_MS=18000`
 - `COGNITION_MAX_OUTPUT_TOKENS=256`
+- `OLLAMA_NUM_CTX` (optional)
 - every provider attempt uses `min(provider timeout, remaining whole-request budget)`
 - every HTTP call is AbortController-bounded
 - completed provider chain failure returns `502 all_providers_failed`

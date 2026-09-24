@@ -4,11 +4,10 @@ const http = require('node:http');
 
 const {
   boundedFetch,
-  callAnthropic,
   callGemini,
   callOllama,
-  callOpenAi,
   createServer,
+  providerList,
   runProviderChain,
 } = require('./server');
 
@@ -44,27 +43,28 @@ test('bounded fetch aborts a hanging provider call', async () => {
   }
 });
 
-test('provider order remains ollama then gemini then openai then anthropic', async () => {
+test('production chain holds no credit-billed provider: ollama then free-tier gemini only', () => {
+  assert.deepEqual(providerList().map(([name]) => name), ['ollama', 'gemini']);
+});
+
+test('provider order falls back from ollama to gemini', async () => {
   const seen = [];
-  const fail = name => async () => {
-    seen.push(name);
-    const error = new Error(name + ' failed');
-    error.failureClass = 'test_failure';
-    throw error;
-  };
   const outcome = await runProviderChain('prompt', [
-    ['ollama', fail('ollama')],
-    ['gemini', fail('gemini')],
-    ['openai', async () => {
-      seen.push('openai');
-      return { text: 'ok', model: 'm', inputTokens: 1, outputTokens: 1, endpointId: 'openai' };
+    ['ollama', async () => {
+      seen.push('ollama');
+      const error = new Error('ollama failed');
+      error.failureClass = 'timeout';
+      throw error;
     }],
-    ['anthropic', fail('anthropic')],
+    ['gemini', async () => {
+      seen.push('gemini');
+      return { text: 'ok', model: 'm', inputTokens: 1, outputTokens: 1, endpointId: 'gemini' };
+    }],
   ], cfg());
 
   assert.equal(outcome.status, 200);
-  assert.deepEqual(seen, ['ollama', 'gemini', 'openai']);
-  assert.equal(outcome.body.providerUsed, 'openai');
+  assert.deepEqual(seen, ['ollama', 'gemini']);
+  assert.equal(outcome.body.providerUsed, 'gemini');
   assert.equal(outcome.body.fallbackOccurred, true);
 });
 
@@ -97,14 +97,12 @@ test('completed provider chain before deadline returns deterministic 502', async
   const outcome = await runProviderChain('prompt', [
     ['ollama', fail],
     ['gemini', fail],
-    ['openai', fail],
-    ['anthropic', fail],
   ], cfg({ totalTimeoutMs: 500 }));
 
   assert.equal(outcome.status, 502);
   assert.equal(outcome.body.error, 'all_providers_failed');
-  assert.equal(outcome.body.providerAttempts.length, 4);
-  assert.deepEqual(outcome.body.providerAttempts.map(a => a.provider), ['ollama', 'gemini', 'openai', 'anthropic']);
+  assert.equal(outcome.body.providerAttempts.length, 2);
+  assert.deepEqual(outcome.body.providerAttempts.map(a => a.provider), ['ollama', 'gemini']);
 });
 
 test('all provider payloads enforce configured output token cap', async () => {
@@ -129,23 +127,20 @@ test('all provider payloads enforce configured output token cap', async () => {
     };
   };
   process.env.GEMINI_API_KEY = 'x';
-  process.env.OPENAI_API_KEY = 'x';
-  process.env.ANTHROPIC_API_KEY = 'x';
   try {
     const c = cfg({ maxOutputTokens: 256 });
     await callOllama('p', 50, c);
     await callGemini('p', 50, c);
-    await callOpenAi('p', 50, c);
-    await callAnthropic('p', 50, c);
+    await callOllama('p', 50, cfg({ maxOutputTokens: 256, ollamaNumCtx: 8192 }));
   } finally {
     global.fetch = originalFetch;
     process.env = originalEnv;
   }
 
   assert.equal(bodies[0].options.num_predict, 256);
+  assert.equal(bodies[0].options.num_ctx, undefined, 'unset OLLAMA_NUM_CTX keeps the model default context');
   assert.equal(bodies[1].generationConfig.maxOutputTokens, 256);
-  assert.equal(bodies[2].max_tokens, 256);
-  assert.equal(bodies[3].max_tokens, 256);
+  assert.equal(bodies[2].options.num_ctx, 8192, 'OLLAMA_NUM_CTX sizes the Ollama context window');
 });
 
 test('worker.cognition disables ollama thinking by default', async () => {
