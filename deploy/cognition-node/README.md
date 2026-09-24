@@ -22,7 +22,7 @@ The node treats one cognition request as a single bounded transaction:
 
 - `METATRON_COGNITION_TOTAL_TIMEOUT_MS=630000`
 - `OLLAMA_TIMEOUT_MS=600000`
-- `FRONTIER_PROVIDER_TIMEOUT_MS=180000` (whole Gemini phase), `GEMINI_MODEL_TIMEOUT_MS=90000` (per model)
+- `FRONTIER_PROVIDER_TIMEOUT_MS=180000` (whole Gemini phase), `GEMINI_MODEL_TIMEOUT_MS=90000` (per model); Gemini also gets 8192 tokens of headroom for thinking, and a `MAX_TOKENS`-truncated answer rotates to the next model
 - `COGNITION_MAX_OUTPUT_TOKENS=256`
 - `OLLAMA_NUM_CTX=8192`
 - every provider attempt uses `min(provider timeout, remaining whole-request budget)`

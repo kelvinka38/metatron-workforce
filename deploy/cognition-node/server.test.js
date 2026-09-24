@@ -185,7 +185,8 @@ test('all provider payloads enforce configured output token cap', async () => {
 
   assert.equal(bodies[0].options.num_predict, 256);
   assert.equal(bodies[0].options.num_ctx, undefined, 'a config without ollamaNumCtx sends no num_ctx');
-  assert.equal(bodies[1].generationConfig.maxOutputTokens, 256);
+  assert.equal(bodies[1].generationConfig.maxOutputTokens, 256 + 8192,
+    'Gemini keeps the requested answer budget plus bounded headroom for its thinking tokens');
   assert.equal(bodies[2].options.num_ctx, 8192, 'OLLAMA_NUM_CTX sizes the Ollama context window');
 });
 
@@ -455,9 +456,11 @@ async function fakeGemini(statusByModel, seen) {
       const model = decodeURIComponent(req.url.split('/').pop().split(':')[0]);
       seen.push({ model, body: JSON.parse(raw) });
       const status = statusByModel[model] ?? 200;
-      res.writeHead(status, { 'content-type': 'application/json' });
+      res.writeHead(status === 'truncated' ? 200 : status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(status === 200
         ? { candidates: [{ content: { parts: [{ text: '{"actionRef":"x"}' }] } }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4 } }
+        : status === 'truncated'
+        ? { candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{ "actionRef": "workspace.test.run", "rationale": "Run governed' }] } }] }
         : { error: { code: status } }));
     });
   });
@@ -516,6 +519,23 @@ test('a gemini key/request error stops the rotation instead of burning every mod
   try {
     await assert.rejects(callGemini('p', 2000, cfg({ geminiModelTimeoutMs: 1000 })), (e) => e.failureClass === 'http_403');
     assert.deepEqual(seen.map((s) => s.model), ['gemini-a']);
+  } finally {
+    process.env = originalEnv;
+    await gemini.close();
+  }
+});
+
+test('gemini gets thinking headroom and a truncated answer rotates instead of reaching the Worker', async () => {
+  // Production 2026-09-24 (case-11a08089 VERIFY x3): Gemini thinking consumed the 1536-token budget and the
+  // visible JSON was cut mid-object, so every attempt failed as "cognitive provider returned no JSON object".
+  const originalEnv = { ...process.env };
+  const seen = [];
+  const gemini = await fakeGemini({ 'gemini-a': 'truncated' }, seen);
+  Object.assign(process.env, { GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-a', GEMINI_MODELS: 'gemini-b', GEMINI_API_BASE_URL: gemini.url });
+  try {
+    const result = await callGemini('p', 4000, cfg({ maxOutputTokens: 1536, geminiModelTimeoutMs: 2000 }));
+    assert.equal(result.model, 'gemini-b', 'a MAX_TOKENS-truncated answer must never be returned');
+    assert.equal(seen[0].body.generationConfig.maxOutputTokens, 1536 + 8192);
   } finally {
     process.env = originalEnv;
     await gemini.close();
