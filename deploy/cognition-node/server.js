@@ -193,7 +193,9 @@ async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
 const DEFAULT_GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
 // Retryable on another free-tier model: rate limit, overload/server error, unknown model, timeout, network.
 // A 400/401/403 (bad request or key) would fail identically on every model, so it stops the rotation.
-const GEMINI_ROTATE_ON = new Set(['http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504', 'timeout', 'network_error', 'empty_response']);
+const GEMINI_ROTATE_ON = new Set(['http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504', 'timeout', 'network_error', 'empty_response', 'truncated']);
+const GEMINI_THINKING_HEADROOM_TOKENS = 8192;
+const GEMINI_MAX_OUTPUT_TOKENS = 65536;
 
 function geminiModels() {
   const configured = String(process.env.GEMINI_MODELS || '').split(',').map((m) => m.trim()).filter(Boolean);
@@ -204,7 +206,14 @@ function geminiModels() {
 
 async function callGeminiModel(model, key, prompt, timeoutMs, cfg) {
   const base = process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/models';
-  const generationConfig = { maxOutputTokens: cfg.maxOutputTokens };
+  // Gemini 3.x flash models think before answering, and thinking tokens count against maxOutputTokens: with
+  // the Worker's 1536-token selection budget the visible JSON was cut mid-object (production 2026-09-24,
+  // case-11a08089 VERIFY x3: '{ "actionRef": "workspace.test.run", ... "rationale": "Run governed').
+  // Free-tier output costs nothing, so thinking gets its own headroom on top of the requested answer budget.
+  const generationConfig = {
+    maxOutputTokens: Math.min(cfg.maxOutputTokens + (cfg.geminiThinkingHeadroomTokens ?? GEMINI_THINKING_HEADROOM_TOKENS),
+      GEMINI_MAX_OUTPUT_TOKENS),
+  };
   if (cfg.jsonOutput) generationConfig.responseMimeType = 'application/json';
   const r = await boundedFetch(base + '/' + model + ':generateContent?key=' + encodeURIComponent(key), {
     method: 'POST',
@@ -217,6 +226,8 @@ async function callGeminiModel(model, key, prompt, timeoutMs, cfg) {
     && data.candidates[0].content.parts) || [];
   const text = parts.filter((part) => part && typeof part.text === 'string' && !part.thought)
     .map((part) => part.text).join('');
+  const finishReason = data.candidates && data.candidates[0] && data.candidates[0].finishReason;
+  if (finishReason === 'MAX_TOKENS') throw classifiedError('truncated', 'gemini_truncated_' + model);
   if (!text) throw classifiedError('empty_response', 'gemini_empty_response');
   const usage = data.usageMetadata || {};
   return { text, model, inputTokens: usage.promptTokenCount || 0, outputTokens: usage.candidatesTokenCount || 0, endpointId: 'gemini' };
