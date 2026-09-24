@@ -12,6 +12,42 @@ const {
   runProviderChain,
 } = require('./server');
 
+async function fakeOllama(handler, { delayMs = 0, hang = false } = {}) {
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      if (hang) return;
+      const { status, body } = handler(JSON.parse(raw), req);
+      setTimeout(() => {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(body));
+      }, delayMs);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    url: 'http://127.0.0.1:' + server.address().port,
+    close: () => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }),
+  };
+}
+
+// Captures every Ollama /api/generate payload on a real local server and points OLLAMA_URL at it.
+async function fakeOllamaCapturing(bodies, body = { response: 'ok', prompt_eval_count: 1, eval_count: 1 }) {
+  const originalUrl = process.env.OLLAMA_URL;
+  const ollama = await fakeOllama((payload) => {
+    bodies.push(payload);
+    return { status: 200, body };
+  });
+  process.env.OLLAMA_URL = ollama.url;
+  return {
+    close: async () => {
+      if (originalUrl === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = originalUrl;
+      await ollama.close();
+    },
+  };
+}
+
 function cfg(overrides = {}) {
   return {
     auth: 'test',
@@ -128,14 +164,20 @@ test('all provider payloads enforce configured output token cap', async () => {
     };
   };
   process.env.GEMINI_API_KEY = 'x';
+  const ollama = await fakeOllama((payload) => {
+    bodies.push(payload);
+    return { status: 200, body: { response: 'ok', prompt_eval_count: 1, eval_count: 1 } };
+  });
+  process.env.OLLAMA_URL = ollama.url;
   try {
     const c = cfg({ maxOutputTokens: 256 });
-    await callOllama('p', 50, c);
+    await callOllama('p', 2000, c);
     await callGemini('p', 50, c);
-    await callOllama('p', 50, cfg({ maxOutputTokens: 256, ollamaNumCtx: 8192 }));
+    await callOllama('p', 2000, cfg({ maxOutputTokens: 256, ollamaNumCtx: 8192 }));
   } finally {
     global.fetch = originalFetch;
     process.env = originalEnv;
+    await ollama.close();
   }
 
   assert.equal(bodies[0].options.num_predict, 256);
@@ -187,13 +229,9 @@ test('a request-supplied maxOutputTokens overrides the server default and reache
   // source/work-product content (e.g. workspace.file.write's "content"). Workforce now sends a
   // request-aware maxOutputTokens (see CognitiveOutputBudget on the Java side); the cognition-node must
   // honor it per request rather than always falling back to its own default.
-  const originalFetch = global.fetch;
   const bodies = [];
-  global.fetch = async (_url, options) => {
-    bodies.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
-  };
-  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 256, maxOutputTokensCeiling: 8192 }));
+  const ollama = await fakeOllamaCapturing(bodies);
+  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 256, maxOutputTokensCeiling: 8192, totalTimeoutMs: 5000, ollamaTimeoutMs: 4000 }));
   await new Promise(resolve => server.listen(0, resolve));
   try {
     const outcome = await postCognitionRequest(server, {
@@ -208,18 +246,14 @@ test('a request-supplied maxOutputTokens overrides the server default and reache
     assert.equal(bodies[0].options.num_predict, 6144);
   } finally {
     server.close();
-    global.fetch = originalFetch;
+    await ollama.close();
   }
 });
 
 test('a requested maxOutputTokens above the enforced ceiling is clamped, never applied verbatim', async () => {
-  const originalFetch = global.fetch;
   const bodies = [];
-  global.fetch = async (_url, options) => {
-    bodies.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
-  };
-  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 256, maxOutputTokensCeiling: 8192 }));
+  const ollama = await fakeOllamaCapturing(bodies);
+  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 256, maxOutputTokensCeiling: 8192, totalTimeoutMs: 5000, ollamaTimeoutMs: 4000 }));
   await new Promise(resolve => server.listen(0, resolve));
   try {
     const outcome = await postCognitionRequest(server, {
@@ -235,18 +269,14 @@ test('a requested maxOutputTokens above the enforced ceiling is clamped, never a
         'the enforced ceiling must apply even when a caller requests far more');
   } finally {
     server.close();
-    global.fetch = originalFetch;
+    await ollama.close();
   }
 });
 
 test('a request that omits maxOutputTokens falls back to the configured server default', async () => {
-  const originalFetch = global.fetch;
   const bodies = [];
-  global.fetch = async (_url, options) => {
-    bodies.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
-  };
-  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 1536, maxOutputTokensCeiling: 8192 }));
+  const ollama = await fakeOllamaCapturing(bodies);
+  const server = createServer(cfg({ auth: 'test', maxOutputTokens: 1536, maxOutputTokensCeiling: 8192, totalTimeoutMs: 5000, ollamaTimeoutMs: 4000 }));
   await new Promise(resolve => server.listen(0, resolve));
   try {
     const outcome = await postCognitionRequest(server, {
@@ -260,44 +290,37 @@ test('a request that omits maxOutputTokens falls back to the configured server d
     assert.equal(bodies[0].options.num_predict, 1536);
   } finally {
     server.close();
-    global.fetch = originalFetch;
+    await ollama.close();
   }
 });
 
 test('ollama provider leaves thinking unchanged outside worker cognition unless explicitly configured', async () => {
-  const originalFetch = global.fetch;
   const bodies = [];
-  global.fetch = async (_url, options) => {
-    bodies.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ response: 'ok' }) };
-  };
+  const ollama = await fakeOllamaCapturing(bodies, { response: 'ok' });
   try {
-    await callOllama('p', 50, cfg({ ollamaThink: undefined }));
-    await callOllama('p', 50, cfg({ ollamaThink: false }));
+    await callOllama('p', 2000, cfg({ ollamaThink: undefined }));
+    await callOllama('p', 2000, cfg({ ollamaThink: false }));
   } finally {
-    global.fetch = originalFetch;
+    await ollama.close();
   }
   assert.equal(Object.hasOwn(bodies[0], 'think'), false);
   assert.equal(bodies[1].think, false);
 });
 
 test('default Ollama model and context fit the CPU-only 8 GB host', async () => {
-  const originalFetch = global.fetch;
   const originalEnv = { ...process.env };
   delete process.env.OLLAMA_MODEL;
   delete process.env.OLLAMA_NUM_CTX;
-  let body;
-  global.fetch = async (_url, options) => {
-    body = JSON.parse(options.body);
-    return { ok: true, json: async () => ({ response: 'ok', prompt_eval_count: 1, eval_count: 1 }) };
-  };
+  const bodies = [];
+  const ollama = await fakeOllamaCapturing(bodies);
   try {
-    const result = await callOllama('p', 50, configFromEnv());
+    const result = await callOllama('p', 2000, configFromEnv());
     assert.equal(result.model, 'qwen3:4b');
   } finally {
-    global.fetch = originalFetch;
+    await ollama.close();
     process.env = originalEnv;
   }
+  const body = bodies[0];
   assert.equal(body.model, 'qwen3:4b');
   assert.equal(body.options.num_ctx, 8192);
 });
@@ -314,5 +337,47 @@ test('default timeouts fit CPU-only local inference and stay inside the Workforc
       'Ollama < node total < Workforce METATRON_COGNITION_HTTP_TIMEOUT_MS (660000)');
   } finally {
     process.env = originalEnv;
+  }
+});
+
+test('ollama transport never goes through global fetch and its hidden 300 s headers timeout', async () => {
+  // Production 2026-09-24 (case-0e3a655f): every long qwen3:4b call failed as
+  // "provider_failed ollama network_error 300807" -- undici's fetch gave up waiting for the headers of a
+  // non-streaming /api/generate after 300 s although OLLAMA_TIMEOUT_MS was 600 s. Here global fetch fails the
+  // way undici does on HeadersTimeoutError; Ollama itself answers (late) and the call must still succeed.
+  const originalFetch = global.fetch;
+  const originalUrl = process.env.OLLAMA_URL;
+  global.fetch = async () => { throw new TypeError('fetch failed'); };
+  const ollama = await fakeOllama(() => ({
+    status: 200,
+    body: { response: 'generated after a long CPU run', prompt_eval_count: 1705, eval_count: 2402 },
+  }), { delayMs: 150 });
+  process.env.OLLAMA_URL = ollama.url;
+  try {
+    const result = await callOllama('p', 5000, cfg());
+    assert.equal(result.text, 'generated after a long CPU run');
+    assert.equal(result.outputTokens, 2402);
+  } finally {
+    global.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = originalUrl;
+    await ollama.close();
+  }
+});
+
+test('ollama call is still bounded by its own timeout and classifies failures', async () => {
+  const originalUrl = process.env.OLLAMA_URL;
+  const hanging = await fakeOllama(() => ({ status: 200, body: {} }), { hang: true });
+  const failing = await fakeOllama(() => ({ status: 500, body: { error: 'boom' } }));
+  try {
+    process.env.OLLAMA_URL = hanging.url;
+    await assert.rejects(callOllama('p', 60, cfg()), (e) => e.failureClass === 'timeout');
+    process.env.OLLAMA_URL = failing.url;
+    await assert.rejects(callOllama('p', 2000, cfg()), (e) => e.failureClass === 'http_500');
+    process.env.OLLAMA_URL = 'http://127.0.0.1:1';
+    await assert.rejects(callOllama('p', 2000, cfg()), (e) => e.failureClass === 'network_error');
+  } finally {
+    if (originalUrl === undefined) delete process.env.OLLAMA_URL; else process.env.OLLAMA_URL = originalUrl;
+    await hanging.close();
+    await failing.close();
   }
 });

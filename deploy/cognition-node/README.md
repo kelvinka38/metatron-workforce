@@ -21,6 +21,7 @@ The node treats one cognition request as a single bounded transaction:
 - `COGNITION_MAX_OUTPUT_TOKENS=256`
 - `OLLAMA_NUM_CTX=8192`
 - every provider attempt uses `min(provider timeout, remaining whole-request budget)`
+- the Ollama call uses `node:http`, not global `fetch`: undici's hidden 300 s headers timeout would otherwise cut every long non-streaming CPU generation at ~300 s regardless of `OLLAMA_TIMEOUT_MS`
 - every HTTP call is AbortController-bounded
 - completed provider chain failure returns `502 all_providers_failed`
 - exhausted whole-request budget returns `504 cognition_deadline_exhausted`
