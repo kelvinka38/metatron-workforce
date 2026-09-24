@@ -902,8 +902,29 @@ class PreviewApps(unittest.TestCase):
                         mock.patch.object(app, "preview", pv):
                     conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
                     conn.request("GET", "/", headers={"Host": "preview.example"})
+                    resp = conn.getresponse()
+                    self.assertEqual(resp.status, 401)  # no login yet
+                    self.assertNotIn(b"Control Center", resp.read())
+                    link = app.preview_login.new_link("preview.example")
+                    login = link.split("preview.example", 1)[1]
+                    conn.request("GET", login, headers={"Host": "preview.example"})
+                    resp = conn.getresponse()
+                    resp.read()
+                    self.assertEqual(resp.status, 302)
+                    cookie = resp.getheader("Set-Cookie").split(";")[0]
+                    self.assertIn("HttpOnly", resp.getheader("Set-Cookie"))
+                    conn.request("GET", login, headers={"Host": "preview.example"})
+                    resp = conn.getresponse()
+                    resp.read()
+                    self.assertEqual(resp.status, 403)  # a link works once
+                    auth = {"Host": "preview.example", "Cookie": cookie}
+                    conn.request("GET", "/", headers=auth)
                     self.assertIn(b"Control Center", conn.getresponse().read())
-                    conn.request("GET", "/health", headers={"Host": "preview.example"})
+                    conn.request("GET", "/", headers={"Host": "preview.example", "Cookie": "core_preview=forged"})
+                    resp = conn.getresponse()
+                    resp.read()
+                    self.assertEqual(resp.status, 401)
+                    conn.request("GET", "/health", headers=auth)
                     self.assertNotIn(b"providers", conn.getresponse().read())  # Core routes stay hidden
                     conn.request("GET", "/health", headers={"Host": "127.0.0.1"})
                     self.assertIn(b"providers", conn.getresponse().read())
@@ -1129,3 +1150,17 @@ class BackgroundCommands(unittest.TestCase):
             self.assertIn("hi", out)
             self.assertIn("oops", out)
             self.assertNotIn("[note]", out)
+
+
+class PreviewLoginCookie(unittest.TestCase):
+    def test_the_app_never_sees_cores_session_cookie(self):
+        from metatron_core import preview_auth
+        self.assertEqual(preview_auth.without_our_cookie("a=1; core_preview=secret; b=2"), "a=1; b=2")
+        self.assertEqual(preview_auth.session_from("a=1; core_preview=secret"), "secret")
+
+    def test_expired_link_does_not_log_in(self):
+        from metatron_core.preview_auth import PreviewAuth
+        auth = PreviewAuth(link_ttl=-1)
+        token = auth.new_link("h").split("t=")[1]
+        self.assertIsNone(auth.redeem(token))
+        self.assertIsNone(PreviewAuth().redeem("made-up"))

@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import preview as previews
+from . import preview_auth
 from .agent import Agent
 from .llm import ProviderChain
 from .store import Store
@@ -43,7 +44,19 @@ store = Store(str(DATA / "core.db"))
 llm = ProviderChain.from_env()
 wake = threading.Event()
 PREVIEW_HOST = os.environ.get("CORE_PREVIEW_HOST", "").lower()  # e.g. preview.metatron.vn
-preview = previews.Preview(DATA / "previews", notify=lambda text: send(ALLOWED_USER, text))
+preview_login = preview_auth.PreviewAuth()
+
+
+def login_line() -> str:
+    """A one-time link that logs the founder in to the preview site (valid 30 minutes)."""
+    return f"🔑 Open (logs you in): {preview_login.new_link(PREVIEW_HOST)}"
+
+
+def _preview_notice(text: str) -> None:
+    send(ALLOWED_USER, f"{text}\n{login_line()}" if "is ready" in text else text)
+
+
+preview = previews.Preview(DATA / "previews", notify=_preview_notice)
 
 
 def send(chat_id: str, text: str) -> None:
@@ -145,7 +158,7 @@ def process(task: dict) -> None:
             live = ""
             if PREVIEW_HOST and previews.detect(ws.dir / "repo"):
                 preview.start(ws, tid)
-                live = f"🖥 Live preview: https://{PREVIEW_HOST} (starting; I'll message you when it's ready)\n"
+                live = f"🖥 Live preview: starting; I'll send you the login link when it's ready\n"
             send(chat, f"✅ Task #{tid} done — {ci}\n\n"
                        f"📝 What was done:\n{out['summary']}\n\n"
                        f"📂 Files changed:\n{files or '(see the PR)'}\n\n"
@@ -246,6 +259,7 @@ def handle_text(chat_id: str, text: str) -> str | None:
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
                 "/status — recent tasks\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
                 "/retry <id> — redo a task on the latest code\n/preview <id> — open a task's app live\n"
+                "/login — a link that logs you in to the preview site\n"
                 "/report — last 7 days\n/approve <id> — merge a task's PR\n/reject <id> — leave it open")
     if text.startswith("/status"):
         rows = store.recent(10)
@@ -284,6 +298,10 @@ def handle_text(chat_id: str, text: str) -> str | None:
         new = store.create_task(chat_id, task["request"])
         wake.set()
         return f"🔁 Task #{task['id']} queued again as #{new} on the latest code.{note}"
+    if text.startswith("/login"):
+        if not PREVIEW_HOST:
+            return "Previews are not set up (CORE_PREVIEW_HOST)."
+        return login_line()
     if text.startswith("/preview"):
         parts = text.split()
         if not PREVIEW_HOST:
@@ -302,7 +320,7 @@ def handle_text(chat_id: str, text: str) -> str | None:
         result = preview.start(ws, task["id"])
         if result != "starting":
             return f"Can't preview task #{task['id']}: {result}."
-        return f"🖥 Starting a preview of task #{task['id']}: https://{PREVIEW_HOST} (I'll message you when it's ready)"
+        return f"🖥 Starting a preview of task #{task['id']}. I'll send you the login link when it's ready."
     if text.startswith("/report"):
         return weekly_report()
     if text.startswith("/log"):
@@ -442,20 +460,43 @@ class Handler(BaseHTTPRequestHandler):
     def _is_preview(self) -> bool:
         return bool(PREVIEW_HOST) and self.headers.get("Host", "").split(":")[0].lower() == PREVIEW_HOST
 
+    def _page(self, code: int, html: str, extra: dict | None = None) -> None:
+        body = html.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def _proxy(self) -> None:
-        """Everything on the preview host goes to the running preview app, never to Core's own routes."""
+        """Everything on the preview host goes to the running preview app, never to Core's own routes.
+        Only a browser logged in through a link the bot sent the founder gets through."""
+        path, _, query = self.path.partition("?")
+        if path == preview_auth.LOGIN_PATH:
+            token = next((v for k, _, v in (p.partition("=") for p in query.split("&")) if k == "t"), "")
+            session = preview_login.redeem(token)
+            if not session:
+                return self._page(403, "<h2>This login link was used or has expired.</h2>"
+                                       "<p>Send <code>/login</code> to the bot for a new one.</p>")
+            cookie = (f"{preview_auth.COOKIE}={session}; Path=/; Max-Age={int(preview_login.session_ttl)}; "
+                      "HttpOnly; Secure; SameSite=Lax")
+            return self._page(302, "", {"Location": "/", "Set-Cookie": cookie})
+        if not preview_login.valid(self.headers.get("Cookie", "")):
+            return self._page(401, "<h2>Not logged in.</h2><p>Send <code>/login</code> to the bot and open "
+                                   "the link it sends you.</p>")
         port = preview.port
         if not port or not previews.port_open(port):
-            body = (b"<h2>No preview is running.</h2><p>Send <code>/preview &lt;task id&gt;</code> to the bot.</p>")
-            self.send_response(503)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
+            return self._page(503, "<h2>No preview is running.</h2>"
+                                   "<p>Send <code>/preview &lt;task id&gt;</code> to the bot.</p>")
         length = int(self.headers.get("Content-Length") or 0)
         data = self.rfile.read(length) if length else None
-        headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS}
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS | {"cookie"}}
+        if (cookie := preview_auth.without_our_cookie(self.headers.get("Cookie", ""))):
+            headers["Cookie"] = cookie
         conn = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
         try:
             conn.request(self.command, self.path, body=data, headers=headers)
