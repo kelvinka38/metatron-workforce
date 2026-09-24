@@ -108,7 +108,7 @@ class WorkCardRendererTest {
     void staleMonitorCardIsExplicitlyLabeledHistorical() {
         ManagementAutonomyService management = mock(ManagementAutonomyService.class);
         WorkCardRenderer renderer = new WorkCardRenderer(management, null);
-        Instant old = Instant.now().minusSeconds(600);
+        Instant old = Instant.now().minusSeconds(1800);
         ManagementObjective objective = objective("stale-objective", ManagementObjective.Status.BLOCKED, old);
         AutonomousObjectiveWork work = mock(AutonomousObjectiveWork.class);
 
@@ -128,6 +128,43 @@ class WorkCardRendererTest {
 
         assertTrue(card.contains("HISTORICAL / STALE OBJECTIVE"));
         assertTrue(card.contains("LAST EVENT " + old));
+    }
+
+    @Test
+    void anInFlightCpuCognitionCallIsNotLabeledStale() {
+        // Production 2026-09-24 (case-0e3a655f): qwen3:4b was generating at ~10 tokens/s, 5 minutes into
+        // one bounded Worker cognition call, and the Work Card already read "HISTORICAL / STALE OBJECTIVE"
+        // and "WAITING FOR EXECUTION PROOF" because freshness was a 90 s window.
+        ManagementAutonomyService management = mock(ManagementAutonomyService.class);
+        ActionJournal journal = mock(ActionJournal.class);
+        WorkCardRenderer renderer = new WorkCardRenderer(management, null, journal);
+        Instant lastAction = Instant.now().minusSeconds(300);
+        ManagementObjective objective = objective("cpu-objective", ManagementObjective.Status.EXECUTING, lastAction);
+        AutonomousObjectiveWork work = mock(AutonomousObjectiveWork.class);
+        ActionJournal.ActionRecord action = new ActionJournal.ActionRecord(
+                lastAction, "cpu-objective", "step-1", "WORKER-GENERAL-ENGINEERING", "assignment-1", 1,
+                "workspace.repository.materialize", "MUTATING", true, "materialized",
+                java.util.Map.of(), java.util.Map.of(), List.of(), "CONTINUE", "continue");
+
+        when(work.humanId()).thenReturn("human-primary");
+        when(work.terminal()).thenReturn(false);
+        when(work.updatedAt()).thenReturn(lastAction);
+        when(work.completedStepIds()).thenReturn(List.of());
+        when(work.evidenceReferences()).thenReturn(List.of());
+        when(work.plannedWork()).thenReturn(List.of());
+        when(work.status()).thenReturn(AutonomousObjectiveWork.Status.EXECUTING);
+        when(work.blocker()).thenReturn("");
+        when(management.get("cpu-objective")).thenReturn(objective);
+        when(management.findAutonomousWork("cpu-objective")).thenReturn(Optional.of(work));
+        when(management.history("cpu-objective")).thenReturn(List.of());
+        when(journal.objectiveActionRecords("cpu-objective")).thenReturn(List.of(action));
+
+        String card = renderer.render("cpu-objective");
+
+        assertFalse(card.contains("STALE"), card);
+        assertTrue(card.contains("STATUS     🟢 WORKING"), card);
+        assertTrue(WorkCardRenderer.FRESH_ACTIVITY_WINDOW.toMillis() > 660_000L,
+                "freshness must outlast one bounded cognition call (Workforce cognition HTTP timeout)");
     }
 
     private static ManagementObjective objective(String id, ManagementObjective.Status status, Instant updatedAt) {

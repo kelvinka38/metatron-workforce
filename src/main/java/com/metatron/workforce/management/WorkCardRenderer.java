@@ -18,7 +18,14 @@ import java.util.Set;
 /** Compact conversation projection of durable Objective/Work state. */
 @Component
 public final class WorkCardRenderer {
-    private static final Duration MONITOR_RECENT_WINDOW = Duration.ofMinutes(10);
+    /**
+     * Longest silence that still counts as live work. On the CPU-only local Cognition Node one bounded
+     * Worker cognition call (qwen3:4b, ~10 tokens/s) legitimately runs up to the Workforce cognition HTTP
+     * timeout (660 s by default) with no durable activity in between, so a 90 s window labeled every
+     * in-flight call STALE (production 2026-09-24, case-0e3a655f). The window covers one full call plus margin.
+     */
+    static final Duration FRESH_ACTIVITY_WINDOW = Duration.ofMinutes(12);
+    private static final Duration MONITOR_RECENT_WINDOW = FRESH_ACTIVITY_WINDOW;
     private final ManagementAutonomyService management;
     private final WorkforceCoreService core;
     private final ActionJournal actionJournal;
@@ -108,7 +115,7 @@ public final class WorkCardRenderer {
         Instant last = history.stream().map(ManagementAutonomyService.ManagementEvent::occurredAt)
                 .max(Comparator.naturalOrder()).orElse(work.updatedAt());
         if (latestAction != null && latestAction.recordedAt().isAfter(last)) last = latestAction.recordedAt();
-        boolean fresh = Duration.between(last, Instant.now()).compareTo(Duration.ofSeconds(90)) <= 0;
+        boolean fresh = Duration.between(last, Instant.now()).compareTo(FRESH_ACTIVITY_WINDOW) <= 0;
         Set<String> completed = Set.copyOf(work.completedStepIds());
         Map<String, String> performers = performersByStep(work.evidenceReferences());
         List<String> durablePerformers = durableAssignmentPerformers(core, objective);
