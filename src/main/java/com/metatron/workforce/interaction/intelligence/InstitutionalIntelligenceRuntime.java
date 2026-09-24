@@ -134,7 +134,7 @@ public final class InstitutionalIntelligenceRuntime {
         }
         this.configuredProviders = List.copyOf(providers);
 
-        String resolvedOllamaModel = present(ollamaModel) ? ollamaModel.trim() : "qwen3:8b";
+        String resolvedOllamaModel = present(ollamaModel) ? ollamaModel.trim() : "qwen3:4b";
         Function<LlmProvider, String> configuredDefaultModel = provider -> switch (provider) {
             case OPENAI -> model(openAiModel, "gpt-4.1-mini");
             case GOOGLE -> model(googleModel, "gemini-3.7-flash");
