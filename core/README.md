@@ -71,6 +71,12 @@ Research Analyst. A task is assigned to a free Worker with the needed capability
 `research`); the agent run works on that Worker's behalf. `CORE_RUNTIME_SLOTS` (default 2) agent
 runs happen at once, and only one of them can use Ollama at a time. `/workers` shows who does what.
 
+Research tasks go to the Research Analyst, who searches the web (`web_search`: Google through
+Gemini's free search grounding, else Bing/DuckDuckGo; `fetch_url`: public pages only, never
+private or internal addresses) and delivers `report.md` with sources. Core sends the report as a
+file on Telegram, keeps it in `core.db`, and shows it in the control room (Reports tab, task page,
+download). A report citing no web pages is flagged as unverified.
+
 ## Control room
 
 https://control.metatron.vn (`CORE_CONTROL_HOST`): live view of the worker, the queue, every task

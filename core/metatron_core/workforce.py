@@ -70,5 +70,9 @@ def persona(worker: dict | None) -> str:
     """Who the agent run is working for, told to the model at the start of the run."""
     if not worker:
         return ""
-    return (f"You are working as {worker['name']} ({worker['role']}, {ORGANIZATION}), "
+    text = (f"You are working as {worker['name']} ({worker['role']}, {ORGANIZATION}), "
             f"accountable to the Head of Engineering. Your job: {worker['purpose'].lower()}.")
+    if "research" in worker["capabilities"]:
+        text += (" Your deliverable is always report.md, based on pages you opened with fetch_url and "
+                 "cited by URL. If you cannot find a source for a figure, say so instead of guessing.")
+    return text

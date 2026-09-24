@@ -55,8 +55,14 @@ def replace_in_file(path: str, shown: str, old: str, new: str) -> str:
     return f"replaced 1 occurrence in {shown}"
 
 
+def read_report(path: str, shown: str) -> str:
+    """The whole deliverable (up to 200 KB), for Core to hand to the founder; empty if there is none."""
+    p = Path(path)
+    return p.read_text(errors="replace")[:200_000] if p.is_file() else ""
+
+
 OPS = {"list_dir": list_dir, "read_file": read_file, "write_file": write_file,
-       "replace_in_file": replace_in_file}
+       "replace_in_file": replace_in_file, "read_report": read_report}
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
         for column in ("attempts INTEGER NOT NULL DEFAULT 0", "not_before REAL NOT NULL DEFAULT 0",
-                       "owner_id TEXT", "assignee_id TEXT"):
+                       "owner_id TEXT", "assignee_id TEXT", "report TEXT"):
             try:  # added after the first deploy; existing databases get them here
                 self._conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
             except sqlite3.OperationalError:

@@ -16,8 +16,8 @@ CLK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 
 def _task_row(t: dict) -> dict:
-    return {k: t.get(k) for k in ("id", "status", "request", "repo", "pr_url", "steps", "attempts",
-                                  "created_at", "updated_at", "not_before", "result", "owner_id", "assignee_id")}
+    return {"has_report": bool(t.get("report")), **{k: t.get(k) for k in ("id", "status", "request", "repo", "pr_url", "steps", "attempts",
+                                  "created_at", "updated_at", "not_before", "result", "owner_id", "assignee_id")}}
 
 
 def processes(uid_base: int | None, proc_root: str = "/proc") -> list[dict]:
@@ -153,4 +153,4 @@ def task_detail(store, task_id: int, limit: int = 300) -> dict | None:
     task = store.get(task_id)
     if not task:
         return None
-    return {"task": _task_row(task), "log": store.audit_tail(task_id, limit)}
+    return {"task": dict(_task_row(task), report=task.get("report") or ""), "log": store.audit_tail(task_id, limit)}

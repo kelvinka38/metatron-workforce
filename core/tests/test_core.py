@@ -1329,3 +1329,93 @@ class WorkforceCore(unittest.TestCase):  # W1
             self.assertIn("Software Engineer A — Software Engineer, load 1/1 (#1)", out)
             self.assertIn("Research Analyst", out)
             self.assertIn("Software Engineer A:", app.handle_text("42", "/status"))
+
+
+class ResearchTools(unittest.TestCase):
+    def test_only_public_addresses_can_be_fetched(self):
+        from metatron_core import research
+        for url in ("http://127.0.0.1:8095/health", "http://10.0.0.5/", "http://169.254.169.254/latest/",
+                    "file:///etc/passwd", "http://[::1]/", "ftp://example.com/"):
+            self.assertTrue(research.fetch_url(url).startswith("error:"), url)
+
+    def test_search_result_pages_are_parsed(self):
+        from metatron_core import research
+        import base64
+        target = "https://vasep.com.vn/feed-prices"
+        u = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+        bing = (f'<li class="b_algo"><h2 class=""><a href="https://www.bing.com/ck/a?!&amp;p=x&amp;u={u}&amp;ntb=1">'
+                '<strong>Shrimp feed</strong> prices</a></h2><div class="b_caption"><p class="b_lineclamp2">'
+                'Feed costs 30,000 VND/kg</p></div></li>')
+        self.assertEqual(research.parse_bing(bing),
+                         [{"title": "Shrimp feed prices", "url": target, "snippet": "Feed costs 30,000 VND/kg"}])
+        ddg = ('<div class="result results_links"><a class="result__a" href="//duckduckgo.com/l/?uddg='
+               'https%3A%2F%2Fexample.org%2Fa&amp;rut=1">Example</a><a class="result__snippet">Snip</a></div>')
+        self.assertEqual(research.parse_duckduckgo(ddg)[0]["url"], "https://example.org/a")
+
+    def test_google_grounding_moves_to_the_next_free_model(self):
+        from metatron_core import research
+        calls = []
+
+        def post(url, body):
+            calls.append(url.split("/models/")[1])
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(url, 429, "quota", {}, io.BytesIO(b""))
+            return {"candidates": [{"content": {"parts": [{"text": "C.P. and Grobest lead."}]},
+                                    "groundingMetadata": {"groundingChunks": [
+                                        {"web": {"uri": "https://vertexaisearch.cloud.google.com/r/1",
+                                                 "title": "tepbac.com"}}]}}]}
+
+        results = research.google_search("shrimp feed Vietnam", "k", post=post)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(results[0]["title"], "tepbac.com")
+        self.assertIn("Grobest", results[0]["snippet"])
+
+    def test_agent_can_search_and_the_report_is_read_back(self):
+        llm = ScriptedLlm([
+            '{"thought": "look it up", "tool": "web_search", "args": {"query": "shrimp feed"}}',
+            '{"thought": "write", "tool": "write_file", "args": {"path": "report.md", "content": "# Feed\\n'
+            'Price 30k VND/kg ([tepbac](https://tepbac.com/x))"}}',
+            '{"thought": "done", "tool": "finish", "args": {"summary": "ok"}}'])
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch("metatron_core.research.web_search", return_value="1. Tepbac\n   https://tepbac.com/x"):
+            ws = Workspace(Path(d), 1, github_token="")
+            out = Agent(llm, lambda k, v: None).run("research shrimp feed", ws)
+            self.assertFalse(out.get("failed"))
+            self.assertIn("tepbac.com/x", llm.seen[1])  # the search result reached the model
+            self.assertIn("30k VND/kg", ws.report())
+
+
+class ReportDelivery(unittest.TestCase):
+    def test_report_is_sent_and_unsourced_reports_are_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            sent = []
+            with mock.patch.object(app, "send_document", lambda *a: sent.append(a) or True), \
+                    mock.patch.object(app, "CONTROL_HOST", "control.example"):
+                lines = app.deliver_report("42", 7, "# R\nsee https://a.vn/x and https://b.vn/y")
+                self.assertIn("sent as a file", lines)
+                self.assertNotIn("unverified", lines)
+                self.assertIn("2 sources", sent[0][3])
+                self.assertIn("unverified", app.deliver_report("42", 8, "# R\nC.P. is the biggest."))
+            self.assertEqual(app.deliver_report("42", 9, ""), "")
+
+    def test_control_room_serves_the_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            tid = app.store.create_task("42", "Research shrimp feed suppliers")
+            app.store.update(tid, status="done", report="# Shrimp feed\n| Supplier | VND/kg |\n|---|---|\n| C.P. | 30000 |")
+            with mock.patch.object(app, "CONTROL_HOST", "control.example"):
+                room = ControlRoom()
+                port = room._serve(app)
+                self.addCleanup(lambda: None)
+                login = app.preview_login.new_link("control.example").split("control.example", 1)[1]
+                resp, _ = room._call(port, "GET", login, {"Host": "control.example"})
+                auth = {"Host": "control.example", "Cookie": resp.getheader("Set-Cookie").split(";")[0]}
+                resp, data = room._call(port, "GET", f"/api/tasks/{tid}/report.md", auth)
+                self.assertEqual(resp.status, 200)
+                self.assertIn(b"| C.P. | 30000 |", data)
+                resp, data = room._call(port, "GET", f"/api/tasks/{tid}", auth)
+                self.assertIn("Shrimp feed", json.loads(data)["task"]["report"])
+                resp, data = room._call(port, "GET", "/api/state", auth)
+                self.assertTrue(json.loads(data)["tasks"][0]["has_report"])
+                room.doCleanups()

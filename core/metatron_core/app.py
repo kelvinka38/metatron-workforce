@@ -9,6 +9,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -68,6 +69,45 @@ def _preview_notice(text: str) -> None:
 
 
 preview = previews.Preview(DATA / "previews", notify=_preview_notice)
+
+
+def send_document(chat_id: str, filename: str, content: str, caption: str = "") -> bool:
+    """A file in the chat (e.g. a task's report.md). False if it could not be sent."""
+    if not BOT_TOKEN or not chat_id or chat_id == "api":
+        print(f"[document to {chat_id}] {filename} ({len(content)} chars)", flush=True)
+        return False
+    boundary = f"core{int(time.time() * 1000)}"
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode(),
+             f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption[:1000]}\r\n'.encode(),
+             (f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{filename}"\r\n'
+              "Content-Type: text/markdown; charset=utf-8\r\n\r\n").encode() + content.encode() + b"\r\n",
+             f"--{boundary}--\r\n".encode()]
+    req = urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument", data=b"".join(parts),
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        urllib.request.urlopen(req, timeout=60).read()
+        return True
+    except Exception as e:
+        print(f"telegram document failed: {e}", flush=True)
+        return False
+
+
+def report_sources(report: str) -> int:
+    """How many distinct web pages a report cites."""
+    return len(set(re.findall(r"https?://[^\s)\]>\"']+", report)))
+
+
+def deliver_report(chat: str, tid: int, report: str) -> str:
+    """Send the report file and return the lines for the done message."""
+    if not report:
+        return ""
+    n = report_sources(report)
+    where = f"https://{CONTROL_HOST} (task #{tid})" if CONTROL_HOST else f"/log {tid}"
+    sent = send_document(chat, f"task-{tid}-report.md", report, f"📄 Report for task #{tid} ({n} sources cited)")
+    lines = f"📄 Report: {'sent as a file above' if sent else 'saved'}; also in the control room: {where}\n"
+    if n == 0:
+        lines += "⚠️ The report cites no web sources: treat its facts and numbers as unverified.\n"
+    return lines
 
 
 def send(chat_id: str, text: str) -> None:
@@ -136,7 +176,8 @@ def process(task: dict, slot: dict | None = None) -> None:
     ws.allow_public = "public" in task["request"].lower()
     agent = Agent(llm, audit, persona=workforce.persona(worker))
     out = agent.run(task["request"], ws, should_stop)
-    fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
+    report = ws.report()
+    fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo, "report": report or None}
     print(f"task #{tid} agent finished after {out['steps']} steps: failed={bool(out.get('failed'))} "
           f"open_pr={bool(out.get('open_pr'))}", flush=True)
 
@@ -178,7 +219,7 @@ def process(task: dict, slot: dict | None = None) -> None:
                 preview.start(ws, tid)
                 live = f"🖥 Live preview: starting; I'll send you the login link when it's ready\n"
             send(chat, f"✅ Task #{tid} done{by} — {ci}\n\n"
-                       f"📝 What was done:\n{out['summary']}\n\n"
+                       f"📝 What was done:\n{out['summary']}\n\n{deliver_report(chat, tid, report)}"
                        f"📂 Files changed:\n{files or '(see the PR)'}\n\n"
                        f"🔗 Pull request (view the code and diff): {url}\n"
                        f"📦 Repo: {repo_url}\n{live}\n"
@@ -192,7 +233,10 @@ def process(task: dict, slot: dict | None = None) -> None:
         send(chat, f"❌ Task #{tid} could not publish\n{fields['result']}")
         return
     store.update(tid, status="done", **fields)
-    send(chat, f"✅ Task #{tid} done{by}\n{fields['result']}")
+    if not report and workforce.required_capability(task["request"]) == "research":
+        fields["result"] += "\n\n⚠️ No report.md was delivered, so there is nothing sourced to check."
+        store.update(tid, result=fields["result"])
+    send(chat, f"✅ Task #{tid} done{by}\n{fields['result']}\n\n{deliver_report(chat, tid, report)}".rstrip())
 
 
 def follow_ci(tid, chat, task, ws, agent, should_stop, audit, title) -> str:
@@ -543,7 +587,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._page(200, CONTROL_PAGE.read_text())
         if self.command == "GET" and path == "/api/state":
             return self._json(200, control.snapshot(store, llm, preview, [dict(s) for s in SLOTS], UID_BASE, DATA))
-        if self.command == "GET" and path.startswith("/api/tasks/") and path.split("/")[3].isdigit():
+        parts = path.split("/")
+        if self.command == "GET" and len(parts) == 5 and parts[2] == "tasks" and parts[3].isdigit() \
+                and parts[4] == "report.md":
+            task = store.get(int(parts[3]))
+            if not task or not task.get("report"):
+                return self._json(404, {"error": "no report"})
+            body = task["report"].encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="task-{parts[3]}-report.md"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.command == "GET" and len(parts) == 4 and parts[2] == "tasks" and parts[3].isdigit():
             detail = control.task_detail(store, int(path.split("/")[3]))
             return self._json(200 if detail else 404, detail or {})
         if self.command == "POST" and path.startswith("/api/"):

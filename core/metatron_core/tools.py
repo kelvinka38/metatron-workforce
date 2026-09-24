@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import fileops
+from . import fileops, research
 from .fileops import clip as _clip
 
 SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "JAVA_HOME", "GRADLE_USER_HOME", "PIP_CACHE_DIR")
@@ -246,6 +246,22 @@ class Workspace:
     def read_file(self, path: str) -> str:
         return self._file_op("read_file", path)
 
+    # Web tools run in Core's process, not as the agent user: they only return text, and only
+    # public addresses are reachable (research.check_public).
+    def web_search(self, query: str) -> str:
+        return research.web_search(str(query))
+
+    def fetch_url(self, url: str) -> str:
+        return research.fetch_url(str(url))
+
+    def report(self) -> str:
+        """The task's report.md (research and analysis deliverable), read as the agent user."""
+        for name in REPORT_NAMES:
+            out = self._file_op("read_report", name)
+            if out.strip() and not out.startswith("error: "):
+                return out
+        return ""
+
     def write_file(self, path: str, content: str) -> str:
         out = self._file_op("write_file", path, content=content)
         target = self._path(path)
@@ -379,6 +395,8 @@ class Workspace:
         return _clip("\n\n".join(parts))
 
 
+REPORT_NAMES = ("report.md", "REPORT.md")
+
 TOOL_SPEC = """
 clone_repo(repo, branch?)          clone GitHub repo 'owner/name'; afterwards you work in its root
 create_repo(name, private?)        create a NEW repo on the founder's GitHub (private unless private=false)
@@ -386,6 +404,8 @@ create_repo(name, private?)        create a NEW repo on the founder's GitHub (pr
 list_dir(path)                     list a directory; after clone_repo/create_repo every path is relative
                                    to the repository root (e.g. "src", "package.json")
 read_file(path)                    read a file
+web_search(query)                  search the web (Google via Gemini, else Bing/DuckDuckGo): titles and URLs
+fetch_url(url)                     read a public web page as text (to check facts and get numbers)
 write_file(path, content)          create or overwrite a file
 replace_in_file(path, old, new)    replace one exact unique snippet in a file (prefer this for small edits)
 run(command, timeout?)             run a bash command in the repository root (build, test, grep, git diff)

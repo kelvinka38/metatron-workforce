@@ -33,6 +33,11 @@ Working rules:
   left out of the pull request.
 - Only call finish with open_pr=true when there are real changes and the checks you could run pass.
 - If the task is a question (no code change needed), answer it via finish(summary=..., open_pr=false).
+- For research, analysis or anything needing current facts (prices, companies, markets, news): use
+  web_search, then fetch_url the pages you rely on. Never state a number, name or date from memory
+  as fact. Write the deliverable to report.md (Markdown): findings with each figure's source URL,
+  a comparison table when comparing, what is estimated or unverified, and a Sources list. Then
+  finish with a short summary; the founder receives report.md itself.
 - Keep the summary short, concrete, and in the same language the user wrote in.
 """
 
@@ -145,7 +150,7 @@ class Agent:
 
     @staticmethod
     def _call(ws: Workspace, tool: str, args: dict, allow_clone: bool = True) -> str:
-        allowed = {"list_dir", "read_file", "write_file", "replace_in_file", "run"}
+        allowed = {"list_dir", "read_file", "write_file", "replace_in_file", "run", "web_search", "fetch_url"}
         if allow_clone:
             allowed |= {"clone_repo", "create_repo"}
         if tool not in allowed:
