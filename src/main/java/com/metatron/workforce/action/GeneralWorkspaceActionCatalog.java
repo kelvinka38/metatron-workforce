@@ -61,7 +61,7 @@ public final class GeneralWorkspaceActionCatalog {
         add(profile, actions, shell(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, gitStatus(workerId, authorizationReference, objectiveId));
         add(profile, actions, gitDiff(workerId, authorizationReference, objectiveId));
-        add(profile, actions, gitRun(workerId, authorizationReference, objectiveId));
+        add(profile, actions, gitRun(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, githubProposal(workerId, authorizationReference, objectiveId));
         add(profile, actions, build(workerId, authorizationReference, objectiveId, workspace));
         add(profile, actions, test(workerId, authorizationReference, objectiveId, workspace));
@@ -606,10 +606,29 @@ public final class GeneralWorkspaceActionCatalog {
                         sandbox.run(worker, objectiveId, "git", List.of("diff", "--no-ext-diff"))));
     }
 
-    private ActionFabric.Action gitRun(String worker, String auth, String objectiveId) {
+    private ActionFabric.Action gitRun(String worker, String auth, String objectiveId,
+                                        ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         return action("workspace.git.run", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             List<String> args = stringList(input(request, "argsJson"));
             if (args.isEmpty()) throw new IllegalArgumentException("git args required");
+            if (args.size() >= 2 && "add".equals(args.get(0)) && args.contains("-A")) {
+                // Deterministic infrastructure, not a cognitive decision -- root-cause fix (2026-09-23,
+                // case build-and-deliver "Metatron Workforce Control Center"): GeneralCognitiveWorkerBrain's
+                // governedGitPrecondition() stages the Objective workspace with a blanket `git add -A`
+                // whenever no narrower governed target is set (the normal case for a fresh application).
+                // Any real Node.js/Python/etc. project's `workspace.dependencies.install` step creates a
+                // dependency directory (node_modules/, .venv/, ...) with anywhere from dozens to thousands
+                // of files, and nothing in this pipeline ever excluded it from Git before this blanket add
+                // -- so it was staged and committed in full, and GitHubWorkspaceProposalPublisher's
+                // MAX_CHANGED_PATHS=50 budget deterministically rejected the resulting proposal with
+                // "proposal exceeds changed-path budget" on every attempt, for every dependency-based
+                // Objective, with no possible recovery through retrying the same action. A missing
+                // .gitignore is exactly the kind of environment-setup gap this method already closes for
+                // missing git identity (see below); closing it the same way, before the add that would
+                // otherwise sweep the dependency tree in, fixes this at the one place that protects every
+                // future Objective through this path rather than this one repository.
+                ensureDependencyArtifactsGitignored(workspace);
+            }
             WorkerExecutionSandboxService.SandboxResult result = sandbox.run(worker, objectiveId, "git", args);
             if (result.success() && !args.isEmpty() && "init".equals(args.get(0))) {
                 // Deterministic infrastructure, not a cognitive decision: a freshly initialized repository
@@ -621,6 +640,31 @@ public final class GeneralWorkspaceActionCatalog {
             }
             return sandboxObservation(request.actionRef(), result);
         });
+    }
+
+    private static final List<String> DEPENDENCY_ARTIFACT_GITIGNORE_PATTERNS = List.of(
+            "node_modules/", "dist/", "build/", "target/", ".gradle/", "__pycache__/",
+            ".venv/", "venv/", ".next/", ".cache/", "coverage/");
+
+    private void ensureDependencyArtifactsGitignored(ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+        Path gitignore = workspaces.resolve(workspace, ".gitignore");
+        String existing;
+        try {
+            existing = Files.isRegularFile(gitignore, LinkOption.NOFOLLOW_LINKS) ? Files.readString(gitignore) : "";
+        } catch (IOException unreadable) {
+            return; // best-effort infrastructure guard; never fail the governed git action itself over this
+        }
+        List<String> existingLines = List.of(existing.split("\\R", -1));
+        StringBuilder additions = new StringBuilder();
+        for (String pattern : DEPENDENCY_ARTIFACT_GITIGNORE_PATTERNS) {
+            String bare = pattern.substring(0, pattern.length() - 1);
+            boolean alreadyCovered = existingLines.stream()
+                    .map(String::trim).anyMatch(line -> line.equals(pattern) || line.equals(bare));
+            if (!alreadyCovered) additions.append(pattern).append('\n');
+        }
+        if (additions.isEmpty()) return;
+        String updated = existing + (existing.isEmpty() || existing.endsWith("\n") ? "" : "\n") + additions;
+        workspaces.write(workspace, ".gitignore", updated);
     }
 
     private void configureGitIdentity(String worker, String objectiveId) {
