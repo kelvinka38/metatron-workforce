@@ -25,6 +25,9 @@ import java.util.Optional;
  * Consequential graph completion is additionally gated by current SoT/plan and independent Observation.
  */
 public final class AutonomyCoordinationService {
+    /** Failure recorded on a MUTATING node whose dispatch was interrupted (e.g. a process restart). */
+    static final String INTERRUPTED_MUTATING_EFFECT = "unknown-mutating-effect-requires-reconciliation";
+
     private final Map<String, Integer> activeGraphVersions = new LinkedHashMap<>();
     private final Map<String, DurableWorkGraph> graphs = new LinkedHashMap<>();
     private final Map<String, DurableDispatch> dispatches = new LinkedHashMap<>();
@@ -158,7 +161,7 @@ public final class AutonomyCoordinationService {
                 nodes.put(entry.getKey(), new DurableWorkGraph.Node(node.spec(), DurableWorkGraph.NodeStatus.PENDING,
                         node.attempt(), "", node.evidenceReferences(), "interrupted-read-only-retry", at));
             } else {
-                String reason = "unknown-mutating-effect-requires-reconciliation";
+                String reason = INTERRUPTED_MUTATING_EFFECT;
                 if (dispatch != null && dispatch.status() == DurableDispatch.Status.STARTED) {
                     dispatches.put(dispatch.dispatchId(), copyDispatch(dispatch, DurableDispatch.Status.DEAD_LETTERED,
                             dispatch.evidenceReferences(), reason, at));

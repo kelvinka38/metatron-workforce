@@ -287,11 +287,12 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         DurableWorkGraph graph = coordination.ensureGraph(objectiveId, work.plannedWork(), clock.instant());
         work = management.beginExecution(objectiveId, runnerId, lease.token(), clock.instant());
 
-        List<String> unsafeInterrupted = coordination.reconcileInterrupted(
-                objectiveId, graph.graphVersion(), clock.instant());
+        List<String> unsafeInterrupted = retryInterruptedWorkspaceSteps(objectiveId, graph.graphVersion(),
+                coordination.reconcileInterrupted(objectiveId, graph.graphVersion(), clock.instant()));
         if (!unsafeInterrupted.isEmpty()) {
-            management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
-                    "execution-reconciliation-required:" + String.join(",", unsafeInterrupted), clock.instant());
+            String reason = "execution-reconciliation-required:" + String.join(",", unsafeInterrupted);
+            management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), reason, clock.instant());
+            LOG.warn("autonomy_objective_blocked objective_id={} reason={}", objectiveId, reason);
             return;
         }
         work = reconcileSucceededNodes(objectiveId, graph.graphVersion(), work, lease);
@@ -302,6 +303,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
             if (ready.isEmpty()) {
                 management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
                         "dependency-or-dispatch-failure:no-runnable-work", clock.instant());
+                LOG.warn("autonomy_objective_blocked objective_id={} reason=dependency-or-dispatch-failure:no-runnable-work",
+                        objectiveId);
                 return;
             }
 
@@ -583,6 +586,32 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 objectiveId, outcome.stepId(), outcome.dispatchAttempt(), outcome.dispatchAttempt() + 1,
                 outcome.failure());
         return recovered;
+    }
+
+    /**
+     * A general-workspace step interrupted mid-dispatch (process restart/deploy) only ever mutated this
+     * Objective's own isolated workspace, which is exactly the effect domain the bounded local retry
+     * already re-runs after an ordinary failure. It is therefore retried in place, within the same attempt
+     * budget, instead of blocking the whole Objective: production 2026-09-24 (case-b60eb63a) was BLOCKED
+     * with "execution-reconciliation-required:...-verify" merely because a deploy restarted Workforce while
+     * VERIFY was running. Every other interrupted MUTATING step still fails closed. Returns the steps that
+     * remain unsafe.
+     */
+    private List<String> retryInterruptedWorkspaceSteps(String objectiveId, int graphVersion, List<String> interrupted) {
+        if (interrupted.isEmpty()) return interrupted;
+        DurableWorkGraph graph = coordination.activeGraph(objectiveId).orElseThrow();
+        List<String> unsafe = new ArrayList<>();
+        for (String stepId : interrupted) {
+            DurableWorkGraph.Node node = graph.nodes().get(stepId);
+            if (node != null && boundedLocalRetryEligible(node.spec(), node.failure(), node.attempt())) {
+                coordination.retryFailedNode(objectiveId, graphVersion, stepId, clock.instant());
+                LOG.warn("autonomy_interrupted_workspace_step_retry objective_id={} step_id={} interrupted_attempt={}",
+                        objectiveId, stepId, node.attempt());
+            } else {
+                unsafe.add(stepId);
+            }
+        }
+        return List.copyOf(unsafe);
     }
 
     /**
