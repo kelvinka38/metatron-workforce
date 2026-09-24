@@ -129,9 +129,10 @@ def process(task: dict) -> None:
             fields["result"] = f"{out['summary']}\n\n(PR could not be opened: {e})"
         else:
             print(f"task #{tid} PR opened: {url}", flush=True)
-            store.update(tid, status="awaiting_approval", pr_url=url, **fields)
-            send(chat, f"📬 Task #{tid}: PR opened, waiting for its CI\n{url}")
+            store.update(tid, status="checking_ci", pr_url=url, **fields)
+            send(chat, f"📬 Task #{tid}: PR opened, checking its CI before you approve\n{url}")
             ci = follow_ci(tid, chat, task, ws, agent, should_stop, audit, title)
+            store.update(tid, status="awaiting_approval")
             send(chat, f"✅ Task #{tid} done — {ci}\n{url}\n\n{out['summary']}\n\n"
                        f"Reply /approve {tid} to merge, /reject {tid} to leave it open.")
             return
@@ -250,6 +251,8 @@ def handle_text(chat_id: str, text: str) -> str | None:
         if len(parts) != 2 or not parts[1].isdigit():
             return "Usage: /approve <task id>"
         task = store.get(int(parts[1]))
+        if task and task["status"] == "checking_ci":
+            return f"Task #{task['id']}'s CI is still being checked. I'll tell you when it's ready to approve."
         if not task or task["status"] != "awaiting_approval":
             return "That task has no PR waiting for approval."
         if text.startswith("/reject"):

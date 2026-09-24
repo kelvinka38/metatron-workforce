@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id     TEXT NOT NULL,
   request     TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'queued',   -- queued|running|cancelling|cancelled|done|failed|awaiting_approval|merged
+  status      TEXT NOT NULL DEFAULT 'queued',   -- queued|running|cancelling|cancelled|done|failed|checking_ci|awaiting_approval|merged
   result      TEXT,
   pr_url      TEXT,
   repo        TEXT,
@@ -44,6 +44,8 @@ class Store:
         # Crash recovery: anything left 'running' by a dead process goes back to the queue.
         self._conn.execute("UPDATE tasks SET status='queued' WHERE status='running'")
         self._conn.execute("UPDATE tasks SET status='cancelled' WHERE status='cancelling'")
+        # A restart during the CI check: the PR exists, the founder decides.
+        self._conn.execute("UPDATE tasks SET status='awaiting_approval' WHERE status='checking_ci'")
 
     @contextmanager
     def _tx(self):

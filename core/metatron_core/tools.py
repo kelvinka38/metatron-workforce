@@ -81,6 +81,8 @@ class Workspace:
         self.base_branch = ""
         self.base_sha = ""
         self.head_sha = ""
+        self.written: set[str] = set()   # repo-relative files the agent wrote on purpose
+        self.left_out: list[str] = []    # new files found at publish but not written on purpose
         self._sleep = time.sleep
         self.dir.mkdir(parents=True, exist_ok=True)
         if self.uid is not None:
@@ -196,7 +198,11 @@ class Workspace:
         return self._file_op("read_file", path)
 
     def write_file(self, path: str, content: str) -> str:
-        return self._file_op("write_file", path, content=content)
+        out = self._file_op("write_file", path, content=content)
+        rel = self._path(path).relative_to(self.dir.resolve())
+        if rel.parts[:1] == ("repo",) and len(rel.parts) > 1:
+            self.written.add("/".join(rel.parts[1:]))
+        return out
 
     def replace_in_file(self, path: str, old: str, new: str) -> str:
         return self._file_op("replace_in_file", path, old=old, new=new)
@@ -237,7 +243,14 @@ class Workspace:
             raise RuntimeError("repo/.git is not a plain directory")
         branch = f"metatron/task-{self.task_id}"
         # Commit as the agent: its own filters can only touch its own files.
-        self._git("add", "-A", as_agent=True)
+        # Stage edits to tracked files and the new files the agent wrote on purpose. Other new files
+        # are side effects of running things (test outputs, caches) and stay out of the PR.
+        self._git("add", "-u", as_agent=True)
+        untracked = self._git("ls-files", "--others", "--exclude-standard", as_agent=True).splitlines()
+        wanted = [f for f in untracked if f in self.written]
+        self.left_out = [f for f in untracked if f not in self.written]
+        for i in range(0, len(wanted), 200):
+            self._git("add", "--", *wanted[i:i + 200], as_agent=True)
         added = self._git("diff", "--cached", "--name-only", "--diff-filter=A", self.base_sha, as_agent=True)
         junk = [f for f in added.splitlines() if JUNK.search(f)]
         for i in range(0, len(junk), 200):
@@ -254,6 +267,9 @@ class Workspace:
 
     def open_pull_request(self, title: str, body: str) -> str:
         branch = self.publish_branch(title)
+        if self.left_out:
+            shown = "\n".join(f"- `{f}`" for f in self.left_out[:20])
+            body += f"\n\nNew files left out (created while running commands, not written on purpose):\n{shown}"
         pr = _github_api("POST", f"https://api.github.com/repos/{self.repo}/pulls", self._token,
                          {"title": title, "head": branch, "base": self.base_branch, "body": body})
         return pr["html_url"]

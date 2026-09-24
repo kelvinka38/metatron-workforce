@@ -675,5 +675,30 @@ class PublishSkipsJunk(unittest.TestCase):
             self.assertNotIn("__pycache__", files)
 
 
+class PublishOnlyIntendedFiles(unittest.TestCase):
+    def test_side_effect_files_stay_out_written_files_go_in(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, upstream = Publish()._workspace(d)
+            ws.write_file("repo/new_module.py", "X = 1\n")
+            ws.run("cd repo && echo '{}' > .acceptance_observed.json && echo b >> f.txt")
+            ws.publish_branch("t")
+            files = subprocess.run(["git", "--git-dir", str(upstream), "ls-tree", "-r", "--name-only",
+                                    "metatron/task-5"], check=True, capture_output=True, text=True).stdout
+            self.assertIn("new_module.py", files)
+            self.assertNotIn(".acceptance_observed.json", files)
+            self.assertEqual(ws.left_out, [".acceptance_observed.json"])
+
+
+class ApproveWaitsForCi(unittest.TestCase):
+    def test_approve_refused_while_ci_is_checked(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            tid = app.store.create_task("42", "x")
+            app.store.update(tid, status="checking_ci", pr_url="https://github.com/o/r/pull/1")
+            with mock.patch.object(app, "merge_pull_request") as merge:
+                self.assertIn("still being checked", app.handle_text("42", f"/approve {tid}"))
+            merge.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

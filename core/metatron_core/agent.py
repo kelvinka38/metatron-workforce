@@ -26,6 +26,8 @@ Working rules:
 - To fix a failing test, fix the code under test. Never change a test's expected values, skip it or
   delete it unless the task explicitly asks for that.
 - Never claim success you have not verified by running something. Say plainly what you could not verify.
+- Create new files with write_file. New files that commands produce (test outputs, caches, builds) are
+  left out of the pull request.
 - Only call finish with open_pr=true when there are real changes and the checks you could run pass.
 - If the task is a question (no code change needed), answer it via finish(summary=..., open_pr=false).
 - Keep the summary short, concrete, and in the same language the user wrote in.
