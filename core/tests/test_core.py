@@ -661,5 +661,18 @@ class GeminiOverload(unittest.TestCase):
         self.assertEqual(seen, ["gemini-3.7-flash", "gemini-3.8-flash"])
 
 
+class PublishSkipsJunk(unittest.TestCase):
+    def test_cache_files_stay_out_of_the_pr(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, upstream = Publish()._workspace(d)
+            ws.run("cd repo && mkdir -p __pycache__ && echo x > __pycache__/f.cpython-312.pyc "
+                   "&& git add -A && git commit -qm 'agent commit with junk' && echo b >> f.txt")
+            ws.publish_branch("t")
+            files = subprocess.run(["git", "--git-dir", str(upstream), "ls-tree", "-r", "--name-only",
+                                    "metatron/task-5"], check=True, capture_output=True, text=True).stdout
+            self.assertIn("f.txt", files)
+            self.assertNotIn("__pycache__", files)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -58,6 +58,8 @@ def _github_text(url: str, token: str) -> str:
 
 
 GUIDANCE_FILES = ("AGENTS.md", "CONTRIBUTING.md", "README.md")
+# Build and test leftovers never belong in a PR (only files new since the clone are dropped).
+JUNK = re.compile(r"(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|node_modules|\.gradle)(/|$)|\.py[co]$|(^|/)\.DS_Store$")
 CI_OK = ("success", "skipped", "neutral")
 
 
@@ -202,6 +204,7 @@ class Workspace:
     def run(self, command: str, timeout: int = 600) -> str:
         env = {k: os.environ[k] for k in SAFE_ENV_KEYS if k in os.environ}
         env["HOME"] = str(self.dir)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
         timeout = min(int(timeout), 1200)
         # Same base as the file tools, so "repo/x.py" means the same file everywhere.
         proc = subprocess.Popen(["bash", "-lc", command], cwd=self.dir, stdout=subprocess.PIPE,
@@ -235,7 +238,11 @@ class Workspace:
         branch = f"metatron/task-{self.task_id}"
         # Commit as the agent: its own filters can only touch its own files.
         self._git("add", "-A", as_agent=True)
-        if self._git("status", "--porcelain", as_agent=True).strip():
+        added = self._git("diff", "--cached", "--name-only", "--diff-filter=A", self.base_sha, as_agent=True)
+        junk = [f for f in added.splitlines() if JUNK.search(f)]
+        for i in range(0, len(junk), 200):
+            self._git("rm", "-r", "-q", "--cached", "--", *junk[i:i + 200], as_agent=True)
+        if self._git("diff", "--cached", "--name-only", as_agent=True).strip():
             self._git("commit", "-q", "-m", title, as_agent=True)
         if int(self._git("rev-list", "--count", f"{self.base_sha}..HEAD", as_agent=True)) == 0:
             raise RuntimeError("no changes to publish")
