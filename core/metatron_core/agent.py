@@ -75,15 +75,17 @@ def invalid_reply_hint(reply: str) -> str:
 
 
 class Agent:
-    def __init__(self, llm: ProviderChain, audit, max_steps: int = 40):
+    def __init__(self, llm: ProviderChain, audit, max_steps: int = 40, persona: str = ""):
         self.llm = llm
         self.audit = audit          # callable(kind, detail)
         self.max_steps = max_steps
+        self.persona = persona      # the Worker this run works for (Workforce Core)
 
     def run(self, request: str, ws: Workspace, should_stop=None, allow_clone: bool = True) -> dict:
         """Returns {'summary', 'open_pr', 'pr_title', 'steps'}, plus 'failed' and, when no free model
         was reachable, 'retry'; 'stopped' when should_stop() gave a reason (cancel, time limit)."""
-        messages = [Message("system", SYSTEM), Message("user", f"Task:\n{request}")]
+        system = f"{self.persona}\n\n{SYSTEM}" if self.persona else SYSTEM
+        messages = [Message("system", system), Message("user", f"Task:\n{request}")]
         bad_replies = 0
         recent_tools: list[str] = []
         recent_actions: list[str] = []

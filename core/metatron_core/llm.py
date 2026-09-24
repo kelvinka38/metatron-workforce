@@ -20,6 +20,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -317,7 +318,14 @@ class Ollama(Provider):
     # the system rules and the task. Ask for a bigger window and trim the history to fit it.
     num_ctx: int = 16384
 
+    # One local generation at a time: the CPU cannot run two without both slowing to a crawl.
+    _busy = threading.Lock()
+
     def complete(self, messages, max_tokens):
+        with self._busy:
+            return self._complete(messages, max_tokens)
+
+    def _complete(self, messages, max_tokens):
         max_tokens = min(max_tokens, self.num_ctx // 4)
         fitted = self.fit(messages, (self.num_ctx - max_tokens) * 3)  # about 3 chars per token
         body = {"model": self.model, "stream": False, "keep_alive": "30m",

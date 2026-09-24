@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import preview as previews
-from . import control, preview_auth
+from . import control, preview_auth, workforce
 from .agent import Agent
 from .llm import ProviderChain
 from .store import Store
@@ -47,7 +47,10 @@ PREVIEW_HOST = os.environ.get("CORE_PREVIEW_HOST", "").lower()  # e.g. preview.m
 CONTROL_HOST = os.environ.get("CORE_CONTROL_HOST", "").lower()  # e.g. control.metatron.vn
 CONTROL_PAGE = Path(__file__).with_name("control.html")
 UID_BASE = int(os.environ["CORE_AGENT_UID_BASE"]) if os.environ.get("CORE_AGENT_UID_BASE", "").isdigit() else None
-WORKER: dict = {}  # what the worker thread is doing now, for the control room
+# Runtime capacity on this host (founder-approved: 2 agent runs at once, at most 1 on Ollama, which
+# the Ollama provider enforces). A slot is an execution unit, not a Worker.
+RUNTIME_SLOTS = max(1, int(os.environ.get("CORE_RUNTIME_SLOTS", "2")))
+SLOTS: list[dict] = [{} for _ in range(RUNTIME_SLOTS)]  # what each runtime slot is running now
 preview_login = preview_auth.PreviewAuth()
 
 
@@ -85,19 +88,20 @@ def send(chat_id: str, text: str) -> None:
 PROGRESS_EVERY = 5
 
 
-def progress_audit(tid: int, chat: str):
+def progress_audit(tid: int, chat: str, slot: dict | None = None):
     """Audit to the DB, one log line per step, and a Telegram progress ping every few tool steps."""
     steps = {"n": 0}
+    slot = {} if slot is None else slot
 
     def audit(kind: str, detail: str) -> None:
         store.audit(tid, kind, detail)
         if kind == "llm" and detail.startswith("[") and "]" in detail:
-            WORKER["model"] = detail[1:detail.index("]")]
+            slot["model"] = detail[1:detail.index("]")]
         if kind != "tool":
             return
         steps["n"] += 1
         action = detail.split(" -> ", 1)[0][:100]
-        WORKER.update(step=steps["n"], action=action)
+        slot.update(step=steps["n"], action=action)
         print(f"task #{tid} step {steps['n']}: {action}", flush=True)
         if steps["n"] % PROGRESS_EVERY == 0:
             send(chat, f"⏳ Task #{tid} still working, step {steps['n']}: {action}")
@@ -112,9 +116,11 @@ CI_FIX_ROUNDS = 2              # M2-2
 WORKSPACE_MAX_AGE = 3 * 86400  # M2-6
 
 
-def process(task: dict) -> None:
+def process(task: dict, slot: dict | None = None) -> None:
     tid, chat = task["id"], task["chat_id"]
-    audit = progress_audit(tid, chat)
+    audit = progress_audit(tid, chat, slot)
+    worker = store.worker(task.get("assignee_id"))
+    by = f" by {worker['name']}" if worker else ""
     started = time.time()
 
     def should_stop():
@@ -124,10 +130,11 @@ def process(task: dict) -> None:
             return f"Stopped: the {TASK_TIME_LIMIT // 60}-minute limit per task was reached."
         return None
 
-    send(chat, f"▶️ Task #{tid} started. I'll post progress every {PROGRESS_EVERY} steps.")
+    send(chat, f"▶️ Task #{tid} started{by} (owner: Head of Engineering). "
+               f"I'll post progress every {PROGRESS_EVERY} steps.")
     ws = Workspace(DATA / "work", tid, GITHUB_TOKEN, agent_uid_for(tid))
     ws.allow_public = "public" in task["request"].lower()
-    agent = Agent(llm, audit)
+    agent = Agent(llm, audit, persona=workforce.persona(worker))
     out = agent.run(task["request"], ws, should_stop)
     fields = {"steps": out["steps"], "result": out["summary"], "repo": ws.repo}
     print(f"task #{tid} agent finished after {out['steps']} steps: failed={bool(out.get('failed'))} "
@@ -170,7 +177,7 @@ def process(task: dict) -> None:
             if PREVIEW_HOST and previews.detect(ws.dir / "repo"):
                 preview.start(ws, tid)
                 live = f"🖥 Live preview: starting; I'll send you the login link when it's ready\n"
-            send(chat, f"✅ Task #{tid} done — {ci}\n\n"
+            send(chat, f"✅ Task #{tid} done{by} — {ci}\n\n"
                        f"📝 What was done:\n{out['summary']}\n\n"
                        f"📂 Files changed:\n{files or '(see the PR)'}\n\n"
                        f"🔗 Pull request (view the code and diff): {url}\n"
@@ -185,7 +192,7 @@ def process(task: dict) -> None:
         send(chat, f"❌ Task #{tid} could not publish\n{fields['result']}")
         return
     store.update(tid, status="done", **fields)
-    send(chat, f"✅ Task #{tid} done\n{fields['result']}")
+    send(chat, f"✅ Task #{tid} done{by}\n{fields['result']}")
 
 
 def follow_ci(tid, chat, task, ws, agent, should_stop, audit, title) -> str:
@@ -239,31 +246,36 @@ def cleanup_workspaces(now: float | None = None) -> int:
     return removed
 
 
-def worker_loop() -> None:
+def worker_loop(index: int = 0) -> None:
+    """One runtime slot: runs the Work that Workforce Core assigned, one task at a time."""
+    slot = SLOTS[index]
     last_cleanup = 0.0
     while True:
-        if time.time() - last_cleanup > 3600:
-            last_cleanup = time.time()
-            removed = cleanup_workspaces()
-            if removed:
-                print(f"cleanup: removed {removed} old workspaces", flush=True)
-        preview.expire()
+        if index == 0:
+            if time.time() - last_cleanup > 3600:
+                last_cleanup = time.time()
+                removed = cleanup_workspaces()
+                if removed:
+                    print(f"cleanup: removed {removed} old workspaces", flush=True)
+            preview.expire()
         task = store.claim_next()
         if not task:
             wake.wait(30)
             wake.clear()
             continue
-        WORKER.clear()
-        WORKER.update(task_id=task["id"], request=task["request"][:300], started=time.time(), step=0)
+        slot.clear()
+        slot.update(task_id=task["id"], worker_id=task["assignee_id"], request=task["request"][:300],
+                    started=time.time(), step=0)
         try:
-            process(task)
+            process(task, slot)
         except Exception:
             err = traceback.format_exc()
             store.audit(task["id"], "error", err)
             store.update(task["id"], status="failed", result=err[-1500:])
             send(task["chat_id"], f"❌ Task #{task['id']} crashed: {err.splitlines()[-1]}")
         finally:
-            WORKER.clear()
+            slot.clear()
+            wake.set()  # capacity was freed: another slot may now claim waiting Work
 
 
 # ---------------- commands ----------------
@@ -272,13 +284,23 @@ def handle_text(chat_id: str, text: str) -> str | None:
     if text in ("/start", "/help"):
         return ("Send me any task in plain language, e.g.\n"
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
-                "/status — recent tasks\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
+                "/status — recent tasks\n/workers — the Workforce: who is doing what\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
                 "/retry <id> — redo a task on the latest code\n/preview <id> — open a task's app live\n"
                 "/login — links that log you in to the control room and the preview site\n"
                 "/report — last 7 days\n/approve <id> — merge a task's PR\n/reject <id> — leave it open")
     if text.startswith("/status"):
         rows = store.recent(10)
-        return "\n".join(f"#{r['id']} [{r['status']}] {r['request'][:60]}" for r in rows) or "No tasks yet."
+        names = {w["id"]: w["name"] for w in store.workers()}
+        return "\n".join(f"#{r['id']} [{r['status']}] {names.get(r.get('assignee_id'), 'unassigned')}: "
+                         f"{r['request'][:50]}" for r in rows) or "No tasks yet."
+    if text.startswith("/workers"):
+        lines = [f"{workforce.ORGANIZATION} (reports to the Founder)"]
+        for w in store.workers():
+            now = ", ".join(f"#{t}" for t in w["current_tasks"]) or "free"
+            done = sum(w["record"].get(s, 0) for s in ("done", "awaiting_approval", "merged"))
+            lines.append(f"• {w['name']} — {w['role']}, load {w['load']}/{w['capacity']} ({now}), "
+                         f"{done} delivered, {w['record'].get('failed', 0)} failed")
+        return "\n".join(lines)
     if text.startswith("/cancel"):
         parts = text.split()
         if len(parts) != 2 or not parts[1].isdigit():
@@ -520,7 +542,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/":
             return self._page(200, CONTROL_PAGE.read_text())
         if self.command == "GET" and path == "/api/state":
-            return self._json(200, control.snapshot(store, llm, preview, dict(WORKER), UID_BASE, DATA))
+            return self._json(200, control.snapshot(store, llm, preview, [dict(s) for s in SLOTS], UID_BASE, DATA))
         if self.command == "GET" and path.startswith("/api/tasks/") and path.split("/")[3].isdigit():
             detail = control.task_detail(store, int(path.split("/")[3]))
             return self._json(200 if detail else 404, detail or {})
@@ -648,7 +670,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    threading.Thread(target=worker_loop, daemon=True, name="worker").start()
+    for i in range(RUNTIME_SLOTS):
+        threading.Thread(target=worker_loop, args=(i,), daemon=True, name=f"runtime-{i + 1}").start()
     core_bot = os.environ.get("CORE_TELEGRAM_BOT_TOKEN", "")
     if core_bot and os.environ.get("CORE_TELEGRAM_MODE", "poll") == "poll":
         # Polling removes the bot's webhook. With the main bot's token this is the cutover (M3-2):

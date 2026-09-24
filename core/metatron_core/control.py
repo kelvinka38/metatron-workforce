@@ -17,7 +17,7 @@ CLK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 def _task_row(t: dict) -> dict:
     return {k: t.get(k) for k in ("id", "status", "request", "repo", "pr_url", "steps", "attempts",
-                                  "created_at", "updated_at", "not_before", "result")}
+                                  "created_at", "updated_at", "not_before", "result", "owner_id", "assignee_id")}
 
 
 def processes(uid_base: int | None, proc_root: str = "/proc") -> list[dict]:
@@ -121,7 +121,7 @@ def models(llm, calls: list[tuple]) -> dict:
             "paid_calls_7d": paid}
 
 
-def snapshot(store, llm, preview, worker: dict, uid_base: int | None, data_dir: Path) -> dict:
+def snapshot(store, llm, preview, slots: list[dict], uid_base: int | None, data_dir: Path) -> dict:
     now = time.time()
     week = store.tasks_since(now - 7 * 86400)
     recent = store.recent(200)
@@ -138,7 +138,8 @@ def snapshot(store, llm, preview, worker: dict, uid_base: int | None, data_dir: 
                     "queued": sum(1 for t in recent if t["status"] == "queued"),
                     "running": sum(1 for t in recent if t["status"] in ("running", "cancelling")),
                     "awaiting_approval": sum(1 for t in recent if t["status"] == "awaiting_approval")},
-        "worker": dict(worker, busy=bool(worker.get("task_id"))),
+        "workers": store.workers(),
+        "runtime": [dict(s, slot=i + 1, busy=bool(s.get("task_id"))) for i, s in enumerate(slots)],
         "preview": {"task_id": preview.running_task(), "port": preview.port},
         "tasks": [_task_row(t) for t in recent],
         "processes": procs,

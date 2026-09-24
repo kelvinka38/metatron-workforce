@@ -49,6 +49,13 @@ textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:1
 #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);
 padding:10px 14px;border-radius:10px;display:none;max-width:90%;z-index:20;white-space:pre-wrap}
 .scroll{overflow-x:auto}
+.org{display:flex;flex-direction:column;align-items:center;gap:0}
+.org .lvl{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;width:100%}
+.org .line{width:2px;height:18px;background:var(--line)}
+.wk{min-width:220px;flex:1 1 220px;max-width:340px}
+.wk .role{color:var(--muted);font-size:12px}
+.cap{display:inline-block;font-size:11px;padding:0 6px;margin:2px 2px 0 0;border-radius:6px;background:var(--chip);color:var(--muted)}
+.st.working{color:var(--run)}.st.free{color:var(--ok)}
 @media (max-width:640px){.hide-s{display:none}main{padding:12px}.kpi .v{font-size:21px}
 .tt{border-radius:12px}.tt thead{display:none}
 .tt tr{display:grid;grid-template-columns:auto auto 1fr;gap:6px 8px;padding:10px 12px;border-bottom:1px solid var(--line)}
@@ -62,7 +69,7 @@ padding:10px 14px;border-radius:10px;display:none;max-width:90%;z-index:20;white
   <span class="live"><span id="dot" class="dot"></span><span id="updated">connecting…</span></span>
   <nav id="tabs">
     <button data-t="overview" class="on">Overview</button><button data-t="tasks">Tasks</button>
-    <button data-t="workers">Workers</button><button data-t="projects">Projects</button>
+    <button data-t="workers">Workforce</button><button data-t="projects">Projects</button>
     <button data-t="models">Models</button>
   </nav>
 </header>
@@ -103,22 +110,49 @@ function actions(t){
 }
 function taskTable(rows){
   if (!rows.length) return `<div class="card muted">No tasks.</div>`;
-  return `<div class="scroll"><table class="tt"><thead><tr><th>#</th><th>Status</th><th>Request</th><th class="hide-s">Project</th><th class="hide-s">Steps</th><th>Updated</th></tr></thead><tbody>${
+  return `<div class="scroll"><table class="tt"><thead><tr><th>#</th><th>Status</th><th>Request</th><th class="hide-s">Worker</th><th class="hide-s">Project</th><th class="hide-s">Steps</th><th>Updated</th></tr></thead><tbody>${
     rows.map(t=>`<tr class="click" onclick="showTask(${t.id})"><td class="mono id">#${t.id}</td><td class="s">${st(t.status)}</td>
-    <td class="rq"><div class="req">${esc(t.request)}</div></td><td class="hide-s mono">${esc(t.repo||"—")}</td>
+    <td class="rq"><div class="req">${esc(t.request)}</div></td><td class="hide-s">${esc(wname(t.assignee_id))}</td><td class="hide-s mono">${esc(t.repo||"—")}</td>
     <td class="hide-s">${t.steps}</td><td class="muted up">${ago(t.updated_at)}</td></tr>`).join("")}</tbody></table></div>`;
 }
 function kpi(v,l){ return `<div class="card kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`; }
-function workerCard(){
-  const w=S.worker;
-  if (!w.busy) return `<div class="card"><b>Worker 1</b> ${st("idle")}<div class="muted">Waiting for tasks · ${S.summary.queued} queued</div></div>`;
-  return `<div class="card"><div class="row"><b>Worker 1</b>${st("running")}<a href="#" onclick="showTask(${w.task_id});return false">task #${w.task_id}</a>
-    <span class="muted">for ${dur(S.now-w.started)}</span></div>
-    <div class="req" style="margin:6px 0">${esc(w.request)}</div>
-    <div class="muted mono">step ${w.step} · ${esc(w.action||"thinking")}</div>
-    <div class="muted mono">model: ${esc(w.model||S.models.last_used||"—")}</div>
-    <div class="bar"><i style="width:${Math.min(100,(S.now-w.started)/27)}%"></i></div>
-    <div class="muted" style="font-size:12px">time used of the 45-minute limit</div></div>`;
+const wname = id => (S.workers.find(w=>w.id===id)||{}).name || "unassigned";
+const slotOf = tid => S.runtime.find(r=>r.task_id===tid);
+function workerCard(w){
+  const busy = w.load>0, done=["done","awaiting_approval","merged"].reduce((n,k)=>n+(w.record[k]||0),0);
+  if (w.reports_to==="founder") return `<div class="card wk"><div class="row"><b>${esc(w.name)}</b>${st(busy?"working":"free")}</div>
+    <div class="role">${esc(w.role)} · ${esc(w.purpose)}</div>
+    <div>${w.capabilities.map(c=>`<span class="cap">${esc(c)}</span>`).join("")}</div>
+    <div style="margin-top:8px">Owns <b>${w.load}</b> open Objective${w.load===1?"":"s"}: ${w.current_tasks.map(t=>`<a href="#" onclick="showTask(${t});return false">#${t}</a>`).join(" ")||"none"}</div>
+    <div class="muted" style="font-size:12px">${done} delivered · ${w.record.failed||0} failed</div></div>`;
+  const cur = w.current_tasks.map(tid=>{ const r=slotOf(tid), t=S.tasks.find(x=>x.id===tid)||{};
+    return `<div style="margin-top:8px"><a href="#" onclick="showTask(${tid});return false">#${tid}</a> ${st(t.status||"")}
+      <div class="req">${esc(t.request||"")}</div>${r?`<div class="muted mono">step ${r.step} · ${esc(r.action||"thinking")}<br>model: ${esc(r.model||"—")} · ${dur(S.now-r.started)}</div>`:""}</div>`; }).join("");
+  return `<div class="card wk"><div class="row"><b>${esc(w.name)}</b>${st(busy?"working":"free")}</div>
+    <div class="role">${esc(w.role)} · ${esc(w.purpose)}</div>
+    <div>${w.capabilities.map(c=>`<span class="cap">${esc(c)}</span>`).join("")}</div>
+    <div class="bar"><i style="width:${100*w.load/w.capacity}%"></i></div>
+    <div class="muted" style="font-size:12px">load ${w.load}/${w.capacity} · ${done} delivered · ${w.record.failed||0} failed</div>${cur}</div>`;
+}
+function orgChart(){
+  const mgr=S.workers.filter(w=>w.reports_to==="founder"), team=S.workers.filter(w=>w.reports_to!=="founder");
+  return `<div class="org"><div class="card" style="text-align:center"><b>Founder</b><div class="role muted">approves merges and decisions</div></div>
+    <div class="line"></div><div class="lvl">${mgr.map(workerCard).join("")}</div>
+    <div class="line"></div><div class="lvl">${team.map(workerCard).join("")}</div></div>`;
+}
+function workforceStrip(){
+  return `<div class="card">${S.workers.map(w=>{ const t=w.current_tasks[0];
+    if (w.reports_to==="founder") return `<div class="row" style="padding:4px 0"><b style="min-width:170px">${esc(w.name)}</b>${st(w.load?"working":"free")}
+      <span class="muted">owns ${w.load} open Objective${w.load===1?"":"s"}</span></div>`;
+    return `<div class="row" style="padding:4px 0"><b style="min-width:170px">${esc(w.name)}</b>${st(w.load?"working":"free")}
+      ${t?`<a href="#" onclick="showTask(${t});return false">#${t}</a><span class="muted req hide-s" style="flex:1">${esc((S.tasks.find(x=>x.id===t)||{}).request||"")}</span>`:`<span class="muted">${w.load}/${w.capacity}</span>`}</div>`; }).join("")}</div>`;
+}
+function runtimeCards(){
+  return `<div class="grid">${S.runtime.map(r=>`<div class="card"><div class="row"><b>Slot ${r.slot}</b>${st(r.busy?"running":"idle")}</div>
+    ${r.busy?`<div class="muted">${esc(wname(r.worker_id))} · <a href="#" onclick="showTask(${r.task_id});return false">task #${r.task_id}</a> · ${dur(S.now-r.started)}</div>
+    <div class="muted mono">step ${r.step} · ${esc(r.model||"—")}</div>
+    <div class="bar"><i style="width:${Math.min(100,(S.now-r.started)/27)}%"></i></div>`:`<div class="muted">free</div>`}</div>`).join("")}</div>
+    <p class="muted" style="font-size:12px">A slot is computing capacity on this server, not a Worker. At most one slot uses the local Ollama model at a time.</p>`;
 }
 const views = {
   overview(){
@@ -126,7 +160,7 @@ const views = {
     return `<div class="grid">${kpi(s.running,"Running")}${kpi(s.queued,"Queued")}${kpi(s.awaiting_approval,"Awaiting approval")}
       ${kpi(s.tasks_7d,"Tasks, 7 days")}${kpi(s.success_rate==null?"—":s.success_rate+"%","Success rate")}
       ${kpi(S.models.paid_calls_7d===0?"$0":"⚠ "+S.models.paid_calls_7d,"Paid model calls")}</div>
-      <h2>Worker</h2>${workerCard()}
+      <h2>Workforce</h2>${workforceStrip()}
       <h2>New task</h2><div class="card"><textarea id="newreq" oninput="draft=this.value" placeholder="e.g. In kelvinka38/bios fix the failing test">${esc(draft)}</textarea>
       <div class="row" style="margin-top:8px"><button class="b p" onclick="newTask()">Queue task</button><span class="muted">Same as sending it to the bot.</span></div></div>
       <h2>Host</h2><div class="grid">${kpi(h.load?h.load[0].toFixed(2):"—",`Load (${h.cpus} CPUs)`)}
@@ -143,7 +177,8 @@ const views = {
   },
   workers(){
     const byTask={}; S.processes.forEach(p=>(byTask[p.task_id]=byTask[p.task_id]||[]).push(p));
-    return `<h2>Workers</h2>${workerCard()}
+    return `<h2>Metatron Engineering</h2>${orgChart()}
+      <h2>Runtime</h2>${runtimeCards()}
       <h2>Queue</h2>${taskTable(S.tasks.filter(t=>t.status==="queued").reverse())}
       <h2>Agent processes</h2>${Object.keys(byTask).length?Object.entries(byTask).map(([tid,ps])=>`
       <div class="card" style="margin-bottom:8px"><div class="row"><b>Task #${tid}</b>
@@ -175,7 +210,8 @@ async function showTask(id){
   openTask=id; const d=await api(`/api/tasks/${id}`); const t=d.task;
   $("#sheet").innerHTML = `<div class="row"><button class="b" onclick="closeTask()">← Back</button><b>Task #${t.id}</b>${st(t.status)}</div>
     <div class="card" style="margin-top:12px"><div style="white-space:pre-wrap">${esc(t.request)}</div>
-    <div class="muted" style="margin-top:8px">Project: <span class="mono">${esc(t.repo||"—")}</span> · steps ${t.steps} · attempts ${t.attempts||0} · created ${ago(t.created_at)}</div>
+    <div class="muted" style="margin-top:8px">Responsible: <b>${esc(wname(t.assignee_id))}</b> · owner: ${esc(wname(t.owner_id))}</div>
+    <div class="muted" style="margin-top:4px">Project: <span class="mono">${esc(t.repo||"—")}</span> · steps ${t.steps} · attempts ${t.attempts||0} · created ${ago(t.created_at)}</div>
     <div style="margin-top:6px">PR: ${gh(t.pr_url)}</div>
     <div class="row" style="margin-top:10px">${actions(t)}</div></div>
     ${t.result?`<h2>Result</h2><div class="card" style="white-space:pre-wrap">${esc(t.result)}</div>`:""}

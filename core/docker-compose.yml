@@ -7,7 +7,7 @@ services:
     image: metatron-core:latest
     container_name: metatron-core
     restart: unless-stopped
-    mem_limit: 1536m
+    mem_limit: 2048m  # two runtime slots (W1); set CORE_RUNTIME_SLOTS=1 if the host runs short
     cpus: 2.0
     pids_limit: 512
     ports:
@@ -28,6 +28,7 @@ services:
       # Control room and live previews, served through the Cloudflare tunnel (login via a bot link).
       CORE_PREVIEW_HOST: "${CORE_PREVIEW_HOST:-}"
       CORE_CONTROL_HOST: "${CORE_CONTROL_HOST:-}"
+      CORE_RUNTIME_SLOTS: "${CORE_RUNTIME_SLOTS:-2}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     volumes:
       - core-data:/data

@@ -62,6 +62,15 @@ the same `docker compose` line. Roll back: `git checkout <previous sha>`, same l
 in volume `metatron-core-data`. The Telegram webhook goes to `/telegram` (or `/core/telegram`)
 with the secret token.
 
+## Workforce (W1)
+
+Core is the execution runtime for Workforce Workers (metatron-institution `05_WORKFORCE`). Workers
+are persistent identities with a role, reporting line, capabilities and capacity, stored in
+`core.db`: Head of Engineering (Manager, owns every task), Software Engineer A and B, QA Engineer,
+Research Analyst. A task is assigned to a free Worker with the needed capability (`code` or
+`research`); the agent run works on that Worker's behalf. `CORE_RUNTIME_SLOTS` (default 2) agent
+runs happen at once, and only one of them can use Ollama at a time. `/workers` shows who does what.
+
 ## Control room
 
 https://control.metatron.vn (`CORE_CONTROL_HOST`): live view of the worker, the queue, every task
@@ -77,7 +86,8 @@ fails, gives the logs back to the agent for up to 2 fix rounds.
 
 | Command | Does |
 | --- | --- |
-| `/status` | Recent tasks |
+| `/status` | Recent tasks and who is responsible |
+| `/workers` | Each Worker's role, load, current tasks and record |
 | `/log <id>` | A task's last 8 steps |
 | `/cancel <id>` | Stop a queued or running task |
 | `/retry <id>` | Redo a task on the latest code (closes its old PR), e.g. after a merge conflict |

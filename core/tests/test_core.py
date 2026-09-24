@@ -1241,3 +1241,91 @@ class ControlRoom(unittest.TestCase):
         self.assertEqual(procs[0]["task_id"], 7)
         self.assertEqual(procs[0]["cmd"], "node server.js")
         self.assertEqual(procs[0]["rss_mb"], 2.0)
+
+
+class WorkforceCore(unittest.TestCase):  # W1
+    def _store(self, d):
+        return Store(str(Path(d) / "core.db"))
+
+    def test_roster_and_ownership_survive_a_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = self._store(d)
+            tid = s.create_task("42", "In kelvinka38/bios fix the failing test")
+            self.assertEqual(s.get(tid)["owner_id"], "head-of-engineering")
+            s = self._store(d)  # restart: the roster is not seeded twice, identities are kept
+            names = [w["name"] for w in s.workers()]
+            self.assertEqual(names, ["Head of Engineering", "Software Engineer A", "Software Engineer B",
+                                     "QA Engineer", "Research Analyst"])
+            self.assertEqual(s.get(tid)["owner_id"], "head-of-engineering")
+
+    def test_work_goes_to_a_capable_worker_with_free_capacity(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = self._store(d)
+            code1 = s.create_task("42", "In kelvinka38/bios add a pond API")
+            code2 = s.create_task("42", "In kelvinka38/bios fix the login page")
+            code3 = s.create_task("42", "In kelvinka38/universal update the README")
+            research = s.create_task("42", "Research the shrimp feed market in Vietnam and compare suppliers")
+            first, second, third = s.claim_next(), s.claim_next(), s.claim_next()
+            self.assertEqual((first["id"], first["assignee_id"]), (code1, "software-engineer-a"))
+            self.assertEqual((second["id"], second["assignee_id"]), (code2, "software-engineer-b"))
+            # Both engineers are busy: the third code task waits, the research task does not.
+            self.assertEqual((third["id"], third["assignee_id"]), (research, "research-analyst"))
+            self.assertIsNone(s.claim_next())
+            self.assertEqual(s.get(code3)["status"], "queued")
+            s.update(code1, status="awaiting_approval")  # its Work is done: capacity comes back
+            fourth = s.claim_next()
+            self.assertEqual((fourth["id"], fourth["assignee_id"]), (code3, "software-engineer-a"))
+            loads = {w["id"]: w["load"] for w in s.workers()}
+            self.assertEqual(loads["software-engineer-a"], 1)
+            self.assertEqual(loads["head-of-engineering"], 4)  # still owns all four Objectives
+            s.update(code1, status="merged")
+            self.assertEqual({w["id"]: w["load"] for w in s.workers()}["head-of-engineering"], 3)
+
+    def test_a_restart_mid_run_frees_the_worker_and_requeues(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = self._store(d)
+            tid = s.create_task("42", "In kelvinka38/bios add a pond API")
+            s.claim_next()
+            s = self._store(d)
+            self.assertEqual(s.get(tid)["status"], "queued")
+            self.assertEqual({w["id"]: w["load"] for w in s.workers()}["software-engineer-a"], 0)
+            self.assertEqual(s.claim_next()["assignee_id"], "software-engineer-a")
+
+    def test_record_counts_what_each_worker_delivered(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = self._store(d)
+            a = s.create_task("42", "In kelvinka38/bios add a pond API")
+            b = s.create_task("42", "In kelvinka38/bios add a feed API")
+            s.claim_next(), s.claim_next()
+            s.update(a, status="done")
+            s.update(b, status="failed")
+            by_id = {w["id"]: w for w in s.workers()}
+            self.assertEqual(by_id["software-engineer-a"]["record"], {"done": 1})
+            self.assertEqual(by_id["software-engineer-b"]["record"], {"failed": 1})
+
+    def test_capability_is_read_from_the_request(self):
+        from metatron_core.workforce import required_capability
+        self.assertEqual(required_capability("Nghiên cứu thị trường tôm và so sánh nhà cung cấp"), "research")
+        self.assertEqual(required_capability("In kelvinka38/bios fix the failing test"), "code")
+        self.assertEqual(required_capability("Research and implement a cache in kelvinka38/bios"), "code")
+
+    def test_the_run_is_told_which_worker_it_works_for(self):
+        from metatron_core.workforce import ROSTER, persona
+        llm = ScriptedLlm(['{"thought": "done", "tool": "finish", "args": {"summary": "ok"}}'])
+        seen = []
+        orig = llm.complete
+        llm.complete = lambda messages, max_tokens=4096: (seen.append(messages[0].content), orig(messages))[1]
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 1, github_token="")
+            Agent(llm, lambda k, v: None, persona=persona(ROSTER[1])).run("say hi", ws)
+        self.assertTrue(seen[0].startswith("You are working as Software Engineer A"))
+
+    def test_workers_command_and_status_show_who_does_what(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            app.store.create_task("42", "In kelvinka38/bios add a pond API")
+            app.store.claim_next()
+            out = app.handle_text("42", "/workers")
+            self.assertIn("Software Engineer A — Software Engineer, load 1/1 (#1)", out)
+            self.assertIn("Research Analyst", out)
+            self.assertIn("Software Engineer A:", app.handle_text("42", "/status"))
