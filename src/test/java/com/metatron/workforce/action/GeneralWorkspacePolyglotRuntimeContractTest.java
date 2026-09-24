@@ -56,6 +56,40 @@ class GeneralWorkspacePolyglotRuntimeContractTest {
     }
 
     @Test
+    void selfContainedHtmlWebAppPrepareCreatesARunnableNodeStaticServerScaffold() throws Exception {
+        // Production 2026-09-24 (case-394285d9): PRODUCE for "a complete runnable web application" yielded a
+        // self-contained HTML page and no .js/.py file, and every PREPARE attempt failed with
+        // "project preparation requires a supported source file".
+        try (Harness harness = new Harness(temp.resolve("prepare-static-web"))) {
+            String page = "<!doctype html>\n<html><head><title>Metatron Workforce Control Center</title>"
+                    + "<style>body{font-family:sans-serif}</style></head>"
+                    + "<body><h1>Metatron Workforce Control Center</h1><script>console.log('ready')</script></body></html>\n";
+            harness.workspaces.write(harness.workspace, "index.html", page);
+            harness.workspaces.write(harness.workspace, "README.md", "# Control Center\n");
+
+            ActionFabric.ActionObservation observation =
+                    harness.invokeDirect("workspace.project.prepare", Map.of());
+
+            assertTrue(observation.success(), observation.summary());
+            assertEquals("node", observation.outputs().get("projectKind"));
+            assertEquals("package.json", observation.outputs().get("manifestPath"));
+            assertEquals(page, harness.workspaces.read(harness.workspace, "index.html"),
+                    "PREPARE must not overwrite the requested work product");
+            String manifest = harness.workspaces.read(harness.workspace, "package.json");
+            assertTrue(manifest.contains("\"start\": \"node server.js\""), manifest);
+            assertTrue(manifest.contains("\"test\": \"node --test test/*.test.js\""), manifest);
+
+            // The generated scaffold must actually pass its own governed test: it serves the page over HTTP.
+            Process process = new ProcessBuilder("node", "--test", "test/scaffold.test.js")
+                    .directory(harness.workspace.path().toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(0, process.waitFor(), output);
+        }
+    }
+
+    @Test
     void nodeProjectUsesDetectedPackageManagerScriptsAndProjectWorkingDirectory() throws Exception {
         try (Harness harness = new Harness(temp.resolve("node"))) {
             harness.workspaces.write(harness.workspace, "web/package.json",

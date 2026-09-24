@@ -381,3 +381,27 @@ test('ollama call is still bounded by its own timeout and classifies failures', 
     await failing.close();
   }
 });
+
+test('worker.cognition asks Ollama for JSON mode; other capabilities do not', async () => {
+  // Production 2026-09-24 (case-394285d9 PREPARE): qwen3:4b answered worker cognition in prose
+  // ("We are given a complex objective ...") and every attempt failed as "no JSON object".
+  const seen = [];
+  const ollama = ['ollama', async (_prompt, _timeoutMs, providerCfg) => {
+    seen.push(providerCfg.ollamaJsonFormat === true);
+    return { text: '{}', model: 'qwen3:4b', inputTokens: 1, outputTokens: 1, endpointId: 'ollama' };
+  }];
+  await runProviderChain('prompt', [ollama], cfg(), { capability: 'worker.cognition' });
+  await runProviderChain('prompt', [ollama], cfg(), { capability: 'institutional.chat' });
+  assert.deepEqual(seen, [true, false]);
+
+  const bodies = [];
+  const server = await fakeOllamaCapturing(bodies);
+  try {
+    await callOllama('p', 2000, cfg({ ollamaJsonFormat: true }));
+    await callOllama('p', 2000, cfg());
+  } finally {
+    await server.close();
+  }
+  assert.equal(bodies[0].format, 'json');
+  assert.equal(Object.hasOwn(bodies[1], 'format'), false);
+});
