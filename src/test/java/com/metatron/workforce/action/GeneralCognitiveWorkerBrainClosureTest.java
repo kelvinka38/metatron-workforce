@@ -159,6 +159,39 @@ class GeneralCognitiveWorkerBrainClosureTest {
     }
 
     @Test
+    void aBareStringForAJsonArrayInputIsRepairedBeforeItReachesTheActionContract() {
+        // Production 2026-09-24 (case-9371b421 VERIFY): the model wrote tasksJson as "build" twice, the action
+        // contract rejected it identically both times, and the repeated-failure breaker failed the step.
+        WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
+                "intelligence-build",
+                "{\"actionRef\":\"workspace.build.run\",\"inputs\":{\"tasksJson\":\"build\",\"workingDirectory\":\"\"},"
+                        + "\"rationale\":\"run the build\"}",
+                List.of("intelligence-provider:test"));
+        GeneralCognitiveWorkerBrain brain = new GeneralCognitiveWorkerBrain(intelligence, new ObjectMapper());
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-1", "verify the produced application", "workspace", "execution.general.workspace",
+                List.of(), ExecutionWorkSpec.Consequence.MUTATING,
+                List.of("build succeeds"), List.of("workspace evidence"));
+        CognitiveWorkerRuntime.CognitiveContext context = new CognitiveWorkerRuntime.CognitiveContext(
+                "worker-1", "assignment-1", "auth-1", "objective-1", work, "idem-1",
+                List.of("workspace.file.read", "workspace.build.run"), List.of(), Map.of());
+
+        CognitiveWorkerRuntime.Thought thought = brain.think(context);
+
+        assertEquals("workspace.build.run", thought.actionRef());
+        assertEquals("[\"build\"]", thought.inputs().get("tasksJson"));
+        assertDoesNotThrow(() -> ActionContractCatalog.validate(thought.actionRef(), thought.inputs()));
+        assertEquals(Map.of("tasksJson", "[\"1\",\"x\"]"),
+                ActionContractCatalog.normalizeProviderInputs("workspace.build.run", Map.of("tasksJson", "[1,\"x\"]")));
+        assertEquals(Map.of("tasksJson", "[\"test\"]"),
+                ActionContractCatalog.normalizeProviderInputs("workspace.test.run", Map.of("tasksJson", "[\"test\"]")),
+                "a valid array is left as it is");
+        assertEquals(Map.of("tasksJson", "[[\"x\"]]"),
+                ActionContractCatalog.normalizeProviderInputs("workspace.build.run", Map.of("tasksJson", "[[\"x\"]]")),
+                "a nested array is not guessed at; validation still rejects it");
+    }
+
+    @Test
     void malformedIntelligenceResponseFailsClosedAtWorkerBoundary() {
         WorkerIntelligenceService intelligence = request -> new WorkerIntelligenceService.Response(
                 "intelligence-malformed", "not-json", List.of("intelligence-provider:test"));

@@ -101,7 +101,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         Map<String, Object> parsed = providerResult.parsed();
         String actionRef = text(parsed.get("actionRef"), "actionRef");
         String rationale = text(parsed.get("rationale"), "rationale");
-        Map<String, String> inputs = stringMap(parsed.get("inputs"));
+        Map<String, String> inputs = ActionContractCatalog.normalizeProviderInputs(
+                actionRef, stringMap(parsed.get("inputs")));
         return new CognitiveWorkerRuntime.Thought(actionRef, inputs, rationale);
     }
 
