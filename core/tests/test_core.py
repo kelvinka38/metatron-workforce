@@ -620,9 +620,25 @@ class GeminiQuota(unittest.TestCase):
             self.assertEqual(g.complete([], 10), "OK")
             self.assertEqual(calls, ["gemini-3.8-flash", "gemini-3.5-flash"])
 
-    def test_per_minute_limit_is_left_to_the_chain(self):
+    def test_per_minute_limit_waits_and_retries_same_model(self):
         g = Gemini("gemini", key="k", model="gemini-3.8-flash")
-        with mock.patch.object(g, "_generate", side_effect=self._err(429, b"GenerateRequestsPerMinute")):
+        waits = []
+        g.sleep = waits.append
+        errors = [self._err(429, b'{"quotaId": "GenerateRequestsPerMinute", "retryDelay": "23s"}')]
+
+        def generate(messages, max_tokens):
+            if errors:
+                raise errors.pop()
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"):
+            self.assertEqual(g.complete([], 10), "OK")
+        self.assertEqual((waits, g.model), ([24], "gemini-3.8-flash"))
+
+    def test_long_per_minute_wait_is_left_to_the_chain(self):
+        g = Gemini("gemini", key="k", model="gemini-3.8-flash")
+        err = self._err(429, b'{"quotaId": "GenerateRequestsPerMinute", "retryDelay": "300s"}')
+        with mock.patch.object(g, "_generate", side_effect=err):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 g.complete([], 10)
         self.assertIn(b"PerMinute", ctx.exception.read())

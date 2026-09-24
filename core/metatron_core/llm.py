@@ -92,6 +92,7 @@ class Gemini(Provider):
     key: str = ""
     model: str = "gemini-2.5-flash"
     exhausted: dict = field(default_factory=dict)  # model -> time it may be tried again
+    sleep: object = time.sleep
 
     def complete(self, messages, max_tokens):
         """Each free model has its own daily quota and capacity: on a retired model (404), a used-up
@@ -104,7 +105,14 @@ class Gemini(Provider):
                 if e.code not in (404, 429) and e.code < 500:
                     raise
                 body = e.read()
-                if e.code == 429 and not is_daily_quota(body.decode(errors="replace")):
+                text = body.decode(errors="replace")
+                if e.code == 429 and not is_daily_quota(text):
+                    # Per-minute limit: a short wait beats a slow local model for this step.
+                    wait = retry_delay(text)
+                    if wait <= 60:
+                        print(f"gemini: {self.model} per-minute limit, waiting {wait}s", flush=True)
+                        self.sleep(wait)
+                        continue
                     raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
                 pause = {404: FOREVER, 429: 6 * 3600}.get(e.code, 600)  # 5xx: overloaded for now
                 self.exhausted[self.model] = time.time() + pause
@@ -164,6 +172,12 @@ def pick_flash_model(models: list[dict]) -> str:
     """Newest stable 'gemini-<version>-flash' that supports generateContent, else the flash alias."""
     stable = [n for n in flash_candidates(models) if _STABLE_FLASH.fullmatch(n) or n == "gemini-flash-latest"]
     return stable[0] if stable else ""
+
+
+def retry_delay(detail: str, default: int = 30) -> int:
+    """Seconds Gemini asks us to wait ("retryDelay": "23s"), else a default."""
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+)(?:\.\d+)?s"', detail)
+    return int(m.group(1)) + 1 if m else default
 
 
 def is_daily_quota(detail: str) -> bool:
