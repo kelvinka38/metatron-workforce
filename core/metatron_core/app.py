@@ -19,7 +19,9 @@ from pathlib import Path
 from .agent import Agent
 from .llm import ProviderChain
 from .store import Store
-from .tools import Workspace, agent_uid_for, merge_pull_request
+import urllib.error
+
+from .tools import Workspace, agent_uid_for, close_pull_request, merge_pull_request
 
 DATA = Path(os.environ.get("CORE_DATA_DIR", "/data"))
 BOT_TOKEN = os.environ.get("CORE_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -220,6 +222,7 @@ def handle_text(chat_id: str, text: str) -> str | None:
         return ("Send me any task in plain language, e.g.\n"
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
                 "/status — recent tasks\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
+                "/retry <id> — redo a task on the latest code\n"
                 "/report — last 7 days\n/approve <id> — merge a task's PR\n/reject <id> — leave it open")
     if text.startswith("/status"):
         rows = store.recent(10)
@@ -238,6 +241,26 @@ def handle_text(chat_id: str, text: str) -> str | None:
             store.update(task["id"], status="cancelling")
             return f"Stopping task #{task['id']} after its current step."
         return f"Task #{task['id']} is {task['status']}; nothing to cancel."
+    if text.startswith("/retry"):
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            return "Usage: /retry <task id>"
+        task = store.get(int(parts[1]))
+        if not task:
+            return "No such task."
+        if task["status"] in ("queued", "running", "cancelling", "checking_ci"):
+            return f"Task #{task['id']} is {task['status']}; wait for it or /cancel it first."
+        note = ""
+        if task["status"] == "awaiting_approval" and task.get("pr_url"):
+            try:
+                close_pull_request(task["pr_url"], GITHUB_TOKEN)
+                note = f" Closed its old PR {task['pr_url']}."
+            except Exception as e:
+                note = f" (Could not close the old PR: {e})"
+            store.update(task["id"], status="superseded")
+        new = store.create_task(chat_id, task["request"])
+        wake.set()
+        return f"🔁 Task #{task['id']} queued again as #{new} on the latest code.{note}"
     if text.startswith("/report"):
         return weekly_report()
     if text.startswith("/log"):
@@ -263,6 +286,10 @@ def handle_text(chat_id: str, text: str) -> str | None:
             merge_pull_request(task["pr_url"], GITHUB_TOKEN)
         except Exception as e:
             print(f"task #{task['id']} merge failed: {str(e)[:300]}", flush=True)
+            if isinstance(e, urllib.error.HTTPError) and e.code in (405, 409):
+                return (f"Can't merge task #{task['id']}: its PR conflicts with changes merged since it was "
+                        f"made.\n{task['pr_url']}\nSend /retry {task['id']} to redo it on the latest code "
+                        "(the old PR is closed).")
             return f"Merge failed: {e}"
         print(f"task #{task['id']} merged: {task['pr_url']}", flush=True)
         store.update(task["id"], status="merged")

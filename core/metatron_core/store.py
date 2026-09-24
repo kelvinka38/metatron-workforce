@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id     TEXT NOT NULL,
   request     TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'queued',   -- queued|running|cancelling|cancelled|done|failed|checking_ci|awaiting_approval|merged
+  status      TEXT NOT NULL DEFAULT 'queued',   -- queued|running|cancelling|cancelled|done|failed|checking_ci|awaiting_approval|merged|superseded
   result      TEXT,
   pr_url      TEXT,
   repo        TEXT,

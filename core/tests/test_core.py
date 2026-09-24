@@ -736,5 +736,26 @@ class GeminiMalformed(unittest.TestCase):
             self.assertRaises(EmptyReply, blocked.complete, [], 10)
 
 
+class ConflictAndRetry(unittest.TestCase):
+    def test_conflict_explained_and_retry_requeues(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            tid = app.store.create_task("42", "rename average to mean")
+            url = "https://github.com/o/r/pull/3"
+            app.store.update(tid, status="awaiting_approval", pr_url=url)
+            conflict = urllib.error.HTTPError(url, 405, "Method Not Allowed", {}, io.BytesIO(b""))
+            with mock.patch.object(app, "merge_pull_request", side_effect=conflict), mock.patch("builtins.print"):
+                reply = app.handle_text("42", f"/approve {tid}")
+            self.assertIn("conflicts", reply)
+            self.assertIn(f"/retry {tid}", reply)
+            with mock.patch.object(app, "close_pull_request") as close:
+                reply = app.handle_text("42", f"/retry {tid}")
+            close.assert_called_once_with(url, app.GITHUB_TOKEN)
+            self.assertEqual(app.store.get(tid)["status"], "superseded")
+            new = app.store.claim_next()
+            self.assertEqual(new["request"], "rename average to mean")
+            self.assertIn(f"as #{new['id']}", reply)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,11 +63,18 @@ JUNK = re.compile(r"(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|node_modules|\
 CI_OK = ("success", "skipped", "neutral")
 
 
-def merge_pull_request(pr_url: str, token: str) -> None:
+def _pr_api(pr_url: str) -> str:
     number = pr_url.rstrip("/").split("/")[-1]
     owner_repo = "/".join(pr_url.split("github.com/")[1].split("/")[:2])
-    _github_api("PUT", f"https://api.github.com/repos/{owner_repo}/pulls/{number}/merge", token,
-                {"merge_method": "squash"})
+    return f"https://api.github.com/repos/{owner_repo}/pulls/{number}"
+
+
+def merge_pull_request(pr_url: str, token: str) -> None:
+    _github_api("PUT", _pr_api(pr_url) + "/merge", token, {"merge_method": "squash"})
+
+
+def close_pull_request(pr_url: str, token: str) -> None:
+    _github_api("PATCH", _pr_api(pr_url), token, {"state": "closed"})
 
 
 class Workspace:
