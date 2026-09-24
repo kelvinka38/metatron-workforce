@@ -48,6 +48,10 @@ if ! grep -q '^CORE_PREVIEW_HOST=' "$CORE_ENV"; then
   echo "CORE_PREVIEW_HOST=preview.metatron.vn" >> "$CORE_ENV"
   echo "live previews: https://preview.metatron.vn"
 fi
+if ! grep -q '^CORE_CONTROL_HOST=' "$CORE_ENV"; then
+  echo "CORE_CONTROL_HOST=control.metatron.vn" >> "$CORE_ENV"
+  echo "control room: https://control.metatron.vn (send /login to the bot)"
+fi
 if has CORE_TELEGRAM_BOT_TOKEN; then echo "Telegram test bot token: set"
 else echo "Telegram test bot token: NOT set yet (M1-6)"; fi
 # Shape checks only; values are never printed.
@@ -133,5 +137,6 @@ fi
 
 step "Done"
 echo "metatron-core is running on 127.0.0.1:8095 beside Workforce."
+echo "Control room: https://control.metatron.vn - send /login to the bot for a one-time link."
 has CORE_TELEGRAM_BOT_TOKEN \
   || echo "Next (M1-6): create the test bot in BotFather, save its token with set-secret.sh CORE_TELEGRAM_BOT_TOKEN, re-run this script."

@@ -62,6 +62,13 @@ the same `docker compose` line. Roll back: `git checkout <previous sha>`, same l
 in volume `metatron-core-data`. The Telegram webhook goes to `/telegram` (or `/core/telegram`)
 with the secret token.
 
+## Control room
+
+https://control.metatron.vn (`CORE_CONTROL_HOST`): live view of the worker, the queue, every task
+with its full log, agent processes (with kill), projects with open PRs, model providers and their
+cooldowns, 7-day model usage (paid calls must be 0) and host load, memory and disk. Tasks can be
+queued, cancelled, retried, previewed, approved and rejected there too. Log in with `/login`.
+
 ## Use
 
 Send the bot a task in plain words, e.g. "In kelvinka38/bios fix the failing test". Core posts
@@ -75,7 +82,7 @@ fails, gives the logs back to the agent for up to 2 fix rounds.
 | `/cancel <id>` | Stop a queued or running task |
 | `/retry <id>` | Redo a task on the latest code (closes its old PR), e.g. after a merge conflict |
 | `/preview <id>` / `/preview stop` | Run a task's app live at https://preview.metatron.vn (one at a time, 2 h) |
-| `/login` | A one-time link (30 min) that logs your browser in to the preview site for 7 days |
+| `/login` | One-time links (30 min each) that log your browser in to the control room and the preview site for 7 days |
 | `/report` | Last 7 days: tasks, success rate, model calls, paid-provider calls (must be 0) |
 | `/approve <id>` | Merge the task's PR |
 | `/reject <id>` | Leave the PR open |

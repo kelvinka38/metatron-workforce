@@ -102,7 +102,7 @@ class Store:
 
     def audit_tail(self, task_id: int, limit: int = 8):
         with self._tx() as c:
-            rows = c.execute("SELECT kind, detail FROM audit WHERE task_id=? ORDER BY id DESC LIMIT ?",
+            rows = c.execute("SELECT at, kind, detail FROM audit WHERE task_id=? ORDER BY id DESC LIMIT ?",
                              (task_id, limit)).fetchall()
             return [dict(r) for r in reversed(rows)]
 

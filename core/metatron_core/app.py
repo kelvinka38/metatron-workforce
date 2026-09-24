@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import preview as previews
-from . import preview_auth
+from . import control, preview_auth
 from .agent import Agent
 from .llm import ProviderChain
 from .store import Store
@@ -44,12 +44,20 @@ store = Store(str(DATA / "core.db"))
 llm = ProviderChain.from_env()
 wake = threading.Event()
 PREVIEW_HOST = os.environ.get("CORE_PREVIEW_HOST", "").lower()  # e.g. preview.metatron.vn
+CONTROL_HOST = os.environ.get("CORE_CONTROL_HOST", "").lower()  # e.g. control.metatron.vn
+CONTROL_PAGE = Path(__file__).with_name("control.html")
+UID_BASE = int(os.environ["CORE_AGENT_UID_BASE"]) if os.environ.get("CORE_AGENT_UID_BASE", "").isdigit() else None
+WORKER: dict = {}  # what the worker thread is doing now, for the control room
 preview_login = preview_auth.PreviewAuth()
 
 
 def login_line() -> str:
     """A one-time link that logs the founder in to the preview site (valid 30 minutes)."""
     return f"🔑 Open (logs you in): {preview_login.new_link(PREVIEW_HOST)}"
+
+
+def control_line() -> str:
+    return f"🎛 Control room (logs you in): {preview_login.new_link(CONTROL_HOST)}"
 
 
 def _preview_notice(text: str) -> None:
@@ -83,10 +91,13 @@ def progress_audit(tid: int, chat: str):
 
     def audit(kind: str, detail: str) -> None:
         store.audit(tid, kind, detail)
+        if kind == "llm" and detail.startswith("[") and "]" in detail:
+            WORKER["model"] = detail[1:detail.index("]")]
         if kind != "tool":
             return
         steps["n"] += 1
         action = detail.split(" -> ", 1)[0][:100]
+        WORKER.update(step=steps["n"], action=action)
         print(f"task #{tid} step {steps['n']}: {action}", flush=True)
         if steps["n"] % PROGRESS_EVERY == 0:
             send(chat, f"⏳ Task #{tid} still working, step {steps['n']}: {action}")
@@ -242,6 +253,8 @@ def worker_loop() -> None:
             wake.wait(30)
             wake.clear()
             continue
+        WORKER.clear()
+        WORKER.update(task_id=task["id"], request=task["request"][:300], started=time.time(), step=0)
         try:
             process(task)
         except Exception:
@@ -249,6 +262,8 @@ def worker_loop() -> None:
             store.audit(task["id"], "error", err)
             store.update(task["id"], status="failed", result=err[-1500:])
             send(task["chat_id"], f"❌ Task #{task['id']} crashed: {err.splitlines()[-1]}")
+        finally:
+            WORKER.clear()
 
 
 # ---------------- commands ----------------
@@ -259,7 +274,7 @@ def handle_text(chat_id: str, text: str) -> str | None:
                 "\"In kelvinka38/bios fix the failing test in the aquaculture module\".\n"
                 "/status — recent tasks\n/log <id> — a task's last steps\n/cancel <id> — stop a task\n"
                 "/retry <id> — redo a task on the latest code\n/preview <id> — open a task's app live\n"
-                "/login — a link that logs you in to the preview site\n"
+                "/login — links that log you in to the control room and the preview site\n"
                 "/report — last 7 days\n/approve <id> — merge a task's PR\n/reject <id> — leave it open")
     if text.startswith("/status"):
         rows = store.recent(10)
@@ -298,10 +313,9 @@ def handle_text(chat_id: str, text: str) -> str | None:
         new = store.create_task(chat_id, task["request"])
         wake.set()
         return f"🔁 Task #{task['id']} queued again as #{new} on the latest code.{note}"
-    if text.startswith("/login"):
-        if not PREVIEW_HOST:
-            return "Previews are not set up (CORE_PREVIEW_HOST)."
-        return login_line()
+    if text.startswith("/login") or text.startswith("/control"):
+        lines = ([control_line()] if CONTROL_HOST else []) + ([login_line()] if PREVIEW_HOST else [])
+        return "\n".join(lines + ["Each link works once, for 30 minutes."]) if lines else "No web pages are set up."
     if text.startswith("/preview"):
         parts = text.split()
         if not PREVIEW_HOST:
@@ -472,22 +486,75 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _proxy(self) -> None:
-        """Everything on the preview host goes to the running preview app, never to Core's own routes.
-        Only a browser logged in through a link the bot sent the founder gets through."""
+    def _is_control(self) -> bool:
+        return bool(CONTROL_HOST) and self.headers.get("Host", "").split(":")[0].lower() == CONTROL_HOST
+
+    def _logged_in(self) -> bool:
+        """Login through a one-time link the bot sent the founder. False: a reply was already sent."""
         path, _, query = self.path.partition("?")
         if path == preview_auth.LOGIN_PATH:
             token = next((v for k, _, v in (p.partition("=") for p in query.split("&")) if k == "t"), "")
             session = preview_login.redeem(token)
             if not session:
-                return self._page(403, "<h2>This login link was used or has expired.</h2>"
-                                       "<p>Send <code>/login</code> to the bot for a new one.</p>")
+                self._page(403, "<h2>This login link was used or has expired.</h2>"
+                                "<p>Send <code>/login</code> to the bot for a new one.</p>")
+                return False
             cookie = (f"{preview_auth.COOKIE}={session}; Path=/; Max-Age={int(preview_login.session_ttl)}; "
                       "HttpOnly; Secure; SameSite=Lax")
-            return self._page(302, "", {"Location": "/", "Set-Cookie": cookie})
+            self._page(302, "", {"Location": "/", "Set-Cookie": cookie})
+            return False
         if not preview_login.valid(self.headers.get("Cookie", "")):
-            return self._page(401, "<h2>Not logged in.</h2><p>Send <code>/login</code> to the bot and open "
-                                   "the link it sends you.</p>")
+            if path.startswith("/api/"):
+                self._json(401, {"error": "not logged in"})
+            else:
+                self._page(401, "<h2>Not logged in.</h2><p>Send <code>/login</code> to the bot and open "
+                                "the link it sends you.</p>")
+            return False
+        return True
+
+    def _control(self) -> None:
+        """The control room: one page plus a small JSON API, only on the control host."""
+        if not self._logged_in():
+            return
+        path = self.path.partition("?")[0]
+        if self.command == "GET" and path == "/":
+            return self._page(200, CONTROL_PAGE.read_text())
+        if self.command == "GET" and path == "/api/state":
+            return self._json(200, control.snapshot(store, llm, preview, dict(WORKER), UID_BASE, DATA))
+        if self.command == "GET" and path.startswith("/api/tasks/") and path.split("/")[3].isdigit():
+            detail = control.task_detail(store, int(path.split("/")[3]))
+            return self._json(200 if detail else 404, detail or {})
+        if self.command == "POST" and path.startswith("/api/"):
+            if self.headers.get("X-Core") != "1":  # a cross-site form cannot set this header
+                return self._json(403, {"error": "missing X-Core header"})
+            try:
+                body = self._body()
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                return self._json(400, {"error": "send a JSON object"})
+            if path == "/api/tasks":
+                request = str(body.get("request", "")).strip()
+                if not request or request.startswith("/"):
+                    return self._json(400, {"error": "Write the task in plain words."})
+                return self._json(200, {"reply": handle_text(ALLOWED_USER or "api", request)})
+            if path == "/api/action":
+                action, tid = str(body.get("action", "")), body.get("task_id")
+                if not isinstance(tid, int):
+                    return self._json(400, {"error": "task_id must be a number"})
+                if action == "kill":
+                    n = control.kill_task_processes(tid, UID_BASE)
+                    return self._json(200, {"reply": f"Stopped {n} process(es) of task #{tid}."})
+                if action in ("approve", "reject", "cancel", "retry", "preview"):
+                    return self._json(200, {"reply": handle_text(ALLOWED_USER or "api", f"/{action} {tid}")})
+                return self._json(400, {"error": f"unknown action {action}"})
+        self._json(404, {})
+
+    def _proxy(self) -> None:
+        """Everything on the preview host goes to the running preview app, never to Core's own routes.
+        Only a browser logged in through a link the bot sent the founder gets through."""
+        if not self._logged_in():
+            return
         port = preview.port
         if not port or not previews.port_open(port):
             return self._page(503, "<h2>No preview is running.</h2>"
@@ -516,11 +583,15 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
 
     def do_PUT(self):
+        if self._is_control():
+            return self._control()
         return self._proxy() if self._is_preview() else self._json(404, {})
 
     do_PATCH = do_DELETE = do_OPTIONS = do_PUT
 
     def do_HEAD(self):
+        if self._is_control():
+            return self._json(405, {})
         return self._proxy() if self._is_preview() else self._json(404, {})
 
     def _json(self, code: int, obj) -> None:
@@ -536,6 +607,8 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
 
     def do_GET(self):
+        if self._is_control():
+            return self._control()
         if self._is_preview():
             return self._proxy()
         if self.path == "/health":
@@ -547,6 +620,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {})
 
     def do_POST(self):
+        if self._is_control():
+            return self._control()
         if self._is_preview():
             return self._proxy()
         if self.path in ("/telegram", "/core/telegram"):  # tunnel may keep the /core prefix

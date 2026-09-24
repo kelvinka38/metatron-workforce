@@ -25,8 +25,9 @@ services:
       CORE_TELEGRAM_WEBHOOK_SECRET: "${CORE_TELEGRAM_WEBHOOK_SECRET:-}"
       TELEGRAM_ALLOWED_USER_ID: "${TELEGRAM_ALLOWED_USER_ID:-}"
       CORE_API_TOKEN: "${CORE_API_TOKEN:-}"
-      # Live previews of built apps, served through the Cloudflare tunnel (behind Cloudflare Access).
+      # Control room and live previews, served through the Cloudflare tunnel (login via a bot link).
       CORE_PREVIEW_HOST: "${CORE_PREVIEW_HOST:-}"
+      CORE_CONTROL_HOST: "${CORE_CONTROL_HOST:-}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
     volumes:
       - core-data:/data

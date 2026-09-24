@@ -1164,3 +1164,80 @@ class PreviewLoginCookie(unittest.TestCase):
         token = auth.new_link("h").split("t=")[1]
         self.assertIsNone(auth.redeem(token))
         self.assertIsNone(PreviewAuth().redeem("made-up"))
+
+
+class ControlRoom(unittest.TestCase):
+    def _serve(self, app):
+        import http.server
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        return server.server_port
+
+    def _call(self, port, method, path, headers, body=None):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp, data
+
+    def test_login_state_actions_and_new_task(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            tid = app.store.create_task("42", "In kelvinka38/scratch add a page")
+            app.store.update(tid, repo="kelvinka38/scratch", status="awaiting_approval",
+                             pr_url="https://github.com/kelvinka38/scratch/pull/1")
+            app.store.audit(tid, "llm", "[gemini:gemini-3.8-flash] {}")
+            with mock.patch.object(app, "CONTROL_HOST", "control.example"):
+                port = self._serve(app)
+                host = {"Host": "control.example"}
+                resp, _ = self._call(port, "GET", "/api/state", host)
+                self.assertEqual(resp.status, 401)
+                login = app.preview_login.new_link("control.example").split("control.example", 1)[1]
+                resp, _ = self._call(port, "GET", login, host)
+                self.assertEqual(resp.status, 302)
+                auth = dict(host, Cookie=resp.getheader("Set-Cookie").split(";")[0])
+                resp, page = self._call(port, "GET", "/", auth)
+                self.assertIn(b"Control Room", page)
+                resp, data = self._call(port, "GET", "/api/state", auth)
+                state = json.loads(data)
+                self.assertEqual(state["summary"]["awaiting_approval"], 1)
+                self.assertEqual(state["projects"][0]["repo"], "kelvinka38/scratch")
+                self.assertEqual(state["projects"][0]["open_prs"][0]["task_id"], tid)
+                self.assertEqual(state["models"]["usage_7d"], [{"model": "gemini:gemini-3.8-flash", "calls": 1}])
+                self.assertEqual(state["models"]["paid_calls_7d"], 0)
+                resp, data = self._call(port, "GET", f"/api/tasks/{tid}", auth)
+                self.assertEqual(json.loads(data)["log"][0]["kind"], "llm")
+                # Actions need the custom header, so a cross-site form cannot trigger them.
+                resp, _ = self._call(port, "POST", "/api/action", auth, {"action": "reject", "task_id": tid})
+                self.assertEqual(resp.status, 403)
+                act = dict(auth, **{"X-Core": "1", "Content-Type": "application/json"})
+                with mock.patch.object(app, "send"):
+                    resp, data = self._call(port, "POST", "/api/action", act, {"action": "reject", "task_id": tid})
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(app.store.get(tid)["status"], "done")
+                resp, data = self._call(port, "POST", "/api/tasks", act, {"request": "In kelvinka38/scratch fix it"})
+                self.assertIn("queued", json.loads(data)["reply"])
+                resp, _ = self._call(port, "POST", "/api/tasks", act, {"request": "/approve 1"})
+                self.assertEqual(resp.status, 400)  # commands only through the action buttons
+                resp, _ = self._call(port, "GET", "/health", auth)
+                self.assertEqual(resp.status, 404)  # Core's own routes stay off the control host
+
+    def test_processes_are_read_per_task_user(self):
+        from metatron_core import control
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "stat").write_text("cpu 1 2 3\nbtime 1000\n")
+            for pid, uid in ((10, 20007), (11, 0)):
+                p = root / str(pid)
+                p.mkdir()
+                (p / "status").write_text(f"Name:\tnode\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\nVmRSS:\t 2048 kB\n")
+                (p / "cmdline").write_bytes(b"node\0server.js\0")
+                (p / "stat").write_text(f"{pid} (node) S " + " ".join(["0"] * 10) + " 100 50 0 0 0 0 0 0 200 0")
+            procs = control.processes(20000, str(root))
+        self.assertEqual(len(procs), 1)
+        self.assertEqual(procs[0]["task_id"], 7)
+        self.assertEqual(procs[0]["cmd"], "node server.js")
+        self.assertEqual(procs[0]["rss_mb"], 2.0)
