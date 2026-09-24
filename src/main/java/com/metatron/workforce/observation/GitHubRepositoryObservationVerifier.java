@@ -100,8 +100,12 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
             // transient propagation-lag failure from a genuine mismatch was silently discarded.
             String diagnostic = failure.getClass().getSimpleName()
                     + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
+            // The report id is per-observation (not one fixed ":failed" id): ObservationClosureService
+            // ignores a re-recorded report whose id equals the current one, so a later, different failure
+            // (e.g. after a Human resume grants a fresh budget) would otherwise never replace the stale
+            // diagnostic a Human sees.
             return Optional.of(new ObservationReport(
-                    "observation:github:" + requirement.requirementId() + ":failed",
+                    "observation:github:" + requirement.requirementId() + ":failed:" + at.toEpochMilli(),
                     requirement.requirementId(), requirement.objectiveId(), requirement.target(),
                     "GitHub verification failed: " + diagnostic, "authoritative-github-api-read", at, at,
                     List.of("observation-error:" + failure.getClass().getSimpleName()), 0.0,
@@ -331,6 +335,16 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
         return get(path, 0);
     }
 
+    /**
+     * Production incident (2026-09-24, same case build-and-deliver "Metatron Workforce Control Center"):
+     * after the read-lag fix, the Objective still reached observation-inconclusive on the published PR
+     * criterion, with all three outer Observation attempts consumed within ~9 seconds of DELIVER -- far
+     * faster than the 404 backoff alone allows -- i.e. a fast non-404 failure. Only 404 was retried, so any
+     * other transient GitHub condition right after a burst of proposal writes (secondary rate limit 403,
+     * 429, 5xx, a reset connection) failed every outer attempt instantly. Those are now retried with the
+     * same bounded backoff, and a final failure names the endpoint and GitHub's own message instead of a
+     * bare status code, so the durable blocker is diagnosable.
+     */
     private JsonNode get(String path, int attempt) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(apiBase + path))
                 .timeout(Duration.ofSeconds(20))
@@ -338,18 +352,60 @@ public final class GitHubRepositoryObservationVerifier implements ObservationVer
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .header("User-Agent", "metatron-workforce-observation");
         if (!token.isBlank()) request.header("Authorization", "Bearer " + token);
-        HttpResponse<String> response = http.send(request.GET().build(), HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() == 404 && attempt < READ_LAG_BACKOFF_MS.length) {
-            try {
-                Thread.sleep(READ_LAG_BACKOFF_MS[attempt]);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw interrupted;
+        HttpResponse<String> response;
+        try {
+            response = http.send(request.GET().build(), HttpResponse.BodyHandlers.ofString());
+        } catch (java.io.IOException transportFailure) {
+            if (attempt < READ_LAG_BACKOFF_MS.length) {
+                backoff(attempt);
+                return get(path, attempt + 1);
             }
+            throw new IllegalStateException("GitHub observation GET " + path + " transport failure: "
+                    + transportFailure.getClass().getSimpleName()
+                    + (transportFailure.getMessage() == null ? "" : ": " + transportFailure.getMessage()),
+                    transportFailure);
+        }
+        if (transientFailure(response) && attempt < READ_LAG_BACKOFF_MS.length) {
+            backoff(attempt);
             return get(path, attempt + 1);
         }
-        if (response.statusCode() != 200) throw new IllegalStateException("GitHub observation HTTP " + response.statusCode());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("GitHub observation HTTP " + response.statusCode()
+                    + " GET " + path + githubMessage(response.body()));
+        }
         return json.readTree(response.body());
+    }
+
+    private static boolean transientFailure(HttpResponse<String> response) {
+        int status = response.statusCode();
+        if (status == 404 || status == 429 || status >= 500) return true;
+        if (status != 403) return false;
+        String body = response.body() == null ? "" : response.body().toLowerCase(java.util.Locale.ROOT);
+        return response.headers().firstValue("retry-after").isPresent()
+                || "0".equals(response.headers().firstValue("x-ratelimit-remaining").orElse(""))
+                || body.contains("rate limit");
+    }
+
+    private static void backoff(int attempt) throws InterruptedException {
+        try {
+            Thread.sleep(READ_LAG_BACKOFF_MS[attempt]);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw interrupted;
+        }
+    }
+
+    private String githubMessage(String body) {
+        if (body == null || body.isBlank()) return "";
+        String message;
+        try {
+            message = json.readTree(body).path("message").asText("");
+        } catch (Exception notJson) {
+            message = body;
+        }
+        message = message.replace('\r', ' ').replace('\n', ' ').trim();
+        if (message.isBlank()) return "";
+        return ": " + (message.length() <= 200 ? message : message.substring(0, 200));
     }
 
     private static String repository(String target) {

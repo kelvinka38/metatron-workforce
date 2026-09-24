@@ -103,6 +103,29 @@ public final class ObservationClosureService {
         return reports(objectiveId);
     }
 
+    /**
+     * Production incident (2026-09-24, case build-and-deliver "Metatron Workforce Control Center"): an
+     * Objective whose work had genuinely been delivered (published PR) was BLOCKED observation-inconclusive
+     * after its bounded attempts were exhausted, and a governed Human resume could never recover it: the
+     * exhausted attempt count is durable, so the very next pass re-derived INCONCLUSIVE and re-blocked
+     * without observing anything. A Human resume is the explicit authority for another bounded try, so the
+     * caller grants exactly one fresh bounded budget to each exhausted, not-authoritatively-terminal
+     * requirement. Authoritative FAIL and PASS reports are never reopened.
+     */
+    public synchronized int reopenExhaustedInconclusive(String objectiveId) {
+        int reopened = 0;
+        for (ObservationRequirement requirement : requirements(objectiveId)) {
+            if (authoritativeTerminal(reportsByRequirement.get(requirement.requirementId()))) continue;
+            if (attemptsByRequirement.getOrDefault(requirement.requirementId(), 0) < MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS) {
+                continue;
+            }
+            attemptsByRequirement.put(requirement.requirementId(), 0);
+            reopened++;
+        }
+        if (reopened > 0) persist();
+        return reopened;
+    }
+
     public synchronized ObservationReport recordReport(ObservationReport report) {
         Objects.requireNonNull(report, "report");
         ObservationRequirement requirement = requirements.get(report.requirementId());

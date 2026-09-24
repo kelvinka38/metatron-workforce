@@ -429,6 +429,13 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         graph = coordination.activeGraph(objectiveId).orElseThrow();
         if (observationClosure != null) {
             observationClosure.ensureRequirements(objectiveId, work.plannedWork(), clock.instant());
+            // A BLOCKED Objective is never runnable, so reaching Observation with an already-exhausted
+            // INCONCLUSIVE verdict means a governed resume re-admitted it: grant that resume one fresh
+            // bounded Observation budget instead of instantly re-blocking on the stale exhausted count.
+            if (observationClosure.verdict(objectiveId) == ObservationClosureService.Verdict.INCONCLUSIVE) {
+                int reopened = observationClosure.reopenExhaustedInconclusive(objectiveId);
+                LOG.warn("autonomy_observation_budget_reopened objective_id={} requirements={}", objectiveId, reopened);
+            }
             observationClosure.observeAvailable(objectiveId, work.evidenceReferences(), clock.instant());
             ObservationClosureService.Verdict verdict = observationClosure.verdict(objectiveId);
             if (verdict == ObservationClosureService.Verdict.PENDING) return;
@@ -440,10 +447,13 @@ public final class AutonomousManagementRunner implements AutoCloseable {
                 // re-run failure text, already captured in each report's observedState()) was discarded.
                 // Same class of gap as the CognitiveWorkerRuntime circuit breaker fix: don't throw away
                 // diagnostic detail the system already captured at the one place a Human can see it.
-                management.blockAutonomousObjective(objectiveId, runnerId, lease.token(),
-                        "observation-" + verdict.name().toLowerCase(java.util.Locale.ROOT)
-                                + ":" + observationFailureDetail(observationClosure.reports(objectiveId)),
-                        clock.instant());
+                String reason = "observation-" + verdict.name().toLowerCase(java.util.Locale.ROOT)
+                        + ":" + observationFailureDetail(observationClosure.reports(objectiveId));
+                // Also log it: channels (e.g. the Telegram work-order card) truncate the durable reason,
+                // and the durable state volume is deliberately not operator-readable, so without this
+                // line the real verifier diagnostic was unrecoverable from production (2026-09-24).
+                LOG.warn("autonomy_observation_blocked objective_id={} reason={}", objectiveId, reason);
+                management.blockAutonomousObjective(objectiveId, runnerId, lease.token(), reason, clock.instant());
                 return;
             }
         }
