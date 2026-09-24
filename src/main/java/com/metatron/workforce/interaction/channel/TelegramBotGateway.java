@@ -40,6 +40,15 @@ public final class TelegramBotGateway implements ChannelGateway {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final String apiBaseUrl;
+    private final java.util.function.LongSupplier clockMillis;
+    /**
+     * Bot-wide Telegram flood-control gate. A 429 "retry after N" applies to the whole bot, but every
+     * send path (answers, Work Controls, Work Cards, monitor edits, dead-letter notices) kept calling
+     * through it, and each premature call lengthens the ban: production 2026-09-24 reached
+     * "retry after 14083" (~4 h) with Telegram silent for every Objective. Until the window elapses,
+     * calls fail locally with the same 429 shape and never reach Telegram.
+     */
+    private volatile long floodBlockedUntilMillis;
 
     public TelegramBotGateway(String botToken, HttpClient httpClient, ObjectMapper objectMapper) {
         this(botToken, httpClient, objectMapper,
@@ -47,6 +56,12 @@ public final class TelegramBotGateway implements ChannelGateway {
     }
 
     TelegramBotGateway(String botToken, HttpClient httpClient, ObjectMapper objectMapper, String apiBaseUrl) {
+        this(botToken, httpClient, objectMapper, apiBaseUrl, System::currentTimeMillis);
+    }
+
+    TelegramBotGateway(String botToken, HttpClient httpClient, ObjectMapper objectMapper, String apiBaseUrl,
+                       java.util.function.LongSupplier clockMillis) {
+        this.clockMillis = Objects.requireNonNull(clockMillis, "clockMillis");
         this.botToken = Objects.requireNonNull(botToken, "botToken");
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
@@ -193,6 +208,13 @@ public final class TelegramBotGateway implements ChannelGateway {
     }
 
     private ApiResult invoke(String method, Map<String, Object> payload) {
+        long now = clockMillis.getAsLong();
+        long blockedUntil = floodBlockedUntilMillis;
+        if (now < blockedUntil) {
+            long remainingSeconds = Math.max(1, (blockedUntil - now + 999) / 1000);
+            throw new IllegalStateException("telegram_send_failed:telegram_error=429:Too Many Requests: retry after "
+                    + remainingSeconds + " (local flood-control gate)");
+        }
         try {
             String body = objectMapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder()
@@ -206,6 +228,17 @@ public final class TelegramBotGateway implements ChannelGateway {
             if (response.statusCode() / 100 != 2 || !apiResponse.path("ok").asBoolean(false)) {
                 String description = apiResponse.path("description").asText("unknown_telegram_error");
                 int errorCode = apiResponse.path("error_code").asInt(response.statusCode());
+                if (errorCode == 429) {
+                    long retryAfter = apiResponse.path("parameters").path("retry_after").asLong(0);
+                    if (retryAfter <= 0) {
+                        java.util.regex.Matcher m = java.util.regex.Pattern.compile("retry after (\\d+)").matcher(description);
+                        if (m.find()) retryAfter = Long.parseLong(m.group(1));
+                    }
+                    if (retryAfter > 0) {
+                        floodBlockedUntilMillis = Math.max(floodBlockedUntilMillis,
+                                clockMillis.getAsLong() + retryAfter * 1000L);
+                    }
+                }
                 throw new IllegalStateException("telegram_send_failed:telegram_error=" + errorCode + ":" + description);
             }
             return new ApiResult(response.body(), apiResponse);
