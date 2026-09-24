@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const { performance } = require('perf_hooks');
 
 function positiveInt(value, fallback) {
@@ -72,6 +73,46 @@ async function boundedFetch(url, options, timeoutMs, provider) {
   }
 }
 
+// A non-streaming Ollama /api/generate sends its response headers only once generation is complete, which
+// on the CPU-only node legitimately takes up to OLLAMA_TIMEOUT_MS (600 s). Node's global fetch (undici)
+// enforces its own hidden 300 s headersTimeout regardless of our AbortController, so every long local call
+// was cut at exactly ~300 s as network_error (production 2026-09-24, case-0e3a655f: "provider_failed ollama
+// network_error 300807" while qwen3:4b was still generating). node:http has no such hidden deadline; this
+// call is bounded only by timeoutMs.
+function postJsonWithoutHiddenDeadline(url, payload, timeoutMs, provider) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const client = target.protocol === 'https:' ? https : http;
+    const body = JSON.stringify(payload);
+    let settled = false;
+    let request;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      settle(reject, classifiedError('timeout', provider + '_timeout'));
+      if (request) request.destroy();
+    }, Math.max(1, timeoutMs));
+    request = client.request(target, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+    }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => settle(resolve, {
+        status: response.statusCode,
+        text: Buffer.concat(chunks).toString('utf8'),
+      }));
+      response.on('error', () => settle(reject, classifiedError('network_error', provider + '_network_error')));
+    });
+    request.on('error', () => settle(reject, classifiedError('network_error', provider + '_network_error')));
+    request.end(body);
+  });
+}
+
 async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   const base = process.env.OLLAMA_URL || 'http://metatron-ollama:11434';
   const model = process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
@@ -79,13 +120,14 @@ async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   if (cfg.ollamaNumCtx > 0) options.num_ctx = cfg.ollamaNumCtx;
   const body = { model, prompt, stream: false, options };
   if (cfg.ollamaThink !== undefined) body.think = cfg.ollamaThink;
-  const r = await boundedFetch(base + '/api/generate', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  }, timeoutMs, 'ollama');
-  if (!r.ok) throw classifiedError('http_' + r.status, 'ollama_http_' + r.status);
-  const data = await r.json();
+  const r = await postJsonWithoutHiddenDeadline(base + '/api/generate', body, timeoutMs, 'ollama');
+  if (r.status < 200 || r.status >= 300) throw classifiedError('http_' + r.status, 'ollama_http_' + r.status);
+  let data;
+  try {
+    data = JSON.parse(r.text);
+  } catch (_invalid) {
+    throw classifiedError('provider_error', 'ollama_invalid_json');
+  }
   return {
     text: data.response || '',
     model,
@@ -251,6 +293,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  postJsonWithoutHiddenDeadline,
   boundedFetch,
   buildPrompt,
   callGemini,
