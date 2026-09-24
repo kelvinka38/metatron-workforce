@@ -11,8 +11,9 @@ from pathlib import Path
 from unittest import mock
 
 from metatron_core.agent import Agent, invalid_reply_hint, parse_action
-from metatron_core.llm import (FOREVER, EmptyReply, Gemini, LlmUnavailable, Provider, ProviderChain,
-                                cooldown_for, flash_candidates, gemini_text, pick_flash_model)
+from metatron_core.llm import (FOREVER, EmptyReply, Gemini, LlmUnavailable, OpenRouterFree, Provider,
+                                ProviderChain, cooldown_for, flash_candidates, gemini_text,
+                                openrouter_free_candidates, pick_flash_model)
 from metatron_core.store import Store
 from metatron_core.tools import Workspace, agent_uid_for
 
@@ -974,6 +975,39 @@ class RepoRootPaths(unittest.TestCase):
                 Agent(llm, audit=lambda *a: None).run("x", ws)
             self.assertEqual(len(calls), 3)
             self.assertIn("refused", llm.seen[4])
+
+
+class OpenRouterFreeOnly(unittest.TestCase):
+    MODELS = [
+        {"id": "big/general:free", "context_length": 200000, "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "qwen/qwen3-coder:free", "context_length": 100000, "pricing": {"prompt": "0", "completion": "0"}},
+        {"id": "paid/model", "context_length": 900000, "pricing": {"prompt": "0.000001", "completion": "0.000002"}},
+        {"id": "tricky/priced:free", "context_length": 999999, "pricing": {"prompt": "0.5", "completion": "0"}},
+    ]
+
+    def test_only_zero_priced_free_models_coders_first(self):
+        self.assertEqual(openrouter_free_candidates(self.MODELS), ["qwen/qwen3-coder:free", "big/general:free"])
+
+    def test_key_without_model_no_longer_blocks_startup(self):
+        env = {"OPENROUTER_FREE_API_KEY": "k"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            names = [p.name for p in ProviderChain.from_env().providers]
+        self.assertEqual(names, ["openrouter", "ollama"])
+
+    def test_rate_limited_model_moves_to_next_free_one(self):
+        r = OpenRouterFree("openrouter", key="k")
+        seen = []
+
+        def post(url, body, headers, timeout):
+            seen.append(body["model"])
+            if body["model"] == "qwen/qwen3-coder:free":
+                raise urllib.error.HTTPError(url, 429, "x", {}, io.BytesIO(b""))
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+        with mock.patch("metatron_core.llm._post", post), mock.patch("builtins.print"), \
+                mock.patch.object(r, "_models", return_value=self.MODELS):
+            self.assertEqual(r.complete([], 10), "OK")
+        self.assertEqual(seen, ["qwen/qwen3-coder:free", "big/general:free"])
 
 
 if __name__ == "__main__":

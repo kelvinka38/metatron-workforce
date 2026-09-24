@@ -238,6 +238,69 @@ class OpenAiCompatible(Provider):
         return data["choices"][0]["message"]["content"] or ""
 
 
+OPENROUTER_API = "https://openrouter.ai/api/v1"
+
+
+def openrouter_free_candidates(models: list[dict]) -> list[str]:
+    """Zero-cost OpenRouter models, best first: ':free' ids whose listed prices are all zero,
+    coding models first, then by context length."""
+    free = []
+    for m in models:
+        mid = str(m.get("id", ""))
+        pricing = m.get("pricing") or {}
+        prices = [pricing.get(k, "0") for k in ("prompt", "completion", "request")]
+        if not mid.endswith(":free") or any(str(p) not in ("0", "0.0", "0.00", "") for p in prices):
+            continue
+        coder = any(w in mid.lower() for w in ("coder", "code", "devstral"))
+        free.append((coder, int(m.get("context_length") or 0), mid))
+    return [mid for _, _, mid in sorted(free, reverse=True)]
+
+
+@dataclass
+class OpenRouterFree(Provider):
+    """OpenRouter's ':free' models only. With no model configured, picks the best free one itself and
+    moves to the next when one is rate-limited, overloaded or gone."""
+    key: str = ""
+    model: str = ""
+    exhausted: dict = field(default_factory=dict)
+
+    def _models(self) -> list[dict]:
+        req = urllib.request.Request(f"{OPENROUTER_API}/models")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read()).get("data", [])
+
+    def _next_model(self) -> str:
+        return next((m for m in openrouter_free_candidates(self._models())
+                     if self.exhausted.get(m, 0) <= time.time()), "")
+
+    def complete(self, messages, max_tokens):
+        if not self.model:
+            self.model = self._next_model()
+        for _ in range(4):
+            if not self.model.endswith(":free"):
+                raise ValueError(f"OpenRouter model '{self.model}' is not ':free' - refusing (zero-cost rule)")
+            body = {"model": self.model, "max_tokens": max_tokens,
+                    "messages": [{"role": m.role, "content": m.content} for m in messages]}
+            try:
+                data = _post(f"{OPENROUTER_API}/chat/completions", body,
+                             {"Authorization": f"Bearer {self.key}"}, timeout=120)
+            except urllib.error.HTTPError as e:
+                if e.code not in (404, 429) and e.code < 500:
+                    raise
+                self.exhausted[self.model] = time.time() + (FOREVER if e.code == 404 else 900)
+                nxt = self._next_model()
+                if not nxt:
+                    raise
+                print(f"openrouter: {self.model} unavailable ({e.code}), switching to {nxt}", flush=True)
+                self.model = nxt
+                continue
+            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            if not text.strip():
+                raise EmptyReply(f"openrouter {self.model} returned no text")
+            return text
+        raise LlmUnavailable("openrouter: no free model answered")
+
+
 @dataclass
 class Ollama(Provider):
     url: str = "http://metatron-ollama:11434"
@@ -275,11 +338,10 @@ class ProviderChain:
                                               model=env.get("CORE_OPENAI_MODEL", "gpt-4.1-mini"),
                                               url="https://api.openai.com/v1/chat/completions"))
         if env.get("OPENROUTER_FREE_API_KEY"):
-            model = env.get("OPENROUTER_FREE_MODEL", "")
-            if not model.endswith(":free"):
+            model = env.get("OPENROUTER_FREE_MODEL", "")  # empty: Core picks the best ':free' model
+            if model and not model.endswith(":free"):
                 raise ValueError(f"OpenRouter model '{model}' is not ':free' - refusing (zero-cost rule)")
-            chain.append(OpenAiCompatible("openrouter", key=env["OPENROUTER_FREE_API_KEY"], model=model,
-                                          url="https://openrouter.ai/api/v1/chat/completions"))
+            chain.append(OpenRouterFree("openrouter", key=env["OPENROUTER_FREE_API_KEY"], model=model))
         chain.append(Ollama("ollama", url=env.get("OLLAMA_URL", "http://metatron-ollama:11434"),
                             model=env.get("CORE_OLLAMA_MODEL", "qwen2.5-coder:7b")))
         return cls(chain)
