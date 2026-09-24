@@ -25,8 +25,11 @@ function configFromEnv() {
     auth: process.env.METATRON_COGNITION_AUTH || '',
     port: positiveInt(process.env.PORT, 8091),
     revision: process.env.METATRON_COGNITION_REVISION || 'unknown',
-    totalTimeoutMs: positiveInt(process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS, 210000),
-    ollamaTimeoutMs: positiveInt(process.env.OLLAMA_TIMEOUT_MS, 150000),
+    // CPU-only qwen3:4b measured 2026-09-24: ~55 prompt tokens/s, ~11 output tokens/s. A 6144-token
+    // content-generation budget alone needs ~9-10 minutes, so the old 150 s paid-API-era budget timed out
+    // every Worker call. Ordering stays: Ollama 600 s < node total 630 s < Workforce HTTP 660 s.
+    totalTimeoutMs: positiveInt(process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS, 630000),
+    ollamaTimeoutMs: positiveInt(process.env.OLLAMA_TIMEOUT_MS, 600000),
     frontierTimeoutMs: positiveInt(process.env.FRONTIER_PROVIDER_TIMEOUT_MS, 18000),
     // Default applied only when a request omits maxOutputTokens. Real Workforce callers (see
     // MetatronCognitionClient.Request/CognitiveOutputBudget) always send an explicit, request-aware
