@@ -73,6 +73,11 @@ public final class TelegramBotGateway implements ChannelGateway {
     @Override
     public String channel() { return "telegram"; }
 
+    /** Milliseconds left in the bot-wide flood-control window, or 0 when sends may reach Telegram. */
+    public long floodBlockedRemainingMillis() {
+        return Math.max(0L, floodBlockedUntilMillis - clockMillis.getAsLong());
+    }
+
     @Override
     public String send(ChannelMessage message) {
         Objects.requireNonNull(message, "message");

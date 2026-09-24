@@ -62,8 +62,10 @@ final class TelegramBotGatewayFloodControlTest {
                 "the local gate keeps the 429 retry-after shape the Work Card monitor already honors: " + gated.getMessage());
         assertThrows(IllegalStateException.class, () -> gateway.editWorkCard("chat-1", 5L, "card"));
         assertEquals(1, calls.get(), "no call may reach Telegram inside the retry-after window");
+        assertEquals(20_000L, gateway.floodBlockedRemainingMillis(), "delivery replay is scheduled after this window");
 
         now.addAndGet(21_000L);
+        assertEquals(0L, gateway.floodBlockedRemainingMillis());
         assertEquals(77L, gateway.sendWorkCard("chat-1", "📋 METATRON · WORK ORDER"));
         assertEquals(2, calls.get(), "sending resumes once the window has elapsed");
     }

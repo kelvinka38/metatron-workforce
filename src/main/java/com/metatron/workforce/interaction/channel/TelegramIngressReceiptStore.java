@@ -152,12 +152,55 @@ public final class TelegramIngressReceiptStore {
         Objects.requireNonNull(failure, "failure");
         Receipt current = required(updateId);
         Status status = current.attempts() >= maxAttempts ? Status.DEAD_LETTER : Status.FAILED;
-        String message = failure.getClass().getSimpleName() + ":" + String.valueOf(failure.getMessage());
-        if (message.length() > 1000) message = message.substring(0, 1000);
-        Receipt next = current.with(status, current.attempts(), null, message, System.currentTimeMillis());
+        Receipt next = current.with(status, current.attempts(), null, failureMessage(failure), System.currentTimeMillis());
         receipts.put(updateId, next);
         persist();
         return next;
+    }
+
+    /**
+     * Telegram flood control (429) says nothing about the interaction: the Objective is already admitted and
+     * only the Work Card could not be sent yet. Keep the receipt ACCEPTED (delivery replay only, no attempt
+     * consumed) instead of burning the bounded attempts in milliseconds and dead-lettering the Work Card
+     * (production 2026-09-24, update 103338021: DEAD_LETTER 1 s after admission, card never delivered).
+     */
+    public synchronized Receipt deliveryDeferred(long updateId, RuntimeException failure) {
+        Objects.requireNonNull(failure, "failure");
+        Receipt current = required(updateId);
+        if (current.objectiveId().isBlank()) throw new IllegalStateException("telegram_delivery_deferral_requires_objective");
+        Receipt next = current.with(Status.ACCEPTED, current.attempts(), null, failureMessage(failure), System.currentTimeMillis());
+        receipts.put(updateId, next);
+        persist();
+        return next;
+    }
+
+    /**
+     * Returns dead-lettered receipts whose Objective was admitted and whose only failure was Telegram flood
+     * control to ACCEPTED, so their Work Card is delivered once the flood-control window has elapsed. Only
+     * receipts dead-lettered at or after {@code notBeforeEpochMillis} qualify; older ones stay retained.
+     */
+    public synchronized int reviveFloodControlDeadLetters(long notBeforeEpochMillis) {
+        int revived = 0;
+        for (Receipt receipt : new ArrayList<>(receipts.values())) {
+            if (receipt.status() == Status.DEAD_LETTER && !receipt.objectiveId().isBlank()
+                    && receipt.updatedAtEpochMillis() >= notBeforeEpochMillis
+                    && isFloodControlFailure(receipt.lastFailure())) {
+                receipts.put(receipt.updateId(), receipt.with(Status.ACCEPTED, receipt.attempts(), null,
+                        receipt.lastFailure(), System.currentTimeMillis()));
+                revived++;
+            }
+        }
+        if (revived > 0) persist();
+        return revived;
+    }
+
+    static boolean isFloodControlFailure(String failure) {
+        return failure != null && failure.contains("telegram_error=429");
+    }
+
+    private static String failureMessage(RuntimeException failure) {
+        String message = failure.getClass().getSimpleName() + ":" + String.valueOf(failure.getMessage());
+        return message.length() > 1000 ? message.substring(0, 1000) : message;
     }
 
     public synchronized Receipt find(long updateId) {

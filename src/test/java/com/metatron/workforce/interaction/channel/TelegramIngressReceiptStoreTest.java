@@ -108,4 +108,63 @@ final class TelegramIngressReceiptStoreTest {
         assertEquals("objective:case-11a08089", TelegramWebhookController.deliveryReplayObjectiveId(retry),
                 "the retry must redeliver the already-admitted Objective instead of re-running the interaction");
     }
+
+    @Test
+    void floodControlDefersWorkCardDeliveryInsteadOfDeadLetteringTheAdmittedObjective() {
+        // Production 2026-09-24: update 103338021 admitted case-b60eb63a, then three sends hit the local
+        // flood-control gate within 1 s and the receipt was DEAD_LETTER; the Work Card was never delivered.
+        TelegramIngressReceiptStore store = new TelegramIngressReceiptStore(tempDir.resolve("flood.json"), new ObjectMapper());
+        store.receive(505L, 77L, "77", "build and deliver the control center");
+        store.admit(505L);
+        store.claim(505L, 3);
+        store.accepted(505L, "objective:case-b60eb63a");
+        IllegalStateException flood = new IllegalStateException(
+                "telegram_send_failed:telegram_error=429:Too Many Requests: retry after 10879 (local flood-control gate)");
+
+        assertTrue(TelegramWebhookController.deferDeliveryForFloodControl(store.find(505L), flood));
+        for (int replay = 0; replay < 5; replay++) {
+            store.deliveryDeferred(505L, flood);
+            TelegramIngressReceiptStore.Receipt claimed = store.claim(505L, 3);
+            assertEquals(TelegramIngressReceiptStore.Status.ACCEPTED, claimed.status(), "deferral never dead-letters");
+            assertEquals("objective:case-b60eb63a", TelegramWebhookController.deliveryReplayObjectiveId(claimed));
+        }
+        assertEquals(1, store.find(505L).attempts(), "flood-control deferral consumes no processing attempt");
+        assertTrue(store.recoverable(3).stream().anyMatch(r -> r.updateId() == 505L), "a restart replays the delivery");
+        assertEquals(10_880_000L, TelegramWebhookController.floodControlReplayDelayMillis(10_879_000L));
+        assertEquals(5_000L, TelegramWebhookController.floodControlReplayDelayMillis(0L));
+
+        store.receive(506L, 77L, "77", "hello");
+        store.admit(506L);
+        assertFalse(TelegramWebhookController.deferDeliveryForFloodControl(store.find(506L), flood),
+                "without an admitted Objective the interaction answer is not deferred");
+        assertFalse(TelegramWebhookController.deferDeliveryForFloodControl(store.find(505L),
+                new IllegalStateException("telegram_send_failed:telegram_error=400:Bad Request")));
+    }
+
+    @Test
+    void recentFloodControlDeadLettersWithAnObjectiveAreRevivedForDelivery() {
+        TelegramIngressReceiptStore store = new TelegramIngressReceiptStore(tempDir.resolve("revive.json"), new ObjectMapper());
+        IllegalStateException flood = new IllegalStateException(
+                "telegram_send_failed:telegram_error=429:Too Many Requests: retry after 10879 (local flood-control gate)");
+        store.receive(601L, 77L, "77", "build it");
+        store.admit(601L);
+        store.claim(601L, 1);
+        store.accepted(601L, "objective:case-flood");
+        store.failed(601L, flood, 1);
+        store.receive(602L, 77L, "77", "other");
+        store.admit(602L);
+        store.claim(602L, 1);
+        store.accepted(602L, "objective:case-other");
+        store.failed(602L, new IllegalStateException("telegram_send_failed:telegram_error=400:Bad Request"), 1);
+        assertEquals(TelegramIngressReceiptStore.Status.DEAD_LETTER, store.find(601L).status());
+
+        assertEquals(0, store.reviveFloodControlDeadLetters(System.currentTimeMillis() + 60_000L),
+                "dead letters older than the revival window stay retained");
+        assertEquals(1, store.reviveFloodControlDeadLetters(0L));
+        assertEquals(TelegramIngressReceiptStore.Status.ACCEPTED, store.find(601L).status());
+        assertEquals(TelegramIngressReceiptStore.Status.DEAD_LETTER, store.find(602L).status());
+
+        TelegramIngressReceiptStore reloaded = new TelegramIngressReceiptStore(tempDir.resolve("revive.json"), new ObjectMapper());
+        assertEquals(TelegramIngressReceiptStore.Status.ACCEPTED, reloaded.find(601L).status(), "revival is durable");
+    }
 }
