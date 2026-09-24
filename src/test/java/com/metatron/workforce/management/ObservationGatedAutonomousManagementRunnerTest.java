@@ -144,6 +144,75 @@ class ObservationGatedAutonomousManagementRunnerTest {
                         + "not just the generic \"observation-failed\" verdict name");
     }
 
+    @Test
+    void governedResumeOfAnObservationInconclusiveBlockGrantsAFreshBoundedObservationBudget() {
+        // Production incident (2026-09-24, case build-and-deliver "Metatron Workforce Control Center"):
+        // delivery genuinely succeeded (PR published) but Observation exhausted its bounded attempts on a
+        // transient condition and BLOCKED observation-inconclusive. Resuming could never recover it: the
+        // exhausted attempt count is durable, so the next pass re-derived INCONCLUSIVE and re-blocked
+        // without observing anything at all.
+        Instant now = Instant.parse("2026-09-24T02:34:48Z");
+        Clock clock = Clock.fixed(now, ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger observations = new AtomicInteger();
+        com.metatron.workforce.observation.ObservationVerifier transientThenRecovered =
+                new com.metatron.workforce.observation.ObservationVerifier() {
+                    @Override public boolean supports(ObservationRequirement requirement) { return true; }
+                    @Override public java.util.Optional<ObservationReport> observe(
+                            ObservationRequirement requirement, List<String> evidence, Instant at) {
+                        int call = observations.incrementAndGet();
+                        Instant observedAt = at.plusSeconds(call);
+                        boolean recovered = call > ObservationClosureService.MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS;
+                        return java.util.Optional.of(new ObservationReport(
+                                "report-" + call, requirement.requirementId(), requirement.objectiveId(),
+                                requirement.target(),
+                                recovered ? "fresh GitHub reads prove the reviewable proposal"
+                                        : "GitHub verification failed: IllegalStateException: GitHub observation HTTP 403",
+                                "authoritative-github-api-read", observedAt, observedAt,
+                                List.of("observation:evidence:" + call), recovered ? 0.99 : 0.0,
+                                recovered ? ObservationReport.Quality.HIGH : ObservationReport.Quality.INSUFFICIENT,
+                                "", recovered ? ObservationReport.CriterionResult.PASS
+                                        : ObservationReport.CriterionResult.INCONCLUSIVE));
+                    }
+                };
+        ObservationClosureService observation = new ObservationClosureService(
+                new InMemoryObservationStateStore(), List.of(transientThenRecovered));
+
+        AutonomousExecutionCapability capability = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.audit.read"; }
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                return new CapabilityResult(true, "worker-auditor", "assignment-observation",
+                        "work-observation", List.of("execution:evidence:success"), "PASS");
+            }
+        };
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, request, available) -> request.executionWorkPlan(),
+                List.of(capability), coordination, observation, clock,
+                "runner-observation-resume", Duration.ofMinutes(5), Duration.ofSeconds(5), 2);
+        HumanObjectiveIngressService ingress = new HumanObjectiveIngressService(
+                management, List.of(capability), runner, "worker-head", clock);
+        var receipt = ingress.submit("human-primary", "org-metatron", "case-observation-resume",
+                "conversation-observation-resume", "telegram:update:observation-resume", "telegram", request());
+
+        for (int pass = 0; pass < ObservationClosureService.MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS; pass++) {
+            runner.runOnce();
+        }
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get(receipt.objectiveId()).status());
+        assertEquals(ObservationClosureService.Verdict.INCONCLUSIVE, observation.verdict(receipt.objectiveId()));
+
+        ManagementObjective blocked = management.get(receipt.objectiveId());
+        management.resumeObjective(receipt.objectiveId(), blocked.ownerWorkerId(),
+                "control-resume:actor=human-primary:authority=test", now);
+        runner.runOnce();
+
+        assertEquals(ObservationClosureService.MAX_AUTONOMOUS_OBSERVATION_ATTEMPTS + 1, observations.get(),
+                "the resumed pass must actually re-observe instead of re-blocking on the stale exhausted count");
+        assertEquals(ObservationClosureService.Verdict.PASSED, observation.verdict(receipt.objectiveId()));
+        assertEquals(ManagementObjective.Status.COMPLETED, management.get(receipt.objectiveId()).status());
+    }
+
     private static NormalizedRequest request() {
         ExecutionWorkSpec step = new ExecutionWorkSpec(
                 "step-1", "Audit repository", "kelvinka38/metatron-workforce", "test.audit.read",
