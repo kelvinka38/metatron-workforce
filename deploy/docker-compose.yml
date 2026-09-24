@@ -115,10 +115,10 @@ services:
       METATRON_COGNITION_CAPACITY_EVENT_PATH: "${METATRON_COGNITION_CAPACITY_EVENT_PATH:-/var/lib/metatron-workforce/cognition-capacity-events.jsonl}"
       METATRON_COGNITION_URL: "${METATRON_COGNITION_URL:-http://metatron-cognition-node:8091}"
       METATRON_COGNITION_AUTH: "${METATRON_COGNITION_AUTH:-}"
-      METATRON_COGNITION_HTTP_TIMEOUT_MS: "${METATRON_COGNITION_HTTP_TIMEOUT_MS:-660000}"
+      METATRON_COGNITION_HTTP_TIMEOUT_MS: "${METATRON_CPU_COGNITION_HTTP_TIMEOUT_MS:-660000}"
       METATRON_COGNITION_MAX_CONCURRENT: "${METATRON_COGNITION_MAX_CONCURRENT:-1}"
       METATRON_COGNITION_MAX_QUEUED: "${METATRON_COGNITION_MAX_QUEUED:-2}"
-      METATRON_COGNITION_QUEUE_WAIT_MS: "${METATRON_COGNITION_QUEUE_WAIT_MS:-660000}"
+      METATRON_COGNITION_QUEUE_WAIT_MS: "${METATRON_CPU_COGNITION_QUEUE_WAIT_MS:-660000}"
       METATRON_AUTONOMY_NODE_EXECUTION_TIMEOUT_MS: "${METATRON_AUTONOMY_NODE_EXECUTION_TIMEOUT_MS:-7200000}"
       METATRON_AUTONOMY_MAX_DURATION_SECONDS: "${METATRON_AUTONOMY_MAX_DURATION_SECONDS:-21600}"
       METATRON_TELEGRAM_INGRESS_PATH: "${METATRON_TELEGRAM_INGRESS_PATH:-/var/lib/metatron-workforce/telegram-ingress-state.json}"
@@ -177,6 +177,41 @@ services:
       gateway:
         aliases:
           - ${METATRON_WORKFORCE_GATEWAY_ALIAS:-workforce-production}
+
+  # Metatron-owned Worker cognition front door (Ollama primary, free-tier Gemini fallback; no credit-billed
+  # provider). Profile-gated: only the production deploy (scripts/highway-tasks/workforce-deploy.sh) enables it,
+  # so parallel acceptance lanes that `up` this file never start or replace the single production node.
+  cognition-node:
+    profiles: ["production-cognition"]
+    build:
+      context: ./cognition-node
+      dockerfile: Dockerfile
+      args:
+        METATRON_COGNITION_REVISION: "${METATRON_COMMIT_SHA:-unknown}"
+    image: metatron-cognition-node:${METATRON_IMAGE_TAG:-0.1.0}
+    container_name: metatron-cognition-node
+    restart: unless-stopped
+    expose:
+      - "8091"
+    environment:
+      METATRON_COGNITION_AUTH: "${METATRON_COGNITION_AUTH:-}"
+      METATRON_COGNITION_REVISION: "${METATRON_COMMIT_SHA:-unknown}"
+      OLLAMA_URL: "${METATRON_CPU_COGNITION_OLLAMA_URL:-http://metatron-ollama:11434}"
+      OLLAMA_MODEL: "${METATRON_CPU_COGNITION_OLLAMA_MODEL:-qwen3:4b}"
+      OLLAMA_NUM_CTX: "${METATRON_CPU_COGNITION_OLLAMA_NUM_CTX:-8192}"
+      OLLAMA_TIMEOUT_MS: "${METATRON_CPU_COGNITION_OLLAMA_TIMEOUT_MS:-600000}"
+      METATRON_COGNITION_TOTAL_TIMEOUT_MS: "${METATRON_CPU_COGNITION_TOTAL_TIMEOUT_MS:-630000}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-3.6-flash}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      gateway:
 
 volumes:
   workforce-state:
