@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CognitiveWorkerFailureRecoveryTest {
@@ -193,6 +194,49 @@ class CognitiveWorkerFailureRecoveryTest {
         assertTrue(outcome.summary().contains("npm ERR! 404"),
                 "the real npm error must be visible in the durable failure summary -- a Human reading the "
                         + "BLOCKED reason must be able to see WHY it failed, not just THAT it failed twice");
+    }
+
+    @Test
+    void circuitBreakerSummaryAlsoNamesTheEarlierDistinctFailureThatStartedTheLoop() {
+        // Production 2026-09-24 (case-9371b421 VERIFY): the breaker reported only the repeated malformed
+        // tasksJson; the earlier, different failure that sent cognition into that loop was never visible.
+        ActionFabric fabric = new ActionFabric(List.of(
+                action("workspace.dependencies.install", request -> new ActionFabric.ActionObservation(
+                        "workspace.dependencies.install", false, "sandbox command failed",
+                        Map.of("exitCode", "1", "output", "npm ERR! code ECONNREFUSED registry unreachable"),
+                        List.of("worker-sandbox:executable=npm:exit=1"), java.time.Instant.now())),
+                action("workspace.build.run", request -> new ActionFabric.ActionObservation(
+                        "workspace.build.run", false, "invalid build input",
+                        Map.of("error", "action-input-type:key=tasksJson"), List.of(), java.time.Instant.now()))));
+        CognitiveWorkerRuntime runtime = new CognitiveWorkerRuntime(fabric, ActionJournal.noop(), 20);
+        ExecutionWorkSpec work = new ExecutionWorkSpec(
+                "step-verify", "verify the application", "fixture", "test.recovery",
+                List.of(), ExecutionWorkSpec.Consequence.READ_ONLY,
+                List.of("build succeeds"), List.of("build evidence"));
+        AtomicInteger cycles = new AtomicInteger();
+
+        CognitiveWorkerRuntime.Outcome outcome = runtime.execute(
+                WORKER, "assignment-verify", AUTH, "objective-verify", work, "verify-key",
+                new CognitiveWorkerRuntime.Brain() {
+                    @Override
+                    public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+                        return cycles.getAndIncrement() == 0
+                                ? new CognitiveWorkerRuntime.Thought("workspace.dependencies.install", Map.of(), "install")
+                                : new CognitiveWorkerRuntime.Thought("workspace.build.run",
+                                        Map.of("tasksJson", "build"), "build");
+                    }
+
+                    @Override
+                    public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                      ActionFabric.ActionObservation observation) {
+                        return CognitiveWorkerRuntime.Reflection.continueWith("keep going");
+                    }
+                });
+
+        assertFalse(outcome.success());
+        assertTrue(outcome.summary().contains("Earliest distinct failure in this step: cycle 1 workspace.dependencies.install"),
+                outcome.summary());
+        assertTrue(outcome.summary().contains("ECONNREFUSED"), outcome.summary());
     }
 
     private static ActionFabric.Action action(

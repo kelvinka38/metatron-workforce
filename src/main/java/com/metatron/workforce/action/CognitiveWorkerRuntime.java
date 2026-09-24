@@ -195,7 +195,8 @@ public final class CognitiveWorkerRuntime {
                         "Deterministic action " + thought.actionRef()
                                 + " failed identically twice with no intervening state change; "
                                 + "bounded retry exhausted, a repair or Human diagnosis is required. "
-                                + "Last failure detail: " + diagnosticExcerpt(history.get(history.size() - 1).observation()));
+                                + "Last failure detail: " + diagnosticExcerpt(history.get(history.size() - 1).observation())
+                                + earliestDistinctFailure(history, thought));
                 Cycle cycle = new Cycle(cycleNumber, thought, blocked, breakerReflection);
                 history.add(cycle);
                 evidence.addAll(blocked.evidenceReferences());
@@ -310,6 +311,22 @@ public final class CognitiveWorkerRuntime {
     /** A bounded, diagnosable excerpt of what an action actually failed with, preferring a sandboxed
      * command's real captured output (the tail, where the actual error line usually is) over the
      * generic summary any caller can otherwise only see as "sandbox command failed". */
+    /**
+     * The repeated failure is often only a symptom (production 2026-09-24: a malformed tasksJson repeated
+     * after an earlier, different build/install failure that was never visible). Name the earliest failure
+     * in this step whose action or inputs differ from the repeated one, so the root cause is diagnosable.
+     */
+    private static String earliestDistinctFailure(List<Cycle> history, Thought repeated) {
+        for (Cycle cycle : history) {
+            if (cycle.observation().success()) continue;
+            if (cycle.thought().actionRef().equals(repeated.actionRef())
+                    && cycle.thought().inputs().equals(repeated.inputs())) continue;
+            return " Earliest distinct failure in this step: cycle " + cycle.number() + " "
+                    + cycle.thought().actionRef() + ": " + diagnosticExcerpt(cycle.observation());
+        }
+        return "";
+    }
+
     private static String diagnosticExcerpt(ActionFabric.ActionObservation observation) {
         String output = observation.outputs().getOrDefault("output", "");
         String detail = output.isBlank() ? observation.summary() : output;

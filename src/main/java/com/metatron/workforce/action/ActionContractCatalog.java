@@ -131,6 +131,54 @@ public final class ActionContractCatalog {
         return Map.of("inputs", Map.copyOf(inputs), "purpose", contract.purpose());
     }
 
+    /**
+     * Repairs the one provider-output shape mismatch that deterministically fails validation: a
+     * JSON_STRING_ARRAY input written as a bare string ("build") or a JSON array of non-strings. Production
+     * 2026-09-24 (case-9371b421 VERIFY) and 2026-09-22 both reached the repeated-failure circuit breaker only
+     * because the model wrote tasksJson/argsJson as a plain string. A bare string becomes a one-element
+     * array, array items become strings, and a blank optional array is dropped (its default applies).
+     * Everything else is left untouched for {@link #validate} to judge; this never adds keys or authority.
+     */
+    public static Map<String, String> normalizeProviderInputs(String actionRef, Map<String, String> suppliedInputs) {
+        Contract contract = contractFor(actionRef);
+        if (!contract.strictInputs() || suppliedInputs == null || suppliedInputs.isEmpty()) {
+            return suppliedInputs == null ? Map.of() : suppliedInputs;
+        }
+        Map<String, String> out = new LinkedHashMap<>(suppliedInputs);
+        for (Map.Entry<String, InputSpec> entry : contract.inputs().entrySet()) {
+            String key = entry.getKey();
+            if (entry.getValue().type() != InputType.JSON_STRING_ARRAY || !out.containsKey(key)) continue;
+            String value = out.get(key);
+            if (value == null) continue;
+            if (value.isBlank()) {
+                if (!entry.getValue().required()) out.remove(key);
+                continue;
+            }
+            JsonNode parsed;
+            try {
+                parsed = JSON.readTree(value);
+            } catch (Exception notJson) {
+                parsed = null;
+            }
+            try {
+                if (parsed != null && parsed.isArray()) {
+                    java.util.List<String> items = new java.util.ArrayList<>();
+                    for (JsonNode item : parsed) {
+                        if (item.isContainerNode()) { items = null; break; }
+                        items.add(item.isTextual() ? item.textValue() : item.asText());
+                    }
+                    if (items != null) out.put(key, JSON.writeValueAsString(items));
+                } else if (parsed == null || parsed.isValueNode()) {
+                    String single = parsed != null && parsed.isTextual() ? parsed.textValue() : value.trim();
+                    out.put(key, JSON.writeValueAsString(java.util.List.of(single)));
+                }
+            } catch (Exception impossible) {
+                throw new IllegalStateException("cannot serialize normalized action input", impossible);
+            }
+        }
+        return Map.copyOf(out);
+    }
+
     public static void validate(String actionRef, Map<String, String> suppliedInputs) {
         Contract contract = contractFor(actionRef);
         if (!contract.strictInputs()) return;
