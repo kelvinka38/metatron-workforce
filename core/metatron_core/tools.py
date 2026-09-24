@@ -289,6 +289,19 @@ class Workspace:
                   auth=True)
         return branch
 
+    def change_summary(self) -> str:
+        """Files the PR changes, one line each with +/- counts (for the founder's report)."""
+        try:
+            stat = self._git("diff", "--numstat", self.base_sha, "HEAD", as_agent=True)
+        except RuntimeError:
+            return ""
+        lines = []
+        for row in stat.splitlines()[:20]:
+            added, removed, path = (row.split("\t") + ["", "", ""])[:3]
+            lines.append(f"• {path} (+{added} −{removed})")
+        more = len(stat.splitlines()) - 20
+        return "\n".join(lines) + (f"\n• … and {more} more files" if more > 0 else "")
+
     def open_pull_request(self, title: str, body: str) -> str:
         branch = self.publish_branch(title)
         if self.left_out:

@@ -824,5 +824,17 @@ class NoRepoNoSilentSuccess(unittest.TestCase):
             self.assertIn("not in a GitHub repo", sent[-1])
 
 
+class ChangeSummary(unittest.TestCase):
+    def test_lists_changed_files_with_counts(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws, _ = Publish()._workspace(d)
+            ws.write_file("repo/app.py", "print(1)\nprint(2)\n")
+            ws.run("cd repo && echo b >> f.txt")
+            ws.publish_branch("t")
+            summary = ws.change_summary()
+            self.assertIn("• app.py (+2 −0)", summary)
+            self.assertIn("• f.txt (+1 −0)", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

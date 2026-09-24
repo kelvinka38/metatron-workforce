@@ -135,7 +135,13 @@ def process(task: dict) -> None:
             send(chat, f"📬 Task #{tid}: PR opened, checking its CI before you approve\n{url}")
             ci = follow_ci(tid, chat, task, ws, agent, should_stop, audit, title)
             store.update(tid, status="awaiting_approval")
-            send(chat, f"✅ Task #{tid} done — {ci}\n{url}\n\n{out['summary']}\n\n"
+            files = ws.change_summary()
+            repo_url = f"https://github.com/{ws.repo}"
+            send(chat, f"✅ Task #{tid} done — {ci}\n\n"
+                       f"📝 What was done:\n{out['summary']}\n\n"
+                       f"📂 Files changed:\n{files or '(see the PR)'}\n\n"
+                       f"🔗 Pull request (view the code and diff): {url}\n"
+                       f"📦 Repo: {repo_url}\n\n"
                        f"Reply /approve {tid} to merge, /reject {tid} to leave it open.")
             return
     if out.get("open_pr") and not ws.repo:
