@@ -111,6 +111,11 @@ rollback() {
   METATRON_IMAGE_TAG="$PREVIOUS_TAG" METATRON_COMMIT_SHA="$PREVIOUS_SHA" \
     docker compose -p "$PROJECT" -f "$COMPOSE" up -d --no-build --force-recreate --no-deps workforce || true
   docker compose -p "$PROJECT" -f "$COMPOSE" stop workforce-sandbox >/dev/null 2>&1 || true
+  # Never leave Workforce without a Cognition Node: if the candidate node image exists, keep one running.
+  if docker image inspect "metatron-cognition-node:$SHA" >/dev/null 2>&1; then
+    METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" \
+      docker compose -p "$PROJECT" -f "$COMPOSE" --profile production-cognition up -d --no-build --no-deps cognition-node || true
+  fi
 }
 trap rollback ERR
 
@@ -119,7 +124,7 @@ bounded_storage_gc() {
   local removed=0 kept=0 ref repo
   local used_images
   used_images="$(docker ps -a --format '{{.Image}}')"
-  for repo in metatron-workforce metatron-workforce-sandbox; do
+  for repo in metatron-workforce metatron-workforce-sandbox metatron-cognition-node; do
     kept=0
     while IFS= read -r ref; do
       [ -n "$ref" ] || continue
@@ -135,15 +140,24 @@ bounded_storage_gc() {
 }
 bounded_storage_gc
 
-echo '=== BUILD EXACT TESTED WORKFORCE + SANDBOX IMAGES ==='
+echo '=== BUILD EXACT TESTED WORKFORCE + SANDBOX + COGNITION NODE IMAGES ==='
 METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" \
-  docker compose -p "$PROJECT" -f "$COMPOSE" build workforce workforce-sandbox
+  docker compose -p "$PROJECT" -f "$COMPOSE" --profile production-cognition build workforce workforce-sandbox cognition-node
 docker image inspect "metatron-workforce:$SHA" >/dev/null
 docker image inspect "metatron-workforce-sandbox:$SHA" >/dev/null
+docker image inspect "metatron-cognition-node:$SHA" >/dev/null
+
+# One-time adoption: the Cognition Node used to be a hand-run container outside this pipeline. Replace any
+# same-named container this compose project does not own, so every later deploy rolls it like Workforce.
+LEGACY_COGNITION=$(docker ps -aq --filter 'name=^/metatron-cognition-node$')
+if [ -n "$LEGACY_COGNITION" ] && [ "$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$LEGACY_COGNITION")" != "$PROJECT" ]; then
+  echo 'COGNITION_NODE_LEGACY_CONTAINER=ADOPTED'
+  docker rm -f "$LEGACY_COGNITION" >/dev/null
+fi
 
 echo '=== DEPLOY EXACT TESTED STACK ==='
 METATRON_IMAGE_TAG="$SHA" METATRON_COMMIT_SHA="$SHA" \
-  docker compose -p "$PROJECT" -f "$COMPOSE" up -d --no-build --force-recreate workforce-sandbox workforce
+  docker compose -p "$PROJECT" -f "$COMPOSE" --profile production-cognition up -d --no-build --force-recreate workforce-sandbox cognition-node workforce
 
 echo '=== VERIFY WORKFORCE CONTAINER ==='
 CID=$(docker compose -p "$PROJECT" -f "$COMPOSE" ps -q workforce)
@@ -182,6 +196,24 @@ for forbidden in GITHUB_TOKEN OPENAI_API_KEY GEMINI_API_KEY ANTHROPIC_API_KEY TE
 done
 docker exec "$CID" sh -c 'wget -qO- --timeout=5 http://workforce-sandbox:8090/health' | grep -q '"status":"UP"'
 
+echo '=== VERIFY COGNITION NODE ==='
+test "$(docker inspect metatron-cognition-node --format '{{.Config.Image}}')" = "metatron-cognition-node:$SHA"
+COGNITION_ENV=$(docker inspect metatron-cognition-node --format '{{range .Config.Env}}{{println .}}{{end}}')
+for forbidden in OPENAI_API_KEY ANTHROPIC_API_KEY GITHUB_TOKEN TELEGRAM_BOT_TOKEN; do
+  if printf '%s\n' "$COGNITION_ENV" | grep -q "^${forbidden}="; then
+    echo "cognition node received forbidden credential: $forbidden" >&2
+    exit 1
+  fi
+done
+COGNITION_HEALTH=""
+for i in $(seq 1 30); do
+  COGNITION_HEALTH=$(docker exec "$CID" sh -c 'wget -qO- --timeout=5 http://metatron-cognition-node:8091/healthz' 2>/dev/null || true)
+  printf '%s' "$COGNITION_HEALTH" | grep -q "\"revision\":\"$SHA\"" && break
+  sleep 2
+done
+printf '%s' "$COGNITION_HEALTH" | grep -q "\"revision\":\"$SHA\""
+echo "COGNITION_NODE_HEALTH=$COGNITION_HEALTH"
+
 echo '=== LOCAL HEALTH ==='
 curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:8080/actuator/health | grep -q '"status":"UP"'
 
@@ -194,5 +226,6 @@ trap - ERR
 echo "PRODUCTION_SHA=$SHA"
 echo "PRODUCTION_IMAGE=metatron-workforce:$SHA"
 echo "SANDBOX_IMAGE=metatron-workforce-sandbox:$SHA"
+echo "COGNITION_NODE_IMAGE=metatron-cognition-node:$SHA"
 echo "DEPLOY_SECONDS=$ELAPSED"
 echo 'PRODUCTION_DEPLOY=PASS'

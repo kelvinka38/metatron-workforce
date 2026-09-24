@@ -301,3 +301,18 @@ test('default Ollama model and context fit the CPU-only 8 GB host', async () => 
   assert.equal(body.model, 'qwen3:4b');
   assert.equal(body.options.num_ctx, 8192);
 });
+
+test('default timeouts fit CPU-only local inference and stay inside the Workforce caller budget', () => {
+  const originalEnv = { ...process.env };
+  delete process.env.OLLAMA_TIMEOUT_MS;
+  delete process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS;
+  try {
+    const c = configFromEnv();
+    assert.equal(c.ollamaTimeoutMs, 600000);
+    assert.equal(c.totalTimeoutMs, 630000);
+    assert.ok(c.ollamaTimeoutMs < c.totalTimeoutMs && c.totalTimeoutMs < 660000,
+      'Ollama < node total < Workforce METATRON_COGNITION_HTTP_TIMEOUT_MS (660000)');
+  } finally {
+    process.env = originalEnv;
+  }
+});

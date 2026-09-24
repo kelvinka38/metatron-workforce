@@ -15,8 +15,8 @@ longer Worker prompts). Size it to free host memory: the KV cache grows with the
 
 The node treats one cognition request as a single bounded transaction:
 
-- `METATRON_COGNITION_TOTAL_TIMEOUT_MS=210000`
-- `OLLAMA_TIMEOUT_MS=150000`
+- `METATRON_COGNITION_TOTAL_TIMEOUT_MS=630000`
+- `OLLAMA_TIMEOUT_MS=600000`
 - `FRONTIER_PROVIDER_TIMEOUT_MS=18000`
 - `COGNITION_MAX_OUTPUT_TOKENS=256`
 - `OLLAMA_NUM_CTX=8192`
@@ -69,8 +69,9 @@ fallback smoke may be run only against a separate canary Cognition Node by overr
 
 ## Deployment ordering
 
-Deploy Workforce first with `METATRON_COGNITION_HTTP_TIMEOUT_MS=240000`, then deploy the Cognition
-Node. This ensures the Java caller remains alive longer than the Node's 210-second total deadline.
+Deploy Workforce first with `METATRON_COGNITION_HTTP_TIMEOUT_MS=660000`, then deploy the Cognition
+Node. This ensures the Java caller remains alive longer than the Node's 630-second total deadline
+(sized for CPU-only qwen3:4b: ~55 prompt tokens/s, ~11 output tokens/s).
 
 For the current 4-vCPU / 8-GB host, start with one concurrent cognition request. Queue sizing and wait
 time must be based on the measured production-shaped qwen benchmark rather than increased blindly.
