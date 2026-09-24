@@ -113,6 +113,54 @@ function postJsonWithoutHiddenDeadline(url, payload, timeoutMs, provider) {
   });
 }
 
+const JSON_TEMPLATE_MARKER = 'Return ONLY JSON:';
+
+// Derives a JSON schema from the Worker instructions' own output template, e.g.
+// {"actionRef":"...","inputs":{"key":"value"},"rationale":"..."} or {"decision":"CONTINUE|COMPLETE|FAILED",...}.
+// Every template key becomes required; string placeholders become strings, a pipe-separated upper-case
+// placeholder becomes an enum, and an object placeholder becomes a string-valued map. Returns null when the
+// prompt carries no parseable template, so the caller falls back to plain JSON mode.
+function outputSchemaFromPrompt(prompt) {
+  const text = String(prompt || '');
+  const marker = text.lastIndexOf(JSON_TEMPLATE_MARKER);
+  if (marker < 0) return null;
+  const start = text.indexOf('{', marker);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let end = -1;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) { end = i; break; }
+  }
+  if (end < 0) return null;
+  let template;
+  try {
+    template = JSON.parse(text.slice(start, end + 1));
+  } catch (_invalid) {
+    return null;
+  }
+  if (!template || typeof template !== 'object' || Array.isArray(template)) return null;
+  const properties = {};
+  for (const [key, example] of Object.entries(template)) {
+    if (example && typeof example === 'object' && !Array.isArray(example)) {
+      properties[key] = { type: 'object', additionalProperties: { type: 'string' } };
+    } else if (typeof example === 'string' && /^[A-Z][A-Z_]*(\|[A-Z][A-Z_]*)+$/.test(example)) {
+      properties[key] = { type: 'string', enum: example.split('|') };
+    } else {
+      properties[key] = { type: 'string' };
+    }
+  }
+  const keys = Object.keys(properties);
+  if (keys.length === 0) return null;
+  return { type: 'object', properties, required: keys };
+}
+
 async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   const base = process.env.OLLAMA_URL || 'http://metatron-ollama:11434';
   const model = process.env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
@@ -120,7 +168,8 @@ async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   if (cfg.ollamaNumCtx > 0) options.num_ctx = cfg.ollamaNumCtx;
   const body = { model, prompt, stream: false, options };
   if (cfg.ollamaThink !== undefined) body.think = cfg.ollamaThink;
-  if (cfg.ollamaJsonFormat) body.format = 'json';
+  if (cfg.ollamaJsonSchema) body.format = cfg.ollamaJsonSchema;
+  else if (cfg.ollamaJsonFormat) body.format = 'json';
   const r = await postJsonWithoutHiddenDeadline(base + '/api/generate', body, timeoutMs, 'ollama');
   if (r.status < 200 || r.status >= 300) throw classifiedError('http_' + r.status, 'ollama_http_' + r.status);
   let data;
@@ -198,9 +247,18 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
       // thinking off, qwen3:4b sometimes answered in prose ("We are given a complex objective ...") and the
       // step failed with "cognitive provider returned no JSON object" (production 2026-09-24, case-394285d9
       // PREPARE). Ollama's JSON mode constrains decoding to a valid JSON value.
+      // JSON mode alone still let qwen3:4b return valid JSON without the required keys ("cognitive response
+      // missing actionRef", production 2026-09-24, case-eff6d8e2 PRODUCE x3). When the Worker instructions carry
+      // their code-owned "Return ONLY JSON: {...}" template, Ollama gets that shape as a JSON schema so decoding
+      // is constrained to exactly those keys.
       const workerCognition = name === 'ollama' && requestOptions.capability === 'worker.cognition';
       const providerConfig = workerCognition
-        ? { ...cfg, ollamaThink: cfg.ollamaThink === undefined ? false : cfg.ollamaThink, ollamaJsonFormat: true }
+        ? {
+          ...cfg,
+          ollamaThink: cfg.ollamaThink === undefined ? false : cfg.ollamaThink,
+          ollamaJsonFormat: true,
+          ollamaJsonSchema: outputSchemaFromPrompt(prompt),
+        }
         : cfg;
       const result = await fn(prompt, timeoutMs, providerConfig);
       if (!result.text) throw classifiedError('empty_response', name + '_empty_response');
@@ -297,6 +355,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  outputSchemaFromPrompt,
   postJsonWithoutHiddenDeadline,
   boundedFetch,
   buildPrompt,

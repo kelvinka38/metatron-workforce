@@ -8,6 +8,7 @@ const {
   callOllama,
   configFromEnv,
   createServer,
+  outputSchemaFromPrompt,
   providerList,
   runProviderChain,
 } = require('./server');
@@ -404,4 +405,42 @@ test('worker.cognition asks Ollama for JSON mode; other capabilities do not', as
   }
   assert.equal(bodies[0].format, 'json');
   assert.equal(Object.hasOwn(bodies[1], 'format'), false);
+});
+
+test('worker cognition sends the instructions\' own JSON template to Ollama as a required-keys schema', async () => {
+  // Production 2026-09-24 (case-eff6d8e2): JSON mode alone let qwen3:4b return valid JSON without actionRef,
+  // and PRODUCE failed three times with "cognitive response missing actionRef".
+  const selection = 'COGNITIVE INSTRUCTIONS\nChoose one action.\n'
+    + 'Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.\n';
+  const reflection = 'Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"evidence-based result"}.';
+
+  assert.deepEqual(outputSchemaFromPrompt(selection), {
+    type: 'object',
+    properties: {
+      actionRef: { type: 'string' },
+      inputs: { type: 'object', additionalProperties: { type: 'string' } },
+      rationale: { type: 'string' },
+    },
+    required: ['actionRef', 'inputs', 'rationale'],
+  });
+  assert.deepEqual(outputSchemaFromPrompt(reflection).properties.decision,
+    { type: 'string', enum: ['CONTINUE', 'COMPLETE', 'FAILED'] });
+  assert.equal(outputSchemaFromPrompt('no template here'), null);
+  assert.equal(outputSchemaFromPrompt('Return ONLY JSON: {not json}'), null);
+
+  let seenSchema;
+  await runProviderChain(selection, [['ollama', async (_p, _t, providerCfg) => {
+    seenSchema = providerCfg.ollamaJsonSchema;
+    return { text: '{}', model: 'qwen3:4b', inputTokens: 1, outputTokens: 1, endpointId: 'ollama' };
+  }]], cfg(), { capability: 'worker.cognition' });
+  assert.deepEqual(seenSchema.required, ['actionRef', 'inputs', 'rationale']);
+
+  const bodies = [];
+  const server = await fakeOllamaCapturing(bodies);
+  try {
+    await callOllama('p', 2000, cfg({ ollamaJsonFormat: true, ollamaJsonSchema: seenSchema }));
+  } finally {
+    await server.close();
+  }
+  assert.deepEqual(bodies[0].format, seenSchema, 'the schema, not bare "json", reaches Ollama');
 });
