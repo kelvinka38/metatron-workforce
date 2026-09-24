@@ -31,7 +31,10 @@ function configFromEnv() {
     // every Worker call. Ordering stays: Ollama 600 s < node total 630 s < Workforce HTTP 660 s.
     totalTimeoutMs: positiveInt(process.env.METATRON_COGNITION_TOTAL_TIMEOUT_MS, 630000),
     ollamaTimeoutMs: positiveInt(process.env.OLLAMA_TIMEOUT_MS, 600000),
-    frontierTimeoutMs: positiveInt(process.env.FRONTIER_PROVIDER_TIMEOUT_MS, 18000),
+    // Free-tier Gemini is tried first (Founder decision 2026-09-24): the whole Gemini phase, across all rotated
+    // models, is bounded so the local Ollama fallback still keeps most of the request budget.
+    frontierTimeoutMs: positiveInt(process.env.FRONTIER_PROVIDER_TIMEOUT_MS, 180000),
+    geminiModelTimeoutMs: positiveInt(process.env.GEMINI_MODEL_TIMEOUT_MS, 90000),
     // Default applied only when a request omits maxOutputTokens. Real Workforce callers (see
     // MetatronCognitionClient.Request/CognitiveOutputBudget) always send an explicit, request-aware
     // value; this default only covers callers of the raw HTTP contract that do not.
@@ -187,26 +190,60 @@ async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
   };
 }
 
-async function callGemini(prompt, timeoutMs, cfg = configFromEnv()) {
-  const key = process.env.GEMINI_API_KEY || '';
-  if (!key) throw classifiedError('not_configured', 'gemini_not_configured');
-  const model = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+const DEFAULT_GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+// Retryable on another free-tier model: rate limit, overload/server error, unknown model, timeout, network.
+// A 400/401/403 (bad request or key) would fail identically on every model, so it stops the rotation.
+const GEMINI_ROTATE_ON = new Set(['http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504', 'timeout', 'network_error', 'empty_response']);
+
+function geminiModels() {
+  const configured = String(process.env.GEMINI_MODELS || '').split(',').map((m) => m.trim()).filter(Boolean);
+  const primary = String(process.env.GEMINI_MODEL || '').trim();
+  const ordered = [...(primary ? [primary] : []), ...(configured.length ? configured : DEFAULT_GEMINI_MODELS)];
+  return [...new Set(ordered)];
+}
+
+async function callGeminiModel(model, key, prompt, timeoutMs, cfg) {
   const base = process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/models';
+  const generationConfig = { maxOutputTokens: cfg.maxOutputTokens };
+  if (cfg.jsonOutput) generationConfig.responseMimeType = 'application/json';
   const r = await boundedFetch(base + '/' + model + ':generateContent?key=' + encodeURIComponent(key), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: cfg.maxOutputTokens },
-    }),
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig }),
   }, timeoutMs, 'gemini');
   if (!r.ok) throw classifiedError('http_' + r.status, 'gemini_http_' + r.status);
   const data = await r.json();
-  const text = (data.candidates && data.candidates[0] && data.candidates[0].content
-    && data.candidates[0].content.parts && data.candidates[0].content.parts[0]
-    && data.candidates[0].content.parts[0].text) || '';
+  const parts = (data.candidates && data.candidates[0] && data.candidates[0].content
+    && data.candidates[0].content.parts) || [];
+  const text = parts.filter((part) => part && typeof part.text === 'string' && !part.thought)
+    .map((part) => part.text).join('');
+  if (!text) throw classifiedError('empty_response', 'gemini_empty_response');
   const usage = data.usageMetadata || {};
   return { text, model, inputTokens: usage.promptTokenCount || 0, outputTokens: usage.candidatesTokenCount || 0, endpointId: 'gemini' };
+}
+
+// Free-tier models share one key but have separate quotas and capacity, so a 429/503 on one model says
+// nothing about the next (metatron-core rotates the same way). Tries each configured model in order within
+// timeoutMs (the whole Gemini phase); each model attempt is bounded by geminiModelTimeoutMs.
+async function callGemini(prompt, timeoutMs, cfg = configFromEnv()) {
+  const key = process.env.GEMINI_API_KEY || '';
+  if (!key) throw classifiedError('not_configured', 'gemini_not_configured');
+  const phaseDeadline = performance.now() + Math.max(1, timeoutMs);
+  let lastFailure = classifiedError('not_configured', 'gemini_no_models');
+  for (const model of geminiModels()) {
+    const remaining = Math.floor(phaseDeadline - performance.now());
+    if (remaining <= 0) break;
+    const attemptMs = Math.max(1, Math.min(cfg.geminiModelTimeoutMs || remaining, remaining));
+    try {
+      return await callGeminiModel(model, key, prompt, attemptMs, cfg);
+    } catch (failure) {
+      lastFailure = failure;
+      const klass = failureClass(failure);
+      console.error('gemini_model_failed', model, klass);
+      if (!GEMINI_ROTATE_ON.has(klass)) throw failure;
+    }
+  }
+  throw lastFailure;
 }
 
 // Founder rule (2026-09-24): no LLM that requires paid credit. OpenAI and Anthropic are credit-billed and
@@ -214,10 +251,14 @@ async function callGemini(prompt, timeoutMs, cfg = configFromEnv()) {
 // WORKER_ORIGINATED_PAID_EXTERNAL_INFERENCE = 0 / "no paid frontier credentials in the Cognition Node"
 // contract (docs/ARCHITECTURE/INTELLIGENCE/12). Gemini stays only as a free-tier fallback and is skipped
 // when GEMINI_API_KEY is unset.
+// Founder decision (2026-09-24, revised): free provider first, local Ollama only when it is unavailable.
+// Free-tier Gemini (rotated across models) answers Worker cognition far faster and more reliably than
+// qwen3:4b on the 4-vCPU CPU-only host; Ollama remains the no-network, no-quota fallback. No credit-billed
+// provider is ever configured.
 function providerList() {
   return [
-    ['ollama', callOllama],
     ['gemini', callGemini],
+    ['ollama', callOllama],
   ];
 }
 
@@ -252,7 +293,9 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
       // their code-owned "Return ONLY JSON: {...}" template, Ollama gets that shape as a JSON schema so decoding
       // is constrained to exactly those keys.
       const workerCognition = name === 'ollama' && requestOptions.capability === 'worker.cognition';
-      const providerConfig = workerCognition
+      const providerConfig = name === 'gemini' && requestOptions.capability === 'worker.cognition'
+        ? { ...cfg, jsonOutput: true }
+        : workerCognition
         ? {
           ...cfg,
           ollamaThink: cfg.ollamaThink === undefined ? false : cfg.ollamaThink,
@@ -355,6 +398,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  geminiModels,
   outputSchemaFromPrompt,
   postJsonWithoutHiddenDeadline,
   boundedFetch,
