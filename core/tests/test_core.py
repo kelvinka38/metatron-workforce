@@ -11,7 +11,7 @@ from unittest import mock
 
 from metatron_core.agent import Agent, invalid_reply_hint, parse_action
 from metatron_core.llm import (FOREVER, EmptyReply, Gemini, LlmUnavailable, Provider, ProviderChain,
-                                cooldown_for, gemini_text, pick_flash_model)
+                                cooldown_for, flash_candidates, gemini_text, pick_flash_model)
 from metatron_core.store import Store
 from metatron_core.tools import Workspace, agent_uid_for
 
@@ -171,7 +171,7 @@ class Publish(unittest.TestCase):
     def test_agent_committed_work_is_published(self):
         with tempfile.TemporaryDirectory() as d:
             ws, upstream = self._workspace(d)
-            ws.run("echo b >> f.txt && git commit -qam 'agent commit'")
+            ws.run("cd repo && echo b >> f.txt && git commit -qam 'agent commit'")
             self.assertEqual(ws.publish_branch("t"), "metatron/task-5")
             log = subprocess.run(["git", "--git-dir", str(upstream), "log", "--format=%s", "metatron/task-5"],
                                  check=True, capture_output=True, text=True).stdout
@@ -180,7 +180,7 @@ class Publish(unittest.TestCase):
     def test_agent_hooks_do_not_run_on_publish(self):
         with tempfile.TemporaryDirectory() as d:
             ws, _ = self._workspace(d)
-            ws.run("mkdir -p h && printf '#!/bin/sh\\ntouch ../pwned\\n' > h/pre-push && chmod +x h/pre-push "
+            ws.run("cd repo && mkdir -p h && printf '#!/bin/sh\\ntouch ../pwned\\n' > h/pre-push && chmod +x h/pre-push "
                    "&& git config core.hooksPath h && echo c >> f.txt")
             ws.publish_branch("t")
             self.assertFalse((ws.dir / "pwned").exists())
@@ -587,6 +587,61 @@ class Report(unittest.TestCase):  # M3-3
             self.assertIn("Paid-provider calls: 0 ✅", text)
             app.store.audit(b, "llm", "[anthropic:claude] {}")
             self.assertIn("zero-cost rule broken", app.handle_text("42", "/report"))
+
+
+class GeminiQuota(unittest.TestCase):
+    MODELS = [_model("gemini-3.8-flash"), _model("gemini-3.5-flash"), _model("gemini-3.1-flash-lite"),
+              _model("gemini-flash-lite-latest")]
+
+    def _err(self, code, body):
+        return urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(body))
+
+    def test_candidates_order(self):
+        self.assertEqual(flash_candidates(self.MODELS),
+                         ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-flash-lite-latest"])
+
+    def test_daily_quota_moves_to_next_model(self):
+        g = Gemini("gemini", key="k", model="gemini-3.8-flash")
+        calls = []
+
+        def generate(messages, max_tokens):
+            calls.append(g.model)
+            if g.model == "gemini-3.8-flash":
+                raise self._err(429, b'{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}')
+            return "OK"
+
+        with mock.patch.object(g, "_generate", side_effect=generate), mock.patch("builtins.print"), \
+                mock.patch.object(g, "_list_models", return_value=self.MODELS):
+            self.assertEqual(g.complete([], 10), "OK")
+            self.assertEqual(calls, ["gemini-3.8-flash", "gemini-3.5-flash"])
+            calls.clear()
+            g.model = "gemini-3.8-flash"  # exhausted models are skipped until their quota is back
+            self.assertEqual(g.complete([], 10), "OK")
+            self.assertEqual(calls, ["gemini-3.8-flash", "gemini-3.5-flash"])
+
+    def test_per_minute_limit_is_left_to_the_chain(self):
+        g = Gemini("gemini", key="k", model="gemini-3.8-flash")
+        with mock.patch.object(g, "_generate", side_effect=self._err(429, b"GenerateRequestsPerMinute")):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                g.complete([], 10)
+        self.assertIn(b"PerMinute", ctx.exception.read())
+
+
+class RepeatedActions(unittest.TestCase):
+    def test_third_identical_call_gets_a_nudge(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 12, github_token="")
+            llm = ScriptedLlm([act("list_dir", path=".")] * 3 + [act("finish", summary="s", open_pr=False)])
+            Agent(llm, audit=lambda *a: None).run("x", ws)
+            self.assertNotIn("exact call 3 times", llm.seen[2])
+            self.assertIn("exact call 3 times", llm.seen[3])
+
+    def test_run_starts_in_the_workspace_root(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(Path(d), 13, github_token="")
+            (ws.dir / "repo").mkdir()
+            (ws.dir / "repo" / "x.txt").write_text("hi")
+            self.assertIn("hi", ws.run("cat repo/x.txt"))
 
 
 if __name__ == "__main__":

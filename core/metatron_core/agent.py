@@ -81,6 +81,7 @@ class Agent:
         messages = [Message("system", SYSTEM), Message("user", f"Task:\n{request}")]
         bad_replies = 0
         recent_tools: list[str] = []
+        recent_actions: list[str] = []
         for step in range(1, self.max_steps + 1):
             reason = should_stop() if should_stop else None
             if reason:
@@ -115,8 +116,12 @@ class Agent:
             result = self._call(ws, tool, args, allow_clone)
             self.audit("tool", f"{tool}({json.dumps(args)[:500]}) -> {result[:1500]}")
             recent_tools.append(tool)
+            recent_actions.append(json.dumps([tool, args], sort_keys=True))
             left = self.max_steps - step
             note = ""
+            if recent_actions[-8:].count(recent_actions[-1]) >= 3:
+                note = ("\n\n[You have made this exact call 3 times recently and it will give the same result. "
+                        "Do something different, or call finish and say what is blocking you.]")
             if 0 < left <= 3:
                 note = (f"\n\n[{left} step(s) left. Call finish now: say what you did, what you found, and "
                         "what you could not do. If the task cannot be done as asked, say why.]")

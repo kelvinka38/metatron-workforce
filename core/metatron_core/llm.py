@@ -16,6 +16,7 @@ the key or billing) disable that provider for the process lifetime.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -47,7 +48,7 @@ def cooldown_for(code: int, detail: str, retry_after: str | None) -> float:
     if code == 429:
         if retry_after and retry_after.strip().isdigit():
             return int(retry_after)
-        return 3600 if "perday" in detail.lower().replace(" ", "") else 60
+        return 3600 if is_daily_quota(detail) else 60
     return 120
 
 
@@ -90,20 +91,29 @@ def _split_system(messages):
 class Gemini(Provider):
     key: str = ""
     model: str = "gemini-2.5-flash"
+    exhausted: dict = field(default_factory=dict)  # model -> time it may be tried again
 
     def complete(self, messages, max_tokens):
-        try:
-            return self._generate(messages, max_tokens)
-        except urllib.error.HTTPError as e:
-            if e.code != 404:
-                raise
-            # Google retires model names; switch once to the newest stable Flash this key can use.
-            newest = pick_flash_model(self._list_models())
-            if not newest or newest == self.model:
-                raise
-            print(f"gemini: model {self.model} not found, switching to {newest}", flush=True)
-            self.model = newest
-            return self._generate(messages, max_tokens)
+        """Each free model has its own daily quota: on a retired model (404) or a used-up daily quota
+        (429 per day), move to the next free Flash model instead of giving up on Gemini."""
+        for _ in range(4):
+            try:
+                return self._generate(messages, max_tokens)
+            except urllib.error.HTTPError as e:
+                if e.code not in (404, 429):
+                    raise
+                body = e.read()
+                if e.code == 429 and not is_daily_quota(body.decode(errors="replace")):
+                    raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
+                self.exhausted[self.model] = time.time() + (6 * 3600 if e.code == 429 else FOREVER)
+                nxt = next((m for m in flash_candidates(self._list_models())
+                            if self.exhausted.get(m, 0) <= time.time()), "")
+                if not nxt:
+                    raise urllib.error.HTTPError(e.url, e.code, e.msg, e.hdrs, io.BytesIO(body)) from None
+                why = "not found" if e.code == 404 else "out of daily free quota"
+                print(f"gemini: model {self.model} {why}, switching to {nxt}", flush=True)
+                self.model = nxt
+        return self._generate(messages, max_tokens)
 
     def _generate(self, messages, max_tokens):
         system, rest = _split_system(messages)
@@ -129,16 +139,30 @@ class Gemini(Provider):
 
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
 _STABLE_FLASH = re.compile(r"gemini-(\d+(?:\.\d+)?)-flash")
+_STABLE_LITE = re.compile(r"gemini-(\d+(?:\.\d+)?)-flash-lite")
+
+
+def flash_candidates(models: list[dict]) -> list[str]:
+    """Free text models to try, best first: stable Flash newest first, then stable Flash-Lite, then aliases."""
+    names = [m.get("name", "").removeprefix("models/") for m in models
+             if "generateContent" in m.get("supportedGenerationMethods", [])]
+
+    def newest_first(pattern):
+        found = [(float(m.group(1)), n) for n in names if (m := pattern.fullmatch(n))]
+        return [n for _, n in sorted(found, reverse=True)]
+
+    aliases = [a for a in ("gemini-flash-latest", "gemini-flash-lite-latest") if a in names]
+    return newest_first(_STABLE_FLASH) + newest_first(_STABLE_LITE) + aliases
 
 
 def pick_flash_model(models: list[dict]) -> str:
     """Newest stable 'gemini-<version>-flash' that supports generateContent, else the flash alias."""
-    names = [m.get("name", "").removeprefix("models/") for m in models
-             if "generateContent" in m.get("supportedGenerationMethods", [])]
-    stable = [(float(m.group(1)), n) for n in names if (m := _STABLE_FLASH.fullmatch(n))]
-    if stable:
-        return max(stable)[1]
-    return "gemini-flash-latest" if "gemini-flash-latest" in names else ""
+    stable = [n for n in flash_candidates(models) if _STABLE_FLASH.fullmatch(n) or n == "gemini-flash-latest"]
+    return stable[0] if stable else ""
+
+
+def is_daily_quota(detail: str) -> bool:
+    return "perday" in detail.lower().replace(" ", "")
 
 
 def gemini_text(data: dict) -> str:

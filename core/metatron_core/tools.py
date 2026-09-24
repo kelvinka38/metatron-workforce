@@ -202,9 +202,9 @@ class Workspace:
     def run(self, command: str, timeout: int = 600) -> str:
         env = {k: os.environ[k] for k in SAFE_ENV_KEYS if k in os.environ}
         env["HOME"] = str(self.dir)
-        cwd = self.dir / "repo" if (self.dir / "repo").is_dir() else self.dir
         timeout = min(int(timeout), 1200)
-        proc = subprocess.Popen(["bash", "-lc", command], cwd=cwd, stdout=subprocess.PIPE,
+        # Same base as the file tools, so "repo/x.py" means the same file everywhere.
+        proc = subprocess.Popen(["bash", "-lc", command], cwd=self.dir, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, env=env, start_new_session=True,
                                 **self._as_agent())
         try:
@@ -290,6 +290,7 @@ list_dir(path)                     list a directory (paths are relative to the w
 read_file(path)                    read a file
 write_file(path, content)          create or overwrite a file
 replace_in_file(path, old, new)    replace one exact unique snippet in a file (prefer this for small edits)
-run(command, timeout?)             run a bash command inside ./repo (build, test, grep, git diff...)
+run(command, timeout?)             run a bash command in the workspace root, where the repo is ./repo:
+                                   use "cd repo && ..." for builds, tests, grep, git diff
 finish(summary, open_pr, pr_title?) end the task. open_pr=true publishes your changes as a pull request.
 """.strip()
