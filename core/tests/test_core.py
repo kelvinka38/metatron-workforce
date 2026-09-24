@@ -757,5 +757,28 @@ class ConflictAndRetry(unittest.TestCase):
             self.assertIn(f"as #{new['id']}", reply)
 
 
+class WebhookTakeover(unittest.TestCase):
+    def test_409_warns_founder_once_and_backs_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            app = _fresh_app(d)
+            conflict = urllib.error.HTTPError("u", 409, "Conflict", {}, io.BytesIO(b""))
+            sent, sleeps = [], []
+
+            def sleep(seconds):
+                sleeps.append(seconds)
+                if len(sleeps) == 2:
+                    raise KeyboardInterrupt  # end the endless loop
+
+            with mock.patch.object(app, "telegram", return_value={"result": {"username": "b"}}), \
+                    mock.patch.object(app, "poll_once", side_effect=conflict), \
+                    mock.patch.object(app, "send", lambda chat, text: sent.append((chat, text))), \
+                    mock.patch.object(app.time, "sleep", sleep), mock.patch("builtins.print"):
+                with self.assertRaises(KeyboardInterrupt):
+                    app.poll_loop("T")
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(sent[0][0], "42")
+            self.assertEqual(sleeps, [60, 60])
+
+
 if __name__ == "__main__":
     unittest.main()

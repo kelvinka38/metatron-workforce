@@ -370,9 +370,23 @@ def poll_loop(token: str) -> None:
     me = telegram("getMe", {}, token).get("result", {})
     print(f"telegram: polling as @{me.get('username', '?')}", flush=True)
     offset = 0
+    warned = False
     while True:
         try:
             offset = poll_once(offset, token)
+            warned = False
+        except urllib.error.HTTPError as e:
+            if e.code != 409:
+                print(f"telegram poll failed: HTTP {e.code}", flush=True)
+                time.sleep(5)
+                continue
+            # 409: someone set a webhook on this bot again (e.g. the old Workforce). Don't fight over it.
+            print("telegram: another system set a webhook on this bot; Core is not receiving messages", flush=True)
+            if not warned and ALLOWED_USER:
+                send(ALLOWED_USER, "⚠️ Another system took over this bot's webhook, so Core no longer receives "
+                                   "messages. Stop that system or roll back, then restart Core.")
+                warned = True
+            time.sleep(60)
         except Exception as e:
             print(f"telegram poll failed: {type(e).__name__}: {str(e).replace(token, '***')[:300]}", flush=True)
             time.sleep(5)
@@ -429,7 +443,8 @@ def main() -> None:
     threading.Thread(target=worker_loop, daemon=True, name="worker").start()
     core_bot = os.environ.get("CORE_TELEGRAM_BOT_TOKEN", "")
     if core_bot and os.environ.get("CORE_TELEGRAM_MODE", "poll") == "poll":
-        # Never the main bot's token here: deleteWebhook would cut off the old Workforce.
+        # Polling removes the bot's webhook. With the main bot's token this is the cutover (M3-2):
+        # the old Workforce stops receiving Telegram messages.
         threading.Thread(target=poll_loop, args=(core_bot,), daemon=True, name="telegram").start()
     port = int(os.environ.get("PORT", "8095"))
     print(f"metatron-core listening on :{port}, providers={[p.name for p in llm.providers]}", flush=True)
