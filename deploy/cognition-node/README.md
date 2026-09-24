@@ -2,8 +2,13 @@
 
 Dependency-free Node.js front door for Metatron-owned cognition. The provider order is intentionally:
 
-1. Ollama / `qwen3:4b` (primary, self-hosted; `OLLAMA_NUM_CTX` defaults to 8192)
-2. Gemini (free tier only; skipped when `GEMINI_API_KEY` is unset)
+1. Gemini, free tier only (Founder decision 2026-09-24: free provider first). The node rotates through
+   `GEMINI_MODEL` then `GEMINI_MODELS` (comma-separated; default `gemini-3.8-flash, gemini-3.7-flash,
+   gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite`) on 404/429/5xx/timeout, because each free
+   model has its own quota. A 400/401/403 stops the rotation. The whole Gemini phase is bounded by
+   `FRONTIER_PROVIDER_TIMEOUT_MS` (180000) and each model attempt by `GEMINI_MODEL_TIMEOUT_MS` (90000).
+   Skipped when `GEMINI_API_KEY` is unset.
+2. Ollama / `qwen3:4b` (self-hosted fallback when no free model is available; `OLLAMA_NUM_CTX` defaults to 8192)
 
 Credit-billed providers (OpenAI, Anthropic) are not part of the chain at all: Founder rule, no LLM spend
 (`WORKER_ORIGINATED_PAID_EXTERNAL_INFERENCE = 0`).
@@ -17,7 +22,7 @@ The node treats one cognition request as a single bounded transaction:
 
 - `METATRON_COGNITION_TOTAL_TIMEOUT_MS=630000`
 - `OLLAMA_TIMEOUT_MS=600000`
-- `FRONTIER_PROVIDER_TIMEOUT_MS=18000`
+- `FRONTIER_PROVIDER_TIMEOUT_MS=180000` (whole Gemini phase), `GEMINI_MODEL_TIMEOUT_MS=90000` (per model)
 - `COGNITION_MAX_OUTPUT_TOKENS=256`
 - `OLLAMA_NUM_CTX=8192`
 - every provider attempt uses `min(provider timeout, remaining whole-request budget)`

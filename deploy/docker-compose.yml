@@ -178,7 +178,8 @@ services:
         aliases:
           - ${METATRON_WORKFORCE_GATEWAY_ALIAS:-workforce-production}
 
-  # Metatron-owned Worker cognition front door (Ollama primary, free-tier Gemini fallback; no credit-billed
+  # Metatron-owned Worker cognition front door (free-tier Gemini first, rotated across models; local Ollama
+  # fallback when no free model is available; no credit-billed
   # provider). Profile-gated: only the production deploy (scripts/highway-tasks/workforce-deploy.sh) enables it,
   # so parallel acceptance lanes that `up` this file never start or replace the single production node.
   cognition-node:
@@ -203,6 +204,7 @@ services:
       METATRON_COGNITION_TOTAL_TIMEOUT_MS: "${METATRON_CPU_COGNITION_TOTAL_TIMEOUT_MS:-630000}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       GEMINI_MODEL: "${GEMINI_MODEL:-gemini-3.6-flash}"
+      GEMINI_MODELS: "${GEMINI_MODELS:-}"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8091/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s

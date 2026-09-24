@@ -8,6 +8,7 @@ const {
   callOllama,
   configFromEnv,
   createServer,
+  geminiModels,
   outputSchemaFromPrompt,
   providerList,
   runProviderChain,
@@ -81,8 +82,9 @@ test('bounded fetch aborts a hanging provider call', async () => {
   }
 });
 
-test('production chain holds no credit-billed provider: ollama then free-tier gemini only', () => {
-  assert.deepEqual(providerList().map(([name]) => name), ['ollama', 'gemini']);
+test('production chain holds no credit-billed provider: free-tier gemini first, local ollama fallback', () => {
+  // Founder decision 2026-09-24: free provider first; Ollama only when it is unavailable.
+  assert.deepEqual(providerList().map(([name]) => name), ['gemini', 'ollama']);
 });
 
 test('provider order falls back from ollama to gemini', async () => {
@@ -443,4 +445,79 @@ test('worker cognition sends the instructions\' own JSON template to Ollama as a
     await server.close();
   }
   assert.deepEqual(bodies[0].format, seenSchema, 'the schema, not bare "json", reaches Ollama');
+});
+
+async function fakeGemini(statusByModel, seen) {
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      const model = decodeURIComponent(req.url.split('/').pop().split(':')[0]);
+      seen.push({ model, body: JSON.parse(raw) });
+      const status = statusByModel[model] ?? 200;
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(status === 200
+        ? { candidates: [{ content: { parts: [{ text: '{"actionRef":"x"}' }] } }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4 } }
+        : { error: { code: status } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { url: 'http://127.0.0.1:' + server.address().port, close: () => new Promise((r) => { server.closeAllConnections(); server.close(r); }) };
+}
+
+test('gemini rotates to the next free-tier model on 429/503 and answers from the first that works', async () => {
+  const originalEnv = { ...process.env };
+  const seen = [];
+  const gemini = await fakeGemini({ 'gemini-a': 503, 'gemini-b': 429 }, seen);
+  Object.assign(process.env, { GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-a', GEMINI_MODELS: 'gemini-b,gemini-c,gemini-d', GEMINI_API_BASE_URL: gemini.url });
+  try {
+    assert.deepEqual(geminiModels(), ['gemini-a', 'gemini-b', 'gemini-c', 'gemini-d']);
+    const outcome = await runProviderChain('prompt', providerList(), cfg({ totalTimeoutMs: 5000, frontierTimeoutMs: 4000, geminiModelTimeoutMs: 2000 }),
+      { capability: 'worker.cognition' });
+    assert.equal(outcome.status, 200);
+    assert.equal(outcome.body.providerUsed, 'gemini');
+    assert.equal(outcome.body.model, 'gemini-c');
+    assert.equal(outcome.body.fallbackOccurred, false, 'no Ollama fallback was needed');
+    assert.deepEqual(seen.map((s) => s.model), ['gemini-a', 'gemini-b', 'gemini-c']);
+    assert.equal(seen[2].body.generationConfig.responseMimeType, 'application/json', 'worker cognition asks Gemini for JSON');
+  } finally {
+    process.env = originalEnv;
+    await gemini.close();
+  }
+});
+
+test('when every free-tier model is unavailable the chain falls back to local ollama', async () => {
+  const originalEnv = { ...process.env };
+  const seen = [];
+  const gemini = await fakeGemini({ 'gemini-a': 503, 'gemini-b': 429 }, seen);
+  const ollamaBodies = [];
+  const ollama = await fakeOllamaCapturing(ollamaBodies, { response: '{"actionRef":"y"}', prompt_eval_count: 1, eval_count: 1 });
+  Object.assign(process.env, { GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-a', GEMINI_MODELS: 'gemini-b', GEMINI_API_BASE_URL: gemini.url });
+  try {
+    const outcome = await runProviderChain('prompt', providerList(), cfg({ totalTimeoutMs: 5000, frontierTimeoutMs: 2000, geminiModelTimeoutMs: 1000, ollamaTimeoutMs: 3000 }),
+      { capability: 'worker.cognition' });
+    assert.equal(outcome.status, 200);
+    assert.equal(outcome.body.providerUsed, 'ollama');
+    assert.equal(outcome.body.fallbackOccurred, true);
+    assert.deepEqual(outcome.body.providerAttempts.map((a) => a.provider), ['gemini']);
+    assert.equal(ollamaBodies.length, 1);
+  } finally {
+    process.env = originalEnv;
+    await ollama.close();
+    await gemini.close();
+  }
+});
+
+test('a gemini key/request error stops the rotation instead of burning every model', async () => {
+  const originalEnv = { ...process.env };
+  const seen = [];
+  const gemini = await fakeGemini({ 'gemini-a': 403 }, seen);
+  Object.assign(process.env, { GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-a', GEMINI_MODELS: 'gemini-b', GEMINI_API_BASE_URL: gemini.url });
+  try {
+    await assert.rejects(callGemini('p', 2000, cfg({ geminiModelTimeoutMs: 1000 })), (e) => e.failureClass === 'http_403');
+    assert.deepEqual(seen.map((s) => s.model), ['gemini-a']);
+  } finally {
+    process.env = originalEnv;
+    await gemini.close();
+  }
 });
