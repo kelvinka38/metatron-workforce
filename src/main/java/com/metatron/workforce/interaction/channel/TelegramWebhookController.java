@@ -297,21 +297,34 @@ public final class TelegramWebhookController {
                     receipt.externalMessageReference(),
                     inbound.text());
 
-            long processingStarted = System.nanoTime();
-            MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
-            String safeAnswer = validateAnswer(inbound.text(), response.text());
-            String objectiveId = objectiveIdFromAnswer(safeAnswer);
-            if (channelObjectiveHandoffEnabled
-                    && requiresObjectiveBeforeAck(receipt.text())
-                    && objectiveId.isBlank()) {
-                throw new IllegalStateException("explicit_objective_did_not_materialize");
-            }
-            if (!objectiveId.isBlank()) receiptStore.accepted(updateId, objectiveId);
+            String safeAnswer;
+            String objectiveId;
+            if (!deliveryReplayObjectiveId(receipt).isBlank()) {
+                // Delivery replay only. An earlier attempt of this same update already admitted its Objective;
+                // re-running the interaction would admit a duplicate Objective for one Human message
+                // (production 2026-09-24: update 103338020 produced three cases because only the Telegram
+                // send kept failing on flood control).
+                objectiveId = receipt.objectiveId();
+                safeAnswer = "";
+                LOG.info("telegram_delivery_replay update_id={} attempt={} objective_id={}",
+                        updateId, receipt.attempts(), objectiveId);
+            } else {
+                long processingStarted = System.nanoTime();
+                MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
+                safeAnswer = validateAnswer(inbound.text(), response.text());
+                objectiveId = objectiveIdFromAnswer(safeAnswer);
+                if (channelObjectiveHandoffEnabled
+                        && requiresObjectiveBeforeAck(receipt.text())
+                        && objectiveId.isBlank()) {
+                    throw new IllegalStateException("explicit_objective_did_not_materialize");
+                }
+                if (!objectiveId.isBlank()) receiptStore.accepted(updateId, objectiveId);
 
-            long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
-            LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} attempt={} answer_ms={} objective_id={}",
-                    updateId, receipt.telegramUserId(), receipt.chatId(), safeAnswer.length(), response.provenanceReference(),
-                    receipt.attempts(), answerMs, objectiveId);
+                long answerMs = (System.nanoTime() - processingStarted) / 1_000_000L;
+                LOG.info("telegram_answer_ready update_id={} telegram_user={} chat={} answer_length={} provenance={} attempt={} answer_ms={} objective_id={}",
+                        updateId, receipt.telegramUserId(), receipt.chatId(), safeAnswer.length(), response.provenanceReference(),
+                        receipt.attempts(), answerMs, objectiveId);
+            }
 
             String delivery;
             if (objectiveId.isBlank()) {
@@ -352,6 +365,15 @@ public final class TelegramWebhookController {
                 scheduleReceipt(updateId);
             }
         }
+    }
+
+    /**
+     * The Objective an earlier attempt of this same update already admitted, or "" when the interaction
+     * has not produced one yet. A non-blank value means the retry must only redeliver, never re-run the
+     * interaction (which would admit a duplicate Objective).
+     */
+    static String deliveryReplayObjectiveId(TelegramIngressReceiptStore.Receipt receipt) {
+        return receipt == null ? "" : receipt.objectiveId();
     }
 
     /**

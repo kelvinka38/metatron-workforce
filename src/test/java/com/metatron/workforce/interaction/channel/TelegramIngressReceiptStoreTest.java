@@ -90,4 +90,22 @@ final class TelegramIngressReceiptStoreTest {
         assertEquals("objective:institutional:42", TelegramWebhookController.objectiveIdFromAnswer(response));
         assertEquals("", TelegramWebhookController.objectiveIdFromAnswer("ordinary discussion"));
     }
+
+    @Test
+    void aDeliveryFailureAfterAdmissionReplaysOnlyDeliveryAndNeverAdmitsAnotherObjective() {
+        // Production 2026-09-24: update 103338020 admitted case-11a08089, then every Telegram send failed on
+        // flood control; each retry re-ran the interaction and admitted another case (952123b7, ee1d1fd3).
+        TelegramIngressReceiptStore store = new TelegramIngressReceiptStore(tempDir.resolve("replay.json"), new ObjectMapper());
+        store.receive(404L, 77L, "77", "build and deliver the control center");
+        store.admit(404L);
+        TelegramIngressReceiptStore.Receipt first = store.claim(404L, 3);
+        assertEquals("", TelegramWebhookController.deliveryReplayObjectiveId(first), "first attempt runs the interaction");
+
+        store.accepted(404L, "objective:case-11a08089");
+        store.failed(404L, new IllegalStateException("telegram_send_failed:telegram_error=429:Too Many Requests: retry after 14083"), 3);
+        TelegramIngressReceiptStore.Receipt retry = store.claim(404L, 3);
+
+        assertEquals("objective:case-11a08089", TelegramWebhookController.deliveryReplayObjectiveId(retry),
+                "the retry must redeliver the already-admitted Objective instead of re-running the interaction");
+    }
 }
