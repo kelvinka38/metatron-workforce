@@ -127,6 +127,9 @@ class Gemini(Provider):
         else:
             # Newer models think by default and can be slow on the free tier: ask for light thinking.
             config = {"maxOutputTokens": max_tokens + 2048, "thinkingConfig": {"thinkingLevel": "low"}}
+        # Every agent reply is one JSON object; asking for JSON output also stops the model from
+        # trying a native function call (finishReason MALFORMED_FUNCTION_CALL, empty text).
+        config["responseMimeType"] = "application/json"
         body = {"contents": contents, "generationConfig": config}
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}

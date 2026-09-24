@@ -90,7 +90,7 @@ from metatron_core.llm import Gemini, Message, ProviderChain
 working = 0
 for p in ProviderChain.from_env().providers:
     try:
-        text = p.complete([Message("user", "Reply with exactly: OK")], 64)
+        text = p.complete([Message("user", 'Reply with exactly this JSON: {"ok": true}')], 64)
         print(f"{p.name}:{getattr(p, 'model', '')} -> {text.strip()[:40]!r}")
         working += 1
     except Exception as e:

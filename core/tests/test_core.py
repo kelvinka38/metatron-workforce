@@ -383,6 +383,7 @@ class GeminiRequest(unittest.TestCase):
     def test_thinking_is_capped_for_every_model(self):
         self.assertEqual(self._config("gemini-2.5-flash")["thinkingConfig"], {"thinkingBudget": 1024})
         self.assertEqual(self._config("gemini-3.8-flash")["thinkingConfig"], {"thinkingLevel": "low"})
+        self.assertEqual(self._config("gemini-3.8-flash")["responseMimeType"], "application/json")
 
 
 class StepLimit(unittest.TestCase):

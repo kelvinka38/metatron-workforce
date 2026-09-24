@@ -259,7 +259,9 @@ def handle_text(chat_id: str, text: str) -> str | None:
         try:
             merge_pull_request(task["pr_url"], GITHUB_TOKEN)
         except Exception as e:
+            print(f"task #{task['id']} merge failed: {str(e)[:300]}", flush=True)
             return f"Merge failed: {e}"
+        print(f"task #{task['id']} merged: {task['pr_url']}", flush=True)
         store.update(task["id"], status="merged")
         store.audit(task["id"], "approval", "merged by founder")
         return f"Merged task #{task['id']}: {task['pr_url']}"
