@@ -2,6 +2,7 @@ package com.metatron.workforce.management;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.operating.WorkerConstitutionService;
+import com.metatron.workforce.runtime.WorkerResourceScopeService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
 import java.time.Instant;
@@ -48,6 +49,7 @@ public final class AutonomousStaffingService {
     private final Map<String, AutonomousStaffingPolicy> policies;
     private final WorkerRuntimeProfileBindingService runtimeProfiles;
     private final WorkerConstitutionService constitution;
+    private final WorkerResourceScopeService resourceScopes;
 
     public AutonomousStaffingService(WorkforceCoreService core, List<AutonomousStaffingPolicy> policies) {
         this(core, policies, WorkerRuntimeProfileBindingService.inMemory(), WorkerConstitutionService.inMemory());
@@ -63,6 +65,15 @@ public final class AutonomousStaffingService {
                                      List<AutonomousStaffingPolicy> policies,
                                      WorkerRuntimeProfileBindingService runtimeProfiles,
                                      WorkerConstitutionService constitution) {
+        this(core, policies, runtimeProfiles, constitution, WorkerResourceScopeService.inMemory());
+    }
+
+    public AutonomousStaffingService(WorkforceCoreService core,
+                                     List<AutonomousStaffingPolicy> policies,
+                                     WorkerRuntimeProfileBindingService runtimeProfiles,
+                                     WorkerConstitutionService constitution,
+                                     WorkerResourceScopeService resourceScopes) {
+        this.resourceScopes = Objects.requireNonNull(resourceScopes, "resourceScopes");
         this.core = Objects.requireNonNull(core);
         this.runtimeProfiles = Objects.requireNonNull(runtimeProfiles, "runtimeProfiles");
         this.constitution = Objects.requireNonNull(constitution, "constitution");
@@ -103,6 +114,7 @@ public final class AutonomousStaffingService {
 
                 WorkerRuntimeProfileBindingService.Binding binding = runtimeProfiles.bind(
                         workerId, spec.runtimeProfileRef(), capability.capabilityRef(), at);
+                bindResourceScope(policy, workerId, at);
                 WorkerConstitutionService.WorkerPositionBinding constitutionBinding =
                         constitution.ensureConstitution(policy, at);
                 evidence = List.of(
@@ -156,6 +168,7 @@ public final class AutonomousStaffingService {
         core.setAvailability(spec.workerId(), true, spec.capacity());
         WorkerRuntimeProfileBindingService.Binding runtimeBinding = runtimeProfiles.bind(
                 spec.workerId(), spec.runtimeProfileRef(), capability.capabilityRef(), at);
+        bindResourceScope(policy, spec.workerId(), at);
 
         var nowEligible = core.eligibleWorkers(capability.capabilityRef(), capability.minimumCapabilityLevel(),
                         capability.requiredCapacity(), at).stream()
@@ -181,6 +194,11 @@ public final class AutonomousStaffingService {
                 "runtime-actions=" + runtimeBinding.profile().actionRefs().stream().sorted().toList(),
                 "cost-limit:" + spec.costLimitRef(),
                 "lifecycle:" + spec.lifecycleRef()));
+    }
+
+    private void bindResourceScope(AutonomousStaffingPolicy policy, String workerId, Instant at) {
+        policy.workerResourceScope().ifPresent(scope ->
+                resourceScopes.declare(workerId, scope.repositories(), scope.writePathPrefixes(), at));
     }
 
     private void validateExistingIdentity(AutonomousStaffingPolicy.FormationSpec spec, String capabilityRef) {

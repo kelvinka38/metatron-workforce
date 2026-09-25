@@ -44,6 +44,12 @@ public class GeneralExecutionRuntimeConfiguration {
     }
 
     @Bean
+    WorkerResourceScopeService workerResourceScopeService(
+            @Value("${METATRON_WORKER_RESOURCE_SCOPES_PATH:/var/lib/metatron-workforce/worker-resource-scopes.tsv}") String path) {
+        return new WorkerResourceScopeService(Path.of(path));
+    }
+
+    @Bean
     ExecutionWorkspaceBindingStore executionWorkspaceBindingStore(
             @Value("${METATRON_EXECUTION_WORKSPACE_BINDINGS_PATH:/var/lib/metatron-workforce/execution-workspace-bindings.json}") String path) {
         return new FileExecutionWorkspaceBindingStore(Path.of(path));
@@ -200,8 +206,9 @@ public class GeneralExecutionRuntimeConfiguration {
             WorkerRuntimeProfileBindingService profiles,
             RepositoryWorkspaceMaterializationService repositories,
             GitHubWorkspaceProposalPublisher proposals,
-            ObjectMapper json) {
-        return new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, repositories, proposals, json);
+            ObjectMapper json,
+            WorkerResourceScopeService scopes) {
+        return new GeneralWorkspaceActionCatalog(workspaces, sandbox, profiles, repositories, proposals, json, scopes);
     }
 
     @Bean

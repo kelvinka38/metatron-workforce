@@ -9,6 +9,7 @@ import com.metatron.workforce.runtime.RepositoryWorkspaceMaterializationState;
 import com.metatron.workforce.runtime.GitHubWorkspaceProposalPublisher;
 import com.metatron.workforce.runtime.GeneratedWorkspaceArtifactPolicy;
 import com.metatron.workforce.runtime.WorkerExecutionSandboxService;
+import com.metatron.workforce.runtime.WorkerResourceScopeService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ public final class GeneralWorkspaceActionCatalog {
     private final RepositoryWorkspaceMaterializationService repositories;
     private final GitHubWorkspaceProposalPublisher proposals;
     private final ObjectMapper json;
+    private final WorkerResourceScopeService scopes;
 
     public GeneralWorkspaceActionCatalog(ObjectiveWorkspaceService workspaces,
                                          WorkerExecutionSandboxService sandbox,
@@ -38,12 +40,24 @@ public final class GeneralWorkspaceActionCatalog {
                                          RepositoryWorkspaceMaterializationService repositories,
                                          GitHubWorkspaceProposalPublisher proposals,
                                          ObjectMapper json) {
+        this(workspaces, sandbox, profiles, repositories, proposals, json, WorkerResourceScopeService.inMemory());
+    }
+
+    /** Composition with per-Worker resource scope; Workers without a declared scope keep existing behaviour. */
+    public GeneralWorkspaceActionCatalog(ObjectiveWorkspaceService workspaces,
+                                         WorkerExecutionSandboxService sandbox,
+                                         WorkerRuntimeProfileBindingService profiles,
+                                         RepositoryWorkspaceMaterializationService repositories,
+                                         GitHubWorkspaceProposalPublisher proposals,
+                                         ObjectMapper json,
+                                         WorkerResourceScopeService scopes) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces");
         this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
         this.profiles = Objects.requireNonNull(profiles, "profiles");
         this.repositories = Objects.requireNonNull(repositories, "repositories");
         this.proposals = Objects.requireNonNull(proposals, "proposals");
         this.json = Objects.requireNonNull(json, "json");
+        this.scopes = Objects.requireNonNull(scopes, "scopes");
     }
 
     public List<ActionFabric.Action> actions(String workerId, String authorizationReference, String objectiveId) {
@@ -82,6 +96,7 @@ public final class GeneralWorkspaceActionCatalog {
         // governed source repository or any external target, so it must remain available to READ_ONLY Work.
         return action("workspace.repository.materialize", ActionFabric.Consequence.READ_ONLY, worker, auth, request -> {
             String repository = input(request, "repository").trim();
+            scopes.requireRepository(worker, repository);
             String ref = request.inputs().getOrDefault("ref", "main").trim();
             boolean createIfMissing = "true".equalsIgnoreCase(request.inputs().getOrDefault("createIfMissing", "false"));
             RepositoryWorkspaceMaterializationService.MaterializedRepository materialized =
@@ -306,6 +321,7 @@ public final class GeneralWorkspaceActionCatalog {
     private ActionFabric.Action filePatch(String worker, String auth, ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         return action("workspace.file.patch", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             String path = input(request, "path");
+            scopes.requireWritablePath(worker, path);
             String oldText = input(request, "oldText");
             String newText = request.inputs().getOrDefault("newText", "");
             int expected;
@@ -335,6 +351,7 @@ public final class GeneralWorkspaceActionCatalog {
     private ActionFabric.Action fileWrite(String worker, String auth, ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
         return action("workspace.file.write", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
             String path = input(request, "path");
+            scopes.requireWritablePath(worker, path);
             String content = request.inputs().getOrDefault("content", "");
             workspaces.write(workspace, path, content);
             return observation(request.actionRef(), true, "workspace file written",
@@ -803,6 +820,7 @@ public final class GeneralWorkspaceActionCatalog {
 
     private ActionFabric.Action githubProposal(String worker, String auth, String objectiveId) {
         return action("workspace.github.pr.publish", ActionFabric.Consequence.MUTATING, worker, auth, request -> {
+            requireScopedProposalPaths(worker, objectiveId);
             GitHubWorkspaceProposalPublisher.Publication publication = proposals.publish(
                     worker,
                     objectiveId,
@@ -835,6 +853,37 @@ public final class GeneralWorkspaceActionCatalog {
                     "committed Objective workspace published as reviewable unmerged GitHub Pull Request",
                     outputs, evidence);
         });
+    }
+
+    /**
+     * Second line of the per-Worker path scope: whatever reached the committed/working tree (file actions or
+     * git-level edits), every path that would differ from the materialized baseline must be writable under the
+     * Worker's scope. Runs before any GitHub effect. Workers without a declared scope are not inspected.
+     */
+    private void requireScopedProposalPaths(String worker, String objectiveId) {
+        if (scopes.find(worker).isEmpty()) return;
+        Set<String> changed = new java.util.TreeSet<>();
+        changed.addAll(nulSeparated(runOrThrow(worker, objectiveId, "git",
+                List.of("diff", "--name-only", "--no-renames", "-z",
+                        RepositoryWorkspaceMaterializationState.BASELINE_REF + "..HEAD", "--"),
+                "git proposal scope diff").output()));
+        changed.addAll(nulSeparated(runOrThrow(worker, objectiveId, "git",
+                List.of("diff", "--name-only", "--no-renames", "-z", "HEAD", "--"),
+                "git proposal scope worktree diff").output()));
+        changed.addAll(nulSeparated(runOrThrow(worker, objectiveId, "git",
+                List.of("ls-files", "--others", "--exclude-standard", "-z"),
+                "git proposal scope untracked").output()));
+        changed.removeIf(path -> path.equals(".metatron-workspace") || path.equals(".metatron-repository"));
+        scopes.requireProposalPaths(worker, changed);
+    }
+
+    private static List<String> nulSeparated(String output) {
+        List<String> paths = new ArrayList<>();
+        for (String path : output.split("\\u0000", -1)) {
+            String trimmed = path.strip();
+            if (!trimmed.isBlank()) paths.add(trimmed);
+        }
+        return paths;
     }
 
     private ActionFabric.Action build(String worker, String auth, String objectiveId,

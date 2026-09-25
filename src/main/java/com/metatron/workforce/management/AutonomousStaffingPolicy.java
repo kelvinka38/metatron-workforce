@@ -21,6 +21,22 @@ public interface AutonomousStaffingPolicy {
     default List<CapabilityGrant> additionalCapabilities() { return List.of(); }
 
     /**
+     * Optional per-Worker resource scope (repositories and writable path prefixes) bound durably at formation.
+     * Empty keeps the pre-existing unscoped behaviour.
+     */
+    default java.util.Optional<WorkerResourceScopeSpec> workerResourceScope() { return java.util.Optional.empty(); }
+
+    record WorkerResourceScopeSpec(java.util.Set<String> repositories, List<String> writePathPrefixes) {
+        public WorkerResourceScopeSpec {
+            repositories = java.util.Set.copyOf(Objects.requireNonNull(repositories, "repositories"));
+            writePathPrefixes = List.copyOf(Objects.requireNonNull(writePathPrefixes, "writePathPrefixes"));
+            if (repositories.isEmpty() || writePathPrefixes.isEmpty()) {
+                throw new IllegalArgumentException("worker resource scope requires repositories and write prefixes");
+            }
+        }
+    }
+
+    /**
      * Standing Position constitution. Specific institutional Heads SHOULD override this with the
      * richer domain contract ratified by their canonical SOT. The default remains explicit and
      * bounded so every formed Worker has a real mission/accountability envelope rather than a
