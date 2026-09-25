@@ -363,6 +363,91 @@ class AutonomousManagementRecoveryTest {
                 "no bounded-local-retry recovery event may be recorded for a deterministic-contract failure");
     }
 
+    @Test
+    void aGeneralWorkspaceStepInterruptedByARestartIsRetriedInPlaceInsteadOfBlockingTheObjective() {
+        // Production 2026-09-24 (case-b60eb63a): a deploy restarted Workforce while VERIFY was dispatched;
+        // restart reconciliation dead-lettered the dispatch and BLOCKED the Objective with
+        // "execution-reconciliation-required:general-engineering-workspace-execution-verify".
+        Clock clock = Clock.fixed(Instant.parse("2026-09-24T23:51:20Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger executions = new AtomicInteger();
+        AutonomousExecutionCapability workspace = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return GeneralWorkspaceAutonomousCapability.CAPABILITY; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                executions.incrementAndGet();
+                return new CapabilityResult(true, "worker-recovery", "assignment-recovery",
+                        "work-recovery", List.of("evidence:verified-after-restart"), "PASS");
+            }
+        };
+        management.acceptHumanObjective(
+                "objective-interrupted", "worker-head", "org-metatron", "Verify the workspace",
+                "human:founder", "request-admission:interrupted", "case-interrupted", "conversation-interrupted",
+                "message-interrupted", "telegram", generalWorkspaceRequest(), clock.instant());
+        // The previous process had already dispatched step-1 when it was replaced.
+        coordination.ensureGraph("objective-interrupted", generalWorkspaceRequest().executionWorkPlan(), clock.instant());
+        coordination.beginDispatch("objective-interrupted", 1, "step-1", clock.instant());
+
+        AutonomousManagementRunner runner = new AutonomousManagementRunner(
+                management,
+                (caseId, request, available) -> request.executionWorkPlan(),
+                List.of(workspace), coordination, clock,
+                "runner-after-restart", Duration.ofMinutes(5), Duration.ofSeconds(1), 1);
+        runner.runOnce();
+
+        assertEquals(1, executions.get(), "the interrupted workspace step is re-dispatched once");
+        AutonomousObjectiveWork work = management.findAutonomousWork("objective-interrupted").orElseThrow();
+        assertEquals(List.of("step-1"), work.completedStepIds());
+        assertTrue(management.history("objective-interrupted").stream()
+                        .noneMatch(event -> event.detail().contains("execution-reconciliation-required")),
+                "a restart during a general-workspace step must not block the Objective");
+        assertEquals(List.of(DurableDispatch.Status.DEAD_LETTERED, DurableDispatch.Status.SUCCEEDED),
+                coordination.dispatches().stream()
+                        .filter(dispatch -> dispatch.objectiveId().equals("objective-interrupted"))
+                        .map(DurableDispatch::status).toList(),
+                "the interrupted dispatch stays durably recorded; only a fresh attempt runs");
+    }
+
+    @Test
+    void anInterruptedMutatingStepOutsideTheWorkspacePipelineStillFailsClosed() {
+        Clock clock = Clock.fixed(Instant.parse("2026-09-24T23:51:20Z"), ZoneOffset.UTC);
+        ManagementAutonomyService management = new ManagementAutonomyService();
+        AutonomyCoordinationService coordination = new AutonomyCoordinationService();
+        AtomicInteger executions = new AtomicInteger();
+        ExecutionWorkSpec externalStep = new ExecutionWorkSpec(
+                "step-1", "Mutate an external system", "target", "test.external.mutation", List.of(),
+                ExecutionWorkSpec.Consequence.MUTATING, List.of("mutation applied"), List.of("mutation evidence"));
+        NormalizedRequest external = new NormalizedRequest(
+                "Mutate an external system", "target", List.of("mutating"), IntelligenceDepth.ANALYZE,
+                "evidence-backed result", List.of(), List.of("mutate"), "current", "",
+                IntelligenceMode.EXECUTION, CollaborationMode.SINGLE,
+                List.<AnalyticalProtocolType>of(), DeterministicCapability.NONE,
+                List.of(), List.of(externalStep), false, null, LlmProvider.OPENAI, "");
+        AutonomousExecutionCapability mutation = new AutonomousExecutionCapability() {
+            @Override public String capabilityRef() { return "test.external.mutation"; }
+
+            @Override public CapabilityResult execute(CapabilityRequest request) {
+                executions.incrementAndGet();
+                return new CapabilityResult(true, "worker", "assignment", "work", List.of("evidence:x"), "PASS");
+            }
+        };
+        management.acceptHumanObjective(
+                "objective-external", "worker-head", "org-metatron", "Mutate an external system",
+                "human:founder", "request-admission:external", "case-external", "conversation-external",
+                "message-external", "telegram", external, clock.instant());
+        coordination.ensureGraph("objective-external", external.executionWorkPlan(), clock.instant());
+        coordination.beginDispatch("objective-external", 1, "step-1", clock.instant());
+
+        new AutonomousManagementRunner(
+                management, (caseId, request, available) -> request.executionWorkPlan(),
+                List.of(mutation), coordination, clock,
+                "runner-after-restart", Duration.ofMinutes(5), Duration.ofSeconds(1), 1).runOnce();
+
+        assertEquals(0, executions.get(), "an unknown external effect is never blindly re-run");
+        assertEquals(ManagementObjective.Status.BLOCKED, management.get("objective-external").status());
+    }
+
     private static NormalizedRequest generalWorkspaceRequest() {
         ExecutionWorkSpec step = new ExecutionWorkSpec(
                 "step-1", "Build the workspace", "target", GeneralWorkspaceAutonomousCapability.CAPABILITY, List.of(),
