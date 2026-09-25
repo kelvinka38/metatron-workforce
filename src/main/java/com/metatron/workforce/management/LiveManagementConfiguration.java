@@ -212,6 +212,54 @@ public class LiveManagementConfiguration {
     }
 
     @Bean
+    HeadOfAquacultureBootstrapStatus headOfAquacultureBootstrapStatus() {
+        return new HeadOfAquacultureBootstrapStatus();
+    }
+
+    /**
+     * Founder-authorized (policy:founder-aquaculture-head-appointment:v1) boot-time appointment of the Head of
+     * Aquaculture, mirroring the Gateway Director reconciliation: idempotent through governed staffing, so the
+     * durable HOA identity, capability bundle, domain-head profile and resource scope exist before any Objective.
+     * Failure leaves the application up with HOA DEGRADED; it never widens the approved envelope.
+     */
+    @Bean
+    ApplicationRunner headOfAquacultureReconciliation(
+            AutonomousStaffingService staffing,
+            AquacultureHeadAppointmentCapability capability,
+            WorkforceCoreService core,
+            RuntimeCapacityCoordinator runtimeCapacity,
+            WorkerConstitutionRuntimeMaterializer constitutionRuntime,
+            HeadOfAquacultureBootstrapStatus bootstrapStatus,
+            @Value("${METATRON_BOOTSTRAP_HEAD_OF_AQUACULTURE:true}") boolean enabled) {
+        return args -> {
+            var now = Clock.systemUTC().instant();
+            if (!enabled) {
+                bootstrapStatus.disabled(now);
+                return;
+            }
+            try {
+                staffing.ensureStaffed(capability, now);
+                runtimeCapacity.ensureRunning(AquacultureHeadAppointmentCapability.WORKER_ID);
+                WorkforceCoreService.Participation participation = core.participations(
+                                AquacultureHeadAppointmentCapability.WORKER_ID).stream()
+                        .filter(p -> p.status() == WorkforceCoreService.ParticipationStatus.ACTIVE)
+                        .filter(p -> AquacultureHeadAppointmentCapability.ROLE_REF.equals(p.roleRef()))
+                        .filter(p -> AquacultureHeadAppointmentCapability.POSITION_REF.equals(p.positionRef()))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Head of Aquaculture active participation missing after staffing reconciliation"));
+                constitutionRuntime.materialize(AquacultureHeadAppointmentCapability.WORKER_ID,
+                        participation.participationId(), now);
+                bootstrapStatus.ready(now);
+            } catch (RuntimeException failure) {
+                bootstrapStatus.degraded(now, failure);
+                LOG.error("Head of Aquaculture boot reconciliation failed; application remains available with HOA DEGRADED",
+                        failure);
+            }
+        };
+    }
+
+    @Bean
     AutonomyEvidencePackageService autonomyEvidencePackageService(
             ManagementAutonomyService management,
             AutonomyCoordinationService coordination,
