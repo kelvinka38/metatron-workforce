@@ -25,6 +25,11 @@ public class WorkerConstitutionConfiguration {
     }
 
     @Bean
+    PositionAddressResolver positionAddressResolver(WorkforceCoreService core, WorkerConstitutionService constitution) {
+        return new PositionAddressResolver(core, constitution);
+    }
+
+    @Bean
     WorkerConstitutionRuntimeStateStore workerConstitutionRuntimeStateStore(
             @Value("${METATRON_WORKER_CONSTITUTION_RUNTIME_STATE_PATH:/var/lib/metatron-workforce/worker-constitution-runtime-state.json}") String configured) {
         return new FileWorkerConstitutionRuntimeStateStore(Path.of(configured));

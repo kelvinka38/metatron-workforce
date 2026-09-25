@@ -65,6 +65,11 @@ public final class WorkerConstitutionService {
             contracts.put(candidate.positionRef(), candidate);
         } else if (!sameStandingContract(existing, candidate)) {
             throw new IllegalStateException("position-operating-contract-conflict:" + formation.positionRef());
+        } else if (!existing.addressAliases().equals(candidate.addressAliases())) {
+            // Address aliases are addressing metadata, not part of the standing mission/authority envelope, so a
+            // policy may declare or change them on an existing Position without versioning it. The standing contract
+            // (id, effective time, evidence) is kept; only the declared aliases follow the current policy.
+            contracts.put(existing.positionRef(), existing.withAddressAliases(candidate.addressAliases()));
         }
 
         String key = bindingKey(formation.workerId(), formation.participationId());
@@ -364,7 +369,8 @@ public final class WorkerConstitutionService {
                         "qualification-evidence:" + formation.qualificationEvidenceRef(),
                         "authority-envelope:" + formation.authorityEnvelopeRef(),
                         "cost-limit:" + formation.costLimitRef(),
-                        "lifecycle:" + formation.lifecycleRef()));
+                        "lifecycle:" + formation.lifecycleRef()),
+                spec.addressAliases());
     }
 
     private static boolean sameStandingContract(PositionOperatingContract left, PositionOperatingContract right) {
@@ -466,7 +472,8 @@ public final class WorkerConstitutionService {
             String workingTimeZone,
             int maxConcurrentAssignments,
             Instant effectiveAt,
-            List<String> evidenceReferences) {
+            List<String> evidenceReferences,
+            List<String> addressAliases) {
         public PositionOperatingContract {
             require(contractId, "contractId");
             require(organizationRef, "organizationRef");
@@ -486,6 +493,15 @@ public final class WorkerConstitutionService {
             if (maxConcurrentAssignments < 1) throw new IllegalArgumentException("maxConcurrentAssignments must be positive");
             Objects.requireNonNull(effectiveAt, "effectiveAt");
             evidenceReferences = List.copyOf(evidenceReferences);
+            // Contracts persisted before address aliases existed deserialize with no aliases.
+            addressAliases = addressAliases == null ? List.of() : List.copyOf(addressAliases);
+        }
+
+        public PositionOperatingContract withAddressAliases(List<String> aliases) {
+            return new PositionOperatingContract(contractId, organizationRef, positionRef, roleRef, mission,
+                    responsibilities, reportingLines, capabilityRequirements, authorityScopes, resourceScopes,
+                    escalationRoutes, successMeasures, decisionRights, operatingCoverage, workingTimeZone,
+                    maxConcurrentAssignments, effectiveAt, evidenceReferences, aliases);
         }
     }
 
