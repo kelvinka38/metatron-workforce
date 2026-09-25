@@ -161,7 +161,48 @@ function outputSchemaFromPrompt(prompt) {
   }
   const keys = Object.keys(properties);
   if (keys.length === 0) return null;
+  // Action selection must name one of the Worker's own availableActions. Unconstrained, both flash-lite and
+  // qwen3:4b answered with the request id ("worker-cognition-<uuid>") as actionRef and VERIFY escalated
+  // after three attempts (production 2026-09-25, case-b60eb63a and case-ee1d1fd3).
+  const actions = availableActionsFromPrompt(text);
+  if (properties.actionRef && actions.length > 0) properties.actionRef = { type: 'string', enum: actions };
   return { type: 'object', properties, required: keys };
+}
+
+// The Worker context is rendered as JSON with an "availableActions":[...] array of action refs.
+function availableActionsFromPrompt(text) {
+  const key = '"availableActions"';
+  const at = text.indexOf(key);
+  if (at < 0) return [];
+  const start = text.indexOf('[', at + key.length);
+  const end = start < 0 ? -1 : text.indexOf(']', start);
+  if (start < 0 || end < 0 || text.slice(at + key.length, start).trim() !== ':') return [];
+  try {
+    const actions = JSON.parse(text.slice(start, end + 1));
+    return Array.isArray(actions) ? [...new Set(actions.filter((a) => typeof a === 'string' && a))] : [];
+  } catch (_invalid) {
+    return [];
+  }
+}
+
+// A model answer that does not satisfy the derived schema (unparseable, missing a required key, or a value
+// outside an enum) is rejected here so the chain moves on instead of handing the Worker an invalid action.
+function schemaViolation(text, schema) {
+  if (!schema) return '';
+  let value;
+  try {
+    value = JSON.parse(String(text).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+  } catch (_invalid) {
+    return 'not_json';
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'not_object';
+  for (const key of schema.required || []) {
+    if (!Object.hasOwn(value, key)) return 'missing_' + key;
+  }
+  for (const [key, property] of Object.entries(schema.properties || {})) {
+    if (property.enum && Object.hasOwn(value, key) && !property.enum.includes(value[key])) return 'invalid_' + key;
+  }
+  return '';
 }
 
 async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
@@ -193,7 +234,7 @@ async function callOllama(prompt, timeoutMs, cfg = configFromEnv()) {
 const DEFAULT_GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
 // Retryable on another free-tier model: rate limit, overload/server error, unknown model, timeout, network.
 // A 400/401/403 (bad request or key) would fail identically on every model, so it stops the rotation.
-const GEMINI_ROTATE_ON = new Set(['http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504', 'timeout', 'network_error', 'empty_response', 'truncated']);
+const GEMINI_ROTATE_ON = new Set(['http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504', 'timeout', 'network_error', 'empty_response', 'truncated', 'invalid_output']);
 const GEMINI_THINKING_HEADROOM_TOKENS = 8192;
 const GEMINI_MAX_OUTPUT_TOKENS = 65536;
 
@@ -229,6 +270,8 @@ async function callGeminiModel(model, key, prompt, timeoutMs, cfg) {
   const finishReason = data.candidates && data.candidates[0] && data.candidates[0].finishReason;
   if (finishReason === 'MAX_TOKENS') throw classifiedError('truncated', 'gemini_truncated_' + model);
   if (!text) throw classifiedError('empty_response', 'gemini_empty_response');
+  const violation = schemaViolation(text, cfg.outputSchema);
+  if (violation) throw classifiedError('invalid_output', 'gemini_invalid_output_' + model + '_' + violation);
   const usage = data.usageMetadata || {};
   return { text, model, inputTokens: usage.promptTokenCount || 0, outputTokens: usage.candidatesTokenCount || 0, endpointId: 'gemini' };
 }
@@ -305,7 +348,7 @@ async function runProviderChain(prompt, providers = providerList(), cfg = config
       // is constrained to exactly those keys.
       const workerCognition = name === 'ollama' && requestOptions.capability === 'worker.cognition';
       const providerConfig = name === 'gemini' && requestOptions.capability === 'worker.cognition'
-        ? { ...cfg, jsonOutput: true }
+        ? { ...cfg, jsonOutput: true, outputSchema: outputSchemaFromPrompt(prompt) }
         : workerCognition
         ? {
           ...cfg,

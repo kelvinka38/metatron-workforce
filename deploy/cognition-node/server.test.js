@@ -456,9 +456,11 @@ async function fakeGemini(statusByModel, seen) {
       const model = decodeURIComponent(req.url.split('/').pop().split(':')[0]);
       seen.push({ model, body: JSON.parse(raw) });
       const status = statusByModel[model] ?? 200;
-      res.writeHead(status === 'truncated' ? 200 : status, { 'content-type': 'application/json' });
+      res.writeHead(typeof status === 'string' ? 200 : status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(status === 200
         ? { candidates: [{ content: { parts: [{ text: '{"actionRef":"x"}' }] } }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4 } }
+        : typeof status === 'string' && status.startsWith('text:')
+        ? { candidates: [{ content: { parts: [{ text: status.slice('text:'.length) }] } }] }
         : status === 'truncated'
         ? { candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{ "actionRef": "workspace.test.run", "rationale": "Run governed' }] } }] }
         : { error: { code: status } }));
@@ -536,6 +538,73 @@ test('gemini gets thinking headroom and a truncated answer rotates instead of re
     const result = await callGemini('p', 4000, cfg({ maxOutputTokens: 1536, geminiModelTimeoutMs: 2000 }));
     assert.equal(result.model, 'gemini-b', 'a MAX_TOKENS-truncated answer must never be returned');
     assert.equal(seen[0].body.generationConfig.maxOutputTokens, 1536 + 8192);
+  } finally {
+    process.env = originalEnv;
+    await gemini.close();
+  }
+});
+
+test('action selection is constrained to the Worker\'s availableActions for Ollama and validated for Gemini', async () => {
+  // Production 2026-09-25 (case-b60eb63a, case-ee1d1fd3 VERIFY): flash-lite and qwen3:4b answered with the
+  // request id as actionRef ("worker-cognition-<uuid>", from the evidence references) and each step escalated
+  // with brain-selected-action-outside-catalog after three attempts.
+  const prompt = 'Objective:\nCOGNITIVE INSTRUCTIONS\nChoose one action.\n'
+    + 'Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.\n\n'
+    + 'Context:\n{"work":{"stepId":"verify"},"availableActions":["workspace.test.run","workspace.file.read"],"actionInputKeys":{}}\n\n'
+    + 'Evidence references:\nworker-cognition-input:worker-cognition-3f2a';
+  const schema = outputSchemaFromPrompt(prompt);
+  assert.deepEqual(schema.properties.actionRef, { type: 'string', enum: ['workspace.test.run', 'workspace.file.read'] });
+
+  const originalEnv = { ...process.env };
+  const seen = [];
+  const invented = 'text:{"actionRef":"worker-cognition-3f2a","inputs":{},"rationale":"r"}';
+  const valid = 'text:{"actionRef":"workspace.test.run","inputs":{},"rationale":"run tests"}';
+  const gemini = await fakeGemini({ 'gemini-a': invented, 'gemini-b': valid }, seen);
+  Object.assign(process.env, { GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-a', GEMINI_MODELS: 'gemini-b', GEMINI_API_BASE_URL: gemini.url });
+  try {
+    const outcome = await runProviderChain(prompt, [['gemini', callGemini]],
+      cfg({ totalTimeoutMs: 5000, frontierTimeoutMs: 4000, geminiModelTimeoutMs: 2000 }), { capability: 'worker.cognition' });
+    assert.equal(outcome.status, 200);
+    assert.equal(outcome.body.model, 'gemini-b', 'an action outside availableActions is never returned to the Worker');
+    assert.match(outcome.body.text, /workspace\.test\.run/);
+
+    seen.length = 0;
+    const onlyInvented = await fakeGemini({ 'gemini-a': invented, 'gemini-b': invented }, seen);
+    process.env.GEMINI_API_BASE_URL = onlyInvented.url;
+    let ollamaSchema;
+    try {
+      const fallback = await runProviderChain(prompt, [['gemini', callGemini], ['ollama', async (_p, _t, providerCfg) => {
+        ollamaSchema = providerCfg.ollamaJsonSchema;
+        return { text: '{"actionRef":"workspace.test.run","inputs":{},"rationale":"r"}', model: 'qwen3:4b', inputTokens: 1, outputTokens: 1, endpointId: 'ollama' };
+      }]], cfg({ totalTimeoutMs: 5000, frontierTimeoutMs: 3000, geminiModelTimeoutMs: 1000, ollamaTimeoutMs: 1000 }), { capability: 'worker.cognition' });
+      assert.equal(fallback.body.providerUsed, 'ollama');
+      assert.deepEqual(fallback.body.providerAttempts.map((a) => a.failureClass), ['invalid_output']);
+      assert.deepEqual(ollamaSchema.properties.actionRef.enum, ['workspace.test.run', 'workspace.file.read'],
+        'Ollama decoding is constrained to the available actions');
+    } finally {
+      await onlyInvented.close();
+    }
+  } finally {
+    process.env = originalEnv;
+    await gemini.close();
+  }
+});
+
+test('reflection answers are validated against their decision enum; prompts without a template are not validated', async () => {
+  const originalEnv = { ...process.env };
+  const seen = [];
+  const gemini = await fakeGemini({
+    'gemini-a': 'text:{"decision":"DONE","summary":"s"}',
+    'gemini-b': 'text:{"decision":"COMPLETE","summary":"s"}',
+  }, seen);
+  Object.assign(process.env, { GEMINI_API_KEY: 'k', GEMINI_MODEL: 'gemini-a', GEMINI_MODELS: 'gemini-b', GEMINI_API_BASE_URL: gemini.url });
+  try {
+    const reflection = 'Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"evidence-based result"}.';
+    const outcome = await runProviderChain(reflection, [['gemini', callGemini]],
+      cfg({ totalTimeoutMs: 5000, frontierTimeoutMs: 4000, geminiModelTimeoutMs: 2000 }), { capability: 'worker.cognition' });
+    assert.equal(outcome.body.model, 'gemini-b');
+    const plain = await callGemini('plain prompt', 2000, cfg({ geminiModelTimeoutMs: 1000 }));
+    assert.equal(plain.model, 'gemini-a', 'no schema, no validation');
   } finally {
     process.env = originalEnv;
     await gemini.close();
