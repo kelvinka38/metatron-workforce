@@ -60,6 +60,8 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     private final ExecutorService objectiveExecutor;
     private final AtomicBoolean started = new AtomicBoolean();
     private final ReentrantLock runLock = new ReentrantLock();
+    private final Set<String> inFlightObjectives = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final long SLOW_LANE_LOG_MILLIS = 60_000L;
     private volatile AutonomySchedulingService scheduling;
     private volatile Duration nodeExecutionTimeout = DEFAULT_NODE_EXECUTION_TIMEOUT;
     /** Optional production bridge used to close canonical Assignments only after Observation PASS. */
@@ -233,12 +235,7 @@ public final class AutonomousManagementRunner implements AutoCloseable {
     public void runOnce() {
         if (!runLock.tryLock()) return;
         try {
-            List<Future<?>> lanes = new ArrayList<>();
-            for (AutonomousObjectiveWork work : management.runnableAutonomousWork()) {
-                String objectiveId = work.objectiveId();
-                lanes.add(objectiveExecutor.submit(() -> processWithLease(objectiveId)));
-            }
-            for (Future<?> lane : lanes) {
+            for (Future<?> lane : submitLanes()) {
                 try { lane.get(); }
                 catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
@@ -251,8 +248,51 @@ public final class AutonomousManagementRunner implements AutoCloseable {
         }
     }
 
+    /**
+     * The scheduled pass never waits for its lanes. Waiting (as runOnce() does) let one long or stuck lane
+     * -- a single dispatch may legitimately run for nodeExecutionTimeout (30 minutes) -- hold back every other
+     * Objective's next turn: after each production restart on 2026-09-24/25 an Objective whose lease had
+     * already expired sat untouched for 40-100 minutes. An Objective whose lane is still in flight is skipped
+     * instead of queued twice.
+     */
+    void runScheduledPass() {
+        if (!runLock.tryLock()) return;
+        try { submitLanes(); }
+        finally { runLock.unlock(); }
+    }
+
+    private List<Future<?>> submitLanes() {
+        List<Future<?>> lanes = new ArrayList<>();
+        for (AutonomousObjectiveWork work : management.runnableAutonomousWork()) {
+            String objectiveId = work.objectiveId();
+            if (!inFlightObjectives.add(objectiveId)) continue;
+            try {
+                lanes.add(objectiveExecutor.submit(() -> runLane(objectiveId)));
+            } catch (RuntimeException rejected) {
+                inFlightObjectives.remove(objectiveId);
+                throw rejected;
+            }
+        }
+        return lanes;
+    }
+
+    private void runLane(String objectiveId) {
+        long started = System.nanoTime();
+        try {
+            processWithLease(objectiveId);
+        } catch (RuntimeException failure) {
+            LOG.error("Autonomous objective lane failed objective_id=" + objectiveId, failure);
+        } finally {
+            inFlightObjectives.remove(objectiveId);
+            long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
+            if (elapsedMillis >= SLOW_LANE_LOG_MILLIS) {
+                LOG.warn("autonomy_lane_slow objective_id={} elapsed_ms={}", objectiveId, elapsedMillis);
+            }
+        }
+    }
+
     private void runSafely() {
-        try { runOnce(); }
+        try { runScheduledPass(); }
         catch (RuntimeException failure) { LOG.error("Autonomous management pass failed", failure); }
     }
 
