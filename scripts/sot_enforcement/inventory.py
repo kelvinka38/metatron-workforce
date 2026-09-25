@@ -53,6 +53,7 @@ SYSTEM_STATE_NAMES = {
     "PersistentMeetingStore.java",
     "WorkplaceWorkerChatStore.java",
     "WorkerRuntimeProfileBindingService.java",
+    "WorkerResourceScopeService.java",
 }
 
 LOCAL_WORKSPACE_NAMES = {
