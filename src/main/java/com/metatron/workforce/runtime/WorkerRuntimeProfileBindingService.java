@@ -18,6 +18,12 @@ import java.util.Set;
  */
 public final class WorkerRuntimeProfileBindingService {
     public static final String GENERAL_ENGINEERING_PROFILE = "runtime-profile:general-engineering-worker:v1";
+    /**
+     * Narrow domain-head profile: read/research, edit files and propose an unmerged PR through Git only.
+     * No shell, process, dependency, build, test or project-prepare action; git is the only executable.
+     * Repository and path limits are per-Worker resource scope (WorkerResourceScopeService), not this profile.
+     */
+    public static final String DOMAIN_HEAD_PROFILE = "runtime-profile:domain-head:v1";
 
     public record ToolProfile(
             String profileRef,
@@ -115,6 +121,19 @@ public final class WorkerRuntimeProfileBindingService {
                             "node", "npm", "npx", "pnpm", "yarn",
                             "python3", "python", "pip3"),
                     true, 300, 2_000_000);
+        }
+        if (DOMAIN_HEAD_PROFILE.equals(runtimeProfileRef)) {
+            return new ToolProfile(
+                    runtimeProfileRef,
+                    Set.of(
+                            "research.web.search",
+                            "workspace.repository.materialize",
+                            "workspace.file.read", "workspace.file.list", "workspace.file.search",
+                            "workspace.file.write", "workspace.file.patch",
+                            "workspace.git.status", "workspace.git.diff", "workspace.git.run",
+                            "workspace.github.pr.publish"),
+                    Set.of("git"),
+                    true, 120, 1_000_000);
         }
         // Bounded legacy profiles remain usable through their already-authorized capability adapter.
         return new ToolProfile(runtimeProfileRef, Set.of("capability:" + capabilityRef), Set.of(), false, 60, 512_000);

@@ -529,8 +529,9 @@ public final class GovernedAutonomousExecutionCapability implements AutonomousEx
                                                                  ExecutionAttempt attempt,
                                                                  GovernancePlanService.BoundPlan boundPlan) {
         if (boundPlan == null || request.workSpec().consequence() != ExecutionWorkSpec.Consequence.MUTATING) return null;
-        if (GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(delegate.capabilityRef())) {
-            // General Workspace authorizes every concrete mutating Action inside CognitiveWorkerRuntime.
+        if (GeneralWorkspaceAutonomousCapability.CAPABILITY.equals(delegate.capabilityRef())
+                || AquacultureDomainPlanningCapability.CAPABILITY.equals(delegate.capabilityRef())) {
+            // General Workspace and HOA planning authorize every concrete mutating Action inside CognitiveWorkerRuntime.
             return null;
         }
         String actionRef = "capability:" + request.workSpec().requiredCapability();

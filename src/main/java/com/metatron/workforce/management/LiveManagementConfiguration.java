@@ -22,6 +22,7 @@ import com.metatron.workforce.runtime.FileRuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeCapacityCoordinator;
 import com.metatron.workforce.runtime.RuntimePersistenceStore;
 import com.metatron.workforce.runtime.RuntimeRegistry;
+import com.metatron.workforce.runtime.WorkerResourceScopeService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
 import com.metatron.workforce.runtime.execution.ExecutionResourceScheduler;
 import com.metatron.workforce.workplace.WorkplaceContinuityService;
@@ -143,8 +144,9 @@ public class LiveManagementConfiguration {
     AutonomousStaffingService autonomousStaffingService(WorkforceCoreService core,
                                                          List<AutonomousStaffingPolicy> policies,
                                                          WorkerRuntimeProfileBindingService runtimeProfiles,
-                                                         WorkerConstitutionService constitution) {
-        return new AutonomousStaffingService(core, policies, runtimeProfiles, constitution);
+                                                         WorkerConstitutionService constitution,
+                                                         WorkerResourceScopeService resourceScopes) {
+        return new AutonomousStaffingService(core, policies, runtimeProfiles, constitution, resourceScopes);
     }
 
     @Bean

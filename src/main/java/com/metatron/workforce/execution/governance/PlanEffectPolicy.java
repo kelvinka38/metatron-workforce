@@ -16,11 +16,20 @@ public final class PlanEffectPolicy {
             "workspace.github.pr.publish"
     );
 
+    /** Head of Aquaculture planning: edit files and propose a PR through git only (no shell/process/prepare). */
+    public static final Set<String> AQUACULTURE_PLANNING_MUTATIONS = Set.of(
+            "workspace.file.patch",
+            "workspace.file.write",
+            "workspace.git.run",
+            "workspace.github.pr.publish"
+    );
+
     private PlanEffectPolicy() {}
 
     public static Set<String> allowedActions(ExecutionWorkSpec work) {
         if (work.consequence() == ExecutionWorkSpec.Consequence.READ_ONLY) return Set.of();
         if ("execution.general.workspace".equals(work.requiredCapability())) return GENERAL_WORKSPACE_MUTATIONS;
+        if ("aquaculture.domain.planning".equals(work.requiredCapability())) return AQUACULTURE_PLANNING_MUTATIONS;
         return Set.of("capability:" + work.requiredCapability());
     }
 
