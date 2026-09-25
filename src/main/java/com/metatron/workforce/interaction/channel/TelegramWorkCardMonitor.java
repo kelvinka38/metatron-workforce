@@ -57,6 +57,7 @@ final class TelegramWorkCardMonitor {
     private int consecutiveFailures;
     private int replacementsUsed;
     private volatile boolean stopped;
+    private String lastEditedText;
 
     TelegramWorkCardMonitor(
             Gateway gateway,
@@ -100,7 +101,16 @@ final class TelegramWorkCardMonitor {
         // stayed stale for minutes and the one-time replacement was burned on a 429 too).
         if (clockMillis.getAsLong() < rateLimitedUntilMillis) return;
         try {
-            gateway.editWorkCard(chatId, activeMessageId, render.get());
+            String text = render.get();
+            // The card only changes with Objective state. Re-sending identical text every 5 s per monitor
+            // still costs a Telegram call each time and kept two live cards in flood control about once a
+            // minute (production 2026-09-25, 02:37-03:22 "telegram_monitor_rate_limited" every 5 min).
+            if (text.equals(lastEditedText)) {
+                if (Boolean.TRUE.equals(terminal.get())) stop("refresh-succeeded-terminal");
+                return;
+            }
+            gateway.editWorkCard(chatId, activeMessageId, text);
+            lastEditedText = text;
             consecutiveFailures = 0;
             if (Boolean.TRUE.equals(terminal.get())) {
                 stop("refresh-succeeded-terminal");
