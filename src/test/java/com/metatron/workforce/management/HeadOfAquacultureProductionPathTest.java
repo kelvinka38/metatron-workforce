@@ -21,8 +21,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -67,45 +71,48 @@ class HeadOfAquacultureProductionPathTest {
         }
     }
 
+    /**
+     * Every host state location the application declares (a METATRON_* property defaulting under /var, /opt or /srv)
+     * is redirected into this test's temp directory. Discovered from the production sources rather than listed, so
+     * state added later cannot leak: CI runs on the production host, where the real state directories are not
+     * writable by the runner and must never be touched by a test.
+     */
+    private static final Pattern HOST_STATE_PROPERTY = Pattern.compile(
+            "\\$\\{(METATRON_[A-Z0-9_]+):(?=(?:\\$\\{METATRON_[A-Z0-9_]+:)?/(?:var|opt|srv)/)");
+
+    static Set<String> hostStateProperties() {
+        Set<String> names = new TreeSet<>();
+        try (Stream<Path> sources = Files.walk(Path.of("src/main"))) {
+            for (Path source : sources.filter(Files::isRegularFile).toList()) {
+                Matcher matcher = HOST_STATE_PROPERTY.matcher(Files.readString(source));
+                while (matcher.find()) names.add(matcher.group(1));
+            }
+        } catch (Exception failure) {
+            throw new IllegalStateException("cannot discover host state properties", failure);
+        }
+        return names;
+    }
+
     @DynamicPropertySource
     static void productionShapedState(DynamicPropertyRegistry registry) {
-        for (String[] entry : new String[][] {
-                {"METATRON_INTELLIGENCE_CASE_PATH", "intelligence-cases"},
-                {"METATRON_INTELLIGENCE_DEPTH_PATH", "intelligence-depth"},
-                {"METATRON_INTELLIGENCE_ROUTING_FEEDBACK_PATH", "intelligence-routing-feedback.json"},
-                {"METATRON_WORKPLACE_MEETING_PATH", "workplace/meetings"},
-                {"METATRON_WORKFORCE_CORE_STATE_PATH", "workforce-core-state.json"},
-                {"METATRON_WORKER_CONSTITUTION_STATE_PATH", "worker-constitution-state.json"},
-                {"METATRON_WORKER_CONSTITUTION_RUNTIME_STATE_PATH", "worker-constitution-runtime-state.json"},
-                {"METATRON_WORKER_ACTOR_STATE_PATH", "worker-actors"},
-                {"METATRON_MANAGEMENT_STATE_PATH", "management-state.json"},
-                {"METATRON_AUTONOMY_COORDINATION_STATE_PATH", "autonomy-coordination-state.json"},
-                {"METATRON_AUTONOMY_SAFETY_STATE_PATH", "autonomy-safety-state.json"},
-                {"METATRON_AUTONOMY_SCHEDULING_STATE_PATH", "autonomy-scheduling-state.json"},
-                {"METATRON_OBSERVATION_STATE_PATH", "observation-state.json"},
-                {"METATRON_EXECUTION_ATTEMPT_STATE_PATH", "execution-attempts.json"},
-                {"METATRON_RUNTIME_STATE_DIR", "runtime-state"},
-                {"METATRON_WORKFORCE_SCHEDULE_STATE_PATH", "work-schedules.json"},
-                {"METATRON_WORKFORCE_STAFFING_STATE_PATH", "staffing-state.json"},
-                {"METATRON_WORKFORCE_REVIEW_STATE_PATH", "review-state.json"},
-                {"METATRON_WORKFORCE_WORK_STATE_PATH", "institutional-work.json"},
-                {"METATRON_WORKPLACE_CONTINUITY_STATE_PATH", "workplace-continuity-state.json"},
-                {"METATRON_RUNTIME_PROFILE_BINDINGS_PATH", "runtime-profile-bindings.tsv"},
-                {"METATRON_WORKER_RESOURCE_SCOPES_PATH", "worker-resource-scopes.tsv"},
-                {"METATRON_OBJECTIVE_WORKSPACE_ROOT", "objective-workspaces"},
-                {"METATRON_CONVERSATION_MEMORY_PATH", "conversations"},
-                {"METATRON_CONVERSATION_SURFACE_MODE_PATH", "conversation-surface-mode"},
-                {"METATRON_FOUNDER_WORKER_PRODUCT_DIR", "founder-worker-products"},
-                {"METATRON_INFERENCE_LEDGER_PATH", "inference-ledger.jsonl"},
-                {"METATRON_COGNITION_CAPACITY_EVENT_PATH", "cognition-capacity-events.jsonl"},
-                {"METATRON_COGNITIVE_ARTIFACT_PATH", "cognitive-artifacts"},
-                {"METATRON_WORKER_DELIBERATION_PATH", "worker-deliberation.json"},
-                {"METATRON_EXECUTION_WORKSPACE_BINDINGS_PATH", "execution-workspace-bindings.json"},
-                {"METATRON_EXECUTION_WORKSPACE_ROOT", "executions"}}) {
-            registry.add(entry[0], () -> STATE.resolve(entry[1]).toString());
+        Set<String> names = hostStateProperties();
+        if (!names.contains("METATRON_WORKFORCE_CORE_STATE_PATH") || !names.contains("METATRON_EXECUTION_RESOURCE_STATE_PATH")) {
+            throw new IllegalStateException("host state property discovery is broken: " + names);
+        }
+        for (String name : names) {
+            registry.add(name, () -> STATE.resolve(name.toLowerCase(java.util.Locale.ROOT)).toString());
         }
         registry.add("OPENAI_API_KEY", () -> "production-path-test-placeholder");
         registry.add("OPENAI_MODEL", () -> "production-path-test-model");
+    }
+
+    @Test
+    void hostStateIsFullyRedirected() {
+        Set<String> names = hostStateProperties();
+        assertTrue(names.size() >= 40, names.toString());
+        assertTrue(names.containsAll(Set.of("METATRON_TELEGRAM_INGRESS_PATH", "METATRON_TELEGRAM_MEMORY_PATH",
+                "METATRON_CONVERSATION_MEMORY_PATH", "METATRON_SOT_GOVERNANCE_STATE_PATH",
+                "METATRON_EXECUTION_RESOURCE_QUEUE_PATH")), names.toString());
     }
 
     @Test
