@@ -24,9 +24,10 @@ final class TelegramWorkCardMonitorTest {
     void successfulRefreshEditsTheSameMessageAndNeverSendsANewOne() {
         RecordingGateway gateway = new RecordingGateway();
         List<String> stoppedReasons = new ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger version = new java.util.concurrent.atomic.AtomicInteger();
         TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
                 gateway, "chat-1", "objective-1", 1000L,
-                () -> "card text", () -> false, stoppedReasons::add);
+                () -> "card text v" + version.incrementAndGet(), () -> false, stoppedReasons::add);
 
         monitor.tick();
         monitor.tick();
@@ -48,7 +49,7 @@ final class TelegramWorkCardMonitorTest {
         List<String> stoppedReasons = new ArrayList<>();
         TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
                 gateway, "chat-1", "objective-1", 1000L,
-                () -> "card text", terminal::get, stoppedReasons::add);
+                () -> terminal.get() ? "card text: completed" : "card text: executing", terminal::get, stoppedReasons::add);
 
         monitor.tick();
         assertFalse(monitor.stopped());
@@ -80,22 +81,45 @@ final class TelegramWorkCardMonitorTest {
     }
 
     @Test
-    void unchangedContentEditFailureIsTreatedAsSuccessAndNeverCreatesAReplacement() {
-        // TelegramBotGateway.editWorkCard already swallows "message is not modified" internally and
-        // never throws for it -- from this policy's perspective that is indistinguishable from an
-        // ordinary successful edit. This proves the "no-op" case never reaches the failure/replacement
-        // path at all.
+    void unchangedContentIsNotReEditedAndNeverCreatesAReplacement() {
+        // Production 2026-09-25: every monitor re-sent identical card text every 5 s, and two live cards
+        // hit Telegram flood control roughly once a minute. Unchanged content now costs no Telegram call.
         RecordingGateway gateway = new RecordingGateway();
+        List<String> stoppedReasons = new ArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<String> card =
+                new java.util.concurrent.atomic.AtomicReference<>("identical card text");
+        TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
+                gateway, "chat-1", "objective-1", 1000L,
+                card::get, () -> false, stoppedReasons::add);
+
+        for (int i = 0; i < 5; i++) monitor.tick();
+        assertEquals(1, gateway.editCalls.size(), "identical text is edited once, then skipped");
+
+        card.set("changed card text");
+        monitor.tick();
+        monitor.tick();
+        assertEquals(2, gateway.editCalls.size(), "a state change is edited exactly once");
+        assertEquals("changed card text", gateway.editCalls.getLast().text());
+        assertEquals(0, gateway.sendCalls.size());
+        assertTrue(stoppedReasons.isEmpty());
+    }
+
+    @Test
+    void anUnchangedCardStillStopsTheMonitorOnceTheObjectiveIsTerminal() {
+        RecordingGateway gateway = new RecordingGateway();
+        AtomicBoolean terminal = new AtomicBoolean(false);
         List<String> stoppedReasons = new ArrayList<>();
         TelegramWorkCardMonitor monitor = new TelegramWorkCardMonitor(
                 gateway, "chat-1", "objective-1", 1000L,
-                () -> "identical card text", () -> false, stoppedReasons::add);
+                () -> "final card text", terminal::get, stoppedReasons::add);
 
-        for (int i = 0; i < 5; i++) monitor.tick();
+        monitor.tick();
+        terminal.set(true);
+        monitor.tick();
 
-        assertEquals(5, gateway.editCalls.size());
-        assertEquals(0, gateway.sendCalls.size());
-        assertTrue(stoppedReasons.isEmpty());
+        assertEquals(1, gateway.editCalls.size());
+        assertTrue(monitor.stopped());
+        assertEquals(List.of("refresh-succeeded-terminal"), stoppedReasons);
     }
 
     @Test
