@@ -28,6 +28,7 @@ The node treats one cognition request as a single bounded transaction:
 - every provider attempt uses `min(provider timeout, remaining whole-request budget)`
 - the Ollama call uses `node:http`, not global `fetch`: undici's hidden 300 s headers timeout would otherwise cut every long non-streaming CPU generation at ~300 s regardless of `OLLAMA_TIMEOUT_MS`
 - every HTTP call is AbortController-bounded
+- Worker cognition output follows the instructions' own `Return ONLY JSON: {...}` template: Ollama decodes against it as a JSON schema, and a Gemini answer that violates it (not JSON, missing key, value outside an enum) rotates to the next model and finally to Ollama. For action selection, `actionRef` is an enum of the prompt's `availableActions`
 - completed provider chain failure returns `502 all_providers_failed`
 - exhausted whole-request budget returns `504 cognition_deadline_exhausted`
 
