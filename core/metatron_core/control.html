@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metatron Control Room</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#16181d;--muted:#667085;--line:#e4e7ec;--accent:#2e62f5;
+--ok:#12805c;--warn:#b54708;--bad:#c01048;--run:#2e62f5;--chip:#eef1f6}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--panel:#161b22;--ink:#e6e9ef;--muted:#8b95a7;
+--line:#262d38;--accent:#6d93ff;--ok:#3ccb8f;--warn:#f5a524;--bad:#ff5c8a;--run:#6d93ff;--chip:#1f2630}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);
+padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header h1{font-size:16px;margin:0;font-weight:650}
+.live{font-size:12px;color:var(--muted)}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+background:var(--ok);margin-right:6px}.dot.off{background:var(--bad)}
+nav{display:flex;gap:4px;overflow-x:auto;margin-left:auto}
+nav button{border:0;background:none;color:var(--muted);padding:6px 10px;border-radius:8px;font:inherit;cursor:pointer;white-space:nowrap}
+nav button.on{background:var(--chip);color:var(--ink);font-weight:600}
+main{max-width:1200px;margin:0 auto;padding:16px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.kpi .v{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}.kpi .l{color:var(--muted);font-size:12px}
+h2{font-size:14px;margin:20px 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600}tr:last-child td{border-bottom:0}
+tbody tr.click{cursor:pointer}tbody tr.click:hover{background:var(--chip)}
+.st{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:600;background:var(--chip);white-space:nowrap}
+.st.running,.st.cancelling,.st.checking_ci{color:var(--run)}.st.done,.st.merged,.st.awaiting_approval{color:var(--ok)}
+.st.failed{color:var(--bad)}.st.queued{color:var(--warn)}
+.muted{color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.req{max-width:520px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+a{color:var(--accent);text-decoration:none}
+button.b,a.b{display:inline-block;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+button.b.p{background:var(--accent);border-color:var(--accent);color:#fff}button.b.d{color:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+textarea{width:100%;min-height:70px;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--panel);color:var(--ink);font:inherit}
+.bar{height:6px;background:var(--chip);border-radius:9px;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:var(--accent)}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.filters button{font-size:12px}
+.filters button.on{background:var(--ink);color:var(--panel)}
+#drawer{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;z-index:10}
+#drawer .sheet{position:absolute;right:0;top:0;bottom:0;width:min(720px,100%);background:var(--bg);overflow:auto;padding:16px}
+.log{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.log div{padding:8px 10px;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.log .k{font-weight:600;margin-right:6px}.log .tool .k{color:var(--run)}.log .llm .k{color:var(--muted)}.log .error .k{color:var(--bad)}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--panel);
+padding:10px 14px;border-radius:10px;display:none;max-width:90%;z-index:20;white-space:pre-wrap}
+.scroll{overflow-x:auto}
+.org{display:flex;flex-direction:column;align-items:center;gap:0}
+.org .lvl{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;width:100%}
+.org .line{width:2px;height:18px;background:var(--line)}
+.wk{min-width:220px;flex:1 1 220px;max-width:340px}
+.wk .role{color:var(--muted);font-size:12px}
+.cap{display:inline-block;font-size:11px;padding:0 6px;margin:2px 2px 0 0;border-radius:6px;background:var(--chip);color:var(--muted)}
+.st.working{color:var(--run)}.st.free{color:var(--ok)}
+.md{line-height:1.6;overflow-wrap:anywhere}.md h1,.md h2,.md h3,.md h4{margin:18px 0 6px;line-height:1.3}
+.md h1{font-size:20px}.md h2{font-size:17px;text-transform:none;letter-spacing:0;color:var(--ink)}.md h3,.md h4{font-size:15px}.md p{margin:8px 0}
+.md ul,.md ol{margin:6px 0;padding-left:22px}.md code{background:var(--chip);padding:0 4px;border-radius:4px}
+.md table{margin:10px 0;font-size:13px}.md blockquote{margin:8px 0;padding-left:10px;border-left:3px solid var(--line);color:var(--muted)}
+@media (max-width:640px){.hide-s{display:none}main{padding:12px}.kpi .v{font-size:21px}
+.tt{border-radius:12px}.tt thead{display:none}
+.tt tr{display:grid;grid-template-columns:auto auto 1fr;gap:6px 8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.tt tr:last-child{border-bottom:0}.tt td{border:0;padding:0}.tt td.id{order:1}.tt td.s{order:2}
+.tt td.up{order:3;justify-self:end}.tt td.rq{order:4;grid-column:1/-1}.tt .req{max-width:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Metatron Control Room</h1>
+  <span class="live"><span id="dot" class="dot"></span><span id="updated">connecting…</span></span>
+  <nav id="tabs">
+    <button data-t="overview" class="on">Overview</button><button data-t="tasks">Tasks</button>
+    <button data-t="workers">Workforce</button><button data-t="reports">Reports</button><button data-t="projects">Projects</button>
+    <button data-t="models">Models</button>
+  </nav>
+</header>
+<main id="view"></main>
+<div id="drawer"><div class="sheet" id="sheet"></div></div>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let S = null, tab = "overview", filter = "all", openTask = null, draft = "";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ago = t => { if (!t) return "—"; const s = Math.max(0, S.now - t);
+  return s < 60 ? `${s|0}s ago` : s < 3600 ? `${s/60|0}m ago` : s < 86400 ? `${s/3600|0}h ago` : `${s/86400|0}d ago`; };
+const dur = s => s < 60 ? `${s|0}s` : s < 3600 ? `${s/60|0}m ${s%60|0}s` : `${s/3600|0}h ${(s%3600)/60|0}m`;
+const st = s => `<span class="st ${esc(s)}">${esc(String(s).replace("_"," "))}</span>`;
+const gh = u => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace("https://github.com/",""))}</a>` : "—";
+function toast(m){ const t=$("#toast"); t.textContent=m; t.style.display="block"; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display="none",5000); }
+
+async function api(path, body){
+  const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json","X-Core":"1"}, body:JSON.stringify(body)} : {});
+  if (r.status === 401) { $("#view").innerHTML = `<div class="card"><h3>Not logged in</h3><p>Send <b>/login</b> to the Telegram bot and open the link it sends.</p></div>`; throw new Error("login"); }
+  return r.json();
+}
+async function refresh(){
+  try { S = await api("/api/state"); $("#dot").className="dot"; $("#updated").textContent = "live · " + new Date().toLocaleTimeString(); render(); }
+  catch(e){ $("#dot").className="dot off"; if (e.message!=="login") $("#updated").textContent="offline, retrying"; }
+}
+async function act(action, id){
+  if (["approve","reject","cancel","retry","kill"].includes(action) && !confirm(`${action} task #${id}?`)) return;
+  const r = await api("/api/action", {action, task_id:id}); toast(r.reply || r.error || "done"); refresh(); if (openTask) showTask(openTask);
+}
+function actions(t){
+  const b=[]; const s=t.status;
+  if (["queued","running"].includes(s)) b.push(["cancel","Cancel","d"]);
+  if (s==="awaiting_approval") b.push(["approve","Approve & merge","p"],["reject","Reject",""]);
+  if (!["queued","running","cancelling","checking_ci"].includes(s)) b.push(["retry","Retry",""]);
+  if (t.repo) b.push(["preview","Preview",""]);
+  return b.map(([a,l,c])=>`<button class="b ${c}" onclick="event.stopPropagation();act('${a}',${t.id})">${l}</button>`).join("");
+}
+function taskTable(rows){
+  if (!rows.length) return `<div class="card muted">No tasks.</div>`;
+  return `<div class="scroll"><table class="tt"><thead><tr><th>#</th><th>Status</th><th>Request</th><th class="hide-s">Worker</th><th class="hide-s">Project</th><th class="hide-s">Steps</th><th>Updated</th></tr></thead><tbody>${
+    rows.map(t=>`<tr class="click" onclick="showTask(${t.id})"><td class="mono id">#${t.id}</td><td class="s">${st(t.status)}</td>
+    <td class="rq"><div class="req">${t.has_report?"📄 ":""}${esc(t.request)}</div></td><td class="hide-s">${esc(wname(t.assignee_id))}</td><td class="hide-s mono">${esc(t.repo||"—")}</td>
+    <td class="hide-s">${t.steps}</td><td class="muted up">${ago(t.updated_at)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+function inline(s){
+  return s.replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,'$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+function md(src){  // small Markdown subset; text is escaped first, so a report cannot inject markup
+  const L=esc(src).split("\n"); let o=[], i=0;
+  while(i<L.length){ const l=L[i];
+    if(/^\s*$/.test(l)){i++;continue;}
+    let m=l.match(/^(#{1,4})\s+(.*)/); if(m){o.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);i++;continue;}
+    if(/^\s*\|/.test(l)){ const rows=[]; while(i<L.length&&/^\s*\|/.test(L[i])) rows.push(L[i++]);
+      const cells=r=>r.trim().replace(/^\||\|$/g,"").split("|").map(c=>inline(c.trim()));
+      const body=rows.filter(r=>!/^\s*\|?\s*:?-{2,}/.test(r));
+      o.push(`<div class="scroll"><table><thead><tr>${cells(body[0]).map(c=>`<th>${c}</th>`).join("")}</tr></thead><tbody>${
+        body.slice(1).map(r=>`<tr>${cells(r).map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`); continue; }
+    if(/^\s*([-*]|\d+\.)\s+/.test(l)){ const ord=/^\s*\d+\./.test(l), items=[];
+      while(i<L.length&&/^\s*([-*]|\d+\.)\s+/.test(L[i])) items.push(L[i++].replace(/^\s*([-*]|\d+\.)\s+/,""));
+      o.push(`<${ord?"ol":"ul"}>${items.map(x=>`<li>${inline(x)}</li>`).join("")}</${ord?"ol":"ul"}>`); continue; }
+    if(/^&gt;\s?/.test(l)){o.push(`<blockquote>${inline(l.replace(/^&gt;\s?/,""))}</blockquote>`);i++;continue;}
+    const para=[]; while(i<L.length&&!/^\s*$/.test(L[i])&&!/^(#{1,4}\s|\s*\||\s*([-*]|\d+\.)\s)/.test(L[i])) para.push(L[i++]);
+    o.push(`<p>${inline(para.join(" "))}</p>`);
+  }
+  return o.join("");
+}
+function kpi(v,l){ return `<div class="card kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`; }
+const wname = id => (S.workers.find(w=>w.id===id)||{}).name || "unassigned";
+const slotOf = tid => S.runtime.find(r=>r.task_id===tid);
+function workerCard(w){
+  const busy = w.load>0, done=["done","awaiting_approval","merged"].reduce((n,k)=>n+(w.record[k]||0),0);
+  if (w.reports_to==="founder") return `<div class="card wk"><div class="row"><b>${esc(w.name)}</b>${st(busy?"working":"free")}</div>
+    <div class="role">${esc(w.role)} · ${esc(w.purpose)}</div>
+    <div>${w.capabilities.map(c=>`<span class="cap">${esc(c)}</span>`).join("")}</div>
+    <div style="margin-top:8px">Owns <b>${w.load}</b> open Objective${w.load===1?"":"s"}: ${w.current_tasks.map(t=>`<a href="#" onclick="showTask(${t});return false">#${t}</a>`).join(" ")||"none"}</div>
+    <div class="muted" style="font-size:12px">${done} delivered · ${w.record.failed||0} failed</div></div>`;
+  const cur = w.current_tasks.map(tid=>{ const r=slotOf(tid), t=S.tasks.find(x=>x.id===tid)||{};
+    return `<div style="margin-top:8px"><a href="#" onclick="showTask(${tid});return false">#${tid}</a> ${st(t.status||"")}
+      <div class="req">${esc(t.request||"")}</div>${r?`<div class="muted mono">step ${r.step} · ${esc(r.action||"thinking")}<br>model: ${esc(r.model||"—")} · ${dur(S.now-r.started)}</div>`:""}</div>`; }).join("");
+  return `<div class="card wk"><div class="row"><b>${esc(w.name)}</b>${st(busy?"working":"free")}</div>
+    <div class="role">${esc(w.role)} · ${esc(w.purpose)}</div>
+    <div>${w.capabilities.map(c=>`<span class="cap">${esc(c)}</span>`).join("")}</div>
+    <div class="bar"><i style="width:${100*w.load/w.capacity}%"></i></div>
+    <div class="muted" style="font-size:12px">load ${w.load}/${w.capacity} · ${done} delivered · ${w.record.failed||0} failed</div>${cur}</div>`;
+}
+function orgChart(){
+  const mgr=S.workers.filter(w=>w.reports_to==="founder"), team=S.workers.filter(w=>w.reports_to!=="founder");
+  return `<div class="org"><div class="card" style="text-align:center"><b>Founder</b><div class="role muted">approves merges and decisions</div></div>
+    <div class="line"></div><div class="lvl">${mgr.map(workerCard).join("")}</div>
+    <div class="line"></div><div class="lvl">${team.map(workerCard).join("")}</div></div>`;
+}
+function workforceStrip(){
+  return `<div class="card">${S.workers.map(w=>{ const t=w.current_tasks[0];
+    if (w.reports_to==="founder") return `<div class="row" style="padding:4px 0"><b style="min-width:170px">${esc(w.name)}</b>${st(w.load?"working":"free")}
+      <span class="muted">owns ${w.load} open Objective${w.load===1?"":"s"}</span></div>`;
+    return `<div class="row" style="padding:4px 0"><b style="min-width:170px">${esc(w.name)}</b>${st(w.load?"working":"free")}
+      ${t?`<a href="#" onclick="showTask(${t});return false">#${t}</a><span class="muted req hide-s" style="flex:1">${esc((S.tasks.find(x=>x.id===t)||{}).request||"")}</span>`:`<span class="muted">${w.load}/${w.capacity}</span>`}</div>`; }).join("")}</div>`;
+}
+function runtimeCards(){
+  return `<div class="grid">${S.runtime.map(r=>`<div class="card"><div class="row"><b>Slot ${r.slot}</b>${st(r.busy?"running":"idle")}</div>
+    ${r.busy?`<div class="muted">${esc(wname(r.worker_id))} · <a href="#" onclick="showTask(${r.task_id});return false">task #${r.task_id}</a> · ${dur(S.now-r.started)}</div>
+    <div class="muted mono">step ${r.step} · ${esc(r.model||"—")}</div>
+    <div class="bar"><i style="width:${Math.min(100,(S.now-r.started)/27)}%"></i></div>`:`<div class="muted">free</div>`}</div>`).join("")}</div>
+    <p class="muted" style="font-size:12px">A slot is computing capacity on this server, not a Worker. At most one slot uses the local Ollama model at a time.</p>`;
+}
+const views = {
+  overview(){
+    const s=S.summary, h=S.host;
+    return `<div class="grid">${kpi(s.running,"Running")}${kpi(s.queued,"Queued")}${kpi(s.awaiting_approval,"Awaiting approval")}
+      ${kpi(s.tasks_7d,"Tasks, 7 days")}${kpi(s.success_rate==null?"—":s.success_rate+"%","Success rate")}
+      ${kpi(S.models.paid_calls_7d===0?"$0":"⚠ "+S.models.paid_calls_7d,"Paid model calls")}</div>
+      <h2>Workforce</h2>${workforceStrip()}
+      <h2>New task</h2><div class="card"><textarea id="newreq" oninput="draft=this.value" placeholder="e.g. In kelvinka38/bios fix the failing test">${esc(draft)}</textarea>
+      <div class="row" style="margin-top:8px"><button class="b p" onclick="newTask()">Queue task</button><span class="muted">Same as sending it to the bot.</span></div></div>
+      <h2>Host</h2><div class="grid">${kpi(h.load?h.load[0].toFixed(2):"—",`Load (${h.cpus} CPUs)`)}
+      ${kpi(h.mem_used_mb?`${(h.mem_used_mb/1024).toFixed(1)}/${(h.mem_total_mb/1024).toFixed(1)} GB`:"—","Memory")}
+      ${kpi(h.disk_used_gb?`${h.disk_used_gb}/${h.disk_total_gb} GB`:"—","Disk")}
+      ${kpi(S.preview.task_id?`#${S.preview.task_id}`:"none","Live preview")}</div>
+      <h2>Needs you</h2>${taskTable(S.tasks.filter(t=>t.status==="awaiting_approval"))}
+      <h2>Recent</h2>${taskTable(S.tasks.slice(0,8))}`;
+  },
+  tasks(){
+    const sts=["all",...new Set(S.tasks.map(t=>t.status))];
+    const rows=S.tasks.filter(t=>filter==="all"||t.status===filter);
+    return `<div class="filters">${sts.map(x=>`<button class="b ${x===filter?"on":""}" onclick="filter='${x}';render()">${esc(x.replace("_"," "))} ${x==="all"?S.tasks.length:S.tasks.filter(t=>t.status===x).length}</button>`).join("")}</div>${taskTable(rows)}`;
+  },
+  workers(){
+    const byTask={}; S.processes.forEach(p=>(byTask[p.task_id]=byTask[p.task_id]||[]).push(p));
+    return `<h2>Metatron Engineering</h2>${orgChart()}
+      <h2>Runtime</h2>${runtimeCards()}
+      <h2>Queue</h2>${taskTable(S.tasks.filter(t=>t.status==="queued").reverse())}
+      <h2>Agent processes</h2>${Object.keys(byTask).length?Object.entries(byTask).map(([tid,ps])=>`
+      <div class="card" style="margin-bottom:8px"><div class="row"><b>Task #${tid}</b>
+      ${S.preview.task_id==tid?st("preview"):""}<span class="muted">${ps.length} process${ps.length>1?"es":""}</span>
+      <button class="b d" style="margin-left:auto" onclick="act('kill',${tid})">Kill all</button></div>
+      <div class="scroll"><table style="margin-top:8px"><thead><tr><th>PID</th><th>Command</th><th>CPU</th><th>RAM</th><th class="hide-s">Started</th></tr></thead><tbody>
+      ${ps.map(p=>`<tr><td class="mono">${p.pid}</td><td class="mono">${esc(p.cmd)}</td><td>${p.cpu_s}s</td><td>${p.rss_mb} MB</td><td class="hide-s muted">${ago(p.started)}</td></tr>`).join("")}
+      </tbody></table></div></div>`).join(""):`<div class="card muted">No agent processes running.</div>`}`;
+  },
+  reports(){
+    const rows=S.tasks.filter(t=>t.has_report);
+    return `<p class="muted">Research and analysis deliverables. Open one to read it, or download the Markdown file.</p>${taskTable(rows)}`;
+  },
+  projects(){
+    if (!S.projects.length) return `<div class="card muted">No projects yet.</div>`;
+    return `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">${S.projects.map(p=>`
+      <div class="card"><div class="row"><b class="mono">${esc(p.repo)}</b><a style="margin-left:auto" href="https://github.com/${esc(p.repo)}" target="_blank" rel="noopener">GitHub ↗</a></div>
+      <div class="row muted" style="margin:6px 0">${p.tasks} tasks · ${p.ok} ok · ${p.failed} failed · ${p.active} active</div>
+      <div class="bar"><i style="width:${p.tasks?100*p.ok/p.tasks:0}%;background:var(--ok)"></i></div>
+      ${p.open_prs.length?`<div style="margin-top:8px">${p.open_prs.map(x=>`<div class="row"><span class="st awaiting_approval">PR</span>${gh(x.url)}<button class="b p" onclick="act('approve',${x.task_id})">Approve</button></div>`).join("")}</div>`:""}
+      <div class="muted" style="margin-top:8px;font-size:12px">last activity ${ago(p.last_activity)} · <a href="#" onclick="showTask(${p.last_task});return false">task #${p.last_task}</a></div></div>`).join("")}</div>`;
+  },
+  models(){
+    const m=S.models, max=Math.max(1,...m.usage_7d.map(u=>u.calls));
+    return `<h2>Providers (in order of use)</h2><div class="scroll"><table><thead><tr><th>Provider</th><th>Model</th><th>State</th></tr></thead><tbody>
+      ${m.providers.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="mono">${esc(p.model||"auto")}</td><td>${p.available?st("ready"):`<span class="st queued">cooling ${dur(p.cooldown_s)}</span>`}</td></tr>`).join("")}
+      </tbody></table></div><p class="muted">Last answer from <span class="mono">${esc(m.last_used||"—")}</span>. Paid calls, 7 days: <b>${m.paid_calls_7d}</b>.</p>
+      <h2>Calls, 7 days</h2><div class="card">${m.usage_7d.length?m.usage_7d.map(u=>`<div style="margin-bottom:10px"><div class="row"><span class="mono">${esc(u.model)}</span><span class="muted" style="margin-left:auto">${u.calls}</span></div><div class="bar"><i style="width:${100*u.calls/max}%"></i></div></div>`).join(""):`<span class="muted">No calls yet.</span>`}</div>`;
+  }
+};
+function render(){ if (S) $("#view").innerHTML = views[tab](); }
+async function showTask(id){
+  openTask=id; const d=await api(`/api/tasks/${id}`); const t=d.task;
+  $("#sheet").innerHTML = `<div class="row"><button class="b" onclick="closeTask()">← Back</button><b>Task #${t.id}</b>${st(t.status)}</div>
+    <div class="card" style="margin-top:12px"><div style="white-space:pre-wrap">${esc(t.request)}</div>
+    <div class="muted" style="margin-top:8px">Responsible: <b>${esc(wname(t.assignee_id))}</b> · owner: ${esc(wname(t.owner_id))}</div>
+    <div class="muted" style="margin-top:4px">Project: <span class="mono">${esc(t.repo||"—")}</span> · steps ${t.steps} · attempts ${t.attempts||0} · created ${ago(t.created_at)}</div>
+    <div style="margin-top:6px">PR: ${gh(t.pr_url)}</div>
+    <div class="row" style="margin-top:10px">${actions(t)}</div></div>
+    ${t.result?`<h2>Result</h2><div class="card" style="white-space:pre-wrap">${esc(t.result)}</div>`:""}
+    ${t.report?`<h2>Report</h2><div class="row" style="margin-bottom:8px"><a class="b" href="/api/tasks/${t.id}/report.md" download>Download report.md</a></div><div class="card md">${md(t.report)}</div>`:""}
+    <h2>Log (${d.log.length} entries, newest last)</h2><div class="log">${d.log.map(e=>`<div class="${esc(e.kind)}"><span class="k">${esc(e.kind)}</span><span class="muted">${e.at?new Date(e.at*1000).toLocaleTimeString():""}</span>\n${esc(e.detail)}</div>`).join("")||`<div class="muted">No log yet.</div>`}</div>`;
+  $("#drawer").style.display="block";
+}
+function closeTask(){ openTask=null; $("#drawer").style.display="none"; }
+$("#drawer").addEventListener("click", e=>{ if (e.target.id==="drawer") closeTask(); });
+async function newTask(){ const v=$("#newreq").value.trim(); if(!v) return; const r=await api("/api/tasks",{request:v}); toast(r.reply||r.error); draft=""; $("#newreq").value=""; refresh(); }
+$("#tabs").addEventListener("click", e=>{ const t=e.target.dataset.t; if(!t) return; tab=t;
+  document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on", b.dataset.t===t)); render(); });
+refresh(); setInterval(()=>{ if (!document.hidden && !(tab==="overview" && document.activeElement?.id==="newreq")) refresh(); }, 5000);
+setInterval(()=>{ // live log only while the task is active; a finished report stays put while read
+  const t = openTask && S && S.tasks.find(x=>x.id===openTask);
+  if (t && !document.hidden && ["queued","running","cancelling","checking_ci"].includes(t.status)) showTask(openTask); }, 10000);
+</script>
+</body>
+</html>

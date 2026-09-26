@@ -1,0 +1,111 @@
+# Metatron Core
+
+One small Python service: a Telegram message becomes a task, one agent works on it in a loop
+(read → edit → run tests → fix) inside its own workspace, opens a GitHub PR and replies on Telegram.
+Merging needs the founder's `/approve <id>`. LLM spend is $0 by construction: Gemini free tier,
+OpenRouter `:free` models, local Ollama.
+
+## Run the tests
+
+```sh
+cd core
+python3 -m unittest discover -s tests -t . -v          # as a normal user
+sudo python3 -m unittest discover -s tests -t . -v     # also runs the agent-user isolation tests
+```
+
+CI (`.github/workflows/core-ci.yml`) runs both on every PR that touches `core/`.
+
+## Environment
+
+| Variable | Needed | Meaning |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | yes | Key from an AI Studio project with **no billing account** |
+| `CORE_GEMINI_MODEL` | no | Default `gemini-2.5-flash` |
+| `OPENROUTER_FREE_API_KEY`, `OPENROUTER_FREE_MODEL` | no | Model must end in `:free`, or Core refuses to start |
+| `OLLAMA_URL`, `CORE_OLLAMA_MODEL` | no | Default `http://metatron-ollama:11434`, `qwen2.5-coder:7b` |
+| `CORE_OLLAMA_NUM_CTX` | no | Local model context window in tokens, default 16384 |
+| `CORE_FREE_WAIT_SECONDS` | no | How long to wait for a briefly busy free cloud model before using Ollama, default 60 (0 = never wait) |
+| `CORE_TELEGRAM_BOT_TOKEN`, `CORE_TELEGRAM_WEBHOOK_SECRET` | yes | Test bot until cutover |
+| `TELEGRAM_ALLOWED_USER_ID` | yes | The only Telegram user Core obeys |
+| `CORE_API_TOKEN` | yes | Bearer token for the local API |
+| `GITHUB_TOKEN` | yes | Clone, push, open and merge PRs. Never visible to the agent |
+| `CORE_AGENT_UID_BASE` | set in image | Task N runs as Unix user base + N (container only) |
+
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are ignored unless `METATRON_ALLOW_PREPAID_CREDIT=true`.
+Leave that unset.
+
+## Deploy (on the host)
+
+First time (builds the image, pulls the Ollama model, checks toolchains, runs the tests inside the
+image and makes one real call to each free provider):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kelvinka38/metatron-workforce/metatron/objective-50334c388a41-aea68111/core/scripts/first-deploy.sh | sudo bash
+```
+
+Secrets go in with `set-secret.sh`, which hides what you paste and keeps it out of shell history:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kelvinka38/metatron-workforce/metatron/objective-50334c388a41-aea68111/core/scripts/set-secret.sh | sudo bash -s CORE_TELEGRAM_BOT_TOKEN
+```
+
+By hand:
+
+```sh
+cd /opt/metatron/metatron-workforce/core
+docker compose --env-file ../deploy/.env --env-file /opt/metatron/metatron-core.env up -d --build
+curl -s 127.0.0.1:8095/health     # lists gemini and ollama, never anthropic or openai
+```
+
+`/opt/metatron/metatron-core.env` (mode 600) holds the `CORE_*` values. Update: `git pull`, then
+the same `docker compose` line. Roll back: `git checkout <previous sha>`, same line. Data lives
+in volume `metatron-core-data`. The Telegram webhook goes to `/telegram` (or `/core/telegram`)
+with the secret token.
+
+## Workforce (W1)
+
+Core is the execution runtime for Workforce Workers (metatron-institution `05_WORKFORCE`). Workers
+are persistent identities with a role, reporting line, capabilities and capacity, stored in
+`core.db`: Head of Engineering (Manager, owns every task), Software Engineer A and B, QA Engineer,
+Research Analyst. A task is assigned to a free Worker with the needed capability (`code` or
+`research`); the agent run works on that Worker's behalf. `CORE_RUNTIME_SLOTS` (default 2) agent
+runs happen at once, and only one of them can use Ollama at a time. `/workers` shows who does what.
+
+Research tasks go to the Research Analyst, who searches the web (`web_search`: Google through
+Gemini's free search grounding, else Bing/DuckDuckGo; `fetch_url`: public pages only, never
+private or internal addresses) and delivers `report.md` with sources. Core sends the report as a
+file on Telegram, keeps it in `core.db`, and shows it in the control room (Reports tab, task page,
+download). A report citing no web pages is flagged as unverified.
+
+## Control room
+
+https://control.metatron.vn (`CORE_CONTROL_HOST`): live view of the worker, the queue, every task
+with its full log, agent processes (with kill), projects with open PRs, model providers and their
+cooldowns, 7-day model usage (paid calls must be 0) and host load, memory and disk. Tasks can be
+queued, cancelled, retried, previewed, approved and rejected there too. Log in with `/login`.
+
+## Use
+
+Send the bot a task in plain words, e.g. "In kelvinka38/bios fix the failing test". Core posts
+when it starts, every 5 steps, and when it opens a PR. It then waits for the PR's CI and, if CI
+fails, gives the logs back to the agent for up to 2 fix rounds.
+
+| Command | Does |
+| --- | --- |
+| `/status` | Recent tasks and who is responsible |
+| `/workers` | Each Worker's role, load, current tasks and record |
+| `/log <id>` | A task's last 8 steps |
+| `/cancel <id>` | Stop a queued or running task |
+| `/retry <id>` | Redo a task on the latest code (closes its old PR), e.g. after a merge conflict |
+| `/preview <id>` / `/preview stop` | Run a task's app live at https://preview.metatron.vn (one at a time, 2 h) |
+| `/login` | One-time links (30 min each) that log your browser in to the control room and the preview site for 7 days |
+| `/report` | Last 7 days: tasks, success rate, model calls, paid-provider calls (must be 0) |
+| `/approve <id>` | Merge the task's PR |
+| `/reject <id>` | Leave the PR open |
+
+Limits: 40 steps and 45 minutes per task. When the free cloud models are unavailable, Core uses the
+local Ollama model (slower, but it never runs out). Only if Ollama also fails does the task wait
+15 minutes and retry (8 attempts). Workspaces untouched for 3 days are deleted.
+
+Local API: `POST /tasks {"request": "..."}` and `GET /tasks/<id>`, both with
+`Authorization: Bearer $CORE_API_TOKEN`.
