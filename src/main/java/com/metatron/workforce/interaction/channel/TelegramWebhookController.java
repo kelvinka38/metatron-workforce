@@ -60,7 +60,7 @@ public final class TelegramWebhookController {
     private static final long MONITOR_REFRESH_SECONDS = 5L;
     /** Flood-control dead letters newer than this are revived for Work Card delivery on startup. */
     private static final Duration FLOOD_CONTROL_REVIVAL_WINDOW = Duration.ofHours(6);
-    private static final Pattern OBJECTIVE_ID = Pattern.compile("(?m)^objective_id=([^\\s]+)$");
+    private static final Pattern OBJECTIVE_ID = Pattern.compile("(?m)^objective_id=(?:`([^`\\s]+)`|([^`\\s]+))$");
     /**
      * Sent once, independently of the live Work Card, whenever monitoring starts. It exists solely
      * to (re-)establish the persistent Telegram Work keyboard via the ordinary {@code send} path
@@ -548,7 +548,9 @@ public final class TelegramWebhookController {
     static String objectiveIdFromAnswer(String answer) {
         if (answer == null || answer.isBlank()) return "";
         Matcher matcher = OBJECTIVE_ID.matcher(answer);
-        return matcher.find() ? matcher.group(1).trim() : "";
+        if (!matcher.find()) return "";
+        String markdownWrapped = matcher.group(1);
+        return (markdownWrapped == null ? matcher.group(2) : markdownWrapped).trim();
     }
 
     private static ThreadFactory namedDaemonThreads(String prefix) {
