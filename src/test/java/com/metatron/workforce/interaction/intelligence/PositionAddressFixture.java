@@ -6,6 +6,7 @@ import com.metatron.workforce.management.AquacultureDomainPlanningRoute;
 import com.metatron.workforce.management.AquacultureHeadStaffingPolicy;
 import com.metatron.workforce.management.AutonomousStaffingPolicy;
 import com.metatron.workforce.operating.PositionAddressResolver;
+import com.metatron.workforce.operating.PositionRouteCatalog;
 import com.metatron.workforce.operating.WorkerConstitutionService;
 
 import java.nio.file.Path;
@@ -21,13 +22,20 @@ final class PositionAddressFixture {
     static final Instant AT = Instant.parse("2026-09-26T00:00:00Z");
 
     final WorkforceCoreService core;
-    final WorkerConstitutionService constitution = WorkerConstitutionService.inMemory();
-    final PositionAddressResolver resolver;
     final List<PositionWorkRoute> routes = new ArrayList<>(List.of(new AquacultureDomainPlanningRoute()));
+    /** Constitution checks a Position's primary capability against the routes registered in this fixture. */
+    final WorkerConstitutionService constitution = WorkerConstitutionService.inMemory(
+            capability -> routes.stream().anyMatch(route -> route.capability().equals(capability)));
+    final PositionAddressResolver resolver;
 
     PositionAddressFixture(Path dir) {
         core = new WorkforceCoreService(new FileWorkforceCoreStateStore(dir.resolve("core-" + System.nanoTime() + ".json")));
         resolver = new PositionAddressResolver(core, constitution);
+    }
+
+    PositionAddressFixture route(PositionWorkRoute route) {
+        routes.add(route);
+        return this;
     }
 
     PositionAddressFixture appointHeadOfAquaculture() {
@@ -49,11 +57,16 @@ final class PositionAddressFixture {
                 new FounderWorkerExecutionPlanProposalService(frontier, resolver, routes));
     }
 
-    /** A Position that exists only in this test: declares its own alias and primary capability, nothing else. */
+    /** A Position that exists only in this test: declares its own aliases and primary capability, nothing else. */
     static AutonomousStaffingPolicy position(String workerId, String positionRef, String roleRef,
                                              String capabilityRef, List<String> aliases) {
+        return position(workerId, positionRef, roleRef, List.of(capabilityRef), capabilityRef, aliases);
+    }
+
+    static AutonomousStaffingPolicy position(String workerId, String positionRef, String roleRef,
+                                             List<String> capabilities, String primaryCapability, List<String> aliases) {
         return new AutonomousStaffingPolicy() {
-            @Override public String capabilityRef() { return capabilityRef; }
+            @Override public String capabilityRef() { return capabilities.getFirst(); }
 
             @Override
             public FormationSpec formationSpec() {
@@ -66,7 +79,11 @@ final class PositionAddressFixture {
 
             @Override
             public PositionContractSpec positionContractSpec() {
-                return AutonomousStaffingPolicy.super.positionContractSpec().withAddressAliases(aliases);
+                PositionContractSpec base = AutonomousStaffingPolicy.super.positionContractSpec();
+                return new PositionContractSpec(base.mission(), base.responsibilities(), base.reportingLines(),
+                        capabilities, base.authorityScopes(), base.resourceScopes(), base.escalationRoutes(),
+                        base.successMeasures(), base.decisionRights(), base.operatingCoverage(), base.workingTimeZone(),
+                        base.maxConcurrentAssignments(), aliases, primaryCapability);
             }
         };
     }

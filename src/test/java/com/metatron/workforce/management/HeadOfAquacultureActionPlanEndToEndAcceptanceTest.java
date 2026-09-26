@@ -89,7 +89,8 @@ class HeadOfAquacultureActionPlanEndToEndAcceptanceTest {
         WorkerRuntimeProfileBindingService profiles = WorkerRuntimeProfileBindingService.inMemory();
         WorkerResourceScopeService scopes = WorkerResourceScopeService.inMemory();
         AutonomousStaffingService staffing = new AutonomousStaffingService(core,
-                List.of(new AquacultureHeadStaffingPolicy()), profiles, WorkerConstitutionService.inMemory(), scopes);
+                List.of(new AquacultureHeadStaffingPolicy()), profiles, WorkerConstitutionService.inMemory(
+                com.metatron.workforce.operating.PositionRouteCatalog.of(List.of(AquacultureDomainPlanningCapability.CAPABILITY))), scopes);
         staffing.ensureStaffed(new AquacultureHeadAppointmentCapability(core, profiles, scopes), CLOCK.instant());
 
         LocalExecutionServers.RealProcessSandboxServer sandbox =

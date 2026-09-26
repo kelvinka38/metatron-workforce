@@ -26,6 +26,8 @@ class PositionAddressRoutingTest {
     private static final String HOA = AquacultureHeadAppointmentCapability.WORKER_ID;
     private static final String HOF = "WORKER-HEAD-OF-FISHERIES";
     private static final String FISHERIES_PLANNING = "fisheries.domain.planning";
+    private static final String FISHERIES_REPORTING = "fisheries.reporting";
+    private static final String DUPLICATE_PLANNING = "duplicate.domain.planning";
     private static final String BODY = "đọc DOMAINS/AQUACULTURE/EXECUTION_PLAN.md, DECISIONS.md, DOMAIN_PACK/*, "
             + "KNOWLEDGE/DOMAINS/AQUACULTURE/v2/gaps.yaml và COVERAGE.md; nộp ACTION_PLAN_v1 theo §7.";
     private static final List<String> AVAILABLE = List.of(
@@ -33,20 +35,26 @@ class PositionAddressRoutingTest {
             AquacultureHeadAppointmentCapability.CAPABILITY,
             FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY,
             GeneralWorkspaceAutonomousCapability.CAPABILITY,
-            FISHERIES_PLANNING);
+            FISHERIES_PLANNING,
+            FISHERIES_REPORTING,
+            DUPLICATE_PLANNING);
     private static final List<ExecutionWorkSpec> FRONTIER_PLAN = List.of(new ExecutionWorkSpec(
             "frontier", "frontier-planned work", "", FounderDefinedWorkerFormationService.COGNITIVE_CAPABILITY,
             List.of(), ExecutionWorkSpec.Consequence.READ_ONLY, List.of("done"), List.of("evidence")));
 
     @TempDir Path temp;
 
-    private static final PositionWorkRoute FISHERIES_ROUTE = new PositionWorkRoute() {
-        @Override public String capability() { return FISHERIES_PLANNING; }
-        @Override public ExecutionWorkSpec work(String stepId, String objective) {
-            return new ExecutionWorkSpec(stepId, objective, "kelvinka38/bios", FISHERIES_PLANNING, List.of(),
-                    ExecutionWorkSpec.Consequence.MUTATING, List.of("plan proposed"), List.of("pr-url"));
-        }
-    };
+    private static PositionWorkRoute route(String capability) {
+        return new PositionWorkRoute() {
+            @Override public String capability() { return capability; }
+            @Override public ExecutionWorkSpec work(String stepId, String objective) {
+                return new ExecutionWorkSpec(stepId, objective, "kelvinka38/bios", capability, List.of(),
+                        ExecutionWorkSpec.Consequence.MUTATING, List.of("plan proposed"), List.of("pr-url"));
+            }
+        };
+    }
+
+    private static final PositionWorkRoute FISHERIES_ROUTE = route(FISHERIES_PLANNING);
 
     private static ExecutionPlanProposalService noFrontier() {
         return (c, r, a) -> { throw new AssertionError("frontier must not be needed for position-addressed work"); };
@@ -76,6 +84,8 @@ class PositionAddressRoutingTest {
     void a1_hoaDeclaresItsAliasesInItsPositionContract() {
         assertEquals(List.of("HOA", "Head of Aquaculture"),
                 new AquacultureHeadStaffingPolicy().positionContractSpec().addressAliases());
+        assertEquals(AquacultureDomainPlanningCapability.CAPABILITY,
+                new AquacultureHeadStaffingPolicy().positionContractSpec().primaryCapability());
         PositionAddressFixture fixture = new PositionAddressFixture(temp).appointHeadOfAquaculture();
         assertEquals(List.of("HOA", "Head of Aquaculture"), fixture.constitution
                 .contractForPosition(AquacultureHeadAppointmentCapability.POSITION_REF).orElseThrow().addressAliases());
@@ -103,10 +113,9 @@ class PositionAddressRoutingTest {
 
     @Test
     void a3_newPositionDeclaringAnAliasIsRoutableWithoutPlannerChanges() {
-        PositionAddressFixture fixture = new PositionAddressFixture(temp).appointHeadOfAquaculture()
+        PositionAddressFixture fixture = new PositionAddressFixture(temp).route(FISHERIES_ROUTE).appointHeadOfAquaculture()
                 .appoint(PositionAddressFixture.position(HOF, "position:head-of-fisheries", "ROLE-HEAD-OF-FISHERIES",
                         FISHERIES_PLANNING, List.of("HOF")));
-        fixture.routes.add(FISHERIES_ROUTE);
 
         assertEquals(Optional.of(HOF), fixture.resolver.resolve("HOF: prepare the fisheries plan"));
         List<ExecutionWorkSpec> plan = plan(fixture, noFrontier(), "HOF: prepare the fisheries plan", "");
@@ -120,9 +129,10 @@ class PositionAddressRoutingTest {
 
     @Test
     void a4_aliasDeclaredByTwoActiveWorkersIsAmbiguousAndNothingIsPlanned() {
-        PositionAddressFixture fixture = new PositionAddressFixture(temp).appointHeadOfAquaculture()
+        PositionAddressFixture fixture = new PositionAddressFixture(temp).route(route(DUPLICATE_PLANNING))
+                .appointHeadOfAquaculture()
                 .appoint(PositionAddressFixture.position("WORKER-HOA-DUPLICATE", "position:hoa-duplicate",
-                        "ROLE-HOA-DUPLICATE", "duplicate.domain.planning", List.of("hoa")));
+                        "ROLE-HOA-DUPLICATE", DUPLICATE_PLANNING, List.of("hoa")));
 
         PositionAddressResolver.AmbiguousAddressException resolved = assertThrows(
                 PositionAddressResolver.AmbiguousAddressException.class, () -> fixture.resolver.resolve("HOA: " + BODY));
@@ -163,10 +173,9 @@ class PositionAddressRoutingTest {
 
     @Test
     void a6_explicitWorkerIdAndRoleTargetWinOverAlias() {
-        PositionAddressFixture fixture = new PositionAddressFixture(temp).appointHeadOfAquaculture()
+        PositionAddressFixture fixture = new PositionAddressFixture(temp).route(FISHERIES_ROUTE).appointHeadOfAquaculture()
                 .appoint(PositionAddressFixture.position(HOF, "position:head-of-fisheries", "ROLE-HEAD-OF-FISHERIES",
                         FISHERIES_PLANNING, List.of("HOF")));
-        fixture.routes.add(FISHERIES_ROUTE);
 
         // Alias says HOA, explicit Worker id names another Worker: the explicit Worker wins.
         List<ExecutionWorkSpec> explicitWorker = plan(fixture, noFrontier(),
@@ -182,6 +191,21 @@ class PositionAddressRoutingTest {
         // Alias says HOF, target is the HOA role: the role wins.
         HeadOfAquaculturePlanningRouteTest.assertSingleGovernedPlanningStep(
                 plan(fixture, noFrontier(), "HOF: " + BODY, AquacultureHeadAppointmentCapability.ROLE_REF));
+    }
+
+    @Test
+    void routeFollowsDeclaredPrimaryCapabilityNotCapabilityOrder() {
+        for (List<String> capabilities : List.of(
+                List.of(FISHERIES_REPORTING, FISHERIES_PLANNING),
+                List.of(FISHERIES_PLANNING, FISHERIES_REPORTING))) {
+            PositionAddressFixture fixture = new PositionAddressFixture(temp)
+                    .route(route(FISHERIES_REPORTING)).route(FISHERIES_ROUTE)
+                    .appoint(PositionAddressFixture.position(HOF, "position:head-of-fisheries", "ROLE-HEAD-OF-FISHERIES",
+                            capabilities, FISHERIES_PLANNING, List.of("HOF")));
+            List<ExecutionWorkSpec> plan = plan(fixture, noFrontier(), "HOF: prepare the fisheries plan", "");
+            assertEquals(1, plan.size(), capabilities + " -> " + plan);
+            assertEquals(FISHERIES_PLANNING, plan.getFirst().requiredCapability(), capabilities.toString());
+        }
     }
 
     @Test

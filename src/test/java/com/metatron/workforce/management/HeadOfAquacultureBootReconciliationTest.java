@@ -46,7 +46,8 @@ class HeadOfAquacultureBootReconciliationTest {
         WorkerRuntimeProfileBindingService profiles = new WorkerRuntimeProfileBindingService(temp.resolve("bindings.tsv"));
         WorkerResourceScopeService scopes = new WorkerResourceScopeService(temp.resolve("scopes.tsv"));
         AutonomousStaffingService staffing = new AutonomousStaffingService(core,
-                List.of(new AquacultureHeadStaffingPolicy()), profiles, WorkerConstitutionService.inMemory(), scopes);
+                List.of(new AquacultureHeadStaffingPolicy()), profiles, WorkerConstitutionService.inMemory(
+                com.metatron.workforce.operating.PositionRouteCatalog.of(List.of(AquacultureDomainPlanningCapability.CAPABILITY))), scopes);
         RuntimeRegistry registry = new RuntimeRegistry();
         RuntimeCapacityCoordinator runtime = new RuntimeCapacityCoordinator(registry);
         WorkerConstitutionRuntimeMaterializer constitution = mock(WorkerConstitutionRuntimeMaterializer.class);
