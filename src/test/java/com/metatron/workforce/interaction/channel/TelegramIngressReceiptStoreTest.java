@@ -88,6 +88,13 @@ final class TelegramIngressReceiptStoreTest {
     void extractsCanonicalObjectiveIdFromHumanAcceptanceResponse() {
         String response = "METATRON WORK ACCEPTED\ncase_id=case:1\nobjective_id=objective:institutional:42\nowner_worker=manager";
         assertEquals("objective:institutional:42", TelegramWebhookController.objectiveIdFromAnswer(response));
+
+        // Production 2026-09-26, Telegram update 103338033: Intelligence rendered the objective id
+        // as inline Markdown code. The transport correlation parser must normalize the presentation
+        // wrapper instead of treating the backticks as part of the durable Objective identity.
+        String markdown = "METATRON WORK ACCEPTED\nobjective_id=`objective:case-e1c8b586`\nowner_worker=manager";
+        assertEquals("objective:case-e1c8b586", TelegramWebhookController.objectiveIdFromAnswer(markdown));
+
         assertEquals("", TelegramWebhookController.objectiveIdFromAnswer("ordinary discussion"));
     }
 
