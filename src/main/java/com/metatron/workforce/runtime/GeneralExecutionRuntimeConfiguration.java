@@ -183,10 +183,12 @@ public class GeneralExecutionRuntimeConfiguration {
             RepositoryCredentialAuthority repositoryCredentials,
             ObjectiveWorkspaceService workspaces,
             ExecutionWorkspaceManager executionWorkspaces,
-            ObjectMapper json) {
+            ObjectMapper json,
+            @Value("${METATRON_GITHUB_API_URL:https://api.github.com/}") String githubApi) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
-        return new RepositoryWorkspaceMaterializationService(http, repositoryCredentials.tokenOrEmpty(), workspaces, executionWorkspaces, json);
+        return new RepositoryWorkspaceMaterializationService(http, repositoryCredentials.tokenOrEmpty(), workspaces,
+                executionWorkspaces, json, URI.create(githubApi));
     }
 
     @Bean
@@ -194,9 +196,11 @@ public class GeneralExecutionRuntimeConfiguration {
             RepositoryCredentialAuthority repositoryCredentials,
             ObjectiveWorkspaceService workspaces,
             WorkerExecutionSandboxService sandbox,
-            ObjectMapper json) {
+            ObjectMapper json,
+            @Value("${METATRON_GITHUB_API_URL:https://api.github.com/}") String githubApi) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-        return new GitHubWorkspaceProposalPublisher(http, repositoryCredentials.tokenOrEmpty(), workspaces, sandbox, json);
+        return new GitHubWorkspaceProposalPublisher(http, repositoryCredentials.tokenOrEmpty(), workspaces, sandbox, json,
+                URI.create(githubApi));
     }
 
     @Bean

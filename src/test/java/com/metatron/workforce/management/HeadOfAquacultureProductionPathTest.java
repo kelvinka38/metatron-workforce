@@ -5,14 +5,19 @@ import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.interaction.ChannelInteractionIngressService;
 import com.metatron.workforce.interaction.MetatronInteraction;
 import com.metatron.workforce.interaction.intelligence.ExecutionWorkSpec;
+import com.metatron.workforce.interaction.intelligence.WorkerIntelligenceService;
 import com.metatron.workforce.phase3.ActorRef;
+import com.metatron.workforce.runtime.ObjectiveWorkspaceService;
 import com.metatron.workforce.runtime.WorkerResourceScopeService;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
+import com.metatron.workforce.testing.LocalExecutionServers;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.convention.TestBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.nio.file.Files;
@@ -33,8 +38,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 
 /**
- * P1/P2 on the real production application context (same composition as production; no Worker cognition is
- * reached because the planning capability's execute is intercepted after dispatch).
+ * P1/P2/C5 on the real production application context. Only the LLM boundary (WorkerIntelligenceService), the
+ * sandbox endpoint (a local real-process sandbox running git) and the GitHub API base (a local fake) are
+ * substituted; everything else is the production composition.
  *
  * <p>P2: after start-up, with no Objective, the Head of Aquaculture already exists ACTIVE with its approved
  * capability bundle, domain-head profile and resource scope.</p>
@@ -53,8 +59,16 @@ class HeadOfAquacultureProductionPathTest {
             + "KNOWLEDGE/DOMAINS/AQUACULTURE/v2/gaps.yaml và COVERAGE.md; nộp ACTION_PLAN_v1 theo §7.";
     private static final Path STATE = createState();
     private static final List<AutonomousExecutionCapability.CapabilityRequest> DISPATCHED = new CopyOnWriteArrayList<>();
+    private static final List<AutonomousExecutionCapability.CapabilityResult> RESULTS = new CopyOnWriteArrayList<>();
+    private static final LocalExecutionServers.RealProcessSandboxServer SANDBOX =
+            sandbox(STATE.resolve("metatron_execution_workspace_root"));
+    private static final LocalExecutionServers.FakeGitHubApiServer GITHUB = github();
+    private static final HeadOfAquacultureContextBudgetTest.RecordingHoaIntelligence INTELLIGENCE =
+            new HeadOfAquacultureContextBudgetTest.RecordingHoaIntelligence();
 
     @MockitoSpyBean AquacultureDomainPlanningCapability planning;
+    @TestBean WorkerIntelligenceService workerIntelligence;
+    @Autowired ObjectiveWorkspaceService workspaces;
     @Autowired ChannelInteractionIngressService ingress;
     @Autowired AutonomousManagementRunner runner;
     @Autowired ManagementAutonomyService management;
@@ -62,6 +76,32 @@ class HeadOfAquacultureProductionPathTest {
     @Autowired WorkerRuntimeProfileBindingService profiles;
     @Autowired WorkerResourceScopeService scopes;
     @Autowired HeadOfAquacultureBootstrapStatus bootstrap;
+
+    static WorkerIntelligenceService workerIntelligence() {
+        return INTELLIGENCE;
+    }
+
+    private static LocalExecutionServers.RealProcessSandboxServer sandbox(Path root) {
+        try {
+            return new LocalExecutionServers.RealProcessSandboxServer(root);
+        } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+        }
+    }
+
+    private static LocalExecutionServers.FakeGitHubApiServer github() {
+        try {
+            return new LocalExecutionServers.FakeGitHubApiServer("kelvinka38/bios");
+        } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+        }
+    }
+
+    @AfterAll
+    static void stopServers() {
+        SANDBOX.stop();
+        GITHUB.stop();
+    }
 
     private static Path createState() {
         try {
@@ -102,6 +142,10 @@ class HeadOfAquacultureProductionPathTest {
         for (String name : names) {
             registry.add(name, () -> STATE.resolve(name.toLowerCase(java.util.Locale.ROOT)).toString());
         }
+        registry.add("METATRON_SANDBOX_URL", () -> "http://127.0.0.1:" + SANDBOX.port());
+        registry.add("METATRON_SANDBOX_TOKEN", () -> LocalExecutionServers.RealProcessSandboxServer.TOKEN);
+        registry.add("METATRON_GITHUB_API_URL", () -> "http://127.0.0.1:" + GITHUB.port() + "/");
+        registry.add("GITHUB_TOKEN", () -> "production-path-test-github-token");
         registry.add("OPENAI_API_KEY", () -> "production-path-test-placeholder");
         registry.add("OPENAI_MODEL", () -> "production-path-test-model");
     }
@@ -129,12 +173,16 @@ class HeadOfAquacultureProductionPathTest {
 
     @Test
     void p1_founderTelegramObjectiveReachesPlanningCapabilityForHoaAsOneMutatingGovernedStep() throws Exception {
+        // C5: the dispatched step runs the real capability over bios-main-sized governance inputs. The seeded
+        // checkout stands in for the materialized kelvinka38/bios source at the fake GitHub base commit.
         doAnswer(invocation -> {
             AutonomousExecutionCapability.CapabilityRequest request = invocation.getArgument(0);
             DISPATCHED.add(request);
-            return new AutonomousExecutionCapability.CapabilityResult(false, request.allocatedWorkerId(),
-                    request.assignmentReference(), "production-path-test", List.of("production-path-test:intercepted"),
-                    "intercepted after dispatch; no Worker cognition in this test");
+            seedBiosCheckout(request.objectiveId());
+            AutonomousExecutionCapability.CapabilityResult result =
+                    (AutonomousExecutionCapability.CapabilityResult) invocation.callRealMethod();
+            RESULTS.add(result);
+            return result;
         }).when(planning).execute(any());
 
         MetatronInteraction telegram = new MetatronInteraction(
@@ -172,5 +220,35 @@ class HeadOfAquacultureProductionPathTest {
         List<ExecutionWorkSpec> planned = management.findAutonomousWork(objectiveId).orElseThrow().plannedWork();
         assertEquals(1, planned.size(), "HOA Objective must plan exactly one step: " + planned);
         assertEquals(AquacultureDomainPlanningCapability.CAPABILITY, planned.getFirst().requiredCapability());
+
+        // C5: with bios-main-sized inputs the production-composed capability completes within the budget.
+        while (RESULTS.isEmpty() && Instant.now().isBefore(deadline.plus(Duration.ofSeconds(120)))) Thread.sleep(250);
+        assertFalse(RESULTS.isEmpty(), "planning capability did not return");
+        AutonomousExecutionCapability.CapabilityResult result = RESULTS.getFirst();
+        assertEquals(List.of(), INTELLIGENCE.scriptFailures, "scripted cognition boundary rejected a request");
+        assertTrue(result.success(), result.summary() + "\n" + result.evidenceReferences());
+        for (WorkerIntelligenceService.Request sent : INTELLIGENCE.requests) {
+            int chars = sent.instructions().length() + sent.context().length();
+            assertTrue(chars <= AquacultureDomainPlanningCapability.MAX_REQUEST_CHARS, "cognition request of " + chars + " chars");
+        }
+        for (String path : HoaPlanningHarness.BIOS_MAIN_INPUT_SIZES.keySet()) {
+            assertTrue(result.evidenceReferences().contains("hoa-input-read:" + path), path);
+            assertTrue(result.evidenceReferences().stream().anyMatch(e -> e.startsWith("hoa-digest:" + path + ":")), path);
+        }
+        assertEquals(1, GITHUB.pullRequestsCreated());
+        assertEquals(0, GITHUB.mergeCalls());
+    }
+
+    private void seedBiosCheckout(String objectiveId) throws Exception {
+        ObjectiveWorkspaceService.ObjectiveWorkspace workspace = workspaces.provision(objectiveId, HOA);
+        Path marker = workspaces.resolve(workspace, ".metatron-repository");
+        Files.createDirectories(marker.getParent());
+        Files.writeString(marker, "repository=kelvinka38/bios\nrequestedRef=main\ncommitSha=" + GITHUB.baseSha()
+                + "\ncomponentId=primary\n");
+        for (var input : HoaPlanningHarness.biosMainSizedInputs().entrySet()) {
+            Path file = workspaces.resolve(workspace, input.getKey());
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, input.getValue());
+        }
     }
 }

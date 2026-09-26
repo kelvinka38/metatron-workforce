@@ -48,6 +48,33 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     // short reference (path, command, SHA): when the offered catalog includes any of these, the
     // cognitive response's JSON must itself carry that content and needs the larger output budget.
     private static final Set<String> CONTENT_BEARING_INPUT_KEYS = Set.of("content", "newText", "body");
+    private static final String ACTION_SELECTION_SYSTEM = """
+            You are the action-selection brain for a governed Metatron Cognitive Worker; you have no execution authority.
+            workerConstitution is the assignment-scoped cognitive projection of the durable Worker Constitution. Historical
+            relationships remain durable by snapshot reference. Role or runtime profile never self-grants authority.
+            Choose exactly one action from availableActions, using only keys listed in actionInputKeys, grounded in Work,
+            memory and recent observations. Inspect unfamiliar code before editing. After failure, inspect/change state before
+            retrying; never blindly repeat an identical failed action. Materialize a required repository before Git/build/test
+            or repository-file work. sourceCommitSha proves source identity; local baseline/HEAD are workspace identities.
+            Do not claim completion. Inputs are strings; encode list arguments as JSON strings in argsJson/tasksJson.
+            Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
+            """;
+    private static final String REFLECTION_SYSTEM = """
+            You are the reflection brain for a governed Metatron Cognitive Worker.
+            Decide from the actual Work, acceptance criteria, evidence requirements and observed action result.
+            COMPLETE only when every acceptance requirement can be supported by actual observations already obtained.
+            CONTINUE if another governed action can advance or verify the Work.
+            FAILED only when the observed state makes bounded recovery impossible.
+            A failed test/build/tool observation is normally recoverable: CONTINUE when search/read/patch/retry can still advance the Work.
+            Do not repeat the identical failed action without an intervening state-changing or diagnostic action.
+            Never treat a successful intermediate action as completion of unrelated acceptance criteria.
+            Repository source identity is proven by workspace.repository.materialize output sourceCommitSha. localBaselineCommitSha and workspace.git.status headSha are local Objective-workspace identities and may intentionally differ from sourceCommitSha.
+            For external research/synthesis Work, a COMPLETE summary is the durable Work output, not a status sentence. It MUST contain the requested substantive deliverable, preserve source URLs or canonical identifiers from observations, distinguish evidence from inference, and explicitly state uncertainty.
+            Never claim that N items were found unless at least N distinct attributable source URLs were actually observed.
+            When the Work asks for a Top-N shortlist, the COMPLETE summary MUST enumerate items 1..N. Each item must include title, issuer/authors, publication/update date when observed, Source: <observed URL>, What is new, Why it matters, and Decision: KEEP|TEST|CHANGE|REJECT. End with the highest-potential model experiment and remaining uncertainty.
+            If there are not enough qualified sources yet, CONTINUE with a narrower governed search. Do not substitute generic encyclopedias, promotional pages, tourism pages, or unrelated sources for missing evidence.
+            Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"evidence-based result or next-step reason"}.
+            """;
     private final WorkerIntelligenceService intelligence;
     private final ObjectMapper json;
     private final List<String> evidence = new ArrayList<>();
@@ -84,17 +111,7 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         CognitiveWorkerRuntime.Thought gitInspection = readOnlyGitInspectionPrecondition(context);
         if (gitInspection != null) return gitInspection;
 
-        String system = """
-                You are the action-selection brain for a governed Metatron Cognitive Worker; you have no execution authority.
-                workerConstitution is the assignment-scoped cognitive projection of the durable Worker Constitution. Historical
-                relationships remain durable by snapshot reference. Role or runtime profile never self-grants authority.
-                Choose exactly one action from availableActions, using only keys listed in actionInputKeys, grounded in Work,
-                memory and recent observations. Inspect unfamiliar code before editing. After failure, inspect/change state before
-                retrying; never blindly repeat an identical failed action. Materialize a required repository before Git/build/test
-                or repository-file work. sourceCommitSha proves source identity; local baseline/HEAD are workspace identities.
-                Do not claim completion. Inputs are strings; encode list arguments as JSON strings in argsJson/tasksJson.
-                Return ONLY JSON: {"actionRef":"...","inputs":{"key":"value"},"rationale":"short operational reason"}.
-                """;
+        String system = ACTION_SELECTION_SYSTEM;
         CognitiveWorkerRuntime.CognitiveContext providerContext = providerActionSelectionContext(context);
         CognitiveProviderResult providerResult = completeObject(
                 providerContext, system, contextPrompt(providerContext), outputBudgetFor(providerContext));
@@ -1187,28 +1204,8 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
         CognitiveWorkerRuntime.Reflection deterministic = deterministicNonTerminalReflection(context, observation);
         if (deterministic != null) return deterministic;
 
-        String system = """
-                You are the reflection brain for a governed Metatron Cognitive Worker.
-                Decide from the actual Work, acceptance criteria, evidence requirements and observed action result.
-                COMPLETE only when every acceptance requirement can be supported by actual observations already obtained.
-                CONTINUE if another governed action can advance or verify the Work.
-                FAILED only when the observed state makes bounded recovery impossible.
-                A failed test/build/tool observation is normally recoverable: CONTINUE when search/read/patch/retry can still advance the Work.
-                Do not repeat the identical failed action without an intervening state-changing or diagnostic action.
-                Never treat a successful intermediate action as completion of unrelated acceptance criteria.
-                Repository source identity is proven by workspace.repository.materialize output sourceCommitSha. localBaselineCommitSha and workspace.git.status headSha are local Objective-workspace identities and may intentionally differ from sourceCommitSha.
-                For external research/synthesis Work, a COMPLETE summary is the durable Work output, not a status sentence. It MUST contain the requested substantive deliverable, preserve source URLs or canonical identifiers from observations, distinguish evidence from inference, and explicitly state uncertainty.
-                Never claim that N items were found unless at least N distinct attributable source URLs were actually observed.
-                When the Work asks for a Top-N shortlist, the COMPLETE summary MUST enumerate items 1..N. Each item must include title, issuer/authors, publication/update date when observed, Source: <observed URL>, What is new, Why it matters, and Decision: KEEP|TEST|CHANGE|REJECT. End with the highest-potential model experiment and remaining uncertainty.
-                If there are not enough qualified sources yet, CONTINUE with a narrower governed search. Do not substitute generic encyclopedias, promotional pages, tourism pages, or unrelated sources for missing evidence.
-                Return ONLY JSON: {"decision":"CONTINUE|COMPLETE|FAILED","summary":"evidence-based result or next-step reason"}.
-                """;
-        String user = contextPrompt(context) + "\nLATEST_OBSERVATION=" + write(Map.of(
-                "actionRef", observation.actionRef(),
-                "success", observation.success(),
-                "summary", observation.summary(),
-                "outputs", observation.outputs(),
-                "evidence", observation.evidenceReferences()));
+        String system = REFLECTION_SYSTEM;
+        String user = contextPrompt(context) + latestObservationPrompt(observation);
         CognitiveProviderResult providerResult = completeObject(context, system, user);
         Map<String, Object> parsed = providerResult.parsed();
         String decision = text(parsed.get("decision"), "decision").toUpperCase(java.util.Locale.ROOT);
@@ -1501,6 +1498,156 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
     }
 
     private String contextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
+        String rendered = renderContextPrompt(context);
+        if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
+            throw new IllegalStateException("worker-cognition-request-context-budget-exceeded:chars="
+                    + rendered.length() + ":limit=" + MAX_CONTEXT_PROMPT_CHARS
+                    + ":worker=" + context.workerId()
+                    + ":assignment=" + context.assignmentReference()
+                    + ":objective=" + context.objectiveId());
+        }
+        return rendered;
+    }
+
+    private String latestObservationPrompt(ActionFabric.ActionObservation observation) {
+        return "\nLATEST_OBSERVATION=" + write(Map.of(
+                "actionRef", observation.actionRef(),
+                "success", observation.success(),
+                "summary", observation.summary(),
+                "outputs", observation.outputs(),
+                "evidence", observation.evidenceReferences()));
+    }
+
+    /**
+     * Characters (instructions + context) of the action-selection request this brain would send for
+     * {@code context}, after its own history compaction. Lets a governing capability shape the context to the
+     * budget before asking, instead of discovering the overflow as a failed cycle.
+     */
+    public int actionSelectionRequestChars(CognitiveWorkerRuntime.CognitiveContext context) {
+        return ACTION_SELECTION_SYSTEM.length() + renderContextPrompt(providerActionSelectionContext(context)).length();
+    }
+
+    /** Characters (instructions + context) of the reflection request this brain would send for the observation. */
+    public int reflectionRequestChars(CognitiveWorkerRuntime.CognitiveContext context,
+                                      ActionFabric.ActionObservation observation) {
+        return REFLECTION_SYSTEM.length() + renderContextPrompt(context).length()
+                + latestObservationPrompt(observation).length();
+    }
+
+    /**
+     * Bounded digest of one governance document for Work that must read documents too large to carry verbatim in
+     * a Worker's cognition context. Every request stays within {@link #MAX_CONTEXT_PROMPT_CHARS} (instructions +
+     * context): a document that does not fit one request is split at line boundaries, each part is digested, and
+     * the part digests are merged (map-reduce) until one digest of at most {@code maxChars} remains. The model is
+     * instructed to keep required items, gates, envelope, rules, gap codes and statuses verbatim and to add nothing
+     * that is not in the text. A digest still over budget after one shortening request fails explicitly; it is never
+     * silently truncated.
+     */
+    public String digestDocument(CognitiveWorkerRuntime.CognitiveContext context, String documentRef, String text,
+                                 int maxChars) {
+        Objects.requireNonNull(context, "context");
+        if (documentRef == null || documentRef.isBlank()) throw new IllegalArgumentException("documentRef required");
+        if (maxChars < 1) throw new IllegalArgumentException("maxChars must be positive");
+        String document = text == null ? "" : text;
+        List<String> parts = new ArrayList<>();
+        List<String> chunks = digestChunks(documentRef, document, "part");
+        for (int i = 0; i < chunks.size(); i++) {
+            parts.add(digestCall(context, documentRef, "part", (i + 1) + "/" + chunks.size(), chunks.get(i),
+                    Math.min(maxChars, Math.max(1, chunks.get(i).length()))));
+        }
+        while (parts.size() > 1 || parts.getFirst().length() > maxChars) {
+            if (parts.size() == 1) {
+                parts = List.of(digestCall(context, documentRef, "shorten", "1/1", parts.getFirst(), maxChars));
+                break;
+            }
+            List<String> groups = digestChunks(documentRef, String.join("\n\n", parts), "merge");
+            List<String> merged = new ArrayList<>();
+            for (int i = 0; i < groups.size(); i++) {
+                merged.add(digestCall(context, documentRef, "merge", (i + 1) + "/" + groups.size(), groups.get(i), maxChars));
+            }
+            if (merged.size() >= parts.size()) {
+                throw new IllegalStateException("worker-document-digest-not-converging:document=" + documentRef);
+            }
+            parts = merged;
+        }
+        return parts.getFirst();
+    }
+
+    private static final String DIGEST_SYSTEM = """
+            You condense one governance document, or one part of it, for a governed Metatron Worker that must plan from it.
+            Keep verbatim every required item, gate, envelope or authority limit, rule, gap codes and identifiers, and status values.
+            Do not add, infer, generalize or evaluate anything that is not in the text. Prefer terse lists over prose.
+            mode=part: condense this part. mode=merge: merge these partial digests of the same document without losing any kept item.
+            mode=shorten: shorten this digest without losing any kept item.
+            The digest MUST be at most maxChars characters.
+            Return ONLY JSON: {"digest":"..."}.
+            """;
+
+    private String digestCall(CognitiveWorkerRuntime.CognitiveContext context, String documentRef, String mode,
+                              String part, String text, int maxChars) {
+        String digest = requestDigest(context, documentRef, mode, part, text, maxChars);
+        if (digest.length() > maxChars) {
+            digest = requestDigest(context, documentRef, "shorten", part, digest, maxChars);
+        }
+        if (digest.length() > maxChars) {
+            throw new IllegalStateException("worker-document-digest-over-budget:document=" + documentRef
+                    + ":chars=" + digest.length() + ":limit=" + maxChars);
+        }
+        return digest;
+    }
+
+    private String requestDigest(CognitiveWorkerRuntime.CognitiveContext context, String documentRef, String mode,
+                                 String part, String text, int maxChars) {
+        String user = digestPrompt(documentRef, mode, part, text, maxChars);
+        if (DIGEST_SYSTEM.length() + user.length() > MAX_CONTEXT_PROMPT_CHARS) {
+            throw new IllegalStateException("worker-document-digest-request-over-budget:document=" + documentRef
+                    + ":chars=" + (DIGEST_SYSTEM.length() + user.length()));
+        }
+        Object digest = completeObject(context, DIGEST_SYSTEM, user).parsed().get("digest");
+        String value = digest == null ? "" : String.valueOf(digest).strip();
+        if (value.isEmpty()) throw new IllegalStateException("worker-document-digest-empty:document=" + documentRef);
+        return value;
+    }
+
+    private String digestPrompt(String documentRef, String mode, String part, String text, int maxChars) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("document", documentRef);
+        payload.put("mode", mode);
+        payload.put("part", part);
+        payload.put("maxChars", maxChars);
+        payload.put("text", text);
+        return write(payload);
+    }
+
+    /** Splits text at line boundaries into pieces whose digest request fits the request budget. */
+    private List<String> digestChunks(String documentRef, String text, String mode) {
+        int budget = MAX_CONTEXT_PROMPT_CHARS - DIGEST_SYSTEM.length();
+        if (digestPrompt(documentRef, mode, "1/1", text, 1).length() <= budget) return List.of(text);
+        List<String> chunks = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : text.split("(?<=\n)")) {
+            for (String piece : splitOversizedLine(documentRef, mode, line, budget)) {
+                if (current.length() > 0
+                        && digestPrompt(documentRef, mode, "999/999", current + piece, 1).length() > budget) {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                }
+                current.append(piece);
+            }
+        }
+        if (current.length() > 0) chunks.add(current.toString());
+        return chunks;
+    }
+
+    private List<String> splitOversizedLine(String documentRef, String mode, String line, int budget) {
+        if (digestPrompt(documentRef, mode, "999/999", line, 1).length() <= budget) return List.of(line);
+        int half = line.length() / 2;
+        List<String> pieces = new ArrayList<>(splitOversizedLine(documentRef, mode, line.substring(0, half), budget));
+        pieces.addAll(splitOversizedLine(documentRef, mode, line.substring(half), budget));
+        return pieces;
+    }
+
+    private String renderContextPrompt(CognitiveWorkerRuntime.CognitiveContext context) {
         List<String> catalog = context.availableActions();
         Map<String, List<String>> actionInputKeys = new LinkedHashMap<>();
         for (String action : catalog) {
@@ -1565,13 +1712,6 @@ public final class GeneralCognitiveWorkerBrain implements CognitiveWorkerRuntime
                     "reflection", latest.reflection().decision().name(),
                     "_contextCompaction", "LATEST_CYCLE_IDENTITY_ONLY")));
             rendered = write(payload);
-        }
-        if (rendered.length() > MAX_CONTEXT_PROMPT_CHARS) {
-            throw new IllegalStateException("worker-cognition-request-context-budget-exceeded:chars="
-                    + rendered.length() + ":limit=" + MAX_CONTEXT_PROMPT_CHARS
-                    + ":worker=" + context.workerId()
-                    + ":assignment=" + context.assignmentReference()
-                    + ":objective=" + context.objectiveId());
         }
         return rendered;
     }
