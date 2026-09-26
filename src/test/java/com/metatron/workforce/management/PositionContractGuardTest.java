@@ -62,7 +62,8 @@ class PositionContractGuardTest {
 
     private void editStoredContract(Consumer<ObjectNode> edit) throws Exception {
         Path state = temp.resolve("constitution.json");
-        ObjectMapper json = new ObjectMapper();
+        ObjectMapper json = new ObjectMapper()
+                .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
         ObjectNode root = (ObjectNode) json.readTree(state.toFile());
         ((ArrayNode) root.get("positionContracts")).forEach(node -> {
             if (POSITION.equals(node.get("positionRef").asText())) edit.accept((ObjectNode) node);

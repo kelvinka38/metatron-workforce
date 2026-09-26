@@ -104,7 +104,8 @@ public final class AquacultureHeadStaffingPolicy implements AutonomousStaffingPo
                 "ASSIGNMENT_DRIVEN_BOUNDED_WITH_WEEKLY_REPORTING",
                 "Asia/Ho_Chi_Minh",
                 1,
-                ADDRESS_ALIASES);
+                ADDRESS_ALIASES,
+                AquacultureDomainPlanningCapability.CAPABILITY);
     }
 
     @Override

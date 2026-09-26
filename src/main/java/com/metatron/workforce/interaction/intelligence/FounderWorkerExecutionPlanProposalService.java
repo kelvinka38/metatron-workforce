@@ -60,9 +60,10 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
      * Work for an EXECUTION Objective addressed to an occupied Position (PR #543 production fix, generalized): the
      * addressee is whoever the Objective names explicitly (a WORKER- id, else a ROLE- target) or, only when it names
      * nobody explicitly, whoever the Objective opens by addressing through an alias that the Position declares in
-     * its contract. The Position's first declared capability that has a {@link PositionWorkRoute} plans the one
-     * step. Positions, aliases and routes are declared by their owners; this planner holds none of them, so a new
-     * Head needs no change here. An ambiguous alias fails as AMBIGUOUS_ADDRESS instead of being guessed.
+     * its contract. The {@link PositionWorkRoute} of the Position's declared primaryCapability plans the one step.
+     * Positions, aliases, primary capabilities and routes are declared by their owners; this planner holds none of
+     * them, so a new Head needs no change here. An ambiguous alias fails as AMBIGUOUS_ADDRESS instead of being
+     * guessed.
      */
     List<ExecutionWorkSpec> positionAddressedWork(
             NormalizedRequest request,
@@ -87,7 +88,7 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
     }
 
     private Optional<PositionWorkRoute> routeFor(PositionAddressResolver.Address address) {
-        return address.capabilityRequirements().stream().map(routes::get).filter(Objects::nonNull).findFirst();
+        return Optional.ofNullable(routes.get(address.primaryCapability()));
     }
 
     /**

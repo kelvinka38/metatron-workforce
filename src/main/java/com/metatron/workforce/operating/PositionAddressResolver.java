@@ -37,11 +37,11 @@ public final class PositionAddressResolver {
         return new PositionAddressResolver(null, null);
     }
 
-    /** An addressable occupied Position. {@code capabilityRequirements} keep the contract's declared order. */
+    /** An addressable occupied Position and the primary capability its contract declares for addressed work. */
     public record Address(String workerId, String participationId, String positionRef, String roleRef,
-                          List<String> capabilityRequirements, List<String> addressAliases) {
+                          String primaryCapability, List<String> addressAliases) {
         public Address {
-            capabilityRequirements = List.copyOf(capabilityRequirements);
+            primaryCapability = primaryCapability == null ? "" : primaryCapability;
             addressAliases = List.copyOf(addressAliases);
         }
     }
@@ -112,7 +112,7 @@ public final class PositionAddressResolver {
                         .flatMap(binding -> constitution.contractForPosition(binding.positionRef())
                                 .filter(contract -> contract.contractId().equals(binding.contractId())))
                         .map(contract -> new Address(worker.workerId(), participation.participationId(),
-                                contract.positionRef(), contract.roleRef(), contract.capabilityRequirements(),
+                                contract.positionRef(), contract.roleRef(), contract.primaryCapability(),
                                 contract.addressAliases()))
                         .ifPresent(addresses::add);
             }

@@ -45,7 +45,8 @@ class PositionAddressAliasPersistenceTest {
         Path state = temp.resolve("constitution.json");
         new WorkerConstitutionService(new FileWorkerConstitutionStateStore(state), ROUTED)
                 .ensureConstitution(new AquacultureHeadStaffingPolicy(), AT);
-        ObjectMapper json = new ObjectMapper();
+        ObjectMapper json = new ObjectMapper()
+                .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
         ObjectNode root = (ObjectNode) json.readTree(state.toFile());
         ((ArrayNode) root.get("positionContracts")).forEach(node -> {
             ((ObjectNode) node).remove("addressAliases");
