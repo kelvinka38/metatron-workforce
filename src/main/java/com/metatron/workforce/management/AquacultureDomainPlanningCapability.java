@@ -61,6 +61,19 @@ public final class AquacultureDomainPlanningCapability implements AutonomousExec
             "KNOWLEDGE/DOMAINS/AQUACULTURE/v2/gaps.yaml",
             "KNOWLEDGE/DOMAINS/AQUACULTURE/v2/COVERAGE.md");
     private static final int MAX_COGNITIVE_CYCLES = 48;
+    /** Upper bound per governance-input digest (CTO decision on the 16,000-char context budget). */
+    static final int MAX_DIGEST_CHARS = 1_500;
+    /**
+     * Characters all governance digests may occupy together in one planning request; with more inputs each
+     * digest gets proportionally less, never more than {@link #MAX_DIGEST_CHARS}.
+     */
+    static final int DIGEST_POOL_CHARS = 7_200;
+    /** Bound on a raw search/read result the planning brain may see (workspace.file.search, ad hoc reads). */
+    static final int MAX_LOOKUP_RESULT_CHARS = 2_000;
+    /** Every request to cognition (instructions + context), as enforced by GeneralCognitiveWorkerBrain. */
+    static final int MAX_REQUEST_CHARS = 16_000;
+    private static final int MAX_HISTORY_SUMMARY_CHARS = 1_500;
+    private static final String MEMORY_DIGEST_PREFIX = "governanceDigest:";
     private static final Pattern PROVIDER_MODEL = Pattern.compile("provider=([^;]+);model=([^;]+)");
     private static final Pattern LEGACY_PROVIDER_MODEL = Pattern.compile("^worker-intelligence-provider:([^:]+):model=([^:]+)");
 
@@ -156,8 +169,9 @@ public final class AquacultureDomainPlanningCapability implements AutonomousExec
         ActionFabric fabric = new ActionFabric(
                 actions.actions(workerId, request.authorizationReference(), request.objectiveId()), executionGate);
         GeneralCognitiveWorkerBrain brain = brains.create();
-        CognitiveWorkerRuntime.Brain governed = requiredInputsFirst(
-                GeneralWorkspaceAutonomousCapability.withObjectiveWorkspaceMemory(brain, memory), workspace);
+        ReadDigestPlanBrain hoaBrain = new ReadDigestPlanBrain(brain, workspace);
+        CognitiveWorkerRuntime.Brain governed =
+                GeneralWorkspaceAutonomousCapability.withObjectiveWorkspaceMemory(hoaBrain, memory);
         ActionJournal journal = ActionJournal.runtimeEvidenceJournal();
         CognitiveWorkerRuntime.Outcome outcome = new CognitiveWorkerRuntime(
                 fabric, journal, MAX_COGNITIVE_CYCLES, executionGate).execute(
@@ -173,6 +187,9 @@ public final class AquacultureDomainPlanningCapability implements AutonomousExec
         for (String path : required) {
             if (read.contains(path)) evidence.add("hoa-input-read:" + path);
             else problems.add("hoa-input-not-read:" + path);
+            String digest = hoaBrain.digests().get(path);
+            if (digest != null) evidence.add("hoa-digest:" + path + ":" + digest.length());
+            else if (read.contains(path)) problems.add("hoa-digest-missing:" + path);
         }
 
         Set<String> models = modelIdentities(brain.evidenceReferences());
@@ -241,38 +258,215 @@ public final class AquacultureDomainPlanningCapability implements AutonomousExec
         return List.copyOf(required);
     }
 
-    private CognitiveWorkerRuntime.Brain requiredInputsFirst(CognitiveWorkerRuntime.Brain delegate,
-                                                             ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
-        return new CognitiveWorkerRuntime.Brain() {
-            @Override public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
-                if (!materialized(context)) return delegate.think(context);
-                List<String> required = requiredInputs(workspace);
-                for (String path : required) {
-                    if (!readAttempted(context.history(), path)) {
-                        return new CognitiveWorkerRuntime.Thought("workspace.file.read", Map.of("path", path),
-                                "Governed HOA precondition: read each required governance input individually before planning");
-                    }
+    /**
+     * Read → digest → plan (CTO decision: the 16,000-char cognition budget stays; raw governance text never reaches
+     * the planning brain).
+     * <ol>
+     *   <li>READ: each required input is read with its own governed workspace.file.read (hoa-input-read evidence).</li>
+     *   <li>DIGEST: right after each read, one separate bounded cognition call (map-reduce for inputs larger than
+     *       one request) produces a digest of at most {@link #digestLimit} chars, kept in Objective memory under
+     *       {@code governanceDigest:<path>}; history keeps only "read ok: &lt;path&gt; (&lt;bytes&gt; bytes)".</li>
+     *   <li>PLAN: the brain sees the digests and current memory and may use workspace.file.search (results bounded to
+     *       {@link #MAX_LOOKUP_RESULT_CHARS}); before every request the context is checked against
+     *       {@link #MAX_REQUEST_CHARS} and older history is folded into one summary when needed.</li>
+     * </ol>
+     */
+    private final class ReadDigestPlanBrain implements CognitiveWorkerRuntime.Brain {
+        private final GeneralCognitiveWorkerBrain brain;
+        private final ObjectiveWorkspaceService.ObjectiveWorkspace workspace;
+        private final Map<String, String> digests = new LinkedHashMap<>();
+
+        private ReadDigestPlanBrain(GeneralCognitiveWorkerBrain brain, ObjectiveWorkspaceService.ObjectiveWorkspace workspace) {
+            this.brain = brain;
+            this.workspace = workspace;
+        }
+
+        Map<String, String> digests() { return Map.copyOf(digests); }
+
+        @Override
+        public CognitiveWorkerRuntime.Thought think(CognitiveWorkerRuntime.CognitiveContext context) {
+            if (!materialized(context)) return brain.think(planningView(context, List.of()));
+            List<String> required = requiredInputs(workspace);
+            for (String path : required) {
+                if (!readAttempted(context.history(), path)) {
+                    return new CognitiveWorkerRuntime.Thought("workspace.file.read", Map.of("path", path),
+                            "Governed HOA precondition: read each required governance input individually before planning");
                 }
-                return delegate.think(withRequiredInputs(context, required));
             }
-            @Override public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
-                                                                        ActionFabric.ActionObservation observation) {
-                return delegate.reflect(context, observation);
+            return brain.think(withinBudget(planningView(context, required), null));
+        }
+
+        @Override
+        public CognitiveWorkerRuntime.Reflection reflect(CognitiveWorkerRuntime.CognitiveContext context,
+                                                         ActionFabric.ActionObservation observation) {
+            String path = requiredReadPath(observation);
+            if (path != null) {
+                String content = observation.outputs().getOrDefault("content", "");
+                if (!digests.containsKey(path)) {
+                    List<String> required = requiredInputs(workspace);
+                    digests.put(path, brain.digestDocument(planningView(context, required), path, content,
+                            digestLimit(required.size())));
+                }
+                return CognitiveWorkerRuntime.Reflection.continueWith(readOk(path, content)
+                        + "; digest " + digests.get(path).length() + " chars in memory " + MEMORY_DIGEST_PREFIX + path);
             }
-            @Override public boolean blocksCompletionForUnresolvedFailure(CognitiveWorkerRuntime.CognitiveContext context,
-                                                                           String actionRef) {
-                return delegate.blocksCompletionForUnresolvedFailure(context, actionRef);
+            ActionFabric.ActionObservation bounded = boundedObservation(observation);
+            return brain.reflect(withinBudget(planningView(context, requiredInputs(workspace)), bounded), bounded);
+        }
+
+        @Override
+        public boolean blocksCompletionForUnresolvedFailure(CognitiveWorkerRuntime.CognitiveContext context, String actionRef) {
+            return brain.blocksCompletionForUnresolvedFailure(planningView(context, List.of()), actionRef);
+        }
+
+        private String requiredReadPath(ActionFabric.ActionObservation observation) {
+            if (!"workspace.file.read".equals(observation.actionRef()) || !observation.success()) return null;
+            String path = observation.outputs().get("path");
+            return path != null && requiredInputs(workspace).contains(path) ? path : null;
+        }
+
+        /**
+         * What the brain may see: no raw governance text, digests keyed by path, bounded lookup results, and read
+         * cycles reduced to "read ok: &lt;path&gt; (&lt;bytes&gt; bytes)".
+         */
+        private CognitiveWorkerRuntime.CognitiveContext planningView(CognitiveWorkerRuntime.CognitiveContext context,
+                                                                     List<String> required) {
+            Map<String, String> memory = new LinkedHashMap<>();
+            context.memory().forEach((key, value) -> {
+                if (!"content".equals(key)) memory.put(key, bounded(value, MAX_LOOKUP_RESULT_CHARS));
+            });
+            if (!required.isEmpty()) memory.put("requiredGovernanceInputs", String.join(";", required));
+            digests.forEach((path, digest) -> memory.put(MEMORY_DIGEST_PREFIX + path, digest));
+            List<CognitiveWorkerRuntime.Cycle> history = context.history().stream().map(this::viewCycle).toList();
+            return new CognitiveWorkerRuntime.CognitiveContext(context.workerId(), context.assignmentReference(),
+                    context.authorizationReference(), context.objectiveId(), context.workSpec(), context.idempotencyKey(),
+                    context.availableActions(), history, Map.copyOf(memory));
+        }
+
+        private CognitiveWorkerRuntime.Cycle viewCycle(CognitiveWorkerRuntime.Cycle cycle) {
+            ActionFabric.ActionObservation observation = cycle.observation();
+            if ("workspace.file.read".equals(cycle.thought().actionRef()) && observation.success()) {
+                String path = observation.outputs().getOrDefault("path", cycle.thought().inputs().getOrDefault("path", ""));
+                String content = observation.outputs().getOrDefault("content", "");
+                observation = new ActionFabric.ActionObservation(observation.actionRef(), true, readOk(path, content),
+                        Map.of("path", path, "bytes", Integer.toString(utf8Bytes(content))),
+                        observation.evidenceReferences(), observation.observedAt());
+            } else {
+                observation = boundedObservation(observation);
             }
-        };
+            return new CognitiveWorkerRuntime.Cycle(cycle.number(), cycle.thought(), observation, cycle.reflection());
+        }
+
+        /**
+         * Keeps the request within {@link #MAX_REQUEST_CHARS}: older cycles are folded into one deterministic history
+         * summary (kept in memory) until the request fits; a request that still cannot fit fails explicitly.
+         */
+        private CognitiveWorkerRuntime.CognitiveContext withinBudget(CognitiveWorkerRuntime.CognitiveContext view,
+                                                                     ActionFabric.ActionObservation observation) {
+            CognitiveWorkerRuntime.CognitiveContext candidate = view;
+            for (int keep : new int[] {view.history().size(), 4, 2, 1, 0}) {
+                if (keep > view.history().size()) continue;
+                candidate = keepingLatest(view, keep);
+                if (requestChars(candidate, observation) <= MAX_REQUEST_CHARS) return candidate;
+            }
+            if (observation != null) {
+                // Reflecting on a non-read action does not need the governance digests; they stay in Objective
+                // memory and return with the next planning request.
+                candidate = withoutDigests(candidate);
+                if (requestChars(candidate, observation) <= MAX_REQUEST_CHARS) return candidate;
+            }
+            String largest = candidate.memory().entrySet().stream()
+                    .sorted((left, right) -> Integer.compare(right.getValue().length(), left.getValue().length()))
+                    .limit(5).map(entry -> entry.getKey() + "=" + entry.getValue().length())
+                    .collect(java.util.stream.Collectors.joining(","));
+            throw new IllegalStateException("hoa-planning-request-over-budget:chars="
+                    + requestChars(candidate, observation) + ":limit=" + MAX_REQUEST_CHARS + ":largest-memory=" + largest);
+        }
+
+        private CognitiveWorkerRuntime.CognitiveContext withoutDigests(CognitiveWorkerRuntime.CognitiveContext view) {
+            Map<String, String> memory = new LinkedHashMap<>();
+            view.memory().forEach((key, value) -> {
+                if (!key.startsWith(MEMORY_DIGEST_PREFIX)) memory.put(key, value);
+            });
+            memory.put("governanceDigestsOmitted", "kept in Objective memory for planning: " + String.join(";", digests.keySet()));
+            return new CognitiveWorkerRuntime.CognitiveContext(view.workerId(), view.assignmentReference(),
+                    view.authorizationReference(), view.objectiveId(), view.workSpec(), view.idempotencyKey(),
+                    view.availableActions(), view.history(), Map.copyOf(memory));
+        }
+
+        private int requestChars(CognitiveWorkerRuntime.CognitiveContext context, ActionFabric.ActionObservation observation) {
+            return observation == null ? brain.actionSelectionRequestChars(context)
+                    : brain.reflectionRequestChars(context, observation);
+        }
+
+        /**
+         * Folds cycles older than the latest {@code keep} into one history summary and reduces them to their
+         * identity (action, inputs bounded to 200 chars, success, short summary). No cycle is removed: the brain's
+         * deterministic preconditions (git add/commit, PR publish) scan the whole history.
+         */
+        private CognitiveWorkerRuntime.CognitiveContext keepingLatest(CognitiveWorkerRuntime.CognitiveContext view, int keep) {
+            List<CognitiveWorkerRuntime.Cycle> history = view.history();
+            if (keep >= history.size()) return view;
+            int folded = history.size() - keep;
+            StringBuilder summary = new StringBuilder();
+            List<CognitiveWorkerRuntime.Cycle> reduced = new ArrayList<>();
+            for (int i = 0; i < history.size(); i++) {
+                CognitiveWorkerRuntime.Cycle cycle = history.get(i);
+                if (i >= folded) {
+                    reduced.add(cycle);
+                    continue;
+                }
+                String target = cycle.thought().inputs().getOrDefault("path", "");
+                summary.append('c').append(cycle.number()).append(' ').append(cycle.thought().actionRef())
+                        .append(cycle.observation().success() ? " ok" : " FAILED")
+                        .append(target.isBlank() ? "" : " " + target).append("; ");
+                Map<String, String> inputs = new LinkedHashMap<>();
+                cycle.thought().inputs().forEach((key, value) -> inputs.put(key, bounded(value, 200)));
+                ActionFabric.ActionObservation observation = cycle.observation();
+                Map<String, String> outputs = observation.outputs().containsKey("path")
+                        ? Map.of("path", observation.outputs().get("path")) : Map.of();
+                reduced.add(new CognitiveWorkerRuntime.Cycle(cycle.number(),
+                        new CognitiveWorkerRuntime.Thought(cycle.thought().actionRef(), inputs,
+                                bounded(cycle.thought().rationale(), 200)),
+                        new ActionFabric.ActionObservation(observation.actionRef(), observation.success(),
+                                bounded(observation.summary(), 160), outputs, observation.evidenceReferences(),
+                                observation.observedAt()),
+                        new CognitiveWorkerRuntime.Reflection(cycle.reflection().decision(),
+                                bounded(cycle.reflection().summary(), 160))));
+            }
+            Map<String, String> memory = new LinkedHashMap<>(view.memory());
+            memory.put("historySummary", bounded(summary.toString().strip(), MAX_HISTORY_SUMMARY_CHARS));
+            return new CognitiveWorkerRuntime.CognitiveContext(view.workerId(), view.assignmentReference(),
+                    view.authorizationReference(), view.objectiveId(), view.workSpec(), view.idempotencyKey(),
+                    view.availableActions(), List.copyOf(reduced), Map.copyOf(memory));
+        }
     }
 
-    private static CognitiveWorkerRuntime.CognitiveContext withRequiredInputs(CognitiveWorkerRuntime.CognitiveContext context,
-                                                                             List<String> required) {
-        Map<String, String> memory = new LinkedHashMap<>(context.memory());
-        memory.put("requiredGovernanceInputs", String.join(";", required));
-        return new CognitiveWorkerRuntime.CognitiveContext(context.workerId(), context.assignmentReference(),
-                context.authorizationReference(), context.objectiveId(), context.workSpec(), context.idempotencyKey(),
-                context.availableActions(), context.history(), Map.copyOf(memory));
+    /** Per-input digest limit: at most {@link #MAX_DIGEST_CHARS}, and all inputs together within the pool. */
+    static int digestLimit(int requiredInputs) {
+        return Math.min(MAX_DIGEST_CHARS, DIGEST_POOL_CHARS / Math.max(1, requiredInputs));
+    }
+
+    private static ActionFabric.ActionObservation boundedObservation(ActionFabric.ActionObservation observation) {
+        Map<String, String> outputs = new LinkedHashMap<>();
+        observation.outputs().forEach((key, value) -> outputs.put(key, bounded(value, MAX_LOOKUP_RESULT_CHARS)));
+        return new ActionFabric.ActionObservation(observation.actionRef(), observation.success(),
+                bounded(observation.summary(), MAX_LOOKUP_RESULT_CHARS), outputs, observation.evidenceReferences(),
+                observation.observedAt());
+    }
+
+    private static String bounded(String value, int maxChars) {
+        String text = value == null ? "" : value;
+        if (text.length() <= maxChars) return text;
+        return text.substring(0, maxChars) + "...[bounded original_chars=" + text.length() + "]";
+    }
+
+    private static String readOk(String path, String content) {
+        return "read ok: " + path + " (" + utf8Bytes(content) + " bytes)";
+    }
+
+    private static int utf8Bytes(String content) {
+        return content == null ? 0 : content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
     }
 
     private static boolean materialized(CognitiveWorkerRuntime.CognitiveContext context) {

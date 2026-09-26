@@ -45,9 +45,10 @@ class HeadOfAquacultureContextBudgetTest {
         RecordingHoaIntelligence intelligence = new RecordingHoaIntelligence();
         HoaPlanningHarness.Run run = HoaPlanningHarness.run(temp, inputs, intelligence);
 
+        assertEquals(List.of(), intelligence.scriptFailures, "scripted cognition boundary rejected a request");
         // C1 (red on main): the step completes instead of failing on the context budget.
         assertEquals(Set.of("hoa-action-plan-v1"), Set.copyOf(run.work().completedStepIds()),
-                "blocker: " + run.work().blocker() + "\nhistory: " + run.history());
+                "blocker: " + run.work().blocker() + "\nevidence: " + run.evidence() + "\nhistory: " + run.history());
         assertFalse(String.join("\n", run.evidence()).contains("context-budget-exceeded"));
 
         // C2: no request that reached cognition exceeded the budget.
@@ -103,8 +104,19 @@ class HeadOfAquacultureContextBudgetTest {
         int digestRequests() { return digests; }
         int selectionRequests() { return selections; }
 
+        final List<String> scriptFailures = new CopyOnWriteArrayList<>();
+
         @Override
         public synchronized Response reason(Request request) {
+            try {
+                return answer(request);
+            } catch (AssertionError failure) {
+                scriptFailures.add(failure.getMessage());
+                throw failure;
+            }
+        }
+
+        private Response answer(Request request) {
             requests.add(request);
             int n = requests.size();
             List<String> evidence = List.of(

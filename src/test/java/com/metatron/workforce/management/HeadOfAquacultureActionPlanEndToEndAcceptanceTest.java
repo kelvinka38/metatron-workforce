@@ -221,6 +221,11 @@ class HeadOfAquacultureActionPlanEndToEndAcceptanceTest {
             int n = calls.incrementAndGet();
             List<String> providerEvidence = List.of(
                     "worker-cognition-evidence;provider=scripted-free-tier;model=scripted-hoa-model;latency_ms=0");
+            if (request.instructions().contains("condense")) {
+                // Bounded governance-input digest (read → digest → plan); tiny fixtures digest to a short note.
+                return new Response("scripted-" + n, "{\"digest\":\"fixture digest: mục bắt buộc, cổng, luật\"}",
+                        providerEvidence);
+            }
             if (request.instructions().contains("reflection brain")) {
                 return new Response("scripted-" + n, "{\"decision\":\"COMPLETE\",\"summary\":\"ACTION_PLAN_v1 proposed\"}",
                         providerEvidence);
