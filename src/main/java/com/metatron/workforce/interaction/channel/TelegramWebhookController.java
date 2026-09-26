@@ -315,9 +315,15 @@ public final class TelegramWebhookController {
                         updateId, receipt.attempts(), objectiveId);
             } else {
                 long processingStarted = System.nanoTime();
+                Set<String> objectivesBefore = objectiveIds();
                 MetatronInteractionOrchestrator.InteractionResponse response = interactionIngress.handle(interaction);
                 safeAnswer = validateAnswer(inbound.text(), response.text());
-                objectiveId = objectiveIdFromAnswer(safeAnswer);
+                objectiveId = admittedObjectiveId(safeAnswer, objectivesBefore, objectiveIds());
+                String referenced = objectiveIdFromAnswer(safeAnswer);
+                if (objectiveId.isBlank() && !referenced.isBlank()) {
+                    LOG.warn("telegram_answer_objective_reference_ignored update_id={} referenced={} reason=not-admitted-by-this-interaction",
+                            updateId, referenced);
+                }
                 if (channelObjectiveHandoffEnabled
                         && requiresObjectiveBeforeAck(receipt.text())
                         && objectiveId.isBlank()) {
@@ -543,6 +549,24 @@ public final class TelegramWebhookController {
             throw new IllegalStateException("telegram_legacy_workforce_echo");
         }
         return answer.trim();
+    }
+
+    /**
+     * The Objective this interaction admitted, if any. An answer's {@code objective_id=} line is trusted only when
+     * that Objective exists after the interaction and did not exist before it: a model-written answer may quote an
+     * earlier Objective (production 2026-09-26: {@code objective_id=`objective:…`} in a DISCUSSION reply), which
+     * must never be mistaken for a new admission nor rendered as this message's Work card.
+     */
+    static String admittedObjectiveId(String answer, Set<String> objectivesBefore, Set<String> objectivesAfter) {
+        String candidate = objectiveIdFromAnswer(answer);
+        if (candidate.isBlank() || objectivesBefore.contains(candidate) || !objectivesAfter.contains(candidate)) return "";
+        return candidate;
+    }
+
+    private Set<String> objectiveIds() {
+        return management.allObjectives().stream()
+                .map(com.metatron.workforce.management.ManagementObjective::objectiveId)
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     static String objectiveIdFromAnswer(String answer) {
