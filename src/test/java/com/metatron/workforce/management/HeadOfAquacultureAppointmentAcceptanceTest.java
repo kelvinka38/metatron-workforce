@@ -54,7 +54,8 @@ class HeadOfAquacultureAppointmentAcceptanceTest {
         WorkerRuntimeProfileBindingService profiles = new WorkerRuntimeProfileBindingService(temp.resolve("bindings.tsv"));
         WorkerResourceScopeService scopes = new WorkerResourceScopeService(temp.resolve("scopes.tsv"));
         AutonomousStaffingService staffing = new AutonomousStaffingService(
-                core, List.of(new AquacultureHeadStaffingPolicy()), profiles, WorkerConstitutionService.inMemory(), scopes);
+                core, List.of(new AquacultureHeadStaffingPolicy()), profiles, WorkerConstitutionService.inMemory(
+                com.metatron.workforce.operating.PositionRouteCatalog.of(List.of(AquacultureDomainPlanningCapability.CAPABILITY))), scopes);
         return new Durable(core, profiles, scopes, staffing,
                 new AquacultureHeadAppointmentCapability(core, profiles, scopes));
     }

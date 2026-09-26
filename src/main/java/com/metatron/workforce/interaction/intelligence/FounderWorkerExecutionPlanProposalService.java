@@ -1,13 +1,15 @@
 package com.metatron.workforce.interaction.intelligence;
 
 import com.metatron.workforce.interaction.FounderDefinedWorkerFormationService;
-import com.metatron.workforce.management.AquacultureDomainPlanningCapability;
-import com.metatron.workforce.management.AquacultureHeadAppointmentCapability;
 import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
+import com.metatron.workforce.operating.PositionAddressResolver;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -18,18 +20,26 @@ import java.util.regex.Pattern;
  */
 public final class FounderWorkerExecutionPlanProposalService implements ExecutionPlanProposalService {
     private static final Pattern WORKER_REF = Pattern.compile("(?i)\\bWORKER-[A-Z0-9._:-]+\\b");
-    /**
-     * Founder addressing convention for the Head of Aquaculture: the Objective body opens with the HOA's
-     * canonical short or long name followed by ':' or ',' (e.g. "HOA: đọc EXECUTION_PLAN.md ..."). Anchored
-     * to the start of the Objective (or right after the explicit Objective-control prefix); a mention
-     * elsewhere in the text never addresses the HOA.
-     */
-    private static final Pattern HOA_ADDRESSEE = Pattern.compile(
-            "(?i)^\\s*(?:take ownership of one objective:\\s*)?(?:HOA|head of aquaculture)\\s*[:,]");
+    private static final String ROLE_REF_PREFIX = "ROLE-";
     private final ExecutionPlanProposalService delegate;
+    private final PositionAddressResolver addresses;
+    private final Map<String, PositionWorkRoute> routes = new LinkedHashMap<>();
 
     public FounderWorkerExecutionPlanProposalService(ExecutionPlanProposalService delegate) {
+        this(delegate, PositionAddressResolver.none(), List.of());
+    }
+
+    public FounderWorkerExecutionPlanProposalService(
+            ExecutionPlanProposalService delegate,
+            PositionAddressResolver addresses,
+            List<? extends PositionWorkRoute> routes) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
+        this.addresses = Objects.requireNonNull(addresses, "addresses");
+        for (PositionWorkRoute route : Objects.requireNonNull(routes, "routes")) {
+            if (this.routes.putIfAbsent(route.capability(), route) != null) {
+                throw new IllegalStateException("duplicate position work route: " + route.capability());
+            }
+        }
     }
 
     @Override
@@ -38,57 +48,86 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
             NormalizedRequest request,
             List<String> availableExecutionCapabilities) {
         List<ExecutionWorkSpec> deterministic = explicitCanonicalGeneralEngineeringWork(request, availableExecutionCapabilities);
-        if (deterministic.isEmpty()) deterministic = explicitHeadOfAquacultureWork(request, availableExecutionCapabilities);
-        if (deterministic.isEmpty()) deterministic = explicitFounderWorkerWork(request, availableExecutionCapabilities);
+        if (deterministic.isEmpty()) deterministic = positionAddressedWork(request, availableExecutionCapabilities);
+        if (deterministic.isEmpty() && !namesRoutedPosition(request)) {
+            deterministic = explicitFounderWorkerWork(request, availableExecutionCapabilities);
+        }
         if (!deterministic.isEmpty() && request.explicitlyRequestedProvider() == null) return deterministic;
-        return singleAquacultureDomainPlanningStep(request, delegate.propose(caseId, request, availableExecutionCapabilities));
+        return singleRoutedStep(request, delegate.propose(caseId, request, availableExecutionCapabilities));
     }
 
     /**
-     * Production fix (2026-09-25): a Founder Objective addressed to the Head of Aquaculture is one governed
-     * MUTATING aquaculture.domain.planning step on kelvinka38/bios (the ACTION_PLAN is proposed as an unmerged
-     * pull request), never generic worker.cognitive.work. Like the General Engineering case above, only the
-     * one canonical identity is special-cased: its literal Worker id, its role ref, or the Founder's
-     * addressing convention anchored at the start of the Objective (HOA_ADDRESSEE).
+     * Work for an EXECUTION Objective addressed to an occupied Position (PR #543 production fix, generalized): the
+     * addressee is whoever the Objective names explicitly (a WORKER- id, else a ROLE- target) or, only when it names
+     * nobody explicitly, whoever the Objective opens by addressing through an alias that the Position declares in
+     * its contract. The {@link PositionWorkRoute} of the Position's declared primaryCapability plans the one step.
+     * Positions, aliases, primary capabilities and routes are declared by their owners; this planner holds none of
+     * them, so a new Head needs no change here. An ambiguous alias fails as AMBIGUOUS_ADDRESS instead of being
+     * guessed.
      */
-    static List<ExecutionWorkSpec> explicitHeadOfAquacultureWork(
+    List<ExecutionWorkSpec> positionAddressedWork(
             NormalizedRequest request,
             List<String> availableExecutionCapabilities) {
         if (request == null || request.mode() != IntelligenceMode.EXECUTION) return List.of();
-        boolean available = availableExecutionCapabilities != null && availableExecutionCapabilities.stream()
-                .filter(Objects::nonNull)
-                .map(String::trim)
-                .anyMatch(AquacultureDomainPlanningCapability.CAPABILITY::equals);
-        if (!available) return List.of();
         String objective = request.objective() == null ? "" : request.objective().trim();
-        if (objective.isBlank() || !addressesHeadOfAquaculture(request.target(), objective)) return List.of();
-        return List.of(AquacultureDomainPlanningCapability.actionPlanWork("aquaculture-domain-planning", objective));
+        if (objective.isBlank()) return List.of();
+        return addressee(request)
+                .flatMap(this::routeFor)
+                .filter(route -> available(route.capability(), availableExecutionCapabilities))
+                .map(route -> List.of(route.work(stepId(route), objective)))
+                .orElse(List.of());
     }
 
-    static boolean addressesHeadOfAquaculture(String target, String objective) {
-        String workerId = workerRef(target);
-        if (workerId.isBlank()) workerId = workerRef(objective);
-        if (AquacultureHeadAppointmentCapability.WORKER_ID.equals(workerId)) return true;
-        String normalizedTarget = target == null ? "" : target.trim();
-        if (normalizedTarget.equalsIgnoreCase(AquacultureHeadAppointmentCapability.ROLE_REF)) return true;
-        return HOA_ADDRESSEE.matcher(objective == null ? "" : objective).find();
+    private Optional<PositionAddressResolver.Address> addressee(NormalizedRequest request) {
+        String workerId = workerRef(request.target());
+        if (workerId.isBlank()) workerId = workerRef(request.objective());
+        if (!workerId.isBlank()) return addresses.byWorker(workerId);
+        String target = request.target() == null ? "" : request.target().trim();
+        if (target.toUpperCase(Locale.ROOT).startsWith(ROLE_REF_PREFIX)) return addresses.byRole(target);
+        return addresses.resolveAlias(request.objective());
+    }
+
+    private Optional<PositionWorkRoute> routeFor(PositionAddressResolver.Address address) {
+        return Optional.ofNullable(routes.get(address.primaryCapability()));
     }
 
     /**
-     * The frontier planner observed in production split HOA work into aquaculture.domain.planning/READ_ONLY
-     * plus a worker.cognitive.work step. aquaculture.domain.planning is a single self-contained capability
-     * (read governing docs → write ACTION_PLAN → publish an unmerged PR), so any plan that selects it is
-     * normalized to exactly that one MUTATING step; plans that do not select it are returned unchanged.
+     * An explicitly named Worker whose Position has its own routed capability is never downgraded to generic
+     * cognitive work, even when that capability is momentarily unavailable (the frontier planner decides then).
      */
-    static List<ExecutionWorkSpec> singleAquacultureDomainPlanningStep(NormalizedRequest request, List<ExecutionWorkSpec> plan) {
+    private boolean namesRoutedPosition(NormalizedRequest request) {
+        if (request == null || request.mode() != IntelligenceMode.EXECUTION) return false;
+        String workerId = workerRef(request.target());
+        if (workerId.isBlank()) workerId = workerRef(request.objective());
+        return !workerId.isBlank() && addresses.byWorker(workerId).flatMap(this::routeFor).isPresent();
+    }
+
+    /**
+     * A frontier plan that selects a routed capability is normalized to that capability's single step (production
+     * observed a Head's planning capability split into a READ_ONLY step plus generic cognitive work); plans that
+     * select no routed capability are returned unchanged.
+     */
+    private List<ExecutionWorkSpec> singleRoutedStep(NormalizedRequest request, List<ExecutionWorkSpec> plan) {
         if (plan == null) return plan;
-        return plan.stream()
-                .filter(step -> step != null && AquacultureDomainPlanningCapability.CAPABILITY.equals(step.requiredCapability()))
-                .findFirst()
-                .map(step -> List.of(AquacultureDomainPlanningCapability.actionPlanWork(step.stepId(),
-                        request == null || request.objective() == null || request.objective().isBlank()
-                                ? step.objective() : request.objective().trim())))
-                .orElse(plan);
+        for (ExecutionWorkSpec step : plan) {
+            PositionWorkRoute route = step == null ? null : routes.get(step.requiredCapability());
+            if (route == null) continue;
+            String objective = request == null || request.objective() == null || request.objective().isBlank()
+                    ? step.objective() : request.objective().trim();
+            return List.of(route.work(step.stepId(), objective));
+        }
+        return plan;
+    }
+
+    private static String stepId(PositionWorkRoute route) {
+        return route.capability().replaceAll("[^A-Za-z0-9]+", "-");
+    }
+
+    private static boolean available(String capability, List<String> availableExecutionCapabilities) {
+        return availableExecutionCapabilities != null && availableExecutionCapabilities.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .anyMatch(capability::equals);
     }
 
     /**
@@ -251,7 +290,6 @@ public final class FounderWorkerExecutionPlanProposalService implements Executio
         if (workerId.isBlank()) workerId = workerRef(request.objective());
         if (workerId.isBlank()) return List.of();
         if (GeneralWorkspaceAutonomousCapability.WORKER_ID.equals(workerId)) return List.of();
-        if (AquacultureHeadAppointmentCapability.WORKER_ID.equals(workerId)) return List.of();
 
         String objective = request.objective().trim();
         if (objective.isBlank()) return List.of();

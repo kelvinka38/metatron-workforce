@@ -2,6 +2,7 @@ package com.metatron.workforce.operating;
 
 import com.metatron.workforce.core.WorkforceCoreService;
 import com.metatron.workforce.execution.ExecutionAttemptService;
+import com.metatron.workforce.interaction.intelligence.PositionWorkRoute;
 import com.metatron.workforce.phase5.WorkScheduleService;
 import com.metatron.workforce.runtime.RuntimeRegistry;
 import com.metatron.workforce.runtime.WorkerRuntimeProfileBindingService;
@@ -10,6 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.nio.file.Path;
+import java.util.List;
 
 @Configuration
 public class WorkerConstitutionConfiguration {
@@ -20,8 +22,15 @@ public class WorkerConstitutionConfiguration {
     }
 
     @Bean
-    WorkerConstitutionService workerConstitutionService(WorkerConstitutionStateStore store) {
-        return new WorkerConstitutionService(store);
+    WorkerConstitutionService workerConstitutionService(WorkerConstitutionStateStore store,
+                                                        List<PositionWorkRoute> positionWorkRoutes) {
+        return new WorkerConstitutionService(store,
+                PositionRouteCatalog.of(positionWorkRoutes.stream().map(PositionWorkRoute::capability).toList()));
+    }
+
+    @Bean
+    PositionAddressResolver positionAddressResolver(WorkforceCoreService core, WorkerConstitutionService constitution) {
+        return new PositionAddressResolver(core, constitution);
     }
 
     @Bean

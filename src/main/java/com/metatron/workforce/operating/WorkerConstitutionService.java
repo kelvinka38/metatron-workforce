@@ -23,14 +23,21 @@ import java.util.Optional;
  */
 public final class WorkerConstitutionService {
     private final WorkerConstitutionStateStore store;
+    private final PositionRouteCatalog routes;
     private final Map<String, PositionOperatingContract> contracts = new LinkedHashMap<>();
     private final Map<String, WorkerPositionBinding> bindings = new LinkedHashMap<>();
     private final Map<String, PerformanceEvaluation> performance = new LinkedHashMap<>();
     private final Map<String, ExperienceRecord> experiences = new LinkedHashMap<>();
     private final Map<String, LearningRecord> learning = new LinkedHashMap<>();
 
+    /** A constitution with no registered Position work routes: no Position may declare address aliases. */
     public WorkerConstitutionService(WorkerConstitutionStateStore store) {
+        this(store, PositionRouteCatalog.NONE);
+    }
+
+    public WorkerConstitutionService(WorkerConstitutionStateStore store, PositionRouteCatalog routes) {
         this.store = Objects.requireNonNull(store, "store");
+        this.routes = Objects.requireNonNull(routes, "routes");
         WorkerConstitutionStateStore.Snapshot snapshot = store.load();
         snapshot.positionContracts().forEach(value -> contracts.put(value.positionRef(), value));
         snapshot.bindings().forEach(value -> bindings.put(bindingKey(value.workerId(), value.participationId()), value));
@@ -40,11 +47,15 @@ public final class WorkerConstitutionService {
     }
 
     public static WorkerConstitutionService inMemory() {
+        return inMemory(PositionRouteCatalog.NONE);
+    }
+
+    public static WorkerConstitutionService inMemory(PositionRouteCatalog routes) {
         return new WorkerConstitutionService(new WorkerConstitutionStateStore() {
             private Snapshot state = Snapshot.empty();
             @Override public Snapshot load() { return state; }
             @Override public void save(Snapshot snapshot) { state = snapshot; }
-        });
+        }, routes);
     }
 
     /**
@@ -58,6 +69,10 @@ public final class WorkerConstitutionService {
         Objects.requireNonNull(at, "at");
         AutonomousStaffingPolicy.FormationSpec formation = policy.formationSpec();
         AutonomousStaffingPolicy.PositionContractSpec spec = policy.positionContractSpec();
+        if (!spec.addressAliases().isEmpty() && !routes.routes(spec.primaryCapability())) {
+            throw new IllegalStateException("position-primary-capability-unrouted:" + formation.positionRef()
+                    + ":" + spec.primaryCapability());
+        }
 
         PositionOperatingContract candidate = toContract(policy, formation, spec, at);
         PositionOperatingContract existing = contracts.get(formation.positionRef());
@@ -65,6 +80,8 @@ public final class WorkerConstitutionService {
             contracts.put(candidate.positionRef(), candidate);
         } else if (!sameStandingContract(existing, candidate)) {
             throw new IllegalStateException("position-operating-contract-conflict:" + formation.positionRef());
+        } else {
+            backfillAdditiveFields(existing, candidate, formation.workerId());
         }
 
         String key = bindingKey(formation.workerId(), formation.participationId());
@@ -364,7 +381,9 @@ public final class WorkerConstitutionService {
                         "qualification-evidence:" + formation.qualificationEvidenceRef(),
                         "authority-envelope:" + formation.authorityEnvelopeRef(),
                         "cost-limit:" + formation.costLimitRef(),
-                        "lifecycle:" + formation.lifecycleRef()));
+                        "lifecycle:" + formation.lifecycleRef()),
+                spec.addressAliases(),
+                spec.primaryCapability());
     }
 
     private static boolean sameStandingContract(PositionOperatingContract left, PositionOperatingContract right) {
@@ -383,6 +402,36 @@ public final class WorkerConstitutionService {
                 && left.operatingCoverage().equals(right.operatingCoverage())
                 && left.workingTimeZone().equals(right.workingTimeZone())
                 && left.maxConcurrentAssignments() == right.maxConcurrentAssignments();
+    }
+
+    /**
+     * The additive contract fields (addressAliases, primaryCapability) came after Positions were already persisted.
+     * A stored field that is still empty takes the policy's value, and each such backfill is recorded as
+     * "contract-backfill:&lt;field&gt;:&lt;workerId&gt;:&lt;value&gt;" evidence on the contract. A stored value that differs is a
+     * conflict, exactly like any other standing-contract difference: the policy must version the Position instead.
+     */
+    private void backfillAdditiveFields(PositionOperatingContract existing, PositionOperatingContract candidate,
+                                        String workerId) {
+        List<String> backfills = new ArrayList<>();
+        List<String> aliases = existing.addressAliases();
+        if (!aliases.equals(candidate.addressAliases())) {
+            if (!aliases.isEmpty()) throw additiveConflict(existing, "addressAliases");
+            aliases = candidate.addressAliases();
+            backfills.add("contract-backfill:addressAliases:" + workerId + ":" + String.join(",", aliases));
+        }
+        String primary = existing.primaryCapability();
+        if (!primary.equals(candidate.primaryCapability())) {
+            if (!primary.isEmpty()) throw additiveConflict(existing, "primaryCapability");
+            primary = candidate.primaryCapability();
+            backfills.add("contract-backfill:primaryCapability:" + workerId + ":" + primary);
+        }
+        if (!backfills.isEmpty()) {
+            contracts.put(existing.positionRef(), existing.backfilled(aliases, primary, backfills));
+        }
+    }
+
+    private static IllegalStateException additiveConflict(PositionOperatingContract existing, String field) {
+        return new IllegalStateException("position-operating-contract-conflict:" + existing.positionRef() + ":" + field);
     }
 
     private static boolean sameBinding(WorkerPositionBinding left, WorkerPositionBinding right) {
@@ -466,7 +515,9 @@ public final class WorkerConstitutionService {
             String workingTimeZone,
             int maxConcurrentAssignments,
             Instant effectiveAt,
-            List<String> evidenceReferences) {
+            List<String> evidenceReferences,
+            List<String> addressAliases,
+            String primaryCapability) {
         public PositionOperatingContract {
             require(contractId, "contractId");
             require(organizationRef, "organizationRef");
@@ -486,6 +537,18 @@ public final class WorkerConstitutionService {
             if (maxConcurrentAssignments < 1) throw new IllegalArgumentException("maxConcurrentAssignments must be positive");
             Objects.requireNonNull(effectiveAt, "effectiveAt");
             evidenceReferences = List.copyOf(evidenceReferences);
+            // Contracts persisted before the additive fields existed deserialize with them empty.
+            addressAliases = addressAliases == null ? List.of() : List.copyOf(addressAliases);
+            primaryCapability = primaryCapability == null ? "" : primaryCapability;
+        }
+
+        PositionOperatingContract backfilled(List<String> aliases, String primary, List<String> backfillEvidence) {
+            List<String> evidence = new ArrayList<>(evidenceReferences);
+            evidence.addAll(backfillEvidence);
+            return new PositionOperatingContract(contractId, organizationRef, positionRef, roleRef, mission,
+                    responsibilities, reportingLines, capabilityRequirements, authorityScopes, resourceScopes,
+                    escalationRoutes, successMeasures, decisionRights, operatingCoverage, workingTimeZone,
+                    maxConcurrentAssignments, effectiveAt, evidence, aliases, primary);
         }
     }
 

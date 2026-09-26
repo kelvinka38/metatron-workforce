@@ -15,6 +15,8 @@ public final class AquacultureHeadStaffingPolicy implements AutonomousStaffingPo
     public static final List<String> WRITE_PATH_PREFIXES = List.of(
             "DOMAINS/AQUACULTURE/ACTION_PLANS/",
             "DOMAINS/AQUACULTURE/REPORTS/");
+    /** Names the Founder opens an Objective with to address the HOA ("HOA: ..."); addressing only, no authority. */
+    public static final List<String> ADDRESS_ALIASES = List.of("HOA", "Head of Aquaculture");
     private static final String FOUNDER = AquacultureHeadAppointmentCapability.FOUNDER_HUMAN_ID;
 
     @Override public String capabilityRef() { return AquacultureHeadAppointmentCapability.CAPABILITY; }
@@ -101,7 +103,9 @@ public final class AquacultureHeadStaffingPolicy implements AutonomousStaffingPo
                         "Propose changes only as unmerged pull requests; never merge, never deploy, never release."),
                 "ASSIGNMENT_DRIVEN_BOUNDED_WITH_WEEKLY_REPORTING",
                 "Asia/Ho_Chi_Minh",
-                1);
+                1,
+                ADDRESS_ALIASES,
+                AquacultureDomainPlanningCapability.CAPABILITY);
     }
 
     @Override

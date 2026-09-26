@@ -7,7 +7,9 @@ import com.metatron.workforce.management.AquacultureHeadAppointmentCapability;
 import com.metatron.workforce.management.GeneralWorkspaceAutonomousCapability;
 import com.metatron.workforce.testing.GovernanceTestHarness;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -34,9 +36,14 @@ class HeadOfAquaculturePlanningRouteTest {
             GeneralWorkspaceAutonomousCapability.CAPABILITY,
             "research.web.search");
 
-    /** Production composition from ExecutionPlanningConfiguration, with the frontier planner as the seam. */
-    private static ExecutionPlanProposalService productionPlanner(ExecutionPlanProposalService frontier) {
-        return new GeneralActionComposingExecutionPlanProposalService(new FounderWorkerExecutionPlanProposalService(frontier));
+    @TempDir Path temp;
+
+    /**
+     * Production composition from ExecutionPlanningConfiguration, with the frontier planner as the seam and the
+     * HOA appointed so its Position-declared address resolves.
+     */
+    private ExecutionPlanProposalService productionPlanner(ExecutionPlanProposalService frontier) {
+        return new PositionAddressFixture(temp).appointHeadOfAquaculture().planner(frontier);
     }
 
     @Test

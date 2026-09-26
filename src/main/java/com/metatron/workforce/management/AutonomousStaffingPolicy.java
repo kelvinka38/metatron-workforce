@@ -141,7 +141,35 @@ public interface AutonomousStaffingPolicy {
             List<String> decisionRights,
             String operatingCoverage,
             String workingTimeZone,
-            int maxConcurrentAssignments) {
+            int maxConcurrentAssignments,
+            List<String> addressAliases,
+            String primaryCapability) {
+        /** Contract without declared address aliases (the Position is addressed only by Worker id / role). */
+        public PositionContractSpec(
+                String mission,
+                List<String> responsibilities,
+                List<ReportingLineSpec> reportingLines,
+                List<String> capabilityRequirements,
+                List<String> authorityScopes,
+                List<ResourceScopeSpec> resourceScopes,
+                List<EscalationRouteSpec> escalationRoutes,
+                List<SuccessMeasureSpec> successMeasures,
+                List<String> decisionRights,
+                String operatingCoverage,
+                String workingTimeZone,
+                int maxConcurrentAssignments) {
+            this(mission, responsibilities, reportingLines, capabilityRequirements, authorityScopes, resourceScopes,
+                    escalationRoutes, successMeasures, decisionRights, operatingCoverage, workingTimeZone,
+                    maxConcurrentAssignments, List.of(), "");
+        }
+
+        /** The same contract, addressable through {@code aliases} and routed by {@code primaryCapability}. */
+        public PositionContractSpec withAddress(List<String> aliases, String primaryCapability) {
+            return new PositionContractSpec(mission, responsibilities, reportingLines, capabilityRequirements,
+                    authorityScopes, resourceScopes, escalationRoutes, successMeasures, decisionRights,
+                    operatingCoverage, workingTimeZone, maxConcurrentAssignments, aliases, primaryCapability);
+        }
+
         public PositionContractSpec {
             require(mission, "mission");
             responsibilities = nonEmpty(responsibilities, "responsibilities");
@@ -155,7 +183,41 @@ public interface AutonomousStaffingPolicy {
             require(operatingCoverage, "operatingCoverage");
             require(workingTimeZone, "workingTimeZone");
             if (maxConcurrentAssignments < 1) throw new IllegalArgumentException("maxConcurrentAssignments must be positive");
+            addressAliases = normalizeAddressAliases(addressAliases);
+            primaryCapability = primaryCapability == null ? "" : primaryCapability.trim();
+            if (!addressAliases.isEmpty() && primaryCapability.isEmpty()) {
+                throw new IllegalArgumentException("primaryCapability required when addressAliases are declared: "
+                        + addressAliases);
+            }
+            if (!primaryCapability.isEmpty() && !capabilityRequirements.contains(primaryCapability)) {
+                throw new IllegalArgumentException("primaryCapability must be one of the Position's capabilityRequirements: "
+                        + primaryCapability);
+            }
         }
+    }
+
+    /**
+     * Address aliases are the names a Founder may open an Objective with ("&lt;alias&gt;: ...") to address the
+     * Position's occupant; such an Objective is routed by the Position's declared primaryCapability, which must be
+     * one of its capabilityRequirements. Aliases are addressing metadata only: they grant no capability or authority,
+     * and may not collide with the explicit Worker-id / role-ref forms, which always take precedence.
+     */
+    static List<String> normalizeAddressAliases(List<String> aliases) {
+        if (aliases == null || aliases.isEmpty()) return List.of();
+        List<String> normalized = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String alias : aliases) {
+            require(alias, "addressAlias");
+            String value = alias.trim().replaceAll("\\s+", " ");
+            String folded = value.toUpperCase(java.util.Locale.ROOT);
+            if (value.contains(":")) throw new IllegalArgumentException("addressAlias must not contain ':' : " + alias);
+            if (folded.startsWith("WORKER-") || folded.startsWith("ROLE-")) {
+                throw new IllegalArgumentException("addressAlias must not use the Worker-id/role-ref form: " + alias);
+            }
+            if (!seen.add(folded)) throw new IllegalArgumentException("duplicate addressAlias: " + alias);
+            normalized.add(value);
+        }
+        return List.copyOf(normalized);
     }
 
     record FormationSpec(
